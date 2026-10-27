@@ -212,7 +212,8 @@
     mine.worker = new Worker(C().E2EE_WORKER);
     const publisher = mine.role === "host";
     const lk = new K.Room({
-      adaptiveStream: !publisher, dynacast: true, stopLocalTrackOnUnpublish: false, disconnectOnPageLeave: true,
+      // Viewers pick their layer themselves (syncSubscriptions): the player is one large picture.
+      adaptiveStream: false, dynacast: true, stopLocalTrackOnUnpublish: false, disconnectOnPageLeave: true,
       e2ee: { keyProvider: mine.keys, worker: mine.worker },
       publishDefaults: {
         simulcast: true, videoSimulcastLayers: [K.VideoPresets.h180, K.VideoPresets.h360], videoCodec: "vp8",
@@ -294,8 +295,10 @@
 
   // Receive only what the stream's publishers (the streamer, and speakers on the stage) send, and
   // only if it is end-to-end encrypted.
+  const narrow = () => Math.max(window.innerWidth || 0, window.innerHeight || 0) < 900;
   function syncSubscriptions(mine) {
     if (!mine.lk) return;
+    const K = LK();
     for (const rp of mine.lk.remoteParticipants.values()) {
       const allowed = mine.publishers.has(rp.identity) || rp.identity === mine.hostPid;
       for (const pub of rp.trackPublications.values()) {
@@ -304,6 +307,13 @@
         const want = allowed && pub.isEncrypted && mine.epoch > 0;
         if (!pub.isEncrypted && allowed && !pub.ppRefused) { pub.ppRefused = true; mine.unencrypted += 1; }
         if (pub.isDesired !== want) pub.setSubscribed(want);
+        if (want && pub.kind === "video") {
+          // The streamer's main picture at the top layer (a phone takes the middle one); a speaker's
+          // camera or the streamer's camera beside a shared screen at the lowest.
+          const small = pub.source === "camera" && (rp.identity !== mine.hostPid || [...rp.trackPublications.values()].some((x) => x.source === "screen_share"));
+          const q = small ? K.VideoQuality.LOW : narrow() ? K.VideoQuality.MEDIUM : K.VideoQuality.HIGH;
+          if (pub.ppQuality !== q) { pub.ppQuality = q; pub.setVideoQuality(q); }
+        }
       }
     }
   }

@@ -50,17 +50,22 @@ export function streamConfigFromEnv(env = process.env) {
   return {
     // The most viewers one stream may have (SDS §14A.5); the postbox may say fewer, the budget too.
     maxViewers: Number(env.CALLS_STREAM_MAX_VIEWERS || 200),
-    // All viewers of all streams together: the media host's measured CPU limit (docs/streaming.md).
+    // All viewers of all streams together, kept well inside the media host's CPU (measured
+    // 2026-10-27: ~0.9% of one core per viewer, 155 viewers = 1.4 of 5 vCPUs; docs/streaming.md).
     totalViewers: Number(env.CALLS_STREAM_TOTAL_VIEWERS || 400),
-    // What one viewer costs the media host's upload, in Mbit/s (measured; docs/streaming.md), and
-    // how many viewers a new stream must have room for before it may start.
-    viewerMbps: Number(env.CALLS_STREAM_VIEWER_MBPS || 2.2),
+    // What one viewer costs the media host's upload, in Mbit/s, on the wire: a camera stream (720p
+    // capped at 1.7 Mbit/s plus voice, +18% measured overhead), and one with a shared screen (2.5
+    // Mbit/s plus voice and a small camera). Measured on the production media host, 2026-10-27.
+    viewerMbps: Number(env.CALLS_STREAM_VIEWER_MBPS || 2.1),
+    screenViewerMbps: Number(env.CALLS_STREAM_SCREEN_VIEWER_MBPS || 3.2),
+    // How many viewers a new stream must have room for before it may start.
     startReserve: Number(env.CALLS_STREAM_START_RESERVE || 10),
   };
 }
 
 export function createStreams(ctx) {
   const { cfg, internal, HttpError, now, liveSession, mailboxFor, limited, send, sessions, signSfuToken, sfuAdmin, sfuEnabled, otherLoadMbps } = ctx;
+  const sfuCall = ctx.sfuCall || (async () => 200);
   const L = { ...STREAM_LIMITS, ...(ctx.limits || {}) };
   const sc = { ...streamConfigFromEnv({}), ...(cfg.streams || {}) };
   const streams = new Map(); // stream id -> stream room
@@ -68,6 +73,7 @@ export function createStreams(ctx) {
 
   // ---- capacity ----
 
+  const rate = (sources) => (sources.includes("screen") ? sc.screenViewerMbps : sc.viewerMbps);
   function viewersOf(st) {
     let n = 0;
     for (const p of st.participants.values()) if (p.role !== "host") n++;
@@ -84,14 +90,14 @@ export function createStreams(ctx) {
     let total = 0;
     for (const st of streams.values()) {
       if (st === except || st.ended) continue;
-      total += Math.max(viewersOf(st), sc.startReserve) * sc.viewerMbps;
+      total += Math.max(viewersOf(st), sc.startReserve) * rate(st.sources);
     }
     return total;
   }
   // How many viewers this stream could have right now, given the budget and every other room.
   function effectiveMax(st, postboxMax) {
     const budget = cfg.sfu ? cfg.sfu.budgetMbps : 0;
-    const room = Math.floor((budget - otherLoadMbps() - loadMbps(st)) / sc.viewerMbps);
+    const room = Math.floor((budget - otherLoadMbps() - loadMbps(st)) / rate(st.sources));
     const cpu = sc.totalViewers - totalViewers(st);
     return Math.max(0, Math.min(postboxMax || sc.maxViewers, sc.maxViewers, room, cpu));
   }
@@ -296,8 +302,14 @@ export function createStreams(ctx) {
     if (!st) {
       if (!isHost) throw new HttpError(409, "not_started");
       const budget = cfg.sfu.budgetMbps;
-      if (otherLoadMbps() + loadMbps() + sc.startReserve * sc.viewerMbps > budget || totalViewers() + sc.startReserve > sc.totalViewers) throw capacityError();
+      if (otherLoadMbps() + loadMbps() + sc.startReserve * rate(verdict.sources) > budget || totalViewers() + sc.startReserve > sc.totalViewers) throw capacityError();
       st = makeStream(sid, verdict);
+      // The media room is made here, sized for this stream (the media server's default room size
+      // is the one for calls), before anyone connects to it.
+      const size = Math.min(verdict.max_viewers, sc.maxViewers) + 10;
+      let status = 0;
+      try { status = await sfuCall("CreateRoom", { name: st.lkRoom, max_participants: size, empty_timeout: 300, departure_timeout: 30 }, { roomCreate: true }); } catch (_) { status = 0; }
+      if (status !== 200) { end(st, "media_failed", false); throw new HttpError(503, "streams_unavailable"); }
     }
     for (const p of st.participants.values()) if (p.sessionId === session.id) return { ...streamView(st, p), sfu: ticket(st, p) };
     st.maxViewers = verdict.max_viewers;
@@ -435,7 +447,7 @@ export function createStreams(ctx) {
   function health() {
     let live = 0, viewers = 0;
     for (const st of streams.values()) if (!st.ended) { live++; viewers += viewersOf(st); }
-    return { live, viewers, load_mbps: Math.round(loadMbps()), viewer_mbps: sc.viewerMbps, max_viewers: sc.maxViewers, total_viewers: sc.totalViewers };
+    return { live, viewers, load_mbps: Math.round(loadMbps()), viewer_mbps: sc.viewerMbps, screen_viewer_mbps: sc.screenViewerMbps, max_viewers: sc.maxViewers, total_viewers: sc.totalViewers };
   }
 
   return { handle, sessionGone, loadMbps, health, streams, check, _end: end };

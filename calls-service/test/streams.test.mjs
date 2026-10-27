@@ -62,7 +62,7 @@ async function start({ budget = 400, streams = {}, limits = {} } = {}) {
   const sfu = sfuConfigFromEnv({ CALLS_SFU_URL: "wss://inbox.test/sfu", CALLS_SFU_API_URL: "https://media.test:7443", CALLS_SFU_KEY: "APIkey1", CALLS_SFU_SECRET: SECRET, CALLS_SFU_BUDGET_MBPS: String(budget) });
   const internal = fakeInternal();
   const sfuCalls = [];
-  const cfg = { postbox: "https://postbox.test", turnSecret: "", turnUrls: [], allowedOrigins: ["https://inbox.test"], ringMs: 400, knockMs: 1500, trustProxy: true, meshMax: 6, sfu, streams: { viewerMbps: 2, startReserve: 10, maxViewers: 200, totalViewers: 400, ...streams } };
+  const cfg = { postbox: "https://postbox.test", turnSecret: "", turnUrls: [], allowedOrigins: ["https://inbox.test"], ringMs: 400, knockMs: 1500, trustProxy: true, meshMax: 6, sfu, streams: { viewerMbps: 1, screenViewerMbps: 2, startReserve: 10, maxViewers: 200, totalViewers: 400, ...streams } };
   const service = createCallsService(cfg, { fetch: fakePostbox(), postboxInternal: internal, sfuApi: async (_s, method, body) => { sfuCalls.push({ method, body }); return 200; }, streamLimits: { tickMs: 60_000, viewerCountMs: 20, reactionFlushMs: 20, ...limits } });
   const server = http.createServer((req, res) => service.handle(req, res));
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
@@ -151,8 +151,9 @@ test("the streamer gets a publishing ticket, viewers a hidden subscribe-only one
     assert.equal(joined.data.key, pub("bob"));
     const again = await t.req("tok-bob", `/calls/v1/streams/${SID}/sfu`, { session: bob.s.id });
     assert.equal(claims(again.body.token).video.canPublish, false);
-    // Stream rooms are not call rooms.
+    // Stream rooms are not call rooms, and are made with their own size before anyone connects.
     assert.equal(t.service.state.rooms.size, 0);
+    assert.deepEqual(t.sfuCalls.find((c) => c.method === "CreateRoom").body, { name: "stream_" + SID, max_participants: 210, empty_timeout: 300, departure_timeout: 30 });
   } finally { await t.stop(); }
 });
 
@@ -331,5 +332,21 @@ test("the stream ends when the streamer stops, leaves for good, or the postbox s
     t.internal.down = true;
     await t.service.streams.check(t.service.streams.streams.get(s3));
     assert.equal((await h3.s.until("stream_ended")).data.reason, "media_failed");
+  } finally { await t.stop(); }
+});
+
+test("a stream with a shared screen counts at the screen rate, a camera-only one at the camera rate", async () => {
+  const t = await start({ budget: 100, streams: { viewerMbps: 1, screenViewerMbps: 2, startReserve: 10 } });
+  try {
+    t.internal.live(SID);
+    await t.join("tok-host");
+    assert.equal(t.service.sfuLoadMbps(), 20, "screen + camera: 10 reserved viewers at 2 Mbit/s");
+    const cam = "str_" + "e".repeat(26);
+    const s = t.internal.live(cam);
+    const admit = t.internal.streamAdmit;
+    t.internal.streamAdmit = async (x) => { const v = await admit(x); if (v && v.allowed && x.stream_id === cam) v.sources = ["camera"]; return v; };
+    void s;
+    await t.join("tok-host", cam);
+    assert.equal(t.service.sfuLoadMbps(), 30, "camera only: 10 reserved viewers at 1 Mbit/s");
   } finally { await t.stop(); }
 });

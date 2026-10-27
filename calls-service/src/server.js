@@ -522,6 +522,12 @@ export function createCallsService(cfgIn, deps = {}) {
     cfg, internal, HttpError, now, liveSession, mailboxFor, limited, send, sessions, signSfuToken, newId,
     sfuEnabled, otherLoadMbps: () => callsLoadMbps(),
     sfuAdmin: (method, body, grant) => { if (sfuEnabled() && cfg.sfu.apiUrl) sfuAdmin(method, body, grant); },
+    // Awaited: a stream's media room must exist with its own size before the first ticket is used.
+    sfuCall: async (method, body, grant) => {
+      if (!sfuEnabled() || !cfg.sfu.apiUrl) return 200;
+      const t = Math.floor(now() / 1000);
+      return sfuApi(cfg.sfu, method, body, signSfuToken(cfg.sfu, { nbf: t - 5, exp: t + 60, video: grant }));
+    },
     limits: deps.streamLimits,
   });
 
