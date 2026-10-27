@@ -1038,6 +1038,8 @@ Test("Call page messages parse strictly and scripts carry JSON-encoded values on
 });
 tests.AddRange(AccountTests.All());
 tests.AddRange(AuthorizationTests.All());
+tests.AddRange(StrongSignInTests.All());
+tests.AddRange(DevicePairingTests.All());
 tests.AddRange(GroupStateAuthorizationTests.All());
 tests.AddRange(GroupClientAuthorizationTests.All());
 tests.AddRange(AvatarAuthorizationTests.All());
