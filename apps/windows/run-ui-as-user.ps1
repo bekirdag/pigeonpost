@@ -5,6 +5,7 @@ $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_ACTIONS -ne 'true') { throw 'This helper is only for disposable GitHub Windows runners.' }
 $directory = (New-Item -ItemType Directory -Force $OutputDirectory).FullName
 $smoke = Join-Path $PSScriptRoot 'smoke-test.ps1'
+$delivery = Join-Path $PSScriptRoot 'test-delivery.ps1'
 # WinUI drag/drop requires an ordinary user. Hosted workers run elevated with UAC disabled.
 # Use a real, short-lived local account instead of modifying the worker's security token.
 Add-Type @'
@@ -73,6 +74,7 @@ try {
     Write-Host (`$notificationResult | ConvertTo-Json -Depth 4)
     if (-not `$notificationResult.passed) { throw 'Native notification integration failed.' }
     Remove-Item Env:PIGEONPOST_NOTIFICATION_TEST_RESULT
+    & $(Literal $delivery) -Executable $(Literal (Resolve-Path $Executable).Path) -OutputDirectory $(Literal $directory)
     & $(Literal $smoke) -Executable $(Literal (Resolve-Path $Executable).Path) -OutputDirectory $(Literal $directory) -Fixture
     exit 0
 } catch { Write-Host (`$_ | Out-String); exit 1 }

@@ -48,7 +48,14 @@ public sealed partial class MainWindow : Window
         PreviewSideData.Seed(stand_in);
         postbox.Dispose();
         postbox = new PostboxClient(new HttpClient(new PreviewRouter(new AttachmentFixtureHandler(preview), stand_in)), new AttachmentFixtureTokens());
-        ViewModel = new InboxViewModel(preview, postbox);
+        if (Environment.GetEnvironmentVariable("PIGEONPOST_UI_DELIVERY_STATE") is { } deliveryState)
+        {
+            var folder = Environment.GetEnvironmentVariable("PIGEONPOST_UI_DELIVERY_FOLDER") ?? throw new InvalidOperationException("Delivery UI fixture folder missing.");
+            deliveryUiFixture = new NativeDeliveryFixture(preview, deliveryState);
+            ViewModel = new InboxViewModel(deliveryUiFixture,
+                deliveryCoordinator: new MessageDeliveryCoordinator(deliveryUiFixture, new FileMessageAttemptStore(folder, new DpapiProtector())));
+        }
+        else ViewModel = new InboxViewModel(preview, postbox);
 #endif
         CreateSideModels();
         InitializeComponent();
@@ -78,6 +85,9 @@ public sealed partial class MainWindow : Window
             ViewModel.MessagesUpdated -= Messages_Updated;
             ViewModel.InboxUpdated -= Inbox_Updated;
             ViewModel.Dispose();
+#if UI_TESTS
+            deliveryUiFixture?.Root.Retire();
+#endif
             groupsModel.Dispose();
         };
     }

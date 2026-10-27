@@ -6,6 +6,7 @@ namespace Pigeonpost.Desktop;
 
 public sealed partial class MainWindow
 {
+    private NativeDeliveryFixture? deliveryUiFixture;
     // Runs under the real Windows standard user alongside native notification qualification.
     // The service is a synthetic in-process fixture without any network or account credentials.
     private static async Task RunDeliveryProtectionTestsAsync(Action<bool, string> check)
@@ -48,7 +49,7 @@ public sealed partial class MainWindow
         finally { service.Root.Retire(); Directory.Delete(folder, recursive: true); }
     }
 
-    private sealed class NativeDeliveryFixture : IProtectedMessageService
+    private sealed class NativeDeliveryFixture(PreviewInboxService? preview = null, string? diagnosticFile = null) : IProtectedMessageService
     {
         internal const string Own = "/k/aaaaaaaaaaaaaaaaaaaaaaaaaa", Peer = "/k/bbbbbbbbbbbbbbbbbbbbbbbbbb";
         internal AuthorizationLease Root = new(); private char owner = 'a';
@@ -57,23 +58,44 @@ public sealed partial class MainWindow
         public string? RecoveryOrigin => "https://native-delivery-fixture.invalid";
         internal int Posts; internal bool LoseNext;
         internal readonly HashSet<string> Committed = [];
-        internal void Rotate(char key) { Root.Retire(); Root = new(); owner = key; }
-        public Task<IReadOnlyList<Mailbox>> GetMailboxesAsync(CancellationToken ct) => Task.FromResult<IReadOnlyList<Mailbox>>([new(Own)]);
-        public Task<RecipientRoute> ResolveRecipientAsync(MessageRecoveryScope scope, string peer, CancellationToken ct)
-        { scope.RequireCurrent(ct); return Task.FromResult(new RecipientRoute(Own, Peer, peer)); }
-        public Task<SendReceipt> SendPreparedMessageAsync(MessageRecoveryScope scope, PreparedMessageAttempt attempt, CancellationToken ct)
+        private readonly Dictionary<string, SendReceipt> receipts = [];
+        private readonly Dictionary<string, string> intents = [];
+        private bool exactRetries = true;
+        private void Diagnostics()
         {
-            scope.RequireCurrent(ct); Posts++; var duplicate = !Committed.Add(attempt.Request.MsgRef);
-            if (LoseNext) { LoseNext = false; throw new HttpRequestException("Synthetic committed response loss."); }
-            return Task.FromResult(new SendReceipt("native_recipient_copy", "native_sent_copy", attempt.Request.MsgRef, duplicate));
+            if (diagnosticFile is null) return;
+            var staging = diagnosticFile + ".tmp";
+            File.WriteAllText(staging, System.Text.Json.JsonSerializer.Serialize(new { posts = Posts, committed = Committed.Count, exactRetries }));
+            File.Move(staging, diagnosticFile, overwrite: true);
         }
-        public Task<InboxSnapshot> LoadAsync(string identity, CancellationToken ct) => throw new NotSupportedException();
+        internal void Rotate(char key) { Root.Retire(); Root = new(); owner = key; }
+        public Task<IReadOnlyList<Mailbox>> GetMailboxesAsync(CancellationToken ct) => preview?.GetMailboxesAsync(ct) ?? Task.FromResult<IReadOnlyList<Mailbox>>([new(Own)]);
+        public Task<RecipientRoute> ResolveRecipientAsync(MessageRecoveryScope scope, string peer, CancellationToken ct)
+        { scope.RequireCurrent(ct); return Task.FromResult(new RecipientRoute(scope.Mailbox, Peer, peer)); }
+        public async Task<SendReceipt> SendPreparedMessageAsync(MessageRecoveryScope scope, PreparedMessageAttempt attempt, CancellationToken ct)
+        {
+            scope.RequireCurrent(ct); Posts++;
+            var reference = attempt.Request.MsgRef;
+            var intent = System.Text.Json.JsonSerializer.Serialize(attempt.Request);
+            if (receipts.TryGetValue(reference, out var existing))
+            {
+                exactRetries &= intents[reference] == intent; Diagnostics(); return existing with { Duplicate = true };
+            }
+            var sent = preview is null ? new SendReceipt("native_recipient_copy", "native_sent_copy")
+                : await preview.SendAsync(scope.Mailbox, attempt.Review.Recipient, attempt.Request.Body, attempt.Request.ThreadId, ct);
+            scope.RequireCurrent(ct);
+            var receipt = sent with { MsgRef = reference, Duplicate = false };
+            Committed.Add(reference); receipts[reference] = receipt; intents[reference] = intent; Diagnostics();
+            if (LoseNext || preview is not null) { LoseNext = false; throw new HttpRequestException("Synthetic committed response loss."); }
+            return receipt;
+        }
+        public Task<InboxSnapshot> LoadAsync(string identity, CancellationToken ct) => preview?.LoadAsync(identity, ct) ?? throw new NotSupportedException();
         public Task<SendReceipt> SendAsync(string identity, string peer, string body, string? threadId, CancellationToken ct) => throw new NotSupportedException();
-        public Task<string> CreateThreadAsync(string identity, string peer, string title, CancellationToken ct) => throw new NotSupportedException();
-        public Task SetArchivedAsync(string identity, string peer, bool archived, CancellationToken ct) => throw new NotSupportedException();
-        public Task AcknowledgeAsync(string identity, string messageId, CancellationToken ct) => throw new NotSupportedException();
-        public Task SetContactAsync(string identity, Contact contact, CancellationToken ct) => throw new NotSupportedException();
-        public Task RemoveContactAsync(string identity, string peer, CancellationToken ct) => throw new NotSupportedException();
+        public Task<string> CreateThreadAsync(string identity, string peer, string title, CancellationToken ct) => preview?.CreateThreadAsync(identity, peer, title, ct) ?? throw new NotSupportedException();
+        public Task SetArchivedAsync(string identity, string peer, bool archived, CancellationToken ct) => preview?.SetArchivedAsync(identity, peer, archived, ct) ?? throw new NotSupportedException();
+        public Task AcknowledgeAsync(string identity, string messageId, CancellationToken ct) => preview?.AcknowledgeAsync(identity, messageId, ct) ?? throw new NotSupportedException();
+        public Task SetContactAsync(string identity, Contact contact, CancellationToken ct) => preview?.SetContactAsync(identity, contact, ct) ?? throw new NotSupportedException();
+        public Task RemoveContactAsync(string identity, string peer, CancellationToken ct) => preview?.RemoveContactAsync(identity, peer, ct) ?? throw new NotSupportedException();
         public Task DeleteThreadAsync(string identity, string threadId, CancellationToken ct) => throw new NotSupportedException();
     }
 }
