@@ -3,7 +3,8 @@ using System.Collections.ObjectModel;
 namespace Pigeonpost.Core;
 
 // Construct on the UI context. Awaited service calls return to it; stale mailbox loads are discarded.
-public sealed partial class InboxViewModel(IInboxService service, IAttachmentService? attachmentService = null) : ObservableObject, IDisposable
+public sealed partial class InboxViewModel(IInboxService service, IAttachmentService? attachmentService = null,
+    MessageDeliveryCoordinator? deliveryCoordinator = null) : ObservableObject, IDisposable
 {
     private InboxSnapshot snapshot = InboxSnapshot.Empty;
     private readonly List<PendingMessage> pending = [];
@@ -73,8 +74,8 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
     public bool IsUpdatingLists { get; private set; }
     public event EventHandler? MessagesUpdating;
     public event EventHandler? MessagesUpdated;
-    public bool IsBusy { get => busy; private set { if (Set(ref busy, value)) { Changed(nameof(CanCompose)); Changed(nameof(CanDeleteSubject)); } } }
-    public bool IsSending { get => sending; private set { if (Set(ref sending, value)) { Changed(nameof(CanCompose)); Changed(nameof(CanDeleteSubject)); } } }
+    public bool IsBusy { get => busy; private set { if (Set(ref busy, value)) { Changed(nameof(CanCompose)); Changed(nameof(CanDeleteSubject)); Changed(nameof(CanReviewPendingDeliveries)); } } }
+    public bool IsSending { get => sending; private set { if (Set(ref sending, value)) { Changed(nameof(CanCompose)); Changed(nameof(CanDeleteSubject)); Changed(nameof(CanReviewPendingDeliveries)); } } }
     public bool CanCompose => ActiveAccount is not null && SelectedConversation is not null && !IsBusy && !IsSending && !IsSelectedBlocked;
     public bool HasConversation => SelectedConversation is not null;
     public bool HasError => !string.IsNullOrEmpty(Error);
@@ -152,6 +153,7 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
         mailboxScope.Dispose();
         mailboxScope = new();
         mailboxVersion++;
+        ClearPendingDeliveryViews();
         SelectedMailbox = mailbox;
         snapshot = InboxSnapshot.Empty;
         allConversations = [];
@@ -165,6 +167,7 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
         Changed(nameof(InboxSummary));
         Changed(nameof(IsListEmpty));
         await RefreshAsync();
+        if (operation.IsCurrent && SelectedMailbox?.Address == mailbox.Address) await RefreshPendingDeliveriesAsync(silent: true);
     }
 
     public async Task RefreshAsync(bool background = false)
@@ -241,6 +244,7 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
         var fileService = attachmentService ?? service as IAttachmentService;
         if (files.Length > 0 && fileService is null) { Error = "File sending is unavailable. Please try again."; return; }
         var subject = SelectedSubject?.Id;
+        var subjectLabel = SelectedSubject?.Name;
         var sentDraftKey = (mailbox.Address, conversation.Peer, subject ?? "");
         var revision = draftRevisions.GetValueOrDefault(sentDraftKey);
         var generation = mailboxVersion;
@@ -250,12 +254,23 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
             DateTimeOffset.UtcNow.ToUnixTimeSeconds(), string.IsNullOrEmpty(subject) ? null : subject,
             Attachments: files.Select(f => new MessageAttachment(f.Id, f.Filename, "application/octet-stream", f.Bytes)).ToArray());
         pending.Add(row);
-        IsSending = true;
+        var activity = StartSendingActivity();
         Error = null;
         Rebuild();
         var sendingMessage = false;
+        PreparedMessageAttempt? prepared = null;
+        var cleanupPending = false;
         try
         {
+            using var recovery = deliveryCoordinator is null ? null
+                : await MessageRecoveryScope.AuthorizeAsync(service, mailbox.Address, token) ?? throw new MessageRecoveryNotAuthorizedException();
+            if (recovery is not null)
+            {
+                var outstanding = await deliveryCoordinator!.GetPendingAsync(recovery, token);
+                operation.Check(token);
+                if (outstanding.Any(p => p.Review.MatchesRecipient(conversation.Peer) && (p.Request.ThreadId ?? "") == (row.ThreadId ?? "")))
+                    throw new MessageAttemptConflictException();
+            }
             var uploaded = new List<MessageAttachment>();
             foreach (var file in files)
             {
@@ -268,14 +283,31 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
                 uploaded.Add(attachment);
             }
             operation.Check(token);
-            sendingMessage = true;
-            var sent = files.Length == 0
-                ? await service.SendAsync(mailbox.Address, conversation.Peer, row.Body, row.ThreadId, token)
-                : await fileService!.SendAttachmentsAsync(mailbox.Address, conversation.Peer, row.Body, row.ThreadId, uploaded.Select(f => f.Id).ToArray(), token);
+            SendReceipt sent;
+            if (recovery is not null)
+            {
+                var draftId = Guid.NewGuid().ToString("N");
+                prepared = await deliveryCoordinator!.PrepareAsync(recovery,
+                    new(mailbox.Address, conversation.Peer, row.Body, row.ThreadId, uploaded.Select(f => f.Id)),
+                    new(conversation.Peer, subjectLabel, draftId), token);
+                operation.Check(token);
+                operation.Local(() => deliveryDraftOwners[prepared.Request.MsgRef] = new(draftId, sentDraftKey, revision, row, files, uploaded));
+                sendingMessage = true;
+                var result = await deliveryCoordinator.SendAsync(recovery, prepared, token);
+                sent = result.Receipt; cleanupPending = result.PendingCleanup;
+            }
+            else
+            {
+                sendingMessage = true;
+                sent = files.Length == 0
+                    ? await service.SendAsync(mailbox.Address, conversation.Peer, row.Body, row.ThreadId, token)
+                    : await fileService!.SendAttachmentsAsync(mailbox.Address, conversation.Peer, row.Body, row.ThreadId, uploaded.Select(f => f.Id).ToArray(), token);
+            }
             operation.Check(); // a completed receipt may update its original inbox after a mailbox switch
             operation.Local(() =>
             {
                 ReplacePending(row with { Status = DeliveryStatus.Sent, SentCopyId = sent.SentCopyId, Attachments = uploaded });
+                if (prepared is not null) deliveryDraftOwners.Remove(prepared.Request.MsgRef);
                 if (!OwnsDraft(sentDraftKey, revision)) return;
                 drafts[sentDraftKey] = "";
                 if (attachmentDrafts.TryGetValue(sentDraftKey, out var sentFiles)) sentFiles.RemoveAll(f => files.Any(sentFile => sentFile.Id == f.Id));
@@ -283,18 +315,24 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
             if (!operation.IsMailbox(generation)) return;
             if (DraftKey() == sentDraftKey && OwnsDraft(sentDraftKey, revision)) Draft = "";
             await RefreshAsync();
+            if (cleanupPending && operation.IsMailbox(generation)) Error = "Delivered. The local pending entry could not be cleared; review pending deliveries.";
         }
         catch (Exception ex)
         {
             if (!operation.IsCurrent) return;
             if (!operation.TryLocal(() => ReplacePending(row with { Status = DeliveryStatus.Failed }))) return;
             if (!operation.IsMailbox(generation)) return;
-            if (ex is not OperationCanceledException) Error = ex is PostboxException ? Describe(ex)
+            if (ex is not OperationCanceledException) Error = deliveryCoordinator is not null ? DescribeDeliveryFailure(ex, sendingMessage)
+                : ex is PostboxException ? Describe(ex)
                 : sendingMessage ? "Delivery could not be confirmed. Check this conversation before trying again."
                 : "Could not upload the files. Your message and attachments are still in the draft.";
             Rebuild();
         }
-        finally { if (operation.IsMailbox(generation)) IsSending = false; }
+        finally
+        {
+            try { if (operation.IsMailbox(generation) && deliveryCoordinator is not null) await RefreshPendingDeliveriesAsync(silent: true); }
+            finally { operation.Dispose(); FinishSendingActivity(activity); }
+        }
     }
 
     public async Task StartConversationAsync(string peer, string firstMessage)
@@ -446,12 +484,30 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
         if (operation is null || string.IsNullOrWhiteSpace(text) || Mailboxes.All(m => m.Address != mailboxAddress)) return false;
         try
         {
-            await service.SendAsync(mailboxAddress, peer, RequestEnvelope.Work(text.Trim()), string.IsNullOrEmpty(threadId) ? null : threadId, cancellationToken);
+            if (deliveryCoordinator is not null)
+            {
+                using var scope = await MessageRecoveryScope.AuthorizeAsync(service, mailboxAddress, cancellationToken) ?? throw new MessageRecoveryNotAuthorizedException();
+                var prepared = await deliveryCoordinator.PrepareAsync(scope,
+                    new(mailboxAddress, peer, RequestEnvelope.Work(text.Trim()), string.IsNullOrEmpty(threadId) ? null : threadId),
+                    new(peer, "Notification reply"), cancellationToken);
+                await deliveryCoordinator.SendAsync(scope, prepared, cancellationToken);
+            }
+            else await service.SendAsync(mailboxAddress, peer, RequestEnvelope.Work(text.Trim()), string.IsNullOrEmpty(threadId) ? null : threadId, cancellationToken);
             operation.Check(cancellationToken);
             await MarkConversationReadAsync(mailboxAddress, peer, cancellationToken);
             return operation.IsCurrent;
         }
         catch (OperationCanceledException) { return false; }
+        catch (Exception ex) when (deliveryCoordinator is not null)
+        {
+            if (operation.IsCurrent && SelectedMailbox?.Address == mailboxAddress) Error = DescribeDeliveryFailure(ex, true);
+            return false;
+        }
+        finally
+        {
+            if (deliveryCoordinator is not null && operation.IsCurrent && SelectedMailbox?.Address == mailboxAddress)
+                await RefreshPendingDeliveriesAsync(silent: true);
+        }
     }
 
     public async Task AcknowledgeSelectedAsync(Func<bool>? isVisible = null)

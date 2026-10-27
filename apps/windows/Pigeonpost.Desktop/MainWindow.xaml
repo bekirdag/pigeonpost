@@ -534,6 +534,10 @@
                     <ProgressRing IsActive="{x:Bind ViewModel.IsBusy, Mode=OneWay}" Width="32" Height="32" IsHitTestVisible="False" />
                 </Grid>
                 <StackPanel Grid.Row="3">
+                <InfoBar x:Name="PendingDeliveryBanner" IsOpen="{x:Bind ViewModel.HasPendingDeliveries, Mode=OneWay}" IsClosable="False" Severity="Warning" Margin="24,0,24,6"
+                         Title="Delivery needs review" Message="{x:Bind ViewModel.PendingDeliverySummary, Mode=OneWay}" AutomationProperties.Name="Pending deliveries">
+                    <InfoBar.ActionButton><Button Content="Review" Click="ReviewPendingDeliveries_Click" IsEnabled="{x:Bind ViewModel.CanReviewPendingDeliveries, Mode=OneWay}" AutomationProperties.Name="Review pending deliveries" /></InfoBar.ActionButton>
+                </InfoBar>
                 <InfoBar x:Name="TimerBanner" IsOpen="{x:Bind ViewModel.HasTimer, Mode=OneWay}" IsClosable="False" Severity="Informational" Margin="24,0,24,6"
                          Message="{x:Bind ViewModel.TimerBanner, Mode=OneWay}" AutomationProperties.Name="Disappearing messages" />
                 <InfoBar x:Name="BlockedBanner" IsOpen="{x:Bind ViewModel.IsSelectedBlocked, Mode=OneWay}" IsClosable="False" Severity="Warning" Margin="24,0,24,6"
@@ -624,6 +628,7 @@
                         <MenuFlyoutItem x:Name="ProfileMenuItem" Text="Profile picture…" Click="ProfilePicture_Click" Visibility="Collapsed" />
                         <MenuFlyoutItem x:Name="PrivacyMenuItem" Text="Privacy and filtering…" Click="Privacy_Settings_Click" Visibility="Collapsed" />
                         <MenuFlyoutItem x:Name="BlockedMenuItem" Text="Blocked…" Click="Blocked_Click" />
+                        <MenuFlyoutItem Text="Pending deliveries…" Click="ReviewPendingDeliveries_Click" Visibility="{x:Bind ToVisibility(ViewModel.DeliveryRecoveryAvailable), Mode=OneWay}" IsEnabled="{x:Bind ViewModel.CanReviewPendingDeliveries, Mode=OneWay}" />
                         <MenuFlyoutItem Text="Manage account" Click="ManageAccount_Click" />
                         <MenuFlyoutItem Text="Privacy policy" Click="Privacy_Click" />
                         <MenuFlyoutSubItem Text="Theme">

@@ -167,12 +167,21 @@ public sealed partial class MainWindow
     // account is not loaded yet (a toast that launched the app), the conversation opens instead.
     public async Task HandleNotificationActionAsync(string action, MessageArrival target, string? reply)
     {
-        if (ViewModel.Mailboxes.All(m => m.Address != target.Mailbox)) { await OpenNotificationAsync(target); return; }
+        var model = ViewModel;
+        var authorization = session.AcceptedAuthorization;
+        if (model.Mailboxes.All(m => m.Address != target.Mailbox)) { await OpenNotificationAsync(target); return; }
         try
         {
             if (action == "reply" && !string.IsNullOrWhiteSpace(reply))
             {
-                await ViewModel.ReplyFromAlertAsync(target.Mailbox, target.Peer, target.ThreadId, reply, lifetime.Token);
+                var confirmed = await model.ReplyFromAlertAsync(target.Mailbox, target.Peer, target.ThreadId, reply, lifetime.Token);
+                if (!SameAccount(model, authorization)) return;
+                if (!confirmed)
+                {
+                    DesktopLog.Write("Windows notification reply was not confirmed; retaining its alert");
+                    AccountStatus.Text = "Reply not confirmed. Review pending deliveries.";
+                    return;
+                }
                 DesktopLog.Write("Replied from a Windows notification");
             }
             else if (action == "read")
@@ -181,6 +190,7 @@ public sealed partial class MainWindow
                 DesktopLog.Write($"Marked {count} message(s) read from a Windows notification");
             }
             else { await OpenNotificationAsync(target); return; }
+            if (!SameAccount(model, authorization)) return;
             await DesktopNotifications.RemoveConversationAsync(target.Mailbox, target.Peer);
             await RefreshUnreadAfterActionAsync(target.Mailbox);
         }

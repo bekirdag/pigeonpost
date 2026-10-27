@@ -1,0 +1,11 @@
+# Recipient lookup production rollout
+
+Source `ee9d35fc48c7cae7f55ce98406c63e6408ad23c8` passed all 13 checks and merged through #126 as `be45ecd5cbecc45cc29d8ba4e8c6cd2079d35ae7`. The complete local postbox suite passed 468 unit and two integration tests; focused real HTTP cases, strict clippy/fmt and OpenAPI validation passed. The main source on the postbox host fast-forwarded cleanly to the merged revision.
+
+Both production services on **45.132.181.100** now use `pigeonpost-postbox:recipient-lookup-ee9d35f`, image `sha256:c08ae26fca484c2c997099d953d9f737b10a75e75097d9e4c791e30b7c676859`, labelled with that merged revision. Before switching, this exact image started with an empty synthetic database and a fresh fixture key in a container with no external network or published ports. Health and the new route's authentication boundary passed. No real accounts/messages or provider credentials were used for that qualification.
+
+A consistent SQLite backup, prior Compose/env/key copies, feature metadata, image references and deployment log remain only on the server at `/var/backups/pigeonpost/recipient-lookup-20261027T005009Z`, protected from web access. SQLite's backup API captured committed WAL state and the backup passed `quick_check`. No production database was copied to a developer Mac or restored over live data.
+
+After both services became ready, the audited internal API enabled `recipient_lookup` globally. Other feature rows and the private environment/key file hashes remained unchanged. Both running image identities match the reviewed candidate; public HTTPS health returns 200, unauthenticated recipient lookup returns 401, and the internal API path remains unavailable publicly (404). No customer message or account writes were used to test deployment. Native store submissions remain held.
+
+The change adds no database schema. Application rollback can restore the previous privacy-capable `calendar-receipts-5ef6efc` image references for both services, retaining the live database and key. Clear the new rollout flag deliberately through the internal API while the new version is still running if abandoning the feature; do not restore the pre-deployment database over accepted writes. Preserve the server backup under the existing retention policy.

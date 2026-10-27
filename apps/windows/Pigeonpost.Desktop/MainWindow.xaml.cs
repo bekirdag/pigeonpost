@@ -32,7 +32,7 @@ public sealed partial class MainWindow : Window
     {
         session = new AccountSession(http, new WindowsTokenStore());
         postbox = new PostboxClient(http, session, transfers: transfers);
-        ViewModel = new InboxViewModel(postbox);
+        ViewModel = CreateLiveInboxViewModel();
 #if UI_TESTS
         // Compiled only in the separate UI-test binary; Store packages never enable fixtures.
         var vaultTest = new WindowsTokenStore();

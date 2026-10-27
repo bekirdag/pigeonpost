@@ -169,7 +169,7 @@ public sealed partial class MainWindow
             ViewModel.MessagesUpdated -= Messages_Updated;
             ViewModel.InboxUpdated -= Inbox_Updated;
             ViewModel.Dispose();
-            ViewModel = new InboxViewModel(postbox);
+            ViewModel = CreateLiveInboxViewModel();
             ViewModel.PropertyChanged += ViewModel_PropertyChanged;
             ViewModel.MessagesUpdating += Messages_Updating;
             ViewModel.MessagesUpdated += Messages_Updated;
