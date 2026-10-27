@@ -71,7 +71,7 @@ try {
     Check ($content.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -eq 'Edited via native message controls') 'Message info displays the folded current text'
     $version = Wait-Control 'Message version'
     Check ($version.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.IsReadOnly) 'Version history remains read-only data'
-    Capture 'message-info.png'; Invoke-Control 'Close'
+    Capture 'message-info.png'; Invoke-Control 'Done'
     Invoke-Control 'Message actions' 'design-3'; Invoke-Control 'Reply'
     Set-Text 'Reply via native message controls'; Invoke-Control 'Send'
     Wait-Check { $s = State; $s -and $s.replies -eq 1 -and $s.originalReplyParent -and (Read-Text) -eq '' } 'Native reply sends the original parent and bounded quote and clears the confirmed reply draft'

@@ -146,7 +146,7 @@ public sealed partial class MainWindow
                 { Line(MessageInfoTime(version.At)); Content(RequestEnvelope.DisplayText(version.Body), "Message version"); }
             }
             await new ContentDialog { XamlRoot = Root.XamlRoot, RequestedTheme = Root.ActualTheme, Resources = DialogTheme(), Title = "Message info",
-                Content = new ScrollViewer { Content = panel, MaxHeight = 480, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled }, CloseButtonText = "Close" }.ShowAsync();
+                Content = new ScrollViewer { Content = panel, MaxHeight = 480, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled }, CloseButtonText = "Done" }.ShowAsync();
         }
         catch (OperationCanceledException) { }
         catch (Exception ex) { DesktopLog.Error("Message information unavailable", ex); if (ReferenceEquals(model, ViewModel)) AccountStatus.Text = "Could not load message info. Try again."; }
