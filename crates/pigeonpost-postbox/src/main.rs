@@ -109,6 +109,9 @@ mod recipients;
 mod reputation;
 mod review_access;
 mod store;
+mod streams;
+#[cfg(test)]
+mod streams_tests;
 mod tester_handles;
 mod vault;
 mod verbs;
@@ -797,6 +800,17 @@ fn build_router(state: AppState) -> Router {
         .route("/v1/groups/{id}/crypto", get(mls::crypto_state))
         .route("/v1/groups/{id}/resync", post(mls::resync))
         .route("/v1/rooms", get(groups::rooms))
+        .route(
+            "/v1/groups/{id}/streams",
+            get(streams::list).post(streams::start),
+        )
+        .route(
+            "/v1/streams/{id}",
+            get(streams::get_one).delete(streams::stop),
+        )
+        .route("/v1/streams/{id}/watch", post(streams::watch))
+        .route("/v1/streams/{id}/stage", post(streams::stage))
+        .route("/v1/streams/{id}/audience", get(streams::audience))
         .route(
             "/v1/mls/devices",
             post(mls::register_device).get(mls::list_devices),

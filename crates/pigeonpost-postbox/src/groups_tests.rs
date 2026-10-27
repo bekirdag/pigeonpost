@@ -7,18 +7,18 @@ use reqwest::Client;
 use rusqlite::params;
 use serde_json::{json, Value};
 
-const OPS: &str = "svc_ops_0123456789abcdef0123456789abcdef";
-const CALLS: &str = "svc_calls_0123456789abcdef0123456789abcdef";
+pub(crate) const OPS: &str = "svc_ops_0123456789abcdef0123456789abcdef";
+pub(crate) const CALLS: &str = "svc_calls_0123456789abcdef0123456789abcdef";
 const ISSUER: &str = "https://auth.example/realms/x";
 
-struct Server {
-    public: String,
-    internal: String,
-    http: Client,
-    state: AppState,
+pub(crate) struct Server {
+    pub public: String,
+    pub internal: String,
+    pub http: Client,
+    pub state: AppState,
 }
 
-async fn serve() -> Server {
+pub(crate) async fn serve() -> Server {
     let mut state = crate::tests::test_state();
     state.service_tokens = Arc::new(internal_api::tokens_for_test(&[
         ("POSTBOX_SVC_TOKEN_OPS", OPS),
@@ -49,7 +49,7 @@ fn enc(s: &str) -> String {
 
 impl Server {
     #[allow(clippy::too_many_arguments)]
-    async fn call(
+    pub(crate) async fn call(
         &self,
         method: reqwest::Method,
         path: &str,
@@ -82,7 +82,7 @@ impl Server {
         (status, serde_json::from_str(&text).unwrap_or(Value::Null))
     }
 
-    async fn flag(&self, name: &str, account: &str) {
+    pub(crate) async fn flag(&self, name: &str, account: &str) {
         let (status, _) = self
             .call(
                 reqwest::Method::PUT,
@@ -98,17 +98,17 @@ impl Server {
 }
 
 /// A person (member session) with one hosted mailbox and one MLS device.
-struct Member {
-    token: String,
-    api_key: String,
-    address: String,
+pub(crate) struct Member {
+    pub token: String,
+    pub api_key: String,
+    pub address: String,
     device: Device,
     device_id: String,
     cursor: std::collections::HashMap<String, i64>,
     received: Vec<String>,
 }
 
-async fn member(srv: &Server, name: &str) -> Member {
+pub(crate) async fn member(srv: &Server, name: &str) -> Member {
     let account = format!("acct_{name}");
     let sub = format!("sub-{name}");
     srv.state
@@ -185,7 +185,7 @@ async fn enroll(srv: &Server, token: &str, address: &str, device_id: &str) -> De
 }
 
 impl Member {
-    async fn req(
+    pub(crate) async fn req(
         &self,
         srv: &Server,
         method: reqwest::Method,
@@ -203,7 +203,7 @@ impl Member {
         .await
     }
 
-    async fn create(&mut self, srv: &Server, name: &str, extra: Value) -> String {
+    pub(crate) async fn create(&mut self, srv: &Server, name: &str, extra: Value) -> String {
         let mut body = json!({ "request_key": rand_hex(6), "name": name });
         if let Value::Object(m) = extra {
             for (k, v) in m {
@@ -273,7 +273,7 @@ impl Member {
         .await
     }
 
-    async fn group(&self, srv: &Server, gid: &str) -> Value {
+    pub(crate) async fn group(&self, srv: &Server, gid: &str) -> Value {
         self.req(
             srv,
             reqwest::Method::GET,
@@ -285,7 +285,7 @@ impl Member {
     }
 
     /// Claim key packages for pending adds, commit adds and removes; returns the status.
-    async fn process_pending(&mut self, srv: &Server, gid: &str) -> u16 {
+    pub(crate) async fn process_pending(&mut self, srv: &Server, gid: &str) -> u16 {
         let (s, crypto) = self
             .req(
                 srv,
@@ -356,7 +356,7 @@ impl Member {
         s
     }
 
-    async fn accept_welcomes(&mut self, srv: &Server) {
+    pub(crate) async fn accept_welcomes(&mut self, srv: &Server) {
         let (s, v) = self
             .req(srv, reqwest::Method::GET, "/v1/mls/welcomes", None)
             .await;
@@ -505,7 +505,7 @@ impl Member {
 
 /// Alice creates and activates; Bob and Carol are invited, Bob accepts and is added by Alice's
 /// device, Carol declines.
-async fn three(srv: &Server) -> (Member, Member, Member, String) {
+pub(crate) async fn three(srv: &Server) -> (Member, Member, Member, String) {
     let mut alice = member(srv, &format!("alice{}", rand_hex(3))).await;
     let mut bob = member(srv, &format!("bob{}", rand_hex(3))).await;
     let carol = member(srv, &format!("carol{}", rand_hex(3))).await;

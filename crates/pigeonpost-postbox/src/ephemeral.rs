@@ -128,6 +128,14 @@ pub(crate) async fn sweep_once(
     let swept: GResult<groups::Sweep> = store
         .group_tx(move |tx| groups::sweep_in(tx, now, BATCH))
         .await;
+    // Live streams past four hours or no longer reported by the calls service (SDS §14A.5).
+    match store
+        .group_tx(move |tx| crate::streams::sweep_in(tx, now))
+        .await
+    {
+        Ok(w) => wake.extend(w),
+        Err(GErr { code, .. }) => tracing::error!(code, "stream maintenance failed"),
+    }
     match swept {
         Ok(s) => {
             if s.expired_messages > 0 || s.purged_groups > 0 {

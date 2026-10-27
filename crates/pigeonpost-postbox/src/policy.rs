@@ -97,6 +97,18 @@ pub(crate) enum Action {
     /// operation's scope (`Facts::scope_granted`) **and** the person who created the key still has
     /// the authority for it (`Facts::org_permitted`) — a key can never exceed either.
     OrgApi,
+    /// Watch a group's live stream as one's own mailbox: list streams, register a receive key,
+    /// get a subscribe-only media ticket (SDS §14A). Agents may; a connector acting for the member
+    /// may not (the stream is end-to-end encrypted to the watching device).
+    StreamWatch,
+    /// Go live in a group, or accept an invitation onto a stream's stage: a person only, because it
+    /// opens a camera, a microphone or a screen (SDS §14A.1).
+    StreamPublish,
+    /// Invite to or remove from a stream's stage, read a stream's audience keys, stop a stream: the
+    /// streamer or a group owner/admin, as a person.
+    StreamModerate,
+    /// `POST /internal/v1/stream-admission`, `/stream-check`, `/stream-end` (the calls service).
+    StreamAdmission,
 }
 
 /// The resource acted on, with bindings resolved from server state.
@@ -116,6 +128,13 @@ pub(crate) enum Resource<'a> {
     Org(&'a str),
     /// A pending device pairing or enrollment, by id.
     DeviceGrant(&'a str),
+    /// A group's live stream, acted on as `mailbox` (with its stored account binding). The group
+    /// rules (membership, role, the group's `stream_policy`, the stage) are resolved from the rows
+    /// the request changes into [`Facts::stream_permitted`].
+    GroupStream {
+        mailbox: &'a str,
+        account: Option<&'a str>,
+    },
     /// A mailbox's picture, with the facts its visibility is decided on.
     Avatar {
         visibility: crate::store::Visibility,
@@ -172,6 +191,9 @@ impl Action {
             Action::OrgSensitive => Requirement::HumanStepUp,
             Action::DeviceEnroll => Requirement::Anyone,
             Action::OrgApi => Requirement::OrgKey,
+            Action::StreamWatch => Requirement::NotConnector,
+            Action::StreamPublish | Action::StreamModerate => Requirement::Human,
+            Action::StreamAdmission => Requirement::Service,
         }
     }
 }
@@ -199,6 +221,10 @@ pub(crate) struct Facts {
     pub device_proof: bool,
     /// The org API key holds the scope the operation needs (SDS §18.2).
     pub scope_granted: bool,
+    /// The group's rules let this mailbox take this stream action (SDS §14A): an active member to
+    /// watch; an active non-restricted member allowed by `stream_policy` to go live; the invited
+    /// member to accept the stage; the streamer or a group admin to moderate.
+    pub stream_permitted: bool,
 }
 
 /// Why a request was refused. Stable; mapped to an HTTP status and error code.
@@ -348,6 +374,15 @@ pub(crate) fn authorize_with(
             owns(p, address, *account) || (facts.delegated && matches!(p, Principal::Account(_, _)))
         }
         (Actor::Principal(_), Resource::Org(_)) => facts.org_permitted,
+        // A stream action needs both: the credential holds the acting mailbox, and the group's
+        // rules (resolved in the same transaction) allow that mailbox this action.
+        (Actor::Principal(p), Resource::GroupStream { mailbox, account }) => {
+            matches!(
+                action,
+                Action::StreamWatch | Action::StreamPublish | Action::StreamModerate
+            ) && owns(p, mailbox, *account)
+                && facts.stream_permitted
+        }
         // A key acts on its own org only, within its scope and its creator's live authority.
         (Actor::OrgKey { org_id, .. }, Resource::Org(id)) => {
             org_id == id && facts.org_permitted && facts.scope_granted
@@ -876,5 +911,93 @@ mod tests {
                 Err(DenyReason::CredentialNotAccepted)
             );
         }
+    }
+
+    #[test]
+    fn stream_actions_need_the_mailbox_the_group_rules_and_the_right_credential() {
+        let me = human("a1", None);
+        let key = Principal::Account("a1".into(), AccountCredential::ApiKey);
+        let connector = Principal::Account(
+            "a1".into(),
+            AccountCredential::Connector { client: "c".into() },
+        );
+        let other = human("a2", None);
+        let own = Resource::GroupStream {
+            mailbox: "/k/me",
+            account: Some("a1"),
+        };
+        let granted = Facts {
+            stream_permitted: true,
+            ..facts()
+        };
+        // The group rules alone are not enough, and neither is owning the mailbox.
+        for action in [
+            Action::StreamWatch,
+            Action::StreamPublish,
+            Action::StreamModerate,
+        ] {
+            assert!(authorize(&Actor::Principal(&me), action, &own, &granted).is_ok());
+            assert_eq!(
+                authorize(&Actor::Principal(&me), action, &own, &facts()),
+                Err(DenyReason::NotPermitted)
+            );
+            assert_eq!(
+                authorize(&Actor::Principal(&other), action, &own, &granted),
+                Err(DenyReason::NotPermitted)
+            );
+        }
+        // Agents (API keys) may watch, never go live or moderate; a connector may do neither.
+        assert!(authorize(&Actor::Principal(&key), Action::StreamWatch, &own, &granted).is_ok());
+        for action in [Action::StreamPublish, Action::StreamModerate] {
+            assert!(matches!(
+                authorize(&Actor::Principal(&key), action, &own, &granted),
+                Err(DenyReason::Auth(_))
+            ));
+        }
+        assert_eq!(
+            authorize(
+                &Actor::Principal(&connector),
+                Action::StreamWatch,
+                &own,
+                &granted
+            ),
+            Err(DenyReason::CredentialNotAccepted)
+        );
+        // A block still wins over every grant.
+        let blocked = Facts {
+            blocked: true,
+            ..granted.clone()
+        };
+        assert_eq!(
+            authorize(&Actor::Principal(&me), Action::StreamWatch, &own, &blocked),
+            Err(DenyReason::Mandatory("blocked"))
+        );
+        // Only services reach the calls service's stream endpoints; never against a mailbox.
+        assert!(authorize(
+            &Actor::Service("calls"),
+            Action::StreamAdmission,
+            &Resource::Platform,
+            &facts()
+        )
+        .is_ok());
+        assert_eq!(
+            authorize(
+                &Actor::Principal(&me),
+                Action::StreamAdmission,
+                &own,
+                &granted
+            ),
+            Err(DenyReason::CredentialNotAccepted)
+        );
+        // A grant on the resource is for stream actions only.
+        assert_eq!(
+            authorize(
+                &Actor::Principal(&me),
+                Action::GroupParticipate,
+                &own,
+                &granted
+            ),
+            Err(DenyReason::NotPermitted)
+        );
     }
 }
