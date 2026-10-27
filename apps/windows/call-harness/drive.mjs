@@ -195,7 +195,7 @@ try {
     // the production host dispatches/receives the operation-tagged native bridge unchanged.
     result.adHocAppLog = appLog().map(line => line.replace(/^\S+ \[\d+\] /, ""));
     A.close(); const earlier = appProcess; earlier.kill();
-    await until(() => earlier.exitCode !== null, 10000, 100, "the earlier app process to exit");
+    await until(() => earlier.exitCode !== null || earlier.signalCode !== null, 10000, 100, "the earlier app process to exit");
     const scheduledPort = DEVTOOLS + 1;
     appProcess = spawn(app, [], { stdio: "ignore", env: {
       ...process.env, PIGEONPOST_CALLS_PAGE: `http://127.0.0.1:${SITE}/native-call.html`,
