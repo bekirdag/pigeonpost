@@ -101,6 +101,7 @@ mod policy;
 mod pow;
 mod principal;
 mod push;
+mod recipients;
 mod reputation;
 mod review_access;
 mod store;
@@ -659,6 +660,7 @@ fn build_router(state: AppState) -> Router {
                 .delete(delete_identity),
         )
         .route("/v1/send", post(send))
+        .route("/v1/recipients/resolve", post(recipients::resolve))
         .route("/v1/inbox", get(inbox))
         .route("/v1/ack", post(ack))
         .route("/v1/messages/delete", post(delete_message))
