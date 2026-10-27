@@ -7,18 +7,23 @@ use ed25519_dalek::{Signer, SigningKey};
 use reqwest::{Client, Method};
 use serde_json::{json, Value};
 
-const OPS: &str = "svc_ops_0123456789abcdef0123456789abcdef";
-const BILLING: &str = "svc_billing_0123456789abcdef0123456789abcdef";
-const ISSUER: &str = "https://auth.example/realms/x";
+pub(crate) const OPS: &str = "svc_ops_0123456789abcdef0123456789abcdef";
+pub(crate) const BILLING: &str = "svc_billing_0123456789abcdef0123456789abcdef";
+pub(crate) const ISSUER: &str = "https://auth.example/realms/x";
 
-struct Srv {
-    public: String,
-    internal: String,
-    http: Client,
-    state: AppState,
+pub(crate) struct Srv {
+    pub public: String,
+    pub internal: String,
+    pub http: Client,
+    pub state: AppState,
 }
 
-async fn serve() -> Srv {
+pub(crate) async fn serve() -> Srv {
+    serve_with(|_| {}).await
+}
+
+/// A server whose state the caller adjusts first (webhook egress, step-up policy, …).
+pub(crate) async fn serve_with(adjust: impl FnOnce(&mut AppState)) -> Srv {
     let mut state = crate::tests::test_state();
     state.service_tokens = Arc::new(internal_api::tokens_for_test(&[
         ("POSTBOX_SVC_TOKEN_OPS", OPS),
@@ -31,6 +36,7 @@ async fn serve() -> Srv {
         acr_values: vec!["mfa".into()],
         max_age: 600,
     });
+    adjust(&mut state);
     let public = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let internal = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let srv = Srv {
@@ -50,15 +56,15 @@ async fn serve() -> Srv {
 
 /// A person: account, a member token (with a verified address), and a strong-auth token.
 #[derive(Clone)]
-struct Person {
-    account: String,
-    token: String,
-    strong: String,
-    address: String,
+pub(crate) struct Person {
+    pub account: String,
+    pub token: String,
+    pub strong: String,
+    pub address: String,
 }
 
 impl Srv {
-    async fn call(
+    pub(crate) async fn call(
         &self,
         method: Method,
         path: &str,
@@ -85,16 +91,16 @@ impl Srv {
             serde_json::from_str(&text).unwrap_or(Value::String(text)),
         )
     }
-    async fn get(&self, path: &str, t: &str) -> (u16, Value) {
+    pub(crate) async fn get(&self, path: &str, t: &str) -> (u16, Value) {
         self.call(Method::GET, path, Some(t), None).await
     }
-    async fn post(&self, path: &str, t: &str, b: Value) -> (u16, Value) {
+    pub(crate) async fn post(&self, path: &str, t: &str, b: Value) -> (u16, Value) {
         self.call(Method::POST, path, Some(t), Some(b)).await
     }
-    async fn patch(&self, path: &str, t: &str, b: Value) -> (u16, Value) {
+    pub(crate) async fn patch(&self, path: &str, t: &str, b: Value) -> (u16, Value) {
         self.call(Method::PATCH, path, Some(t), Some(b)).await
     }
-    async fn global_flag(&self, name: &str) {
+    pub(crate) async fn global_flag(&self, name: &str) {
         let (s, _) = self
             .call(
                 Method::PUT,
@@ -106,7 +112,7 @@ impl Srv {
         assert_eq!(s, 200, "flag {name}");
     }
 
-    async fn person(&self, name: &str) -> Person {
+    pub(crate) async fn person(&self, name: &str) -> Person {
         let sub = format!("sub-{name}");
         let account = self
             .state
@@ -132,7 +138,7 @@ impl Srv {
     }
 
     /// Draft, then activate through the billing service with a grant entitlement.
-    async fn org(&self, owner: &Person, ns: &str, seats: i64) -> String {
+    pub(crate) async fn org(&self, owner: &Person, ns: &str, seats: i64) -> String {
         let op = format!("op-{ns}-0123456789abcdef");
         let (s, v) = self
             .call(Method::POST, "/internal/v1/org-drafts", Some(BILLING), Some(json!({
@@ -154,7 +160,7 @@ impl Srv {
         id
     }
 
-    async fn entitlement(
+    pub(crate) async fn entitlement(
         &self,
         org: &str,
         seats: i64,
@@ -192,7 +198,7 @@ impl Srv {
     }
 
     /// Invite `who` and have them accept; returns (member_id, mailbox address).
-    async fn join(
+    pub(crate) async fn join(
         &self,
         org: &str,
         admin: &Person,
@@ -224,7 +230,7 @@ impl Srv {
     }
 }
 
-async fn setup() -> (Srv, Person, String) {
+pub(crate) async fn setup() -> (Srv, Person, String) {
     let srv = serve().await;
     srv.global_flag("orgs").await;
     srv.global_flag("groups").await;
@@ -242,7 +248,7 @@ async fn setup() -> (Srv, Person, String) {
     (srv, owner, org)
 }
 
-fn token_of(link: &str) -> String {
+pub(crate) fn token_of(link: &str) -> String {
     link.split('#').nth(1).unwrap().to_string()
 }
 
@@ -765,7 +771,7 @@ async fn require_mfa_gates_members_and_acceptance() {
 }
 
 /// Send a message from one mailbox to another through the account that holds the sender.
-async fn send(srv: &Srv, token: &str, from: &str, to: &str) -> (u16, Value) {
+pub(crate) async fn send(srv: &Srv, token: &str, from: &str, to: &str) -> (u16, Value) {
     let (s, v) = srv
         .post(
             "/v1/send",
@@ -776,7 +782,7 @@ async fn send(srv: &Srv, token: &str, from: &str, to: &str) -> (u16, Value) {
     (if s == 201 { 200 } else { s }, v)
 }
 
-fn enc(s: &str) -> String {
+pub(crate) fn enc(s: &str) -> String {
     s.replace('/', "%2F")
 }
 
@@ -877,7 +883,7 @@ async fn rules_decide_delivery_and_a_personal_block_always_wins() {
     assert_eq!((s, v["error"].as_str()), (400, Some("never_auto_verb")));
 }
 
-fn b64(bytes: &[u8]) -> String {
+pub(crate) fn b64(bytes: &[u8]) -> String {
     b64_encode(bytes)
 }
 

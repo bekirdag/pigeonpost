@@ -25,6 +25,12 @@ pub(crate) enum Actor<'a> {
     Service(&'a str),
     /// No credential at all: only actions open to anyone (public profile pictures) accept it.
     Anonymous,
+    /// An org API key (`pk_org_…`, SDS §18.2): automation bound to one organization. Never a
+    /// person, never a mailbox; it acts only through `Action::OrgApi`.
+    OrgKey {
+        key_id: &'a str,
+        org_id: &'a str,
+    },
 }
 
 /// What they want to do.
@@ -87,6 +93,10 @@ pub(crate) enum Action {
     CalendarUse,
     /// `POST /internal/v1/calendar/meeting-access` (SDS §14B.7).
     MeetingAccess,
+    /// One `/org/v1` operation by an org API key (SDS §18). Granted only when the key holds the
+    /// operation's scope (`Facts::scope_granted`) **and** the person who created the key still has
+    /// the authority for it (`Facts::org_permitted`) — a key can never exceed either.
+    OrgApi,
 }
 
 /// The resource acted on, with bindings resolved from server state.
@@ -134,6 +144,8 @@ enum Requirement {
     Human,
     /// Anyone, with or without a credential.
     Anyone,
+    /// An org API key, and nothing else.
+    OrgKey,
 }
 
 impl Action {
@@ -159,6 +171,7 @@ impl Action {
             Action::GroupManage | Action::OrgAdminister => Requirement::Human,
             Action::OrgSensitive => Requirement::HumanStepUp,
             Action::DeviceEnroll => Requirement::Anyone,
+            Action::OrgApi => Requirement::OrgKey,
         }
     }
 }
@@ -184,6 +197,8 @@ pub(crate) struct Facts {
     pub delegated: bool,
     /// The device grant or code was verified (hash, expiry, single use, key proof) by the caller.
     pub device_proof: bool,
+    /// The org API key holds the scope the operation needs (SDS §18.2).
+    pub scope_granted: bool,
 }
 
 /// Why a request was refused. Stable; mapped to an HTTP status and error code.
@@ -272,6 +287,14 @@ pub(crate) fn authorize_with(
 ) -> Result<(), DenyReason> {
     // 1. Credential kind.
     match (action.requirement(), actor) {
+        (Requirement::OrgKey, Actor::OrgKey { .. }) => {}
+        // Re-authenticating cannot turn an org API key into a person (SDS §3.4).
+        (Requirement::Human | Requirement::HumanStepUp, Actor::OrgKey { .. }) => {
+            return Err(DenyReason::Auth(AuthDenial::HumanRequired))
+        }
+        (_, Actor::OrgKey { .. }) | (Requirement::OrgKey, _) => {
+            return Err(DenyReason::CredentialNotAccepted)
+        }
         (Requirement::Service, Actor::Service(_)) => {}
         (Requirement::Anyone, Actor::Principal(_) | Actor::Anonymous) => {}
         (Requirement::Service, Actor::Principal(_) | Actor::Anonymous)
@@ -325,6 +348,10 @@ pub(crate) fn authorize_with(
             owns(p, address, *account) || (facts.delegated && matches!(p, Principal::Account(_, _)))
         }
         (Actor::Principal(_), Resource::Org(_)) => facts.org_permitted,
+        // A key acts on its own org only, within its scope and its creator's live authority.
+        (Actor::OrgKey { org_id, .. }, Resource::Org(id)) => {
+            org_id == id && facts.org_permitted && facts.scope_granted
+        }
         (_, Resource::DeviceGrant(_)) => {
             matches!(action, Action::DeviceEnroll) && facts.device_proof
         }
@@ -355,6 +382,9 @@ pub(crate) fn authorize_with(
     if granted {
         Ok(())
     } else {
+        if let Actor::OrgKey { key_id, .. } = actor {
+            tracing::debug!(key_id, ?action, "org API key denied");
+        }
         if let Actor::Service(service) = actor {
             tracing::warn!(
                 service,
@@ -752,5 +782,99 @@ mod tests {
             ),
             Err(DenyReason::NotPermitted)
         );
+    }
+
+    /// An org API key (SDS §18.2) reaches only `OrgApi`, only on its own org, and only when both
+    /// its scope and its creator's live authority allow — never a human or step-up action.
+    #[test]
+    fn org_keys_are_bounded_by_scope_creator_and_org() {
+        let key = Actor::OrgKey {
+            key_id: "okey_1",
+            org_id: "org_a",
+        };
+        let both = Facts {
+            org_permitted: true,
+            scope_granted: true,
+            ..facts()
+        };
+        assert!(authorize(&key, Action::OrgApi, &Resource::Org("org_a"), &both).is_ok());
+        // Another org, even with every grant fact set.
+        assert_eq!(
+            authorize(&key, Action::OrgApi, &Resource::Org("org_b"), &both),
+            Err(DenyReason::NotPermitted)
+        );
+        // Scope without the creator's authority, and authority without the scope.
+        for f in [
+            Facts {
+                org_permitted: true,
+                ..facts()
+            },
+            Facts {
+                scope_granted: true,
+                ..facts()
+            },
+        ] {
+            assert_eq!(
+                authorize(&key, Action::OrgApi, &Resource::Org("org_a"), &f),
+                Err(DenyReason::NotPermitted)
+            );
+        }
+        // Mandatory denies still win.
+        for f in [
+            Facts {
+                credential_revoked: true,
+                ..both.clone()
+            },
+            Facts {
+                org_inactive: true,
+                ..both.clone()
+            },
+        ] {
+            assert!(matches!(
+                authorize(&key, Action::OrgApi, &Resource::Org("org_a"), &f),
+                Err(DenyReason::Mandatory(_))
+            ));
+        }
+        // Human and step-up actions: `human_required`, however many facts are set.
+        for action in [
+            Action::OrgAdminister,
+            Action::OrgSensitive,
+            Action::GroupManage,
+            Action::SensitiveAccountChange,
+        ] {
+            assert_eq!(
+                authorize(&key, action, &Resource::Org("org_a"), &both),
+                Err(DenyReason::Auth(AuthDenial::HumanRequired))
+            );
+        }
+        // Everything else (mailbox, service, events, device enrollment) is not for a key.
+        for action in [
+            Action::ReadCapabilities,
+            Action::StreamAccountEvents,
+            Action::ManageOwnMailbox,
+            Action::GroupParticipate,
+            Action::DeviceEnroll,
+            Action::ViewAvatar,
+            Action::WriteFeatureFlags,
+        ] {
+            assert_eq!(
+                authorize(&key, action, &Resource::Org("org_a"), &both),
+                Err(DenyReason::CredentialNotAccepted)
+            );
+        }
+        // And no other credential reaches `OrgApi`: not a person, an account key or a service.
+        let me = human("a1", Some("gold"));
+        let account_key = Principal::Account("a1".into(), AccountCredential::ApiKey);
+        for actor in [
+            Actor::Principal(&me),
+            Actor::Principal(&account_key),
+            Actor::Service("ops"),
+            Actor::Anonymous,
+        ] {
+            assert_eq!(
+                authorize(&actor, Action::OrgApi, &Resource::Org("org_a"), &both),
+                Err(DenyReason::CredentialNotAccepted)
+            );
+        }
     }
 }

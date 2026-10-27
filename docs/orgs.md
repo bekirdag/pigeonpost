@@ -181,6 +181,9 @@ company* (`agents` ← `*`, block; plus `agents` ← `/acme/*`, allow, priority 
 | GET | `/v1/orgs/{id}/audit` | `?action=&before_id=&limit≤200` | `{entries:[{id, at, actor_kind, actor, action, target, details}], next_before_id}` |
 | GET | `/v1/orgs/{id}/audit/export` | `?format=csv\|json` | File download. Step-up. |
 
+Org API keys (`/v1/orgs/{id}/api-keys`), webhooks (`/v1/orgs/{id}/webhooks`) and the `/org/v1`
+automation API are specified in `docs/org-api.md` (Phase 5, flag `org_api`).
+
 ## 8. Device login with a pre-assigned handle (§10)
 
 CLI: `pigeonpost login --device --handle /acme/agent1 [--label "Build box"] [--onboard]` and

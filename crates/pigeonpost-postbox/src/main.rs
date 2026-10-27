@@ -89,6 +89,10 @@ mod msgactions_tests;
 mod oidc;
 mod org;
 mod org_agents;
+mod org_api;
+mod org_api_keys;
+#[cfg(test)]
+mod org_api_tests;
 mod org_notify;
 mod org_rooms;
 mod org_routes;
@@ -109,6 +113,9 @@ mod tester_handles;
 mod vault;
 mod verbs;
 mod web_plan;
+mod webhooks;
+#[cfg(test)]
+mod webhooks_tests;
 mod wns;
 
 /// How long a proof-of-work challenge stays valid (also bounds the spent-challenge set).
@@ -187,6 +194,8 @@ struct AppState {
     call_pairs: Arc<filtering::PairLimiter>,
     /// Calendar delivery client and worker wakeup (Phase 3B).
     calendar: Arc<calendar::Runtime>,
+    /// How webhook deliveries reach the internet: the resolver and the SSRF policy (SDS §18.5).
+    webhook_egress: Arc<webhooks::Egress>,
 }
 
 /// Namespaces where a name is authorised by proving control of it at an identity provider, rather
@@ -412,6 +421,8 @@ async fn serve(cfg: Config) {
     org_notify::start_worker(state.clone());
     // Calendar deliveries, reminders and retention (SDS §14B.12).
     calendar::worker::start(state.clone());
+    // Org webhook fan-out and delivery (SDS §18.5).
+    webhooks::start_worker(state.clone());
     // `into_make_service_with_connect_info` is what puts the socket peer in request extensions;
     // without it `TRUSTED_PROXY_HOPS=0` would have no IP to rate-limit against.
     if let Err(e) = axum::serve(
@@ -544,6 +555,7 @@ fn build_state(cfg: &Config, master_key: [u8; 32]) -> Result<AppState, store::St
         avatar_processor: Arc::new(avatars::Processor::from_env()),
         call_pairs: Arc::new(filtering::PairLimiter::new()),
         calendar: Arc::new(calendar::Runtime::from_env(&cfg.public_url)),
+        webhook_egress: Arc::new(webhooks::Egress::system()),
     })
 }
 
@@ -800,6 +812,11 @@ fn build_router(state: AppState) -> Router {
         .route("/v1/mls/welcomes/{welcome_id}/ack", post(mls::welcome_ack))
         // Phase 4: organizations (SDS §5–§10, docs/orgs.md).
         .merge(org_routes::router())
+        // Phase 5: the enterprise API (SDS §18, docs/org-api.md) — dashboard key and webhook
+        // routes, and `/org/v1` for org API keys.
+        .merge(org_api_keys::router())
+        .merge(webhooks::router())
+        .merge(org_api::router(state.clone()))
         // Phase 3B: calendar and scheduled meetings (SDS §14B.5, docs/calendar.md).
         .route(
             "/v1/calendars",
@@ -2465,6 +2482,12 @@ pub(crate) async fn principal_for_token(
     token: Option<&str>,
 ) -> Result<Principal, ApiError> {
     let token = token.ok_or_else(|| ApiError::unauthorized("missing bearer token"))?;
+    // An org API key is not an account or mailbox credential: it works on `/org/v1` only.
+    if org_api_keys::is_org_key(token) {
+        return Err(ApiError::unauthorized(
+            "org API keys work only on /org/v1, not on the member API",
+        ));
+    }
     if is_api_key(token) {
         match state.store.account_for_key(sha256(token.as_bytes())).await {
             Ok(Some(a)) => Ok(Principal::Account(a, AccountCredential::ApiKey)),
@@ -6633,6 +6656,7 @@ mod tests {
             avatar_processor: Arc::new(avatars::Processor::new(avatars::Isolation::Inline)),
             call_pairs: Arc::new(filtering::PairLimiter::new()),
             calendar: Arc::new(calendar::Runtime::for_test()),
+            webhook_egress: Arc::new(webhooks::Egress::system()),
         }
     }
 
@@ -9341,6 +9365,7 @@ mod tests {
             avatar_processor: Arc::new(avatars::Processor::new(avatars::Isolation::Inline)),
             call_pairs: Arc::new(filtering::PairLimiter::new()),
             calendar: Arc::new(calendar::Runtime::for_test()),
+            webhook_egress: Arc::new(webhooks::Egress::system()),
         };
         let _ = build_router(state);
     }

@@ -87,7 +87,7 @@ fn ip(e: &Extension<ClientIp>) -> Option<String> {
     Some(e.0.as_str().to_string())
 }
 
-fn text(field: &str, v: &str, max: usize) -> GResult<String> {
+pub(crate) fn text(field: &str, v: &str, max: usize) -> GResult<String> {
     let t = v.trim();
     if t.is_empty() || t.chars().count() > max || t.chars().any(char::is_control) {
         return Err(GErr::bad(
@@ -736,17 +736,17 @@ struct InvitesReq {
     invites: Vec<InviteRow>,
 }
 
-struct CheckedInvite {
-    first: String,
-    last: String,
-    contact: String,
-    handle: String,
-    roles: Roles,
+pub(crate) struct CheckedInvite {
+    pub first: String,
+    pub last: String,
+    pub contact: String,
+    pub handle: String,
+    pub roles: Roles,
 }
 
 /// One invitation row, inside the transaction: capacity, address, uniqueness, then the rows.
 #[allow(clippy::too_many_arguments)]
-fn invite_one(
+pub(crate) fn invite_one(
     tx: &Connection,
     vault: &crate::vault::Vault,
     org_id: &str,
@@ -837,7 +837,7 @@ fn invite_one(
 
 /// Issue a fresh invitation token for a member row. The token is never stored.
 #[allow(clippy::too_many_arguments)]
-fn new_invite_in(
+pub(crate) fn new_invite_in(
     tx: &Connection,
     vault: &crate::vault::Vault,
     org_id: &str,
@@ -1805,7 +1805,11 @@ struct PatchRoom {
     listed: Option<bool>,
 }
 
-fn room_in_org(c: &Connection, org_id: &str, gid: &str) -> GResult<crate::groups::GroupRow> {
+pub(crate) fn room_in_org(
+    c: &Connection,
+    org_id: &str,
+    gid: &str,
+) -> GResult<crate::groups::GroupRow> {
     let g = crate::groups::live_group(c, gid)?;
     if g.org_id.as_deref() != Some(org_id) {
         return Err(GErr::not_found());
@@ -1992,7 +1996,12 @@ async fn rules(
     finish(&state, result)
 }
 
-fn policy_changed(tx: &Connection, org_id: &str, now: u64, out: &mut Outcome) -> GResult<()> {
+pub(crate) fn policy_changed(
+    tx: &Connection,
+    org_id: &str,
+    now: u64,
+    out: &mut Outcome,
+) -> GResult<()> {
     let rev = org_rules::bump_rules(tx, org_id)?;
     out.wake.extend(org::emit_members(
         tx,
@@ -2162,11 +2171,11 @@ async fn delete_rule(
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct EvalReq {
-    from: String,
-    to: String,
+pub(crate) struct EvalReq {
+    pub from: String,
+    pub to: String,
     #[serde(default)]
-    verb: Option<String>,
+    pub verb: Option<String>,
 }
 
 /// `POST /v1/orgs/{id}/rules/evaluate` — a dry run with the same evaluation `do_send` uses.
@@ -2177,63 +2186,86 @@ async fn evaluate(
     body: Body,
 ) -> Response {
     let result = async {
-        let ctx = org::org_ctx(&state, &headers, &id).await?;
+        let _ctx = org::org_ctx(&state, &headers, &id).await?;
         let (req, _): (EvalReq, String) = parse(body)?;
-        let to = crate::resolve_recipient(&state, req.to.trim()).await?.ok_or_else(|| {
-            GErr::bad("unknown_recipient", "no mailbox at that address")
-        })?;
-        // The recipient must be this org's own mailbox; the evaluation never describes others'.
-        let owned = {
-            let (id2, a) = (id.clone(), to.address.clone());
-            state
-                .store
-                .group_read(move |c: &Connection| -> GResult<bool> {
-                    Ok(c.query_row(
-                        "SELECT EXISTS(SELECT 1 FROM org_members WHERE org_id = ?1 AND identity = ?2 AND status = 'active')
-                             OR EXISTS(SELECT 1 FROM org_agents WHERE org_id = ?1 AND identity = ?2 AND status = 'active')",
-                        params![id2, a],
-                        |r| r.get(0),
-                    )?)
-                })
-                .await?
-        };
-        if !owned {
-            return Err(GErr::bad("not_org_mailbox", "the recipient must be a mailbox of this organization"));
-        }
-        let from = crate::resolve_recipient(&state, req.from.trim()).await?;
-        let (from_address, from_handle) = match &from {
-            Some(f) => (f.address.clone(), f.handle.clone()),
-            None => {
-                // A sender that is not hosted here is evaluated by the spelling given.
-                let raw = req.from.trim().to_ascii_lowercase();
-                (raw.clone(), Some(raw))
-            }
-        };
-        let verdict = org_rules::verdict(&state, &to, &from_address, from_handle.as_deref()).await.unwrap_or_default();
-        let subject = from_handle.clone().unwrap_or_else(|| from_address.clone());
-        let contact = state.store.governing_contact(to.address.clone(), subject).await?;
-        let rel = state
-            .store
-            .relationship(to.address.clone(), from_address.clone(), from_handle.clone())
-            .await?;
-        let policy = state.store.inbox_policy(to.address.clone()).await?;
-        let d = crate::decide_admission(&rel, contact.as_ref(), Some(&verdict), policy);
-        let autonomy = crate::effective_autonomy(contact.as_ref(), policy, Some(&verdict));
-        let verb_auto = req.verb.as_ref().map(|v| autonomy.0 && autonomy.1.iter().any(|g| g == v));
-        let _ = &ctx;
-        Ok(Outcome::ok(json!({
-            "admitted": d.admitted,
-            "known": d.known,
-            "decided_by": d.decided_by,
-            "autonomy": if autonomy.0 { "auto" } else { "review" },
-            "verbs": autonomy.1,
-            "verb_auto": verb_auto,
-            "matched_rule": verdict.matched_json(),
-            "explanation": d.explanation,
-        })))
+        let v = evaluate_in(&state, &id, &req.from, &req.to, req.verb.as_deref()).await?;
+        Ok(Outcome::ok(v))
     }
     .await;
     finish(&state, result)
+}
+
+/// The rule dry run, shared with `/org/v1/rules/evaluate`. The recipient must be a live mailbox of
+/// this org: the evaluation never describes anybody else's.
+pub(crate) async fn evaluate_in(
+    state: &AppState,
+    id: &str,
+    from_raw: &str,
+    to_raw: &str,
+    verb: Option<&str>,
+) -> GResult<Value> {
+    let to = crate::resolve_recipient(state, to_raw.trim())
+        .await?
+        .ok_or_else(|| GErr::bad("unknown_recipient", "no mailbox at that address"))?;
+    let owned = {
+        let (id2, a) = (id.to_string(), to.address.clone());
+        state
+            .store
+            .group_read(move |c: &Connection| -> GResult<bool> {
+                Ok(c.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM org_members WHERE org_id = ?1 AND identity = ?2 AND status = 'active')
+                         OR EXISTS(SELECT 1 FROM org_agents WHERE org_id = ?1 AND identity = ?2 AND status = 'active')",
+                    params![id2, a],
+                    |r| r.get(0),
+                )?)
+            })
+            .await?
+    };
+    if !owned {
+        return Err(GErr::bad(
+            "not_org_mailbox",
+            "the recipient must be a mailbox of this organization",
+        ));
+    }
+    let from = crate::resolve_recipient(state, from_raw.trim()).await?;
+    let (from_address, from_handle) = match &from {
+        Some(f) => (f.address.clone(), f.handle.clone()),
+        None => {
+            // A sender that is not hosted here is evaluated by the spelling given.
+            let raw = from_raw.trim().to_ascii_lowercase();
+            (raw.clone(), Some(raw))
+        }
+    };
+    let verdict = org_rules::verdict(state, &to, &from_address, from_handle.as_deref())
+        .await
+        .unwrap_or_default();
+    let subject = from_handle.clone().unwrap_or_else(|| from_address.clone());
+    let contact = state
+        .store
+        .governing_contact(to.address.clone(), subject)
+        .await?;
+    let rel = state
+        .store
+        .relationship(
+            to.address.clone(),
+            from_address.clone(),
+            from_handle.clone(),
+        )
+        .await?;
+    let policy = state.store.inbox_policy(to.address.clone()).await?;
+    let d = crate::decide_admission(&rel, contact.as_ref(), Some(&verdict), policy);
+    let autonomy = crate::effective_autonomy(contact.as_ref(), policy, Some(&verdict));
+    let verb_auto = verb.map(|v| autonomy.0 && autonomy.1.iter().any(|g| g == v));
+    Ok(json!({
+        "admitted": d.admitted,
+        "known": d.known,
+        "decided_by": d.decided_by,
+        "autonomy": if autonomy.0 { "auto" } else { "review" },
+        "verbs": autonomy.1,
+        "verb_auto": verb_auto,
+        "matched_rule": verdict.matched_json(),
+        "explanation": d.explanation,
+    }))
 }
 
 // ---- domains (SDS §7.5) ------------------------------------------------------------------------
@@ -2548,25 +2580,27 @@ pub(crate) async fn recheck_domains(state: &AppState) {
 // ---- audit (SDS §6.8) --------------------------------------------------------------------------
 
 #[derive(Deserialize, Default)]
-struct AuditQuery {
+pub(crate) struct AuditQuery {
     #[serde(default)]
-    action: Option<String>,
+    pub action: Option<String>,
     #[serde(default)]
-    before_id: Option<i64>,
+    pub before_id: Option<i64>,
     #[serde(default)]
     limit: Option<i64>,
     #[serde(default)]
     format: Option<String>,
 }
 
-fn audit_rows(c: &Connection, org: &str, q: &AuditQuery, limit: i64) -> GResult<Vec<Value>> {
-    let action = q
-        .action
-        .as_deref()
-        .map(|a| format!("{}%", a.replace(['%', '_'], "")));
+pub(crate) fn audit_rows(
+    c: &Connection,
+    org: &str,
+    q: &AuditQuery,
+    limit: i64,
+) -> GResult<Vec<Value>> {
+    let action = q.action.as_deref().map(crate::org_api::like_prefix);
     let mut stmt = c.prepare(
         "SELECT id, at, actor_kind, actor_account, action, target, details FROM audit_log
-          WHERE org_id = ?1 AND (?2 IS NULL OR action LIKE ?2) AND (?3 IS NULL OR id < ?3)
+          WHERE org_id = ?1 AND (?2 IS NULL OR action LIKE ?2 ESCAPE '\\') AND (?3 IS NULL OR id < ?3)
           ORDER BY id DESC LIMIT ?4",
     )?;
     let rows = stmt.query_map(params![org, action, q.before_id, limit], |r| {
@@ -2584,6 +2618,10 @@ fn audit_rows(c: &Connection, org: &str, q: &AuditQuery, limit: i64) -> GResult<
     let mut out: Vec<Value> = rows.collect::<Result<_, _>>()?;
     // Name the actor by their org handle when they are a member; account ids are internal.
     for v in out.iter_mut() {
+        // An org API key is named by its key id (SDS §18.2: every use is logged with it).
+        if v["actor_kind"] == "api_key" {
+            continue;
+        }
         if let Some(a) = v["actor"].as_str() {
             let name: Option<String> = c
                 .query_row(

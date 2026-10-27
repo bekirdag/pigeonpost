@@ -606,6 +606,8 @@ fn every_route_is_in_the_openapi_spec_and_nothing_else_is() {
         (include_str!("internal_api.rs"), "pub(crate) fn router("),
         (include_str!("org_routes.rs"), "pub(crate) fn router("),
         (include_str!("org_agents.rs"), "pub(crate) fn router("),
+        (include_str!("org_api_keys.rs"), "pub(crate) fn router("),
+        (include_str!("webhooks.rs"), "pub(crate) fn router("),
     ] {
         served.extend(routes_in(source, router_fn));
     }
@@ -627,7 +629,7 @@ fn every_route_is_in_the_openapi_spec_and_nothing_else_is() {
 }
 
 /// `(method, path)` for every `.route("…", …)` in the body of `router_fn`.
-fn routes_in(source: &str, router_fn: &str) -> Vec<(String, String)> {
+pub(crate) fn routes_in(source: &str, router_fn: &str) -> Vec<(String, String)> {
     // A Windows checkout may have CRLF line endings.
     let source = source.replace("\r\n", "\n");
     let start = source.find(router_fn).expect("router function");
@@ -688,7 +690,7 @@ fn routes_in(source: &str, router_fn: &str) -> Vec<(String, String)> {
 }
 
 /// `(method, path)` for every operation under `paths:`.
-fn spec_operations(spec: &str) -> std::collections::BTreeSet<(String, String)> {
+pub(crate) fn spec_operations(spec: &str) -> std::collections::BTreeSet<(String, String)> {
     let mut out = std::collections::BTreeSet::new();
     let mut in_paths = false;
     let mut path: Option<String> = None;
