@@ -372,8 +372,10 @@
                     </ComboBox>
                     <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.InboxSummary, Mode=OneWay}" FontSize="12" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" HorizontalAlignment="Right" Foreground="{ThemeResource TextTertiaryBrush}" />
                 </Grid>
-                <!-- Chats, Calls and Groups (MainWindow.SideViews.cs); each appears when the server enables it. -->
-                <StackPanel x:Name="SideNav" Grid.Row="4" Orientation="Horizontal" Spacing="6" Visibility="Collapsed" />
+                <!-- Each page appears when the server enables it. -->
+                <Grid x:Name="SideNav" Grid.Row="4" ColumnSpacing="6" RowSpacing="6" Visibility="Collapsed">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                </Grid>
                 <Grid x:Name="SideListHost" Grid.Row="5" Margin="-4,0,-4,0" Visibility="Collapsed" />
                 <Grid x:Name="ConversationListHost" Grid.Row="5" Margin="-4,0,-4,0">
                     <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>

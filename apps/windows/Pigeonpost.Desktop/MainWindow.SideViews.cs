@@ -15,7 +15,7 @@ namespace Pigeonpost.Desktop;
 //  Every feature appears only when GET /v1/capabilities lists it for the account.
 public sealed partial class MainWindow
 {
-    private enum SideView { Chats, Calls, Filtered, Groups }
+    private enum SideView { Chats, Calls, Filtered, Groups, Calendar }
 
     private ServerFeatures features = ServerFeatures.None;
     private SideView sideView = SideView.Chats;
@@ -26,7 +26,7 @@ public sealed partial class MainWindow
     private readonly System.Collections.ObjectModel.ObservableCollection<CallRow> filteredCallRows = [];
     private readonly System.Collections.ObjectModel.ObservableCollection<FilteredSender> filteredSenders = [];
     private IReadOnlyList<InboxMessage> filteredMessages = [];
-    private Button? callsNav, groupsNav, chatsNav;
+    private Button? callsNav, groupsNav, chatsNav, calendarNav;
     private int featureVersion;
     private sealed record SideBinding(InboxViewModel Inbox, AuthorizationLease? Authorization, string Mailbox);
     private SideBinding? sideBinding;
@@ -40,6 +40,7 @@ public sealed partial class MainWindow
     {
         callHistory = new CallHistoryModel(postbox);
         avatars = new AvatarDirectory(postbox);
+        CreateCalendarModel();
 #if UI_TESTS
         var stores = new Dictionary<string, IGroupStateStore>(StringComparer.Ordinal);
         groupsModel = new GroupsModel(postbox, mailbox => stores.TryGetValue(mailbox, out var store) ? store : stores[mailbox] = new MemoryGroupStateStore());
@@ -85,6 +86,7 @@ public sealed partial class MainWindow
     {
         sideBinding = null;
         refreshingSide = null;
+        calendarModel.Clear();
         await groupsModel.ActivateAsync(null, ServerFeatures.None, [], []);
         avatars.Clear();
         AvatarFiles.Clear();
@@ -99,6 +101,8 @@ public sealed partial class MainWindow
         await RefreshSideViewsAsync();
         if (!SideCurrent(binding)) return;
         await groupsModel.ActivateAsync(mailbox, features, binding.Inbox.Mailboxes, binding.Inbox.Contacts);
+        if (!SideCurrent(binding)) return;
+        await calendarModel.ActivateAsync(mailbox.Address, features, lifetime.Token);
         if (!SideCurrent(binding)) return;
         RefreshAvatars();
         UpdateSideNav();
@@ -126,6 +130,12 @@ public sealed partial class MainWindow
             if (!SideCurrent(binding)) return;
             if (groupsModel.Enabled) await groupsModel.RefreshAsync();
             if (!SideCurrent(binding)) return;
+            if (sideView == SideView.Calendar && calendarModel.State.Enabled && !calendarModel.State.Busy)
+            {
+                using var target = calendarModel.CaptureView()?.BeginAction();
+                if (target is not null) await calendarModel.ReloadAsync(target, lifetime.Token);
+            }
+            if (!SideCurrent(binding)) return;
             if (sideView == SideView.Calls) await callHistory.MarkSeenAsync();
             if (SideCurrent(binding)) binding.Inbox.PruneExpired();
         }
@@ -141,6 +151,7 @@ public sealed partial class MainWindow
         features = ServerFeatures.None;
         callHistory.Reset(null);
         _ = groupsModel.ActivateAsync(null, ServerFeatures.None, [], []);
+        calendarModel.Clear();
         avatars.Clear();
         avatars.Enabled = false;
         filteredMessages = [];
@@ -162,18 +173,23 @@ public sealed partial class MainWindow
     private void BuildSideNav()
     {
         SideNav.Children.Clear();
+        SideNav.RowDefinitions.Clear();
         Button Nav(string label, string automation, SideView view)
         {
-            var button = new Button { Content = label, Padding = new Thickness(12, 4, 12, 5), MinHeight = 30, CornerRadius = new CornerRadius(8), FontSize = 13 };
+            var button = new Button { Content = label, Padding = new Thickness(12, 4, 12, 5), MinHeight = 30, CornerRadius = new CornerRadius(8), FontSize = 13, HorizontalAlignment = HorizontalAlignment.Stretch };
             AutomationProperties.SetName(button, automation);
-            button.Click += (_, _) => ShowSideView(view);
+            button.Click += (_, _) => { if (IsCompact && view == SideView.Calendar) compactConversation = true; ShowSideView(view); };
+            var index = SideNav.Children.Count;
+            if (index / 2 >= SideNav.RowDefinitions.Count) SideNav.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            Grid.SetColumn(button, index % 2); Grid.SetRow(button, index / 2);
             SideNav.Children.Add(button);
             return button;
         }
         chatsNav = Nav("Chats", "Chats", SideView.Chats);
         callsNav = features.Has(ServerFeatures.CallHistory) ? Nav("Calls", "Calls", SideView.Calls) : null;
         groupsNav = features.Has(ServerFeatures.Groups) && GroupsModel.LibraryAvailable ? Nav("Groups", "Groups", SideView.Groups) : null;
-        SideNav.Visibility = ToVisibility(callsNav is not null || groupsNav is not null);
+        calendarNav = features.Has(ServerFeatures.Calendar) ? Nav("Calendar", "Calendar", SideView.Calendar) : null;
+        SideNav.Visibility = ToVisibility(callsNav is not null || groupsNav is not null || calendarNav is not null);
         NewGroupButton.Visibility = ToVisibility(groupsNav is not null);
         UpdateSideNav();
     }
@@ -192,13 +208,14 @@ public sealed partial class MainWindow
             AutomationProperties.SetName(groupsNav, count > 0 ? $"Groups, {count} new" : "Groups");
             NewGroupButton.Visibility = ToVisibility(groupsModel.Enabled);
         }
-        foreach (var (button, view) in new[] { (chatsNav, SideView.Chats), (callsNav, SideView.Calls), (groupsNav, SideView.Groups) })
+        foreach (var (button, view) in new[] { (chatsNav, SideView.Chats), (callsNav, SideView.Calls), (groupsNav, SideView.Groups), (calendarNav, SideView.Calendar) })
             if (button is not null) button.Style = (Style)Application.Current.Resources[sideView == view ? "AccentButtonStyle" : "DefaultButtonStyle"];
     }
 
     private void ShowSideView(SideView view)
     {
         sideView = view;
+        calendarPage?.Dispose(); calendarPage = null;
         SidePage.Children.Clear();
         SideListHost.Children.Clear();
         switch (view)
@@ -206,6 +223,7 @@ public sealed partial class MainWindow
             case SideView.Calls: SidePage.Children.Add(BuildCallsPage()); _ = callHistory.MarkSeenAsync(); break;
             case SideView.Filtered: SidePage.Children.Add(BuildFilteredPage()); break;
             case SideView.Groups: SideListHost.Children.Add(BuildGroupList()); SidePage.Children.Add(BuildGroupPage()); break;
+            case SideView.Calendar: SidePage.Children.Add(BuildCalendarPage()); break;
         }
         UpdateLayoutMode();
         UpdateSideNav();
