@@ -49,7 +49,7 @@ public sealed partial class MainWindow
         finally { service.Root.Retire(); Directory.Delete(folder, recursive: true); }
     }
 
-    private sealed class NativeDeliveryFixture(PreviewInboxService? preview = null, string? diagnosticFile = null) : IProtectedMessageService
+    private sealed class NativeDeliveryFixture(PreviewInboxService? preview = null, string? diagnosticFile = null, bool messageModes = false) : IProtectedMessageService, IMessageActionsService
     {
         internal const string Own = "/k/aaaaaaaaaaaaaaaaaaaaaaaaaa", Peer = "/k/bbbbbbbbbbbbbbbbbbbbbbbbbb";
         internal AuthorizationLease Root = new(); private char owner = 'a';
@@ -60,12 +60,19 @@ public sealed partial class MainWindow
         internal readonly HashSet<string> Committed = [];
         private readonly Dictionary<string, SendReceipt> receipts = [];
         private readonly Dictionary<string, string> intents = [];
+        private readonly Dictionary<string, MessageSendRequest> requests = [];
+        private readonly Dictionary<string, List<MessageVersion>> history = [];
+        private int infoReads;
+        private readonly long fixtureTime = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         private bool exactRetries = true;
         private void Diagnostics()
         {
             if (diagnosticFile is null) return;
             var staging = diagnosticFile + ".tmp";
-            File.WriteAllText(staging, System.Text.Json.JsonSerializer.Serialize(new { posts = Posts, committed = Committed.Count, exactRetries }));
+            File.WriteAllText(staging, System.Text.Json.JsonSerializer.Serialize(new { posts = Posts, committed = Committed.Count, exactRetries,
+                replies = requests.Values.Count(r => r.ReplyTo is not null), edits = requests.Values.Count(r => r.EditOf is not null),
+                originalReplyParent = requests.Values.Any(r => r.ReplyTo == "design-3" && r.Quote == "Thanks. Let's keep the conversation easy to follow and make files simple to share."),
+                originalEditParent = requests.Values.Any(r => r.EditOf == "design-2" && r.Attachments is null), infoReads }));
             File.Move(staging, diagnosticFile, overwrite: true);
         }
         internal void Rotate(char key) { Root.Retire(); Root = new(); owner = key; }
@@ -81,22 +88,43 @@ public sealed partial class MainWindow
             {
                 exactRetries &= intents[reference] == intent; Diagnostics(); return existing with { Duplicate = true };
             }
-            var sent = preview is null ? new SendReceipt("native_recipient_copy", "native_sent_copy")
+            var sent = preview is null || messageModes && attempt.Request.EditOf is not null ? new SendReceipt("native_recipient_copy", "native_sent_copy_" + Posts)
                 : await preview.SendAsync(scope.Mailbox, attempt.Review.Recipient, attempt.Request.Body, attempt.Request.ThreadId, ct);
             scope.RequireCurrent(ct);
             var receipt = sent with { MsgRef = reference, Duplicate = false };
-            Committed.Add(reference); receipts[reference] = receipt; intents[reference] = intent; Diagnostics();
-            if (LoseNext || preview is not null) { LoseNext = false; throw new HttpRequestException("Synthetic committed response loss."); }
+            Committed.Add(reference); receipts[reference] = receipt; intents[reference] = intent; requests[reference] = attempt.Request;
+            if (messageModes && attempt.Request.EditOf is { } parent && history.TryGetValue(parent, out var versions))
+                versions.Add(new(parent, attempt.Request.Body, DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
+            Diagnostics();
+            if (LoseNext || preview is not null && !messageModes) { LoseNext = false; throw new HttpRequestException("Synthetic committed response loss."); }
             return receipt;
         }
         public async Task<InboxSnapshot> LoadAsync(string identity, CancellationToken ct)
         {
             if (preview is null) throw new NotSupportedException();
             var snapshot = await preview.LoadAsync(identity, ct);
+            if (messageModes)
+            {
+                var now = fixtureTime;
+                var own = snapshot.Messages.Single(m => m.MessageId == "design-2");
+                if (!history.ContainsKey(own.MessageId)) history[own.MessageId] = [new(own.MessageId, "Earlier native fixture version", now - 180), new(own.MessageId, own.Body, now - 120)];
+                snapshot = snapshot with { Messages = snapshot.Messages.Select(m => m.MessageId == "design-2"
+                    ? m with { SentAt = now - 120, Body = history[m.MessageId][^1].Body, EditCount = history[m.MessageId].Count - 1 }
+                    : m.MessageId == "design-3" ? m with { SentAt = now - 60 } : m).ToArray() };
+            }
             var references = receipts.Values.Where(r => r.SentCopyId is not null).ToDictionary(r => r.SentCopyId!, r => r.MsgRef);
             return snapshot with { Messages = snapshot.Messages.Select(m => m.IsOutgoing && references.TryGetValue(m.MessageId, out var reference) ? m with { MsgRef = reference } : m).ToArray() };
         }
         public Task<SendReceipt> SendAsync(string identity, string peer, string body, string? threadId, CancellationToken ct) => throw new NotSupportedException();
+        public Task<SendReceipt> SendMessageAsync(MessageSendRequest request, CancellationToken ct) => throw new NotSupportedException();
+        public Task DeleteMessageAsync(string identity, string messageId, CancellationToken ct) => throw new NotSupportedException();
+        public async Task<MessageInfo> GetMessageInfoAsync(string identity, string messageId, CancellationToken ct)
+        {
+            ct.ThrowIfCancellationRequested(); Root.RequireActive();
+            var row = (await LoadAsync(identity, ct)).Messages.Single(m => m.MessageId == messageId);
+            infoReads++; Diagnostics();
+            return new(messageId, row.MsgRef, row.Direction, row.SentAt, history.GetValueOrDefault(messageId)?.ToArray(), row.ReplyTo, row.Receipt);
+        }
         public Task<string> CreateThreadAsync(string identity, string peer, string title, CancellationToken ct) => preview?.CreateThreadAsync(identity, peer, title, ct) ?? throw new NotSupportedException();
         public Task SetArchivedAsync(string identity, string peer, bool archived, CancellationToken ct) => preview?.SetArchivedAsync(identity, peer, archived, ct) ?? throw new NotSupportedException();
         public Task AcknowledgeAsync(string identity, string messageId, CancellationToken ct) => preview?.AcknowledgeAsync(identity, messageId, ct) ?? throw new NotSupportedException();

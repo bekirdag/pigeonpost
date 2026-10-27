@@ -1051,6 +1051,8 @@ tests.AddRange(PreparedDeliveryTests.All());
 tests.AddRange(RecipientLookupTests.All());
 tests.AddRange(MessageDeliveryCoordinatorTests.All());
 tests.AddRange(ProtectedComposerTests.All());
+tests.AddRange(MessageTextTests.All());
+tests.AddRange(MessageComposerTests.All());
 tests.AddRange(CallRingTests.All());
 tests.AddRange(PrivacyTests.All());
 tests.AddRange(GroupTests.All());

@@ -117,13 +117,96 @@ internal static class MessageTargetTests
             var view = vm.CaptureMessageView(vm.Messages.Single())!; var action = view.BeginAction()!;
             view.Retire(); Require(view.BeginAction() is null && action.IsCurrent);
         });
+        yield return ("Message information uses the original owned copy and current account capabilities", async () =>
+        {
+            using var f = new Service(); using var vm = new InboxViewModel(f); await vm.InitializeAsync();
+            var target = vm.CaptureMessageTarget(vm.Messages.Single())!;
+            Require(await vm.ReadMessageInfoAsync(target) is null && f.InfoCalls == 0);
+            vm.SetMessageFeatures(new(new HashSet<string> { ServerFeatures.MessageReply }));
+            var info = await vm.ReadMessageInfoAsync(target);
+            Require(info?.MessageId == "reply_copy" && info.Versions?.Single().Body == "Private fixture version"
+                && f.InfoIdentity == Own && f.InfoCalls == 1);
+        });
+        yield return ("A delayed message-info action retains its original caller after the view created it", async () =>
+        {
+            using var f = new Service(); using var vm = new InboxViewModel(f); await vm.InitializeAsync();
+            vm.SetMessageFeatures(new(new HashSet<string> { ServerFeatures.Receipts }));
+            var caller = f.Root.Child(); MessageTarget target;
+            using (new AuthorizationContext(caller)) target = vm.CaptureMessageTarget(vm.Messages.Single())!;
+            f.BlockInfo = true; var read = vm.ReadMessageInfoAsync(target);
+            await f.Waiting.Task.WaitAsync(TimeSpan.FromSeconds(3)); caller.Retire(); f.Release.TrySetResult();
+            Require(await read is null && f.Root.IsActive && !target.IsCurrent && f.InfoHttpCalls == 0);
+        });
+        yield return ("A late message-info response cannot publish into another account or selection", async () =>
+        {
+            using var f = new Service(); using var vm = new InboxViewModel(f); await vm.InitializeAsync();
+            vm.SetMessageFeatures(new(new HashSet<string> { ServerFeatures.MessageEdit }));
+            var target = vm.CaptureMessageTarget(vm.Messages.Single())!; f.BlockInfo = true;
+            var read = vm.ReadMessageInfoAsync(target); await f.Waiting.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            vm.SelectSubject(vm.Subjects.Single(s => s.Id == "parent_subject")); f.Release.TrySetResult();
+            Require(await read is null);
+            f.Root.Retire(); f.Root = new(); await vm.InitializeAsync();
+            Require(!vm.CanInspectMessages && await vm.ReadMessageInfoAsync(target) is null);
+        });
+        yield return ("Message information refuses a foreign model, retired target and substituted copy response", async () =>
+        {
+            using var f = new Service(); using var vm = new InboxViewModel(f); using var other = new InboxViewModel(f);
+            await vm.InitializeAsync(); await other.InitializeAsync();
+            var features = new ServerFeatures(new HashSet<string> { ServerFeatures.MessageEdit }); vm.SetMessageFeatures(features); other.SetMessageFeatures(features);
+            var target = vm.CaptureMessageTarget(vm.Messages.Single())!;
+            Require(await other.ReadMessageInfoAsync(target) is null && f.InfoCalls == 0);
+            target.Retire(); Require(await vm.ReadMessageInfoAsync(target) is null && f.InfoCalls == 0);
+            f.InfoCopy = "different_copy";
+            Require(await vm.ReadMessageInfoAsync(vm.CaptureMessageTarget(vm.Messages.Single())!) is null && vm.HasError);
+        });
+        yield return ("Message-info token acquisition cannot borrow an unretired replacement account", async () =>
+        {
+            using var f = new Service(); using var vm = new InboxViewModel(f); await vm.InitializeAsync();
+            vm.SetMessageFeatures(new(new HashSet<string> { ServerFeatures.MessageEdit }));
+            var target = vm.CaptureMessageTarget(vm.Messages.Single())!; f.BlockInfo = true;
+            var read = vm.ReadMessageInfoAsync(target); await f.Waiting.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            var old = f.Root; f.Root = new(); await vm.InitializeAsync(); f.Release.TrySetResult();
+            Require(await read is null && f.InfoHttpCalls == 0 && old.IsActive && !vm.CanInspectMessages && !target.IsAccountCurrent);
+            old.Retire();
+        });
     }
     private const string Own = "/k/target_fixture", Peer = "/bob/main";
     private static void Require(bool value) { if (!value) throw new Exception("Message target assertion failed."); }
-    private sealed class Service : IInboxService, IDisposable
+    private sealed class Service : IInboxService, IMessageActionsService, IDisposable
     {
         internal AuthorizationLease Root = new();
         public AuthorizationLease? AcceptedAuthorization => Root;
+        internal int InfoCalls, InfoHttpCalls; internal string? InfoIdentity; internal string? InfoCopy; internal bool BlockInfo;
+        internal readonly TaskCompletionSource Waiting = new(TaskCreationOptions.RunContinuationsAsynchronously), Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public async Task<MessageInfo> GetMessageInfoAsync(string identity, string messageId, CancellationToken ct)
+        {
+            InfoCalls++; InfoIdentity = identity;
+            using var http = new HttpClient(new InfoHandler(this, messageId));
+            using var client = new PostboxClient(http, new InfoTokens(this), new("http://127.0.0.1:9"));
+            return await client.GetMessageInfoAsync(identity, messageId, ct);
+        }
+        private sealed class InfoTokens(Service owner) : IAccessTokenProvider
+        {
+            public AuthorizationLease? AcceptedAuthorization => owner.Root;
+            public async Task<string> GetTokenAsync(CancellationToken ct)
+            {
+                if (owner.BlockInfo) { owner.Waiting.TrySetResult(); await owner.Release.Task.ConfigureAwait(false); }
+                ct.ThrowIfCancellationRequested(); return "synthetic-message-info-token";
+            }
+            public Task<string> RefreshTokenAsync(CancellationToken ct) => GetTokenAsync(ct);
+        }
+        private sealed class InfoHandler(Service owner, string messageId) : HttpMessageHandler
+        {
+            protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+            {
+                owner.InfoHttpCalls++;
+                var info = new MessageInfo(owner.InfoCopy ?? messageId, Versions: [new("fixture_version", "Private fixture version", 100)]);
+                return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = new StringContent(
+                    System.Text.Json.JsonSerializer.Serialize(info, PostboxJson.Options), System.Text.Encoding.UTF8, "application/json") });
+            }
+        }
+        public Task<SendReceipt> SendMessageAsync(MessageSendRequest request, CancellationToken ct) => throw new NotSupportedException();
+        public Task DeleteMessageAsync(string identity, string messageId, CancellationToken ct) => throw new NotSupportedException();
         internal InboxMessage Parent = new() { MessageId = "parent_copy", Body = "Parent fixture", From = "/k/bob", SenderHandle = Peer,
             ThreadId = "parent_subject", MsgRef = "mref_aaaaaaaaaaaaaaaaaaaaaaaaaa", ReceivedAt = 100, Read = true };
         internal InboxMessage Reply = new() { MessageId = "reply_copy", Body = "Reply fixture", From = "/k/bob", SenderHandle = Peer,

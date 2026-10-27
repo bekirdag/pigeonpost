@@ -98,6 +98,7 @@ public sealed partial class InboxViewModel
         var prior = account;
         account = next;
         prior?.Authorization.Retire();
+        ClearComposerAction(restore: false);
         mailboxVersion++; loadVersion++;
         mailboxScope.Cancel(); mailboxScope.Dispose(); mailboxScope = new();
         var previousLoad = loading; loading = null;
@@ -111,6 +112,7 @@ public sealed partial class InboxViewModel
         callEntries = [];
         pending.Clear(); drafts.Clear(); attachmentDrafts.Clear(); selections.Clear(); opened.Clear(); draftRevisions.Clear();
         deliveryDraftOwners.Clear(); sendingActivity = null; ClearPendingDeliveryViews();
+        messageFeatures = ServerFeatures.None;
         history = []; historyContext = null; matches = []; matchIndex = 0;
         ContextVersion++;
         var wasUpdating = IsUpdatingLists;
@@ -129,7 +131,7 @@ public sealed partial class InboxViewModel
             nameof(MailboxAddress), nameof(ConversationTitle), nameof(ConversationAddress), nameof(SubjectTitle), nameof(HasConversation),
             nameof(InboxSummary), nameof(IsListEmpty), nameof(EmptyListMessage), nameof(HasDraftAttachments), nameof(CanCompose),
             nameof(CanDeleteSubject), nameof(IsSelectedBlocked), nameof(BlockedBanner), nameof(CanSetTimer), nameof(TimerBanner), nameof(HasTimer),
-            nameof(FindSummary), nameof(CurrentMatch) }) Changed(name);
+            nameof(FindSummary), nameof(CurrentMatch), nameof(CanInspectMessages) }) Changed(name);
         MessagesUpdated?.Invoke(this, EventArgs.Empty);
     }
 

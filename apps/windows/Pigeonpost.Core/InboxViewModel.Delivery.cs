@@ -13,6 +13,7 @@ public sealed class PendingDeliveryView
     public string Body => current() ? RequestEnvelope.DisplayText(attempt.Request.Body) : "";
     public string Details => current() ? $"{(attempt.Request.EditOf is not null ? "Edit" : attempt.Request.ReplyTo is not null ? "Reply" : "Message")} · {attempt.Request.Attachments?.Count ?? 0} files" : "";
     public string Label => current() ? $"{Recipient} · {Subject}" : "";
+    internal bool Matches(string peer, string? thread) => current() && attempt.Review.MatchesRecipient(peer) && (attempt.Request.ThreadId ?? "") == (thread ?? "");
     public PendingDeliveryTarget? BeginAction() => current() ? begin() : null;
     public override string ToString() => "PendingDeliveryView(redacted)";
 }
@@ -59,7 +60,7 @@ public sealed partial class InboxViewModel
         sendingActivity = null; IsSending = false;
     }
     private sealed record DeliveryDraftOwner(string DraftId, (string Mailbox, string Peer, string Subject) Key, long Revision,
-        PendingMessage Row, IReadOnlyList<DraftAttachment> Files, IReadOnlyList<MessageAttachment> Uploaded);
+        PendingMessage Row, IReadOnlyList<DraftAttachment> Files, IReadOnlyList<MessageAttachment> Uploaded, ComposerMode? Mode = null);
     public IReadOnlyList<PendingDeliveryView> PendingDeliveries => ActiveAccount is not null ? pendingDeliveryViews : [];
     public bool HasPendingDeliveries => PendingDeliveries.Count > 0;
     public string PendingDeliverySummary => $"{PendingDeliveries.Count} pending {(PendingDeliveries.Count == 1 ? "delivery" : "deliveries")} in this inbox";
@@ -134,12 +135,20 @@ public sealed partial class InboxViewModel
                 if (!deliveryDraftOwners.Remove(target.Attempt.Request.MsgRef, out var original) || original.DraftId != target.Attempt.Review.DraftId) return;
                 ReplacePending(original.Row with { Status = DeliveryStatus.Sent, SentCopyId = result.Receipt.SentCopyId, Attachments = original.Uploaded });
                 if (!OwnsDraft(original.Key, original.Revision)) return;
-                drafts[original.Key] = "";
-                if (attachmentDrafts.TryGetValue(original.Key, out var files)) files.RemoveAll(f => original.Files.Any(sent => sent.Id == f.Id));
+                if (original.Mode?.Kind == MessageComposerKind.Edit)
+                { drafts[original.Key] = original.Mode.PreviousDraft; attachmentDrafts[original.Key] = original.Mode.PreviousFiles.ToList(); }
+                else
+                {
+                    drafts[original.Key] = "";
+                    if (attachmentDrafts.TryGetValue(original.Key, out var files)) files.RemoveAll(f => original.Files.Any(sent => sent.Id == f.Id));
+                }
+                if (original.Mode is not null && ReferenceEquals(composerMode, original.Mode)) composerMode = null;
                 cleared = original;
             });
+            if (cleared?.Mode is { } completedMode) completedMode.Dispose();
             if (!operation.IsMailbox(generation)) return true;
-            if (cleared is { } clearedDraft && DraftKey() == clearedDraft.Key && OwnsDraft(clearedDraft.Key, clearedDraft.Revision)) Draft = "";
+            if (cleared is { } clearedDraft && DraftKey() == clearedDraft.Key && OwnsDraft(clearedDraft.Key, clearedDraft.Revision)) Draft = drafts.GetValueOrDefault(clearedDraft.Key, "");
+            NotifyComposerAction();
             await RefreshAsync();
             if (result.PendingCleanup && operation.IsMailbox(generation)) Error = "Delivered. The local pending entry could not be cleared; review pending deliveries.";
             return true;

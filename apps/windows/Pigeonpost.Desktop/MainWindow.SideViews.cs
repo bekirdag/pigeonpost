@@ -70,6 +70,8 @@ public sealed partial class MainWindow
         catch (Exception ex) { DesktopLog.Error("Capabilities unavailable", ex); available = ServerFeatures.None; }
         if (version != featureVersion || !SameAccount(inbox, authorization)) return;
         features = available;
+        inbox.SetMessageFeatures(available);
+        RefreshMessageOptions();
         DesktopLog.Write("Features: " + string.Join(",", features.Names.Order(StringComparer.Ordinal)));
         avatars.Enabled = features.Has(ServerFeatures.Avatars);
         ProfileMenuItem.Visibility = ToVisibility(features.Has(ServerFeatures.Avatars));

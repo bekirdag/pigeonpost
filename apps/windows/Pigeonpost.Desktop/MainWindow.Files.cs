@@ -31,7 +31,7 @@ public sealed partial class MainWindow
 
     private DataPackageView? AttachmentClipboard()
     {
-        if (!ViewModel.CanCompose || dialogOpen) return null;
+        if (!ViewModel.CanAttachFiles || dialogOpen) return null;
         try
         {
             var data = Clipboard.GetContent();
@@ -195,7 +195,7 @@ public sealed partial class MainWindow
 
     private async Task AttachFilesAsync(Func<Task<IReadOnlyList<IStorageItem>>> chooseFiles)
     {
-        if (dialogOpen || !ViewModel.CanCompose || ViewModel.SelectedMailbox is not { } mailbox || ViewModel.SelectedConversation is not { } conversation) return;
+        if (dialogOpen || !ViewModel.CanAttachFiles || ViewModel.SelectedMailbox is not { } mailbox || ViewModel.SelectedConversation is not { } conversation) return;
         var context = ViewModel.ContextVersion;
         dialogOpen = true;
         try
