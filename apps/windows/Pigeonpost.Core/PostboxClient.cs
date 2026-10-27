@@ -5,7 +5,8 @@ using System.Text.Json;
 
 namespace Pigeonpost.Core;
 
-public sealed class PostboxException(int statusCode, string? code, JsonElement? detail = null) : Exception(code switch
+public sealed class PostboxException(int statusCode, string? code, JsonElement? detail = null,
+    StrongSignInRequirement? strongSignIn = null) : Exception(code switch
 {
     "not_admitted" => "They are not accepting mail from this mailbox.",
     "recipient_unresolved" => "No mailbox at that address.",
@@ -18,6 +19,9 @@ public sealed class PostboxException(int statusCode, string? code, JsonElement? 
     "bad_response" => "The postbox returned an unreadable response.",
     "feature_disabled" => "This isn't available for your account yet.",
     "human_required" => "Only you can do this, signed in on this device.",
+    "step_up_required" => "Verify your sign-in before continuing.",
+    "step_up_unavailable" => "Strong sign-in is unavailable. Ask your administrator to configure it.",
+    "mfa_required" => "Set up strong sign-in before continuing.",
     "not_member" => "You are not an active member of this group.",
     "not_admin" => "Only the group's admins can do that.",
     "owner_only" => "Only the group's owner can do that.",
@@ -40,6 +44,7 @@ public sealed class PostboxException(int statusCode, string? code, JsonElement? 
 {
     public int StatusCode { get; } = statusCode;
     public string? Code { get; } = code;
+    public StrongSignInRequirement? StrongSignIn { get; } = strongSignIn;
     // The whole error body, for codes that carry fields (current_epoch, current_revision, …).
     public JsonElement? Detail { get; } = detail;
     public long? DetailNumber(string name) => Detail is { ValueKind: JsonValueKind.Object } body
@@ -110,6 +115,8 @@ public sealed partial class PostboxClient(HttpClient http, IAccessTokenProvider 
                 owner.Check(cancellationToken);
                 if (response.StatusCode == HttpStatusCode.Unauthorized)
                 {
+                    var problem = await ReadProblemAsync(response, owner, cancellationToken).ConfigureAwait(false);
+                    if (problem.Code == "step_up_required") throw problem;
                     await tokens.RefreshTokenAsync(cancellationToken).ConfigureAwait(false);
                     owner.Check(cancellationToken);
                 }
@@ -144,6 +151,7 @@ public sealed partial class PostboxClient(HttpClient http, IAccessTokenProvider 
                 }
             }
             catch (AuthorizationRetiredException) { throw; }
+            catch (PostboxException ex) when (ex.Code == "step_up_required") { throw; }
             catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
             {
                 // Offline: reconnect with the last processed cursor.
@@ -277,6 +285,11 @@ public sealed partial class PostboxClient(HttpClient http, IAccessTokenProvider 
             response.RequestMessage = request;
             try { owner.Check(cancellationToken); }
             catch { response.Dispose(); throw; }
+            if (response.IsSuccessStatusCode) return response;
+            PostboxException problem;
+            try { problem = await ReadProblemAsync(response, owner, cancellationToken).ConfigureAwait(false); }
+            catch { response.Dispose(); throw; }
+            if (problem.Code == "step_up_required") { response.Dispose(); throw problem; }
             if (response.StatusCode == HttpStatusCode.Unauthorized && attempt == 0)
             {
                 response.Dispose();
@@ -292,24 +305,8 @@ public sealed partial class PostboxClient(HttpClient http, IAccessTokenProvider 
                 finally { renewal.Release(); }
                 continue;
             }
-            if (response.IsSuccessStatusCode) return response;
-            using (response)
-            {
-                string? code = response.StatusCode == HttpStatusCode.Unauthorized ? "unauthorized" : null;
-                JsonElement? detail = null;
-                try
-                {
-                    var error = await response.Content.ReadFromJsonAsync<JsonElement>(PostboxJson.Options, cancellationToken).ConfigureAwait(false);
-                    if (error.ValueKind == JsonValueKind.Object)
-                    {
-                        detail = error;
-                        if (error.TryGetProperty("error", out var name) && name.ValueKind == JsonValueKind.String) code ??= name.GetString();
-                    }
-                }
-                catch (Exception ex) when (ex is JsonException or NotSupportedException or InvalidOperationException) { }
-                owner.Check(cancellationToken);
-                throw new PostboxException((int)response.StatusCode, code, detail);
-            }
+            response.Dispose();
+            throw problem;
         }
     }
 
