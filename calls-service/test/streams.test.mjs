@@ -307,7 +307,7 @@ test("reactions are sealed blobs, rate limited and batched to everyone", async (
 });
 
 test("the stream ends when the streamer stops, leaves for good, or the postbox says so", async () => {
-  const t = await start({ limits: { hostGraceMs: 50, blindMs: 0 } });
+  const t = await start({ limits: { hostGraceMs: 50, blindMs: -1 } });
   try {
     const s = t.internal.live(SID);
     const host = await t.join("tok-host");
