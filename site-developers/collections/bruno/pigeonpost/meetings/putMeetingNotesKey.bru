@@ -1,0 +1,26 @@
+meta {
+  name: Register this device's notes key (idempotent; at most 10 per account, the oldest is dropped)
+  type: http
+  seq: 3
+}
+
+put {
+  url: {{baseUrl}}/v1/meetings/keys/:key_id
+  body: json
+  auth: bearer
+}
+
+params:path {
+  key_id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "public_key": "string",
+    "label": "string"
+  }
+}

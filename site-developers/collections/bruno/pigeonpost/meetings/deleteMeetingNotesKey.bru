@@ -1,0 +1,19 @@
+meta {
+  name: Forget a notes key; its wraps on stored briefs are deleted too
+  type: http
+  seq: 4
+}
+
+delete {
+  url: {{baseUrl}}/v1/meetings/keys/:key_id
+  body: none
+  auth: bearer
+}
+
+params:path {
+  key_id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}

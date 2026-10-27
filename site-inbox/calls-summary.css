@@ -1,0 +1,77 @@
+/* Phase 7: meeting notes — the in-call indicator and consent sheet (calls-summary.js), and the
+   Meeting notes reader in the inbox (meeting-notes.js). Uses the call and inbox theme variables. */
+
+/* Always visible while notes are on, below the header and above the faces. */
+.call-notes-banner {
+  position: absolute; top: calc(var(--call-top-h, 86px) - 10px); left: 50%; transform: translateX(-50%); z-index: 5;
+  display: inline-flex; align-items: center; gap: 10px; max-width: calc(100% - 24px);
+  padding: 6px 8px 6px 12px; border-radius: 999px;
+  background: var(--call-dock); border: 1px solid var(--call-rule); font-size: 13px; color: var(--call-body);
+}
+.call-notes-banner[hidden] { display: none; }
+.call-notes-dot { width: 10px; height: 10px; flex: none; border-radius: 50%; background: var(--call-muted); }
+.call-notes-banner[data-state="active"] .call-notes-dot { background: var(--call-end); animation: share-pulse 1.6s ease-in-out infinite; }
+.call-notes-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.call-notes-banner .call-pill[hidden] { display: none; }
+@media (prefers-reduced-motion: reduce) { .call-notes-banner[data-state="active"] .call-notes-dot { animation: none; } }
+@media (max-width: 560px) {
+  .call-notes-banner { flex-wrap: wrap; justify-content: center; border-radius: 14px; }
+  .call-notes-text { white-space: normal; text-align: center; }
+}
+
+#call-notes-btn[aria-pressed="true"] { background: var(--call-end); color: var(--call-on-solid); border-color: var(--call-end); }
+#call-notes-btn[hidden] { display: none; }
+
+.call-notes-sheet {
+  position: absolute; inset: 0; z-index: 9; display: grid; place-items: center; padding: 16px;
+  background: color-mix(in srgb, var(--call-ground) 70%, transparent);
+}
+.call-notes-sheet[hidden] { display: none; }
+.call-notes-card {
+  width: min(520px, 100%); max-height: calc(100% - 32px); overflow: auto;
+  padding: 18px 18px 14px; border-radius: 14px; background: var(--call-tile); border: 1px solid var(--call-edge);
+  color: var(--call-ink); box-shadow: 0 18px 48px var(--call-shadow); font-size: 14px; line-height: 1.45;
+}
+.call-notes-card h3 { margin: 0 0 10px; font-size: 16px; }
+.call-notes-card p { margin: 0 0 10px; color: var(--call-body); }
+.call-notes-list { margin: 0 0 12px; padding: 0; list-style: none; display: grid; gap: 8px; }
+.call-notes-list li { display: grid; gap: 2px; }
+.call-notes-list strong { font-size: 12px; font-weight: 600; color: var(--call-muted); text-transform: none; }
+.call-notes-list span { color: var(--call-body); }
+.call-notes-warn { padding: 8px 10px; border-radius: 9px; border: 1px solid var(--call-edge); background: var(--call-btn); }
+.call-notes-warn[hidden] { display: none; }
+.call-notes-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.call-notes-agree { background: var(--call-focus); border-color: var(--call-focus); color: var(--call-ground); font-weight: 600; }
+.call-notes-agree:hover { background: var(--call-ink); border-color: var(--call-ink); }
+.call-notes-agree:disabled { opacity: .5; cursor: not-allowed; }
+
+/* ---- the inbox reader ---- */
+.notes-dialog {
+  position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 16px;
+  background: color-mix(in srgb, var(--ink) 35%, transparent);
+}
+.notes-dialog[hidden] { display: none; }
+.notes-panel {
+  width: min(760px, 100%); max-height: calc(100vh - 32px); display: flex; flex-direction: column;
+  border-radius: 14px; background: var(--page); color: var(--ink);
+  border: 1px solid var(--rule); box-shadow: 0 18px 48px rgba(0, 0, 0, .25);
+}
+.notes-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 14px 16px; border-bottom: 1px solid var(--rule); }
+.notes-head h2 { margin: 0; font-size: 17px; }
+.notes-body { overflow: auto; padding: 12px 16px 16px; }
+.notes-note { color: var(--muted); font-size: 13px; margin: 0 0 12px; }
+.notes-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.notes-list button {
+  width: 100%; text-align: left; display: grid; gap: 2px; padding: 10px 12px; border-radius: 10px;
+  border: 1px solid var(--rule); background: none; color: inherit; font: inherit; cursor: pointer;
+}
+.notes-list button:hover, .notes-list button:focus-visible { background: var(--wash); }
+.notes-meta { font-size: 12.5px; color: var(--muted); }
+.notes-brief h3 { font-size: 14px; margin: 16px 0 6px; }
+.notes-brief ul { margin: 0; padding-left: 20px; }
+.notes-brief li { margin: 2px 0; }
+.notes-transcript { list-style: none; padding: 0 !important; display: grid; gap: 4px; font-size: 13.5px; }
+.notes-transcript time { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 6px; }
+.notes-transcript b { font-weight: 600; margin-right: 4px; }
+.notes-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; flex-wrap: wrap; }
+.notes-draft { padding: 8px 10px; border-radius: 9px; border: 1px solid var(--rule); font-size: 13px; }

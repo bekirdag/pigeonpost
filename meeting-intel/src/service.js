@@ -21,6 +21,7 @@ export const LIMITS = {
   chunkBytes: 192 * 1024,
   chunkSeconds: 30,
   windowSeconds: 28, // whisper encodes 30 s at a time; a window just under that costs one pass
+  searchSeconds: 8, // where in a full window to look for a pause to cut at
   gapMs: 2_500, // a longer gap between a speaker's chunks starts a new window
   queueSeconds: 1_200, // all sessions: audio waiting for transcription
   sessionQueueSeconds: 600,
@@ -166,8 +167,36 @@ export function createIntel(cfg, deps) {
     w.parts.push(pcm);
     w.bytes += pcm.length;
     w.end = t + (pcm.length / BYTES_PER_SECOND) * 1000;
-    if (w.bytes >= LIMITS.windowSeconds * BYTES_PER_SECOND) flush(s, participant);
+    if (w.bytes >= LIMITS.windowSeconds * BYTES_PER_SECOND) splitAtPause(s, w);
     return { accepted: true };
+  }
+
+  // A full window is cut at its quietest quarter second in the last few seconds, not at a fixed
+  // mark, so a word is not split between two transcriptions. The rest starts the next window.
+  function splitAtPause(s, w) {
+    const pcm = Buffer.concat(w.parts);
+    wipeWindow(w);
+    const frame = BYTES_PER_SECOND / 4;
+    const from = Math.max(0, pcm.length - LIMITS.searchSeconds * BYTES_PER_SECOND);
+    let cut = pcm.length;
+    let quietest = Infinity;
+    for (let at = from; at + frame <= pcm.length; at += frame / 2) {
+      let energy = 0;
+      for (let i = at; i < at + frame; i += 8) energy += Math.abs(pcm.readInt16LE(i));
+      if (energy < quietest) { quietest = energy; cut = at + frame / 2; }
+    }
+    cut -= cut % 2;
+    const head = Buffer.from(pcm.subarray(0, cut));
+    const tail = Buffer.from(pcm.subarray(cut));
+    pcm.fill(0);
+    s.open.delete(w.participant);
+    queue.push({ session: s, window: { participant: w.participant, gen: w.gen, t0: w.t0, end: w.t0 + (head.length / BYTES_PER_SECOND) * 1000, parts: [head], bytes: head.length } });
+    s.pending++;
+    if (tail.length) {
+      const t0 = w.t0 + (cut / BYTES_PER_SECOND) * 1000;
+      s.open.set(w.participant, { participant: w.participant, gen: w.gen, t0, end: w.end, parts: [tail], bytes: tail.length });
+    }
+    pump();
   }
 
   function flush(s, participant) {

@@ -1,0 +1,15 @@
+meta {
+  name: This account's notes keys (public halves)
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/v1/meetings/keys
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}

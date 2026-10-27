@@ -321,6 +321,7 @@
         window.PigeonpostLive?.onReady(session); // Phase 6: a stream rejoins on the new session
         return;
       case "incoming": return onIncoming(data);
+      case "summary": window.PigeonpostCallsSummary?.onEvent(data); return; // Phase 7: meeting notes
       case "ring_ended":
         if (ring && ring.room === data.room) {
           const missed = ring;
@@ -433,6 +434,7 @@
       const placed = await post("/calls", { session, from: me.address, to: peer, kind, e2ee: canEncryptFrames });
       if (!room) { post(`/rooms/${placed.room}/leave`, { session }).catch(() => {}); return; }
       Object.assign(room, { id: placed.room, code: placed.code, you: placed.you, state: "ringing", topology: placed.topology || "mesh" });
+      window.PigeonpostCallsSummary?.joined(placed.room); // Phase 7: the host's notes offer may have come first
       setMembers(placed.participants);
       setStatus("Ringing…");
       startTone("ringback");
@@ -466,10 +468,12 @@
         if (!room) { if (joined.room) post(`/rooms/${joined.room}/leave`, { session }).catch(() => {}); return; }
         if (joined.participants) onJoined(joined);
         else Object.assign(room, { id: joined.room, code: joined.code, you: joined.you, state: "active" });
+        window.PigeonpostCallsSummary?.joined(room.id); // Phase 7
       } else {
         const placed = await post("/calls", { session, from: me.address, group_id: group.id, kind });
         if (!room) { post(`/rooms/${placed.room}/leave`, { session }).catch(() => {}); return; }
         Object.assign(room, { id: placed.room, code: placed.code, you: placed.you, state: "ringing" });
+        window.PigeonpostCallsSummary?.joined(room.id); // Phase 7
         setStatus("Ringing the group…");
         startTone("ringback");
       }
@@ -627,6 +631,7 @@
     }
     if (room.topology === "sfu") Sfu.enter();
     renderStage();
+    window.PigeonpostCallsSummary?.joined(data.room); // Phase 7
   }
 
   // ---- local media -----------------------------------------------------------------------------
@@ -728,6 +733,7 @@
       if (sent && !local.stream.getTracks().includes(sent)) local.stream.addTrack(sent);
     }
     updateSlot("audio");
+    window.PigeonpostCallsSummary?.micChanged(); // Phase 7: notes record the track that is sent
     if (oldSent && oldSent !== sent && oldSent !== raw) oldSent.stop();
     if (oldRaw && oldRaw !== raw) oldRaw.stop();
     return true;
@@ -832,6 +838,7 @@
     if (!local.mic) return;
     local.muted = !local.muted;
     local.mic.enabled = !local.muted;
+    window.PigeonpostCallsSummary?.muteChanged(); // Phase 7
     tellHost("muted", local.muted);
     broadcastState();
     showSelf();
@@ -1971,6 +1978,7 @@
     if (notify && ending.state === "waiting" && ending.knock && session) post("/knocks/withdraw", { session, knock: ending.knock }).catch(() => {}); // Phase 3B
     else if (notify && ending.id && session) post(`/rooms/${ending.id}/leave`, { session }).catch(() => {});
     Sfu.leave(ending);
+    window.PigeonpostCallsSummary?.left(); // Phase 7: capture stops with the call
     for (const p of [...peers.values()]) closePeer(p);
     hideShareIndicators();
     stopLocalMedia();
@@ -3182,6 +3190,12 @@
   }
 
   function wire() {
+    // Phase 7: meeting notes (calls-summary.js) see the room, the session and this device's own
+    // sent microphone track — nothing of anyone else's media.
+    window.PigeonpostCallsSummary?.attach({
+      room: () => room, session: () => session, mic: () => local.mic, muted: () => local.muted,
+      post, base: BASE, authHeader, toast, el, svg, isGuest: () => !memberToken(),
+    });
     if (PAGE === "join") { Join.init(); return; }
     // `?answer=<room>`: opened by an app that cannot hold a call itself (Linux) to answer one ring.
     try {

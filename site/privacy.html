@@ -87,7 +87,7 @@
 
   <h3>Voice and video calls</h3>
   <p>
-    When you start or answer a voice or video call, the app uses your microphone and, for video calls or screen sharing, your camera or the screen or window you choose. Audio, video, shared screens and in-call chat travel directly between the people in the call, encrypted end to end (DTLS-SRTP). When a direct connection is not possible they pass through our relay server, which forwards encrypted data it cannot read. We do not record or store call audio, video, shared screens or in-call chat. To set up calls and keep them reliable, our call service processes who is in a call (mailbox addresses, or the name a guest enters when asking to join through a meeting link), when the call starts and ends, and connection diagnostics (how many connection candidates of each type were tried and whether the relay was used; never network addresses or call content). Microphone, camera and screen access are optional and controlled by your device or operating system.
+    When you start or answer a voice or video call, the app uses your microphone and, for video calls or screen sharing, your camera or the screen or window you choose. Audio, video, shared screens and in-call chat travel directly between the people in the call, encrypted end to end (DTLS-SRTP). When a direct connection is not possible they pass through our relay server, which forwards encrypted data it cannot read. We do not record or store call audio, video, shared screens or in-call chat, except the microphone audio of people who explicitly agree to meeting notes, as described under <a href="#meeting-summaries">Meeting notes</a>. To set up calls and keep them reliable, our call service processes who is in a call (mailbox addresses, or the name a guest enters when asking to join through a meeting link), when the call starts and ends, and connection diagnostics (how many connection candidates of each type were tried and whether the relay was used; never network addresses or call content). Microphone, camera and screen access are optional and controlled by your device or operating system.
   </p>
 
   <h3>Live streams in groups</h3>
@@ -174,6 +174,23 @@
   </p>
   <p>
     <strong>Retention.</strong> Your own events stay until you delete or cancel them or delete your account. The address, name and notes of a person invited by contact address are erased 30 days after the event's last occurrence, its cancellation, or their removal; invitation links expire after at most 30 days, guest sessions after at most 24 hours and join tickets after 2 minutes. Delivery records are kept up to 90 days. Requests to stop invitations are kept as keyed fingerprints until you ask us to remove them. Copies held by Novu, Postmark, recipients' mailboxes and calendar apps follow their own retention and cannot be recalled by us.
+  </p>
+
+  <h3 id="meeting-summaries">Meeting notes</h3>
+  <p>
+    If meeting notes are enabled for their account, the person who started a call, or the host of a scheduled meeting, can ask for notes. Nothing is captured until <strong>everyone in the call</strong>, including guests, has been shown what will happen and has chosen <em>Agree</em>. Anyone can decline, or choose <em>Stop for me</em> at any time; capture then pauses for everyone until everyone present has agreed again, and declining never removes anyone from the call. When someone new joins, capture pauses before they hear anyone and stays paused until they have answered. While notes are on, every participant sees a notes indicator.
+  </p>
+  <p>
+    <strong>What is captured.</strong> Only the microphone of each person who agreed, captured by their own device. Nobody's device records anyone else's audio, video, shared screen or chat. Each device encrypts its audio for our notes service before sending it; our call service passes it on but cannot read it. A microphone can pick up other voices in the same room or from loudspeakers, so a nearby voice may end up in someone's audio; headphones avoid this. Speaker names in the notes come from whose device captured the audio, not from recognizing voices.
+  </p>
+  <p>
+    <strong>Who processes it.</strong> Our notes service runs on our own server. It decrypts the audio in memory, turns it into text with an open-source speech-to-text model (whisper.cpp), and writes a summary, decisions, action items and open questions with an open-source language model on the same server. No outside AI or cloud provider receives the audio, the transcript or the summary. The audio is never written to disk and is deleted as soon as it has been transcribed; if processing fails it is discarded, and nothing is kept longer than 24 hours. Audio from someone who chooses <em>Stop for me</em> that has not been transcribed yet is discarded.
+  </p>
+  <p>
+    <strong>Who receives the notes.</strong> Members in the call who agreed receive the summary and the full transcript, encrypted for their devices: each device that agreed, or that opened Meeting notes beforehand, holds its own key, and our server stores only the encrypted copy. People who join later and agree receive the notes of the whole meeting. Guests can agree but do not receive a copy. People who declined, people who were not in the call, and organization administrators do not receive the notes. Once the notes are made, our server keeps no readable transcript or summary.
+  </p>
+  <p>
+    <strong>Retention.</strong> The encrypted notes and the record of who agreed are kept for 90 days and then deleted automatically. Each attendee can delete their own copy sooner; when the last attendee deletes theirs, the notes are deleted. Copies attendees make themselves, for example by copying the text, are theirs. Our records of the meeting (who asked for notes, who agreed or declined and when, and the size of the result) contain no audio or text.
   </p>
 
   <h2>3. Sender attribution</h2>
@@ -325,6 +342,12 @@
       <td>To run the calendars and scheduled meetings you create or are invited to</td>
       <td>Performance of the service you requested (GDPR Art. 6(1)(b)); for people invited by contact address, the organizer's legitimate interest in inviting them (Art. 6(1)(f))</td>
       <td>Your events until you delete them or your account; contact addresses, names and notes of invited guests erased <strong>30 days</strong> after the event's last occurrence, cancellation or their removal; delivery records 90 days; requests to stop invitations kept as keyed fingerprints</td>
+    </tr>
+    <tr>
+      <td>Meeting notes: consent answers, encrypted summaries and transcripts, and call audio only while it is transcribed</td>
+      <td>To give the people who agreed a summary and transcript of their call</td>
+      <td>Consent of every participant (GDPR Art. 6(1)(a)), which anyone can withdraw during the call</td>
+      <td>Audio deleted once transcribed and never kept longer than <strong>24 hours</strong>; encrypted notes and consent records <strong>90 days</strong>, or until each attendee deletes their copy</td>
     </tr>
     <tr>
       <td>Profile pictures</td>

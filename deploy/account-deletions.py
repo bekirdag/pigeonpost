@@ -64,6 +64,12 @@ def erase(conn, request_id, blob_root, evidence):
             if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone():
                 conn.execute("UPDATE " + table + " SET account_id=? WHERE account_id=?", ("erased_" + request_id, account))
         conn.execute("UPDATE namespaces SET provider_ref=? WHERE provider_ref=?", ("plan:erased_" + request_id, "plan:" + account))
+        # Meeting notes (Phase 7): the account's notes keys, its wrapped copies and its attendance go.
+        # A meeting it hosted keeps the other attendees' copies but no longer names the host.
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='meeting_notes_keys'").fetchone():
+            for table in ("meeting_notes_keys", "meeting_brief_keys", "meeting_attendees"):
+                conn.execute("DELETE FROM " + table + " WHERE account_id=?", (account,))
+            conn.execute("UPDATE meetings SET host_account=?, host_address='erased' WHERE host_account=?", ("erased_" + request_id, account))
         conn.execute("INSERT OR IGNORE INTO erased_member_subjects VALUES (?,?)", (hashlib.sha256(subject.encode()).digest(), now))
         conn.execute("DELETE FROM accounts WHERE id=?", (account,))
         # Report/evidence records are retained only where the operator identified a security need.

@@ -220,7 +220,8 @@ test("stop for me: a participant's unprocessed audio is discarded and their in-f
   await send(r.intel, s, o, "pid_bbbbbbbbbbbb", 1, "loud:10:3", 29_000); // open window
   await tick();
   assert.deepEqual(r.intel.discard(s, { participant: "pid_bbbbbbbbbbbb" }), { discarded: 2 });
-  assert.deepEqual(r.intel.discard(s, { participant: "pid_aaaaaaaaaaaa" }), { discarded: 0 }); // the one in flight
+  // A's window is in whisper; the remainder after its pause cut is still open and goes too.
+  assert.deepEqual(r.intel.discard(s, { participant: "pid_aaaaaaaaaaaa" }), { discarded: 1 });
   release();
   await r.intel.finish(s, "host_stopped");
   // Nothing of B made it, and A's in-flight window was dropped too.
