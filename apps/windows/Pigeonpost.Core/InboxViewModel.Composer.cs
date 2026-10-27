@@ -79,6 +79,7 @@ public sealed partial class InboxViewModel
     public string ComposerActionTitle => !HasComposerAction ? "" : IsEditingMessage ? "Editing message" : "Replying to message";
     public string ComposerActionQuote => HasComposerAction ? composerMode!.Quote : "";
     public string ComposerActionProblem => HasComposerAction ? ComposerProblem(composerMode!) ?? "" : "";
+    public bool HasComposerActionProblem => ComposerActionProblem.Length > 0;
     public string ComposerPlaceholder => IsEditingMessage ? "Edit this message…" : "Write a message…";
     public string SendActionLabel => IsEditingMessage ? "Save edit" : "Send";
     public bool CanAttachFiles => CanCompose && !IsEditingMessage;
@@ -145,6 +146,6 @@ public sealed partial class InboxViewModel
     private void NotifyComposerAction()
     {
         foreach (var name in new[] { nameof(HasComposerAction), nameof(IsEditingMessage), nameof(ComposerActionTitle), nameof(ComposerActionQuote),
-            nameof(ComposerActionProblem), nameof(ComposerPlaceholder), nameof(SendActionLabel), nameof(CanAttachFiles), nameof(CanSendDraft), nameof(CanReplyToMessage) }) Changed(name);
+            nameof(ComposerActionProblem), nameof(HasComposerActionProblem), nameof(ComposerPlaceholder), nameof(SendActionLabel), nameof(CanAttachFiles), nameof(CanSendDraft), nameof(CanReplyToMessage) }) Changed(name);
     }
 }
