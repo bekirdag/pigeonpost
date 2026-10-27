@@ -57,7 +57,20 @@ internal static class CalendarPostbox
             var invitations = await other.GetCalendarInvitationsAsync(peer);
             Check(invitations.Count == 1 && invitations.Single().EventId == detail.Event.Id && (await other.GetCalendarInvitationsAsync(peer, true)).Count == 0);
             _ = await api.GetCalendarSettingsAsync(own);
-            Console.WriteLine("PASS Windows calendar postbox interoperability: empty reads, protected folder/event creation, exact committed-loss replay, one occurrence, owned details, invitation separation and settings.");
+            stage = "calendar controller committed-loss recovery";
+            using var model = new CalendarStore(loss, loss, restarted);
+            await model.ActivateAsync(own, await loss.GetCapabilitiesAsync(default));
+            Check(model.State.Enabled && model.State.CanCreate && model.State.Folders.Count == 1);
+            using var action = model.CaptureView()?.BeginAction() ?? throw new InvalidOperationException();
+            var controllerBody = CalendarWritePayload.From(new { request_key = "controller_" + Guid.NewGuid().ToString("N"), title = "Windows controller real postbox fixture",
+                all_day = false, start = day + "T11:00", end = day + "T12:00", tzid = "Europe/Istanbul" });
+            await Control(http, proxy, "after");
+            Check(await model.CreateAsync(action, CalendarAttemptKind.Event, controllerBody) is null && !model.State.Busy && model.State.Pending.Count == 1);
+            var reviewed = model.State.Pending.Single(); await Control(http, proxy, "off");
+            Check(await model.RetryAsync(action, reviewed) is not null && model.State.Pending.Count == 0 && !model.State.Busy);
+            await Attempts(http, proxy, reviewed.Id);
+            Check((await api.GetCalendarOccurrencesAsync(own, range.Start, range.End)).Count(o => o.Title == "Windows controller real postbox fixture") == 1);
+            Console.WriteLine("PASS Windows calendar postbox interoperability: empty reads, protected folder/event creation, exact committed-loss replay, one occurrence, owned details, invitation separation, settings and controller recovery.");
             return 0;
         }
         catch (Exception error)
