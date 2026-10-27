@@ -1,0 +1,31 @@
+meta {
+  name: Delete a webhook
+  type: http
+  seq: 3
+}
+
+delete {
+  url: {{baseUrl}}/webhooks/:webhook
+  body: none
+  auth: bearer
+}
+
+params:path {
+  webhook: wh_l2v6a376dfbkghh3usy7oy7hm5
+}
+
+headers {
+  ~Idempotency-Key: replace-with-a-unique-key
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  Deletes the webhook; pending deliveries are cancelled.
+
+  Scope: `webhooks:write`.
+
+  Errors: `unauthorized` (401), `ip_not_allowed` (403), `insufficient_scope` (403), `forbidden` (403), `not_found` (404), `feature_disabled` (404), `org_inactive` (409), `org_read_only` (409), `idempotency_conflict` (409), `rate_limited` (429), `store_error` (500).
+}

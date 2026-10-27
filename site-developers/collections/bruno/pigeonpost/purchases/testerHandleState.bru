@@ -1,0 +1,15 @@
+meta {
+  name: Complimentary tester handle offer and current holding
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/v1/claims/test
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}

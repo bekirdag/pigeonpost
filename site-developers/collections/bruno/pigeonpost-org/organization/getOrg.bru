@@ -1,0 +1,23 @@
+meta {
+  name: Get the organization
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/org
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  Name, namespace, status, seats and agents used and their limits, plan and settings.
+
+  Scope: `org:read`.
+
+  Errors: `unauthorized` (401), `ip_not_allowed` (403), `insufficient_scope` (403), `forbidden` (403), `feature_disabled` (404), `org_inactive` (409), `rate_limited` (429), `store_error` (500).
+}

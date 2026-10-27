@@ -1,0 +1,38 @@
+meta {
+  name: Create a webhook
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/webhooks
+  body: json
+  auth: bearer
+}
+
+headers {
+  ~Idempotency-Key: replace-with-a-unique-key
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "url": "https://siem.example.com/hooks/pigeonpost",
+    "events": [
+      "member.joined",
+      "member.removed"
+    ],
+    "description": "SIEM"
+  }
+}
+
+docs {
+  Registers an HTTPS endpoint for the given events (or `["*"]`). The signing secret is returned once (`no-store`). At most 10 per org. The URL's host is resolved now and at every delivery; private, loopback, link-local and other non-public addresses are refused.
+
+  Scope: `webhooks:write`.
+
+  Errors: `invalid_webhook_url` (400), `bad_request` (400), `unauthorized` (401), `ip_not_allowed` (403), `insufficient_scope` (403), `forbidden` (403), `feature_disabled` (404), `webhook_limit` (409), `org_inactive` (409), `org_read_only` (409), `idempotency_conflict` (409), `rate_limited` (429), `store_error` (500).
+}

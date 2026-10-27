@@ -1,0 +1,25 @@
+meta {
+  name: Request deletion of this account and its data
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/v1/account/deletion-request
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "confirm": false
+  }
+}
+
+docs {
+  Idempotent; retries return the original receipt and cannot postpone its deadline.
+}

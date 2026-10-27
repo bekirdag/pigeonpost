@@ -1,0 +1,31 @@
+meta {
+  name: Delete a rule
+  type: http
+  seq: 4
+}
+
+delete {
+  url: {{baseUrl}}/rules/:rule
+  body: none
+  auth: bearer
+}
+
+params:path {
+  rule: rule_unpvkpyglae5zpxsyrifunjcqi
+}
+
+headers {
+  ~Idempotency-Key: replace-with-a-unique-key
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  Rules an API key created, or rules that grant trust (removing a grant lowers trust). Deleting a restriction a person made is `human_required`.
+
+  Scope: `rules:write`.
+
+  Errors: `unauthorized` (401), `ip_not_allowed` (403), `insufficient_scope` (403), `forbidden` (403), `human_required` (403), `not_found` (404), `feature_disabled` (404), `org_inactive` (409), `org_read_only` (409), `idempotency_conflict` (409), `rate_limited` (429), `store_error` (500).
+}

@@ -1,0 +1,19 @@
+meta {
+  name: Active devices of a mailbox the caller shares a group with
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/v1/mls/devices
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+}

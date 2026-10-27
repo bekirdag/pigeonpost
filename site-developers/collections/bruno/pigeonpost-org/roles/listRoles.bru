@@ -1,0 +1,23 @@
+meta {
+  name: List roles
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/roles
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  Each role, what it allows, and who holds it. Not paginated: `next_cursor` is always null. Role changes stay on the dashboard (owner with step-up).
+
+  Scope: `org:read`.
+
+  Errors: `unauthorized` (401), `ip_not_allowed` (403), `insufficient_scope` (403), `forbidden` (403), `feature_disabled` (404), `org_inactive` (409), `rate_limited` (429), `store_error` (500).
+}

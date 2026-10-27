@@ -1,0 +1,22 @@
+meta {
+  name: Report a picture to the operator
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/v1/report-avatar
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "address": "string",
+    "identity": "string"
+  }
+}

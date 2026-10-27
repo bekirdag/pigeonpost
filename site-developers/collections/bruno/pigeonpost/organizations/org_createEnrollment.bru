@@ -1,0 +1,28 @@
+meta {
+  name: Create enrollment
+  type: http
+  seq: 36
+}
+
+post {
+  url: {{baseUrl}}/v1/orgs/:id/agents/:address/enrollments
+  body: json
+  auth: bearer
+}
+
+params:path {
+  id: 
+  address: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {}
+}
+
+docs {
+  See docs/orgs.md. Requires the `orgs` feature flag. Needs a recent strong sign-in (`step_up_required` with `acr_values` and `max_age`). A person signed in (member token); automation gets `human_required`.
+}

@@ -1,0 +1,36 @@
+meta {
+  name: Set the acting mailbox's stranger defaults and filtering settings
+  type: http
+  seq: 6
+}
+
+put {
+  url: {{baseUrl}}/v1/policy
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "read_receipts": false,
+    "accept_all": false,
+    "auto_accept_known": false,
+    "unknown_calls": "ring",
+    "unnamed_calls": "ring",
+    "unnamed_messages": "show",
+    "unknown_messages": "show",
+    "low_reputation": "filter",
+    "group_members_known": false,
+    "call_history_days": 0,
+    "identity": "string"
+  }
+}
+
+docs {
+  Any subset of fields. All values are validated before anything is written
+  (`invalid_policy`). Agents (MCP) may only make settings stricter. Returns the whole policy.
+}

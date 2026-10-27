@@ -1,0 +1,23 @@
+meta {
+  name: Report the sender of a received message, or the caller of an incoming call, as spam
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/v1/report-spam
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "message_id": "string",
+    "call_id": "string",
+    "identity": "string"
+  }
+}

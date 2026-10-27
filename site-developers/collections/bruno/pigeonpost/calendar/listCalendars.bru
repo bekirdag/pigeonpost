@@ -1,0 +1,19 @@
+meta {
+  name: The acting mailbox's calendars
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/v1/calendars
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  See docs/calendar.md. Requires the `calendar` feature flag.
+}

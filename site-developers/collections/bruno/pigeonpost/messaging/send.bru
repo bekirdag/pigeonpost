@@ -1,0 +1,32 @@
+meta {
+  name: Seal and deliver a message to a hosted recipient
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/v1/send
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "to": "string",
+    "body": "string",
+    "from": "string",
+    "thread_id": "string",
+    "thread": "string",
+    "attachments": [
+      "string"
+    ],
+    "msg_ref": "string",
+    "reply_to": "string",
+    "quote": "string",
+    "edit_of": "string"
+  }
+}

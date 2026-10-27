@@ -1,0 +1,21 @@
+meta {
+  name: Register a name within the account's Pigeonpost Cloud web plan
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/v1/claims/plan
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "namespace": "string"
+  }
+}

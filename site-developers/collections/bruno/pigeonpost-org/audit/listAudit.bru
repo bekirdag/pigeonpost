@@ -1,0 +1,28 @@
+meta {
+  name: Read the audit log
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/audit?since=2026-10-27T00:00:00Z&action=member.
+  body: none
+  auth: bearer
+}
+
+params:query {
+  since: 2026-10-27T00:00:00Z
+  action: member.
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  Oldest first, for SIEM streaming. Start with `since`, then follow `next_cursor`; store the last cursor and resume from it. Every API request is itself audited as `api_key.use`.
+
+  Scope: `audit:read`.
+
+  Errors: `invalid_cursor` (400), `unauthorized` (401), `ip_not_allowed` (403), `insufficient_scope` (403), `forbidden` (403), `feature_disabled` (404), `org_inactive` (409), `rate_limited` (429), `store_error` (500).
+}

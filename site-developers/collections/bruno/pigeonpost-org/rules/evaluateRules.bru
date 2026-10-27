@@ -1,0 +1,35 @@
+meta {
+  name: Evaluate rules (dry run)
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/rules/evaluate
+  body: json
+  auth: bearer
+}
+
+headers {
+  ~Idempotency-Key: replace-with-a-unique-key
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "from": "/k/7ycq4bnzr2hvd6m5xk3p2a4t7e",
+    "to": "/acme/ci-bot",
+    "verb": "deploy"
+  }
+}
+
+docs {
+  What would happen if `from` sent to `to` (optionally with `verb`), exactly as the dashboard's rule tester. Changes nothing.
+
+  Scope: `org:read`.
+
+  Errors: `bad_request` (400), `unauthorized` (401), `ip_not_allowed` (403), `insufficient_scope` (403), `forbidden` (403), `feature_disabled` (404), `org_inactive` (409), `idempotency_conflict` (409), `rate_limited` (429), `store_error` (500).
+}

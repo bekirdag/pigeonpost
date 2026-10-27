@@ -1,0 +1,29 @@
+meta {
+  name: This device lost its group state; re-add it
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/v1/groups/:id/resync
+  body: json
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "request_key": "string"
+  }
+}
+
+docs {
+  See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+}

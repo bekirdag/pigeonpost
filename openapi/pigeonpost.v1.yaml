@@ -7208,6 +7208,380 @@ paths:
           $ref: '#/components/responses/GroupError'
         '409':
           $ref: '#/components/responses/GroupError'
+  /v1/orgs/{id}/api-keys:
+    get:
+      tags: [organizations]
+      operationId: org_apiKeys
+      summary: List org API keys
+      description: 'See docs/org-api.md §1. Requires the `orgs` and `org_api` feature flags. Owner or admin, a person signed in (member token). Never returns a secret.'
+      security:
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The org's API keys, live and revoked.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [keys]
+                properties:
+                  keys:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/OrgApiKey'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+    post:
+      tags: [organizations]
+      operationId: org_createApiKey
+      summary: Create org API key
+      description: 'See docs/org-api.md §1. Requires the `orgs` and `org_api` feature flags. Owner or admin with a recent strong sign-in (`step_up_required` with `acr_values` and `max_age`; `403 step_up_unavailable` when the server has no strong-auth `acr` configured). `send_as` is required with `messages:send` and must be an active org agent. The secret is returned once (`Cache-Control: no-store`) and stored only as SHA-256. At most 25 live keys per org. A person signed in (member token); automation gets `human_required`.'
+      security:
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, scopes]
+              additionalProperties: false
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 100
+                scopes:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: string
+                    enum: ['org:read', 'members:write', 'agents:write', 'rules:write', 'rooms:write', 'messages:send', 'audit:read', 'webhooks:write']
+                expires_in_days:
+                  type: integer
+                  minimum: 1
+                  maximum: 730
+                ip_allowlist:
+                  type: array
+                  maxItems: 20
+                  items:
+                    type: string
+                    description: IPv4 or IPv6 CIDR range.
+                send_as:
+                  type: string
+                  description: Org agent handle, e.g. `/acme/ci-bot`. Required with `messages:send`.
+            example:
+              name: HR onboarding
+              scopes: ['org:read', 'members:write']
+              expires_in_days: 365
+              ip_allowlist: [203.0.113.0/24]
+      responses:
+        '201':
+          description: Created. The secret is shown only in this response.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [key, secret]
+                properties:
+                  key:
+                    $ref: '#/components/schemas/OrgApiKey'
+                  secret:
+                    type: string
+                    description: '`pk_org_` followed by 32 characters.'
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/orgs/{id}/api-keys/{key_id}:
+    delete:
+      tags: [organizations]
+      operationId: org_revokeApiKey
+      summary: Revoke org API key
+      description: 'See docs/org-api.md §1. Requires the `orgs` and `org_api` feature flags. Owner or admin, a person signed in (member token). Revokes immediately; audited as `api_key.revoke`.'
+      security:
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: key_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Revoked.
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+  /v1/orgs/{id}/webhooks:
+    get:
+      tags: [organizations]
+      operationId: org_webhooks
+      summary: List webhooks
+      description: 'See docs/org-api.md §3 and §6. Requires the `orgs` and `org_api` feature flags. Owner or admin, a person signed in (member token).'
+      security:
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [webhooks]
+                properties:
+                  webhooks:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/OrgWebhook'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+    post:
+      tags: [organizations]
+      operationId: org_createWebhook
+      summary: Create webhook
+      description: 'See docs/org-api.md §6. Requires the `orgs` and `org_api` feature flags. Owner or admin, a person signed in (member token); no step-up. The URL must be `https://` on port 443 or 8443 and resolve only to public addresses (`invalid_webhook_url`). At most 10 per org (`webhook_limit`). The signing secret is returned once (`Cache-Control: no-store`).'
+      security:
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url, events]
+              additionalProperties: false
+              properties:
+                url:
+                  type: string
+                  format: uri
+                  maxLength: 2048
+                events:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: string
+                    description: An event type such as `member.joined`, or `*` for every event.
+                description:
+                  type: string
+                  maxLength: 200
+            example:
+              url: https://siem.example.com/hooks/pigeonpost
+              events: [member.joined, member.removed]
+              description: SIEM
+      responses:
+        '201':
+          description: Created. The secret is shown only in this response.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [webhook, secret]
+                properties:
+                  webhook:
+                    $ref: '#/components/schemas/OrgWebhook'
+                  secret:
+                    type: string
+                    description: '`whsec_…` signing secret.'
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/orgs/{id}/webhooks/{webhook}:
+    delete:
+      tags: [organizations]
+      operationId: org_deleteWebhook
+      summary: Delete webhook
+      description: 'See docs/org-api.md §3. Requires the `orgs` and `org_api` feature flags. Owner or admin, a person signed in (member token). Pending deliveries are cancelled.'
+      security:
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: webhook
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deleted]
+                properties:
+                  deleted:
+                    type: boolean
+                    const: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+  /v1/orgs/{id}/webhooks/{webhook}/rotate:
+    post:
+      tags: [organizations]
+      operationId: org_rotateWebhook
+      summary: Rotate webhook secret
+      description: 'See docs/org-api.md §6. Requires the `orgs` and `org_api` feature flags. Owner or admin, a person signed in (member token). The new secret is returned once (`Cache-Control: no-store`); the old one keeps signing for 24 hours.'
+      security:
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: webhook
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Rotated.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [webhook, secret, previous_secret_expires_at]
+                properties:
+                  webhook:
+                    $ref: '#/components/schemas/OrgWebhook'
+                  secret:
+                    type: string
+                    description: The new `whsec_…` signing secret.
+                  previous_secret_expires_at:
+                    type: integer
+                    description: Unix seconds.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+  /v1/orgs/{id}/webhooks/{webhook}/deliveries:
+    get:
+      tags: [organizations]
+      operationId: org_webhookDeliveries
+      summary: Webhook delivery attempts
+      description: 'See docs/org-api.md §6. Requires the `orgs` and `org_api` feature flags. Owner or admin, a person signed in (member token). Newest first.'
+      security:
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: webhook
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deliveries]
+                properties:
+                  deliveries:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/OrgWebhookDelivery'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
   /v1/device-pairings:
     post:
       tags: [device-login]
@@ -8590,6 +8964,55 @@ components:
         billing_ref: {type: [string, 'null']}
         period_end: {type: [integer, 'null']}
         created_at: {type: integer}
+    OrgApiKey:
+      type: object
+      description: An org API key as the dashboard shows it (docs/org-api.md §1). Never the secret. Timestamps are Unix seconds.
+      properties:
+        id: {type: string, description: '`okey_…`'}
+        name: {type: string}
+        scopes: {type: array, items: {type: string}}
+        last4: {type: string}
+        send_as: {type: [string, 'null']}
+        ip_allowlist: {type: array, items: {type: string}}
+        created_at: {type: integer}
+        created_by: {type: [string, 'null'], description: Member handle of the creator.}
+        expires_at: {type: [integer, 'null']}
+        last_used_at: {type: [integer, 'null']}
+        revoked_at: {type: [integer, 'null']}
+    OrgWebhook:
+      type: object
+      description: An org webhook (docs/org-api.md §3). Timestamps are Unix seconds.
+      properties:
+        id: {type: string, description: '`wh_…`'}
+        url: {type: string}
+        events: {type: array, items: {type: string}}
+        description: {type: [string, 'null']}
+        status: {type: string, enum: [active]}
+        created_at: {type: integer}
+        created_by: {type: [string, 'null']}
+        rotated_at: {type: [integer, 'null']}
+        previous_secret_expires_at: {type: [integer, 'null']}
+        last_delivery:
+          oneOf:
+            - type: object
+              properties:
+                at: {type: integer}
+                status: {type: string, enum: [delivered, failed, retrying, blocked]}
+                response_status: {type: [integer, 'null']}
+            - type: 'null'
+    OrgWebhookDelivery:
+      type: object
+      description: One webhook delivery attempt. `at` is Unix seconds.
+      properties:
+        id: {type: string, description: '`whd_…`'}
+        event_id: {type: string}
+        event_type: {type: string}
+        attempt: {type: integer}
+        status: {type: string, enum: [delivered, failed, retrying, blocked]}
+        response_status: {type: [integer, 'null']}
+        error: {type: [string, 'null']}
+        duration_ms: {type: [integer, 'null']}
+        at: {type: integer}
     Error:
       type: object
       required: [error]

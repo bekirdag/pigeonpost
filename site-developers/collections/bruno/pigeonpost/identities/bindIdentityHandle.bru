@@ -1,0 +1,23 @@
+meta {
+  name: Give an existing mailbox a handle
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/v1/identities/handle
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "address": "string",
+    "handle": "string",
+    "capability_token": "string"
+  }
+}

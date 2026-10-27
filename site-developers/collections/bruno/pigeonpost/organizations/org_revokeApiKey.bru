@@ -1,0 +1,24 @@
+meta {
+  name: Revoke org API key
+  type: http
+  seq: 44
+}
+
+delete {
+  url: {{baseUrl}}/v1/orgs/:id/api-keys/:key_id
+  body: none
+  auth: bearer
+}
+
+params:path {
+  id: 
+  key_id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  See docs/org-api.md §1. Requires the `orgs` and `org_api` feature flags. Owner or admin, a person signed in (member token). Revokes immediately; audited as `api_key.revoke`.
+}

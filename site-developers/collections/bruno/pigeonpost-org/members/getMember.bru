@@ -1,0 +1,27 @@
+meta {
+  name: Get a member
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/members/:member
+  body: none
+  auth: bearer
+}
+
+params:path {
+  member: john
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  One member.
+
+  Scope: `org:read`.
+
+  Errors: `unauthorized` (401), `ip_not_allowed` (403), `insufficient_scope` (403), `forbidden` (403), `not_found` (404), `feature_disabled` (404), `org_inactive` (409), `rate_limited` (429), `store_error` (500).
+}

@@ -1,0 +1,22 @@
+meta {
+  name: Clear the missed-call badge up to a time
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/v1/calls/log/seen
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "up_to": 0,
+    "identity": "string"
+  }
+}

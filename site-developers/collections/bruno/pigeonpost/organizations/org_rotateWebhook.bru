@@ -1,0 +1,24 @@
+meta {
+  name: Rotate webhook secret
+  type: http
+  seq: 48
+}
+
+post {
+  url: {{baseUrl}}/v1/orgs/:id/webhooks/:webhook/rotate
+  body: none
+  auth: bearer
+}
+
+params:path {
+  id: 
+  webhook: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  See docs/org-api.md §6. Requires the `orgs` and `org_api` feature flags. Owner or admin, a person signed in (member token). The new secret is returned once (`Cache-Control: no-store`); the old one keeps signing for 24 hours.
+}

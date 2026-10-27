@@ -1,0 +1,19 @@
+meta {
+  name: Limited preview of one's invitation
+  type: http
+  seq: 25
+}
+
+post {
+  url: {{baseUrl}}/v1/calendar/guest/preview
+  body: json
+  auth: none
+}
+
+body:json {
+  {}
+}
+
+docs {
+  Guest route (no Pigeonpost account): see docs/calendar.md §6. Purpose-bound credentials in the body; refusals are a generic `guest_token_invalid`.
+}

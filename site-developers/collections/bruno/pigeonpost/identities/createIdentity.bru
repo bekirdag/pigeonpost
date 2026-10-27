@@ -1,0 +1,31 @@
+meta {
+  name: Create a mailbox
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/v1/identities
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "pow_challenge": "string",
+    "pow_solution": "string",
+    "label": "string",
+    "handle": "string"
+  }
+}
+
+docs {
+  With an API key or member token: created under that account, no proof-of-work, optionally
+  under a `handle` the account is authorised for. Anonymous (no bearer): proof-of-work and the
+  per-IP mint budget apply, `handle` is ignored, and the mailbox is ephemeral. A capability
+  token cannot create mailboxes (400 `use_api_key`).
+}

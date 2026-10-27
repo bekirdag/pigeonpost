@@ -380,7 +380,7 @@ pub(crate) async fn identity_for_device_token(
 
 // ---- agents ------------------------------------------------------------------------------------
 
-fn agent_json(c: &Connection, org_id: &str, identity: &str, now: u64) -> GResult<Value> {
+pub(crate) fn agent_json(c: &Connection, org_id: &str, identity: &str, now: u64) -> GResult<Value> {
     let (handle, label, status, created_at, last_seen): (String, Option<String>, String, i64, Option<i64>) = c.query_row(
         "SELECT handle, label, status, created_at, last_seen_at FROM org_agents WHERE org_id = ?1 AND identity = ?2",
         params![org_id, identity],
@@ -410,7 +410,7 @@ fn agent_json(c: &Connection, org_id: &str, identity: &str, now: u64) -> GResult
     }))
 }
 
-fn agent_in_org(c: &Connection, org_id: &str, address: &str) -> GResult<String> {
+pub(crate) fn agent_in_org(c: &Connection, org_id: &str, address: &str) -> GResult<String> {
     let found: Option<String> = c
         .query_row(
             "SELECT identity FROM org_agents WHERE org_id = ?1 AND (identity = ?2 OR handle = ?2) AND status <> 'deleted'",
@@ -462,7 +462,7 @@ struct AgentReq {
     operators: Vec<String>,
 }
 
-fn label_ok(l: Option<&str>) -> GResult<Option<String>> {
+pub(crate) fn label_ok(l: Option<&str>) -> GResult<Option<String>> {
     match l.map(str::trim).filter(|l| !l.is_empty()) {
         None => Ok(None),
         Some(l) if l.chars().count() <= 80 && !l.chars().any(char::is_control) => {
@@ -477,7 +477,7 @@ fn label_ok(l: Option<&str>) -> GResult<Option<String>> {
 
 /// Create an agent inside a transaction (route and pairing approval share it).
 #[allow(clippy::too_many_arguments)]
-fn create_agent_in(
+pub(crate) fn create_agent_in(
     tx: &Connection,
     vault: &crate::vault::Vault,
     o: &org::OrgRow,

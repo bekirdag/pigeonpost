@@ -1,0 +1,30 @@
+meta {
+  name: Notification and mute settings
+  type: http
+  seq: 21
+}
+
+put {
+  url: {{baseUrl}}/v1/groups/:id/notifications
+  body: json
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "notify": "string",
+    "muted_until": 0
+  }
+}
+
+docs {
+  See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+}

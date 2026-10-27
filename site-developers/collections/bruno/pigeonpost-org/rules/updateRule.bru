@@ -1,0 +1,37 @@
+meta {
+  name: Update a rule
+  type: http
+  seq: 3
+}
+
+patch {
+  url: {{baseUrl}}/rules/:rule
+  body: json
+  auth: bearer
+}
+
+params:path {
+  rule: rule_unpvkpyglae5zpxsyrifunjcqi
+}
+
+headers {
+  ~Idempotency-Key: replace-with-a-unique-key
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "priority": 50
+  }
+}
+
+docs {
+  Only rules an API key created; the result must stay restrictive (`human_required` otherwise).
+
+  Scope: `rules:write`.
+
+  Errors: `invalid_rule` (400), `bad_request` (400), `unauthorized` (401), `ip_not_allowed` (403), `insufficient_scope` (403), `forbidden` (403), `human_required` (403), `not_found` (404), `feature_disabled` (404), `org_inactive` (409), `org_read_only` (409), `idempotency_conflict` (409), `rate_limited` (429), `store_error` (500).
+}

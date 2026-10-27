@@ -1,0 +1,26 @@
+meta {
+  name: Picture bytes, authorized on every request
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/v1/avatar-blobs/:id/:version/:file
+  body: none
+  auth: bearer
+}
+
+params:path {
+  id: 
+  version: 
+  file: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  `everyone` pictures answer without credentials with `Cache-Control: public, max-age=31536000,
+  immutable`; others need the caller's credential and answer `private, max-age=300`.
+}

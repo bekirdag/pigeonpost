@@ -1,0 +1,24 @@
+meta {
+  name: Devices
+  type: http
+  seq: 37
+}
+
+get {
+  url: {{baseUrl}}/v1/orgs/:id/agents/:address/devices
+  body: none
+  auth: bearer
+}
+
+params:path {
+  id: 
+  address: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  See docs/orgs.md. Requires the `orgs` feature flag. A person signed in (member token); automation gets `human_required`.
+}

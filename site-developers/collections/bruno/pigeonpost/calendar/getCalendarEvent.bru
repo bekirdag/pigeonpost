@@ -1,0 +1,23 @@
+meta {
+  name: One event, or `{id}.ics` for the caller's iCalendar copy
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/v1/calendar/events/:id
+  body: none
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  See docs/calendar.md. Requires the `calendar` feature flag.
+}

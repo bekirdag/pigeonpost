@@ -1,0 +1,26 @@
+meta {
+  name: Set the picture from a raw image
+  type: http
+  seq: 2
+}
+
+put {
+  url: {{baseUrl}}/v1/profile/avatar
+  body: none
+  auth: bearer
+}
+
+headers {
+  Content-Type: image/*
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  The body is the image itself (JPEG, PNG or WebP, at most 10 MB; convert HEIC on the
+  device). The server decodes it in an isolated worker, strips every piece of metadata,
+  crops a square and stores WebP at 64/128/256/512 px plus a 256 px JPEG. Five changes per
+  mailbox per day.
+}

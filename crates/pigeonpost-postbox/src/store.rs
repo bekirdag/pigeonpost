@@ -27,6 +27,7 @@ mod googleplay;
 mod groups;
 mod lifecycle;
 mod msgactions;
+mod org_api;
 mod org_model;
 mod orgs;
 pub use audit::AuditRow;
@@ -983,6 +984,9 @@ impl Store {
         }
         // Organizations (Phase 4): additive tables plus three columns on `orgs`.
         org_model::migrate(&conn)?;
+        // Enterprise API (Phase 5): keys, idempotency, webhooks and the event triggers, which need
+        // the org, group and device tables above.
+        org_api::migrate(&conn)?;
         // Mirror provider state into the unified entitlements table. Idempotent; it never changes
         // namespaces or the provider tables, so an older binary that ignores the table is unaffected.
         {

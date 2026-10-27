@@ -1,0 +1,23 @@
+meta {
+  name: Whether a secret feed is on (never the link)
+  type: http
+  seq: 20
+}
+
+get {
+  url: {{baseUrl}}/v1/calendar/feeds/:calendar_id
+  body: none
+  auth: bearer
+}
+
+params:path {
+  calendar_id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  See docs/calendar.md. Requires the `calendar` feature flag.
+}

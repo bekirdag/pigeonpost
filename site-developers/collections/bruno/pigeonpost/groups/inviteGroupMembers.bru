@@ -1,0 +1,30 @@
+meta {
+  name: Invite mailboxes (admins, or members when allowed)
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/v1/groups/:id/members
+  body: json
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "request_key": "string",
+    "invite": []
+  }
+}
+
+docs {
+  See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+}

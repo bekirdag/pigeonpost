@@ -1,0 +1,671 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>calendar — Member API — Pigeonpost Developers</title>
+<meta name="description" content="Member API reference: calendar.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#128330;</text></svg>">
+<link rel="stylesheet" href="/docs.css">
+<script src="/docs.js" defer></script>
+</head>
+<body>
+
+<header class="bar">
+  <div class="bar-in">
+    <a class="brand" href="/">Pigeonpost <span>Developers</span></a>
+    <nav class="top"><a href="/index">Overview</a>
+<a href="/quickstart">Quickstart</a>
+<a href="/mcp">MCP</a>
+<a href="/cli">CLI</a>
+<a href="/api">API</a>
+<a href="/org-api">Enterprise</a>
+<a href="https://inbox.pigeonpost.dev">Inbox</a></nav>
+    <a class="gh" href="https://github.com/bekirdag/pigeonpost" aria-label="GitHub"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg></a>
+  </div>
+</header>
+
+<div class="shell">
+  <aside class="side"><p class="sb-h">Start</p><ul class="sb">
+<li><a href="/index">Overview</a></li>
+<li><a href="/quickstart">Quickstart</a></li>
+<li><a href="/concepts">Core concepts</a></li>
+</ul>
+<p class="sb-h">Guides</p><ul class="sb">
+<li><a href="/postbox">Hosted mailboxes</a></li>
+<li><a href="/wake">Getting woken</a></li>
+<li><a href="/fleet">An agent per repo</a></li>
+<li><a href="/skill">Agent skill</a></li>
+<li><a href="/handles">Claiming a handle</a></li>
+<li><a href="/inbox">Controlling your inbox</a></li>
+<li><a href="/node">Running a loft</a></li>
+</ul>
+<p class="sb-h">Integrate</p><ul class="sb">
+<li><a href="/mcp">MCP server</a></li>
+<li><a href="/cli">CLI reference</a></li>
+<li><a href="/api">HTTP API</a></li>
+<li><a href="/api-reference" class="on">API reference</a></li>
+<li><a href="/changelog">Changelog</a></li>
+</ul>
+<p class="sb-h">Enterprise API</p><ul class="sb">
+<li><a href="/org-api">Overview</a></li>
+<li><a href="/org-api-reference">Reference</a></li>
+<li><a href="/org-api-errors">Errors</a></li>
+<li><a href="/org-api-onboard">Onboard a new employee</a></li>
+<li><a href="/org-api-ci-agents">Install agents from CI</a></li>
+<li><a href="/org-api-room-posts">Post build results into a room</a></li>
+<li><a href="/org-api-siem">Stream audit logs to your SIEM</a></li>
+<li><a href="/org-api-webhooks">Verify webhook signatures</a></li>
+</ul>
+<p class="sb-h">Your mail</p><ul class="sb">
+<li><a href="https://inbox.pigeonpost.dev">Open the web inbox</a></li>
+<li><a href="https://pigeonpost.dev/account">Handles and account</a></li>
+</ul></aside>
+  <main class="doc">
+<h1>calendar</h1>
+<nav class="tagnav"><a href="/api-reference">All</a><a href="/api-ref-calendar" class="on">calendar</a><a href="/api-ref-meta">meta</a><a href="/api-ref-accounts">accounts</a><a href="/api-ref-identities">identities</a><a href="/api-ref-messaging">messaging</a><a href="/api-ref-attachments">attachments</a><a href="/api-ref-threads">threads</a><a href="/api-ref-trust">trust</a><a href="/api-ref-calls">calls</a><a href="/api-ref-profile">profile</a><a href="/api-ref-events">events</a><a href="/api-ref-handles">handles</a><a href="/api-ref-purchases">purchases</a><a href="/api-ref-devices">devices</a><a href="/api-ref-mcp">mcp</a><a href="/api-ref-operator">operator</a><a href="/api-ref-groups">groups</a><a href="/api-ref-mls">mls</a><a href="/api-ref-organizations">organizations</a><a href="/api-ref-device-login">device-login</a></nav>
+<p>Calendars, events, invitations, feeds and guest routes (Phase 3B, docs/calendar.md).</p>
+<div class="tw"><table><thead><tr><th>Method</th><th>Path</th><th>Does</th></tr></thead><tbody><tr><td><a href="#listCalendars"><span class="method">GET</span></a></td><td><code>/v1/calendars</code></td><td>The acting mailbox&#x27;s calendars</td></tr><tr><td><a href="#createCalendar"><span class="method">POST</span></a></td><td><code>/v1/calendars</code></td><td>Create a calendar</td></tr><tr><td><a href="#updateCalendar"><span class="method">PATCH</span></a></td><td><code>/v1/calendars/{id}</code></td><td>Rename, recolor or make default</td></tr><tr><td><a href="#deleteCalendar"><span class="method">DELETE</span></a></td><td><code>/v1/calendars/{id}</code></td><td>Delete a calendar (cancels events the caller organizes in it)</td></tr><tr><td><a href="#listCalendarOccurrences"><span class="method">GET</span></a></td><td><code>/v1/calendar/events</code></td><td>Effective occurrences in a window (≤ 62 days)</td></tr><tr><td><a href="#createCalendarEvent"><span class="method">POST</span></a></td><td><code>/v1/calendar/events</code></td><td>Create an event (and invitations)</td></tr><tr><td><a href="#getCalendarEvent"><span class="method">GET</span></a></td><td><code>/v1/calendar/events/{id}</code></td><td>One event, or <code>{id}.ics</code> for the caller&#x27;s iCalendar copy</td></tr><tr><td><a href="#updateCalendarEvent"><span class="method">PATCH</span></a></td><td><code>/v1/calendar/events/{id}</code></td><td>Change an event (scope all, this or following)</td></tr><tr><td><a href="#cancelCalendarEvent"><span class="method">POST</span></a></td><td><code>/v1/calendar/events/{id}/cancel</code></td><td>Cancel an event, one occurrence or the rest of a series</td></tr><tr><td><a href="#changeCalendarAttendees"><span class="method">POST</span></a></td><td><code>/v1/calendar/events/{id}/attendees</code></td><td>Add or remove attendees (organizer)</td></tr><tr><td><a href="#calendarGuestLink"><span class="method">POST</span></a></td><td><code>/v1/calendar/events/{id}/attendees/{attendee_id}/link</code></td><td>A fresh personal invitation link for a contact-address guest (organizer)</td></tr><tr><td><a href="#rsvpCalendarEvent"><span class="method">POST</span></a></td><td><code>/v1/calendar/events/{id}/rsvp</code></td><td>Answer an invitation</td></tr><tr><td><a href="#setCalendarReminders"><span class="method">PUT</span></a></td><td><code>/v1/calendar/events/{id}/reminders</code></td><td>The caller&#x27;s own reminders for an event</td></tr><tr><td><a href="#placeCalendarInvitation"><span class="method">PUT</span></a></td><td><code>/v1/calendar/events/{id}/placement</code></td><td>Move an invitation to another of the caller&#x27;s calendars</td></tr><tr><td><a href="#linkCalendarGroup"><span class="method">PATCH</span></a></td><td><code>/v1/calendar/events/{id}/linked-group</code></td><td>Link (or unlink) a meeting chat group (organizer)</td></tr><tr><td><a href="#listCalendarInvitations"><span class="method">GET</span></a></td><td><code>/v1/calendar/invitations</code></td><td>Pending or filtered invitations</td></tr><tr><td><a href="#getCalendarSettings"><span class="method">GET</span></a></td><td><code>/v1/calendar/settings</code></td><td>Calendar settings</td></tr><tr><td><a href="#putCalendarSettings"><span class="method">PUT</span></a></td><td><code>/v1/calendar/settings</code></td><td>Change calendar settings</td></tr><tr><td><a href="#calendarFreeBusy"><span class="method">POST</span></a></td><td><code>/v1/calendar/freebusy</code></td><td>Busy intervals (own mailboxes only in this phase; others <code>unknown</code>)</td></tr><tr><td><a href="#getCalendarFeed"><span class="method">GET</span></a></td><td><code>/v1/calendar/feeds/{calendar_id}</code></td><td>Whether a secret feed is on (never the link)</td></tr><tr><td><a href="#setCalendarFeed"><span class="method">POST</span></a></td><td><code>/v1/calendar/feeds/{calendar_id}</code></td><td>Turn a secret feed on (new link, shown once) or off</td></tr><tr><td><a href="#calendarFeed"><span class="method">GET</span></a></td><td><code>/v1/calendar/feed/{secret}</code></td><td>The subscribable feed (<code>{secret}.ics</code>; the secret is the grant)</td></tr><tr><td><a href="#previewCalendarImport"><span class="method">POST</span></a></td><td><code>/v1/calendar/import/preview</code></td><td>Parse an uploaded .ics into a private draft</td></tr><tr><td><a href="#confirmCalendarImport"><span class="method">POST</span></a></td><td><code>/v1/calendar/import/{draft}/confirm</code></td><td>Create private copies of selected draft events</td></tr><tr><td><a href="#calendarGuestPreview"><span class="method">POST</span></a></td><td><code>/v1/calendar/guest/preview</code></td><td>Limited preview of one&#x27;s invitation</td></tr><tr><td><a href="#calendarGuestIcs"><span class="method">POST</span></a></td><td><code>/v1/calendar/guest/ics</code></td><td>The guest&#x27;s own iCalendar copy</td></tr><tr><td><a href="#calendarGuestRsvp"><span class="method">POST</span></a></td><td><code>/v1/calendar/guest/rsvp</code></td><td>Answer as a guest</td></tr><tr><td><a href="#calendarGuestVerifyStart"><span class="method">POST</span></a></td><td><code>/v1/calendar/guest/verify/start</code></td><td>Send a verification code to the invited address</td></tr><tr><td><a href="#calendarGuestVerifyComplete"><span class="method">POST</span></a></td><td><code>/v1/calendar/guest/verify/complete</code></td><td>Confirm the code and get a device-bound guest session</td></tr><tr><td><a href="#calendarGuestRecover"><span class="method">POST</span></a></td><td><code>/v1/calendar/guest/recover</code></td><td>Ask for a code for a live invitation (always the same answer)</td></tr><tr><td><a href="#calendarGuestJoin"><span class="method">POST</span></a></td><td><code>/v1/calendar/guest/join</code></td><td>A single-use join ticket for the calls service</td></tr><tr><td><a href="#calendarGuestUnsubscribe"><span class="method">POST</span></a></td><td><code>/v1/calendar/guest/unsubscribe</code></td><td>Stop invitations from one organizer or everyone</td></tr></tbody></table></div>
+<p>Base URL <code>https://postbox.pigeonpost.dev</code>. Overview: <a href="/api">HTTP API</a>.</p>
+<section class="op">
+<h2 id="listCalendars"><span class="method">GET</span> <code class="path">/v1/calendars</code><a class="ah" href="#listCalendars">#</a></h2>
+<p class="op-sum">The acting mailbox&#x27;s calendars</p>
+<p class="op-facts">Credentials: <code>apiKey</code>, <code>capToken</code>, <code>memberToken</code></p>
+<p>See docs/calendar.md. Requires the <code>calendar</code> feature flag.</p>
+<h3>Parameters</h3>
+<div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr></tbody></table></div>
+<h3>Responses</h3>
+<p class="resp"><code>200</code> Success.</p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr><tr><td><code>404</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/calendars&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre>
+</section>
+<section class="op">
+<h2 id="createCalendar"><span class="method">POST</span> <code class="path">/v1/calendars</code><a class="ah" href="#createCalendar">#</a></h2>
+<p class="op-sum">Create a calendar</p>
+<p class="op-facts">Credentials: <code>apiKey</code>, <code>capToken</code>, <code>memberToken</code></p>
+<p>See docs/calendar.md. Requires the <code>calendar</code> feature flag.</p>
+<h3>Parameters</h3>
+<div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr></tbody></table></div>
+<h3>Request body</h3><p><code>application/json</code></p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Responses</h3>
+<p class="resp"><code>201</code> Success.</p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr><tr><td><code>404</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/calendars&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d &#x27;{}&#x27;</code></pre>
+</section>
+<section class="op">
+<h2 id="updateCalendar"><span class="method">PATCH</span> <code class="path">/v1/calendars/{id}</code><a class="ah" href="#updateCalendar">#</a></h2>
+<p class="op-sum">Rename, recolor or make default</p>
+<p class="op-facts">Credentials: <code>apiKey</code>, <code>capToken</code>, <code>memberToken</code></p>
+<p>See docs/calendar.md. Requires the <code>calendar</code> feature flag.</p>
+<h3>Parameters</h3>
+<div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>id</code></td><td>path</td><td>string</td><td>yes</td><td></td></tr><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr></tbody></table></div>
+<h3>Request body</h3><p><code>application/json</code></p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Responses</h3>
+<p class="resp"><code>200</code> Success.</p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr><tr><td><code>404</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS -X PATCH &quot;https://postbox.pigeonpost.dev/v1/calendars/$ID&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d &#x27;{}&#x27;</code></pre>
+</section>
+<section class="op">
+<h2 id="deleteCalendar"><span class="method">DELETE</span> <code class="path">/v1/calendars/{id}</code><a class="ah" href="#deleteCalendar">#</a></h2>
+<p class="op-sum">Delete a calendar (cancels events the caller organizes in it)</p>
+<p class="op-facts">Credentials: <code>apiKey</code>, <code>capToken</code>, <code>memberToken</code></p>
+<p>See docs/calendar.md. Requires the <code>calendar</code> feature flag.</p>
+<h3>Parameters</h3>
+<div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>id</code></td><td>path</td><td>string</td><td>yes</td><td></td></tr><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr></tbody></table></div>
+<h3>Request body</h3><p><code>application/json</code></p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Responses</h3>
+<p class="resp"><code>200</code> Success.</p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr><tr><td><code>404</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS -X DELETE &quot;https://postbox.pigeonpost.dev/v1/calendars/$ID&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d &#x27;{}&#x27;</code></pre>
+</section>
+<section class="op">
+<h2 id="listCalendarOccurrences"><span class="method">GET</span> <code class="path">/v1/calendar/events</code><a class="ah" href="#listCalendarOccurrences">#</a></h2>
+<p class="op-sum">Effective occurrences in a window (≤ 62 days)</p>
+<p class="op-facts">Credentials: <code>apiKey</code>, <code>capToken</code>, <code>memberToken</code></p>
+<p>See docs/calendar.md. Requires the <code>calendar</code> feature flag.</p>
+<h3>Parameters</h3>
+<div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>from</code></td><td>query</td><td>string</td><td>yes</td><td></td></tr><tr><td><code>to</code></td><td>query</td><td>string</td><td>yes</td><td></td></tr><tr><td><code>calendars</code></td><td>query</td><td>string</td><td></td><td></td></tr><tr><td><code>include</code></td><td>query</td><td>string</td><td></td><td></td></tr><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr></tbody></table></div>
+<h3>Responses</h3>
+<p class="resp"><code>200</code> Success.</p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr><tr><td><code>404</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/calendar/events&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre>
+</section>
+<section class="op">
+<h2 id="createCalendarEvent"><span class="method">POST</span> <code class="path">/v1/calendar/events</code><a class="ah" href="#createCalendarEvent">#</a></h2>
+<p class="op-sum">Create an event (and invitations)</p>
+<p class="op-facts">Credentials: <code>apiKey</code>, <code>capToken</code>, <code>memberToken</code></p>
+<p>See docs/calendar.md. Requires the <code>calendar</code> feature flag.</p>
+<h3>Parameters</h3>
+<div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr></tbody></table></div>
+<h3>Request body</h3><p><code>application/json</code></p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Responses</h3>
+<p class="resp"><code>201</code> Success.</p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr><tr><td><code>404</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/calendar/events&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d &#x27;{}&#x27;</code></pre>
+</section>
+<section class="op">
+<h2 id="getCalendarEvent"><span class="method">GET</span> <code class="path">/v1/calendar/events/{id}</code><a class="ah" href="#getCalendarEvent">#</a></h2>
+<p class="op-sum">One event, or <code>{id}.ics</code> for the caller&#x27;s iCalendar copy</p>
+<p class="op-facts">Credentials: <code>apiKey</code>, <code>capToken</code>, <code>memberToken</code></p>
+<p>See docs/calendar.md. Requires the <code>calendar</code> feature flag.</p>
+<h3>Parameters</h3>
+<div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>id</code></td><td>path</td><td>string</td><td>yes</td><td></td></tr><tr><td><code>occurrence_id</code></td><td>query</td><td>string</td><td></td><td></td></tr><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr></tbody></table></div>
+<h3>Responses</h3>
+<p class="resp"><code>200</code> Success.</p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr><tr><td><code>404</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/calendar/events/$ID&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre>
+</section>
+<section class="op">
+<h2 id="updateCalendarEvent"><span class="method">PATCH</span> <code class="path">/v1/calendar/events/{id}</code><a class="ah" href="#updateCalendarEvent">#</a></h2>
+<p class="op-sum">Change an event (scope all, this or following)</p>
+<p class="op-facts">Credentials: <code>apiKey</code>, <code>capToken</code>, <code>memberToken</code></p>
+<p>See docs/calendar.md. Requires the <code>calendar</code> feature flag.</p>
+<h3>Parameters</h3>
+<div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>id</code></td><td>path</td><td>string</td><td>yes</td><td></td></tr><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr></tbody></table></div>
+<h3>Request body</h3><p><code>application/json</code></p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Responses</h3>
+<p class="resp"><code>200</code> Success.</p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr><tr><td><code>404</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS -X PATCH &quot;https://postbox.pigeonpost.dev/v1/calendar/events/$ID&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d &#x27;{}&#x27;</code></pre>
+</section>
+<section class="op">
+<h2 id="cancelCalendarEvent"><span class="method">POST</span> <code class="path">/v1/calendar/events/{id}/cancel</code><a class="ah" href="#cancelCalendarEvent">#</a></h2>
+<p class="op-sum">Cancel an event, one occurrence or the rest of a series</p>
+<p class="op-facts">Credentials: <code>apiKey</code>, <code>capToken</code>, <code>memberToken</code></p>
+<p>See docs/calendar.md. Requires the <code>calendar</code> feature flag.</p>
+<h3>Parameters</h3>
+<div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>id</code></td><td>path</td><td>string</td><td>yes</td><td></td></tr><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr></tbody></table></div>
+<h3>Request body</h3><p><code>application/json</code></p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Responses</h3>
+<p class="resp"><code>200</code> Success.</p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr><tr><td><code>404</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/calendar/events/$ID/cancel&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d &#x27;{}&#x27;</code></pre>
+</section>
+<section class="op">
+<h2 id="changeCalendarAttendees"><span class="method">POST</span> <code class="path">/v1/calendar/events/{id}/attendees</code><a class="ah" href="#changeCalendarAttendees">#</a></h2>
+<p class="op-sum">Add or remove attendees (organizer)</p>
+<p class="op-facts">Credentials: <code>apiKey</code>, <code>capToken</code>, <code>memberToken</code></p>
+<p>See docs/calendar.md. Requires the <code>calendar</code> feature flag.</p>
+<h3>Parameters</h3>
+<div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>id</code></td><td>path</td><td>string</td><td>yes</td><td></td></tr><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr></tbody></table></div>
+<h3>Request body</h3><p><code>application/json</code></p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Responses</h3>
+<p class="resp"><code>200</code> Success.</p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr><tr><td><code>404</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/calendar/events/$ID/attendees&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d &#x27;{}&#x27;</code></pre>
+</section>
+<section class="op">
+<h2 id="calendarGuestLink"><span class="method">POST</span> <code class="path">/v1/calendar/events/{id}/attendees/{attendee_id}/link</code><a class="ah" href="#calendarGuestLink">#</a></h2>
+<p class="op-sum">A fresh personal invitation link for a contact-address guest (organizer)</p>
+<p class="op-facts">Credentials: <code>apiKey</code>, <code>capToken</code>, <code>memberToken</code></p>
+<p>See docs/calendar.md. Requires the <code>calendar</code> feature flag.</p>
+<h3>Parameters</h3>
+<div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>id</code></td><td>path</td><td>string</td><td>yes</td><td></td></tr><tr><td><code>attendee_id</code></td><td>path</td><td>string</td><td>yes</td><td></td></tr><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr></tbody></table></div>
+<h3>Responses</h3>
+<p class="resp"><code>200</code> Success.</p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr><tr><td><code>404</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/calendar/events/$ID/attendees/$ATTENDEE_ID/link&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre>
+</section>
+<section class="op">
+<h2 id="rsvpCalendarEvent"><span class="method">POST</span> <code class="path">/v1/calendar/events/{id}/rsvp</code><a class="ah" href="#rsvpCalendarEvent">#</a></h2>
+<p class="op-sum">Answer an invitation</p>
+<p class="op-facts">Credentials: <code>apiKey</code>, <code>capToken</code>, <code>memberToken</code></p>
+<p>See docs/calendar.md. Requires the <code>calendar</code> feature flag.</p>
+<h3>Parameters</h3>
+<div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>id</code></td><td>path</td><td>string</td><td>yes</td><td></td></tr><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr></tbody></table></div>
+<h3>Request body</h3><p><code>application/json</code></p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Responses</h3>
+<p class="resp"><code>200</code> Success.</p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr><tr><td><code>404</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/calendar/events/$ID/rsvp&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d &#x27;{}&#x27;</code></pre>
+</section>
+<section class="op">
+<h2 id="setCalendarReminders"><span class="method">PUT</span> <code class="path">/v1/calendar/events/{id}/reminders</code><a class="ah" href="#setCalendarReminders">#</a></h2>
+<p class="op-sum">The caller&#x27;s own reminders for an event</p>
+<p class="op-facts">Credentials: <code>apiKey</code>, <code>capToken</code>, <code>memberToken</code></p>
+<p>See docs/calendar.md. Requires the <code>calendar</code> feature flag.</p>
+<h3>Parameters</h3>
+<div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>id</code></td><td>path</td><td>string</td><td>yes</td><td></td></tr><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr></tbody></table></div>
+<h3>Request body</h3><p><code>application/json</code></p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Responses</h3>
+<p class="resp"><code>200</code> Success.</p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr><tr><td><code>404</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS -X PUT &quot;https://postbox.pigeonpost.dev/v1/calendar/events/$ID/reminders&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d &#x27;{}&#x27;</code></pre>
+</section>
+<section class="op">
+<h2 id="placeCalendarInvitation"><span class="method">PUT</span> <code class="path">/v1/calendar/events/{id}/placement</code><a class="ah" href="#placeCalendarInvitation">#</a></h2>
+<p class="op-sum">Move an invitation to another of the caller&#x27;s calendars</p>
+<p class="op-facts">Credentials: <code>apiKey</code>, <code>capToken</code>, <code>memberToken</code></p>
+<p>See docs/calendar.md. Requires the <code>calendar</code> feature flag.</p>
+<h3>Parameters</h3>
+<div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>id</code></td><td>path</td><td>string</td><td>yes</td><td></td></tr><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr></tbody></table></div>
+<h3>Request body</h3><p><code>application/json</code></p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Responses</h3>
+<p class="resp"><code>200</code> Success.</p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr><tr><td><code>404</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS -X PUT &quot;https://postbox.pigeonpost.dev/v1/calendar/events/$ID/placement&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d &#x27;{}&#x27;</code></pre>
+</section>
+<section class="op">
+<h2 id="linkCalendarGroup"><span class="method">PATCH</span> <code class="path">/v1/calendar/events/{id}/linked-group</code><a class="ah" href="#linkCalendarGroup">#</a></h2>
+<p class="op-sum">Link (or unlink) a meeting chat group (organizer)</p>
+<p class="op-facts">Credentials: <code>apiKey</code>, <code>capToken</code>, <code>memberToken</code></p>
+<p>See docs/calendar.md. Requires the <code>calendar</code> feature flag.</p>
+<h3>Parameters</h3>
+<div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>id</code></td><td>path</td><td>string</td><td>yes</td><td></td></tr><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr></tbody></table></div>
+<h3>Request body</h3><p><code>application/json</code></p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Responses</h3>
+<p class="resp"><code>200</code> Success.</p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr><tr><td><code>404</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS -X PATCH &quot;https://postbox.pigeonpost.dev/v1/calendar/events/$ID/linked-group&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d &#x27;{}&#x27;</code></pre>
+</section>
+<section class="op">
+<h2 id="listCalendarInvitations"><span class="method">GET</span> <code class="path">/v1/calendar/invitations</code><a class="ah" href="#listCalendarInvitations">#</a></h2>
+<p class="op-sum">Pending or filtered invitations</p>
+<p class="op-facts">Credentials: <code>apiKey</code>, <code>capToken</code>, <code>memberToken</code></p>
+<p>See docs/calendar.md. Requires the <code>calendar</code> feature flag.</p>
+<h3>Parameters</h3>
+<div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>state</code></td><td>query</td><td>string</td><td></td><td></td></tr><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr></tbody></table></div>
+<h3>Responses</h3>
+<p class="resp"><code>200</code> Success.</p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr><tr><td><code>404</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/calendar/invitations&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre>
+</section>
+<section class="op">
+<h2 id="getCalendarSettings"><span class="method">GET</span> <code class="path">/v1/calendar/settings</code><a class="ah" href="#getCalendarSettings">#</a></h2>
+<p class="op-sum">Calendar settings</p>
+<p class="op-facts">Credentials: <code>apiKey</code>, <code>capToken</code>, <code>memberToken</code></p>
+<p>See docs/calendar.md. Requires the <code>calendar</code> feature flag.</p>
+<h3>Parameters</h3>
+<div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr></tbody></table></div>
+<h3>Responses</h3>
+<p class="resp"><code>200</code> Success.</p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr><tr><td><code>404</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/calendar/settings&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre>
+</section>
+<section class="op">
+<h2 id="putCalendarSettings"><span class="method">PUT</span> <code class="path">/v1/calendar/settings</code><a class="ah" href="#putCalendarSettings">#</a></h2>
+<p class="op-sum">Change calendar settings</p>
+<p class="op-facts">Credentials: <code>apiKey</code>, <code>capToken</code>, <code>memberToken</code></p>
+<p>See docs/calendar.md. Requires the <code>calendar</code> feature flag.</p>
+<h3>Parameters</h3>
+<div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr></tbody></table></div>
+<h3>Request body</h3><p><code>application/json</code></p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Responses</h3>
+<p class="resp"><code>200</code> Success.</p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr><tr><td><code>404</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS -X PUT &quot;https://postbox.pigeonpost.dev/v1/calendar/settings&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d &#x27;{}&#x27;</code></pre>
+</section>
+<section class="op">
+<h2 id="calendarFreeBusy"><span class="method">POST</span> <code class="path">/v1/calendar/freebusy</code><a class="ah" href="#calendarFreeBusy">#</a></h2>
+<p class="op-sum">Busy intervals (own mailboxes only in this phase; others <code>unknown</code>)</p>
+<p class="op-facts">Credentials: <code>apiKey</code>, <code>capToken</code>, <code>memberToken</code></p>
+<p>See docs/calendar.md. Requires the <code>calendar</code> feature flag.</p>
+<h3>Parameters</h3>
+<div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr></tbody></table></div>
+<h3>Request body</h3><p><code>application/json</code></p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Responses</h3>
+<p class="resp"><code>200</code> Success.</p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr><tr><td><code>404</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/calendar/freebusy&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d &#x27;{}&#x27;</code></pre>
+</section>
+<section class="op">
+<h2 id="getCalendarFeed"><span class="method">GET</span> <code class="path">/v1/calendar/feeds/{calendar_id}</code><a class="ah" href="#getCalendarFeed">#</a></h2>
+<p class="op-sum">Whether a secret feed is on (never the link)</p>
+<p class="op-facts">Credentials: <code>apiKey</code>, <code>capToken</code>, <code>memberToken</code></p>
+<p>See docs/calendar.md. Requires the <code>calendar</code> feature flag.</p>
+<h3>Parameters</h3>
+<div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>calendar_id</code></td><td>path</td><td>string</td><td>yes</td><td></td></tr><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr></tbody></table></div>
+<h3>Responses</h3>
+<p class="resp"><code>200</code> Success.</p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr><tr><td><code>404</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/calendar/feeds/$CALENDAR_ID&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre>
+</section>
+<section class="op">
+<h2 id="setCalendarFeed"><span class="method">POST</span> <code class="path">/v1/calendar/feeds/{calendar_id}</code><a class="ah" href="#setCalendarFeed">#</a></h2>
+<p class="op-sum">Turn a secret feed on (new link, shown once) or off</p>
+<p class="op-facts">Credentials: <code>apiKey</code>, <code>capToken</code>, <code>memberToken</code></p>
+<p>See docs/calendar.md. Requires the <code>calendar</code> feature flag.</p>
+<h3>Parameters</h3>
+<div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>calendar_id</code></td><td>path</td><td>string</td><td>yes</td><td></td></tr><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr></tbody></table></div>
+<h3>Request body</h3><p><code>application/json</code></p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Responses</h3>
+<p class="resp"><code>200</code> Success.</p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr><tr><td><code>404</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/calendar/feeds/$CALENDAR_ID&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d &#x27;{}&#x27;</code></pre>
+</section>
+<section class="op">
+<h2 id="calendarFeed"><span class="method">GET</span> <code class="path">/v1/calendar/feed/{secret}</code><a class="ah" href="#calendarFeed">#</a></h2>
+<p class="op-sum">The subscribable feed (<code>{secret}.ics</code>; the secret is the grant)</p>
+<p class="op-facts">Credentials: none</p>
+<p>No bearer. Redacted projection; private events and invitations are Busy.</p>
+<h3>Parameters</h3>
+<div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>secret</code></td><td>path</td><td>string</td><td>yes</td><td></td></tr></tbody></table></div>
+<h3>Responses</h3>
+<p class="resp"><code>200</code> Success.</p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr><tr><td><code>404</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/calendar/feed/$SECRET&quot;</code></pre>
+</section>
+<section class="op">
+<h2 id="previewCalendarImport"><span class="method">POST</span> <code class="path">/v1/calendar/import/preview</code><a class="ah" href="#previewCalendarImport">#</a></h2>
+<p class="op-sum">Parse an uploaded .ics into a private draft</p>
+<p class="op-facts">Credentials: <code>apiKey</code>, <code>capToken</code>, <code>memberToken</code></p>
+<p>See docs/calendar.md. Requires the <code>calendar</code> feature flag.</p>
+<h3>Parameters</h3>
+<div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>calendar_id</code></td><td>query</td><td>string</td><td></td><td></td></tr><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr></tbody></table></div>
+<h3>Request body</h3><p><code>text/calendar</code></p>
+<h3>Responses</h3>
+<p class="resp"><code>200</code> Success.</p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr><tr><td><code>404</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/calendar/import/preview&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
+  -H &quot;Content-Type: text/calendar&quot; \
+  --data-binary @file</code></pre>
+</section>
+<section class="op">
+<h2 id="confirmCalendarImport"><span class="method">POST</span> <code class="path">/v1/calendar/import/{draft}/confirm</code><a class="ah" href="#confirmCalendarImport">#</a></h2>
+<p class="op-sum">Create private copies of selected draft events</p>
+<p class="op-facts">Credentials: <code>apiKey</code>, <code>capToken</code>, <code>memberToken</code></p>
+<p>Requires the <code>calendar</code> feature flag. Repeated selection indices are imported once. The same selection and destination replay the original result for seven days after confirmation, without creating events or notices again. Omitting calendar_id uses the preview&#x27;s destination; naming that same destination is equivalent. A changed selection or destination returns 409 idempotency_conflict. Replay requires continuing ownership of the destination calendar. See docs/calendar.md.</p>
+<h3>Parameters</h3>
+<div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>draft</code></td><td>path</td><td>string</td><td>yes</td><td></td></tr><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr></tbody></table></div>
+<h3>Request body</h3><p><code>application/json</code></p>
+<pre class="lang-json"><code>{
+  &quot;select&quot;: [
+    0
+  ],
+  &quot;calendar_id&quot;: &quot;string&quot;
+}</code></pre>
+<h3>Responses</h3>
+<p class="resp"><code>200</code> Success.</p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr><tr><td><code>404</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr><tr><td><code>409</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/calendar/import/$DRAFT/confirm&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d &#x27;{&quot;select&quot;: [0], &quot;calendar_id&quot;: &quot;string&quot;}&#x27;</code></pre>
+</section>
+<section class="op">
+<h2 id="calendarGuestPreview"><span class="method">POST</span> <code class="path">/v1/calendar/guest/preview</code><a class="ah" href="#calendarGuestPreview">#</a></h2>
+<p class="op-sum">Limited preview of one&#x27;s invitation</p>
+<p class="op-facts">Credentials: none</p>
+<p>Guest route (no Pigeonpost account): see docs/calendar.md §6. Purpose-bound credentials in the body; refusals are a generic <code>guest_token_invalid</code>.</p>
+<h3>Request body</h3><p><code>application/json</code></p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Responses</h3>
+<p class="resp"><code>200</code> Success.</p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr><tr><td><code>404</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/calendar/guest/preview&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d &#x27;{}&#x27;</code></pre>
+</section>
+<section class="op">
+<h2 id="calendarGuestIcs"><span class="method">POST</span> <code class="path">/v1/calendar/guest/ics</code><a class="ah" href="#calendarGuestIcs">#</a></h2>
+<p class="op-sum">The guest&#x27;s own iCalendar copy</p>
+<p class="op-facts">Credentials: none</p>
+<p>Guest route (no Pigeonpost account): see docs/calendar.md §6. Purpose-bound credentials in the body; refusals are a generic <code>guest_token_invalid</code>.</p>
+<h3>Request body</h3><p><code>application/json</code></p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Responses</h3>
+<p class="resp"><code>200</code> Success.</p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr><tr><td><code>404</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/calendar/guest/ics&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d &#x27;{}&#x27;</code></pre>
+</section>
+<section class="op">
+<h2 id="calendarGuestRsvp"><span class="method">POST</span> <code class="path">/v1/calendar/guest/rsvp</code><a class="ah" href="#calendarGuestRsvp">#</a></h2>
+<p class="op-sum">Answer as a guest</p>
+<p class="op-facts">Credentials: none</p>
+<p>Guest route (no Pigeonpost account): see docs/calendar.md §6. Purpose-bound credentials in the body; refusals are a generic <code>guest_token_invalid</code>.</p>
+<h3>Request body</h3><p><code>application/json</code></p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Responses</h3>
+<p class="resp"><code>200</code> Success.</p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr><tr><td><code>404</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/calendar/guest/rsvp&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d &#x27;{}&#x27;</code></pre>
+</section>
+<section class="op">
+<h2 id="calendarGuestVerifyStart"><span class="method">POST</span> <code class="path">/v1/calendar/guest/verify/start</code><a class="ah" href="#calendarGuestVerifyStart">#</a></h2>
+<p class="op-sum">Send a verification code to the invited address</p>
+<p class="op-facts">Credentials: none</p>
+<p>Guest route (no Pigeonpost account): see docs/calendar.md §6. Purpose-bound credentials in the body; refusals are a generic <code>guest_token_invalid</code>.</p>
+<h3>Request body</h3><p><code>application/json</code></p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Responses</h3>
+<p class="resp"><code>200</code> Success.</p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr><tr><td><code>404</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/calendar/guest/verify/start&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d &#x27;{}&#x27;</code></pre>
+</section>
+<section class="op">
+<h2 id="calendarGuestVerifyComplete"><span class="method">POST</span> <code class="path">/v1/calendar/guest/verify/complete</code><a class="ah" href="#calendarGuestVerifyComplete">#</a></h2>
+<p class="op-sum">Confirm the code and get a device-bound guest session</p>
+<p class="op-facts">Credentials: none</p>
+<p>Guest route (no Pigeonpost account): see docs/calendar.md §6. Purpose-bound credentials in the body; refusals are a generic <code>guest_token_invalid</code>.</p>
+<h3>Request body</h3><p><code>application/json</code></p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Responses</h3>
+<p class="resp"><code>200</code> Success.</p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr><tr><td><code>404</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/calendar/guest/verify/complete&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d &#x27;{}&#x27;</code></pre>
+</section>
+<section class="op">
+<h2 id="calendarGuestRecover"><span class="method">POST</span> <code class="path">/v1/calendar/guest/recover</code><a class="ah" href="#calendarGuestRecover">#</a></h2>
+<p class="op-sum">Ask for a code for a live invitation (always the same answer)</p>
+<p class="op-facts">Credentials: none</p>
+<p>Guest route (no Pigeonpost account): see docs/calendar.md §6. Purpose-bound credentials in the body; refusals are a generic <code>guest_token_invalid</code>.</p>
+<h3>Request body</h3><p><code>application/json</code></p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Responses</h3>
+<p class="resp"><code>200</code> Success.</p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr><tr><td><code>404</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/calendar/guest/recover&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d &#x27;{}&#x27;</code></pre>
+</section>
+<section class="op">
+<h2 id="calendarGuestJoin"><span class="method">POST</span> <code class="path">/v1/calendar/guest/join</code><a class="ah" href="#calendarGuestJoin">#</a></h2>
+<p class="op-sum">A single-use join ticket for the calls service</p>
+<p class="op-facts">Credentials: none</p>
+<p>Guest route (no Pigeonpost account): see docs/calendar.md §6. Purpose-bound credentials in the body; refusals are a generic <code>guest_token_invalid</code>.</p>
+<h3>Request body</h3><p><code>application/json</code></p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Responses</h3>
+<p class="resp"><code>200</code> Success.</p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr><tr><td><code>404</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/calendar/guest/join&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d &#x27;{}&#x27;</code></pre>
+</section>
+<section class="op">
+<h2 id="calendarGuestUnsubscribe"><span class="method">POST</span> <code class="path">/v1/calendar/guest/unsubscribe</code><a class="ah" href="#calendarGuestUnsubscribe">#</a></h2>
+<p class="op-sum">Stop invitations from one organizer or everyone</p>
+<p class="op-facts">Credentials: none</p>
+<p>Guest route (no Pigeonpost account): see docs/calendar.md §6. Purpose-bound credentials in the body; refusals are a generic <code>guest_token_invalid</code>.</p>
+<h3>Request body</h3><p><code>application/json</code></p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Responses</h3>
+<p class="resp"><code>200</code> Success.</p>
+<pre class="lang-json"><code>{}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr><tr><td><code>404</code></td><td>A calendar refusal: <code>{error, message, …}</code> with codes from docs/calendar.md §0 (<code>feature_disabled</code>, <code>not_found</code>, <code>forbidden</code>, <code>human_required</code>, <code>revision_conflict</code>, <code>time_invalid</code>, <code>recurrence_invalid</code>, <code>expansion_limit</code>, <code>attendee_limit</code>, <code>invite_limit</code>, <code>meeting_capacity</code>, <code>guest_token_invalid</code>, <code>window_closed</code>, …).</td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/calendar/guest/unsubscribe&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d &#x27;{}&#x27;</code></pre>
+</section>
+    <footer class="pagefoot">
+      <nav>
+        <a href="https://pigeonpost.dev">pigeonpost.dev</a>
+        <a href="https://github.com/bekirdag/pigeonpost">GitHub</a>
+        <a href="https://www.npmjs.com/package/@bekirdag/pigeonpost">npm</a>
+        <a href="https://github.com/bekirdag/pigeonpost/tree/main/docs">Design docs</a>
+      </nav>
+      <p>Free and open source, MIT licensed.</p>
+    </footer>
+  </main>
+</div>
+
+</body>
+</html>

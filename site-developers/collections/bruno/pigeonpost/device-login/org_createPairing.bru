@@ -1,0 +1,19 @@
+meta {
+  name: Create pairing
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/v1/device-pairings
+  body: json
+  auth: none
+}
+
+body:json {
+  {}
+}
+
+docs {
+  See docs/orgs.md. Requires the `orgs` feature flag.
+}

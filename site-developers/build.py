@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """Generate the developer documentation site.
 
-Ten hand-written pages sharing one shell. A generator rather than ten copies of the
-same chrome: the nav appears once here instead of ten times in HTML, so adding a page
-cannot leave nine sidebars stale.
+Hand-written pages sharing one shell. A generator rather than copies of the same chrome:
+the nav appears once here instead of in every HTML file, so adding a page cannot leave the
+other sidebars stale.
+
+The API reference pages (`api-ref-*`, `org-api-ref-*`, their indexes and `org-api-errors`) and
+the Postman/Bruno collections under `collections/` are generated from the JSON mirrors of the
+OpenAPI specs in `../openapi/` (standard library only; regenerate the mirrors with
+`.github/scripts/openapi/export_json.py` after editing a spec).
 
 Every command and endpoint on these pages is checked against the current SDS and source tree.
 Release and deployment availability must be verified separately. If you change a public surface,
@@ -13,10 +18,13 @@ re-check the pages that quote it.
 """
 
 import html
+import json
 import pathlib
 import re
+import shutil
 
 OUT = pathlib.Path(__file__).parent
+SPECS = OUT.parent / "openapi"
 
 # ---- navigation ------------------------------------------------------------------
 
@@ -39,6 +47,18 @@ NAV = [
         ("mcp", "MCP server"),
         ("cli", "CLI reference"),
         ("api", "HTTP API"),
+        ("api-reference", "API reference"),
+        ("changelog", "Changelog"),
+    ]),
+    ("Enterprise API", [
+        ("org-api", "Overview"),
+        ("org-api-reference", "Reference"),
+        ("org-api-errors", "Errors"),
+        ("org-api-onboard", "Onboard a new employee"),
+        ("org-api-ci-agents", "Install agents from CI"),
+        ("org-api-room-posts", "Post build results into a room"),
+        ("org-api-siem", "Stream audit logs to your SIEM"),
+        ("org-api-webhooks", "Verify webhook signatures"),
     ]),
     ("Your mail", [
         ("https://inbox.pigeonpost.dev", "Open the web inbox"),
@@ -47,7 +67,7 @@ NAV = [
 ]
 
 TOP = [("index", "Overview"), ("quickstart", "Quickstart"),
-       ("mcp", "MCP"), ("cli", "CLI"), ("api", "API"),
+       ("mcp", "MCP"), ("cli", "CLI"), ("api", "API"), ("org-api", "Enterprise"),
        ("https://inbox.pigeonpost.dev", "Inbox")]
 
 GH = "https://github.com/bekirdag/pigeonpost"
@@ -58,7 +78,17 @@ def href(slug):
     return slug if slug.startswith("http") else f"/{slug}"
 
 
+def nav_slug(slug):
+    """Generated reference pages highlight their index page in the navigation."""
+    if slug.startswith("org-api-ref-"):
+        return "org-api-reference"
+    if slug.startswith("api-ref-"):
+        return "api-reference"
+    return slug
+
+
 def sidebar(current):
+    current = nav_slug(current)
     out = []
     for section, items in NAV:
         out.append(f'<p class="sb-h">{section}</p><ul class="sb">')
@@ -70,6 +100,9 @@ def sidebar(current):
 
 
 def topnav(current):
+    current = nav_slug(current)
+    if current.startswith("org-api"):
+        current = "org-api"
     return "\n".join(
         f'<a href="{href(s)}"{" class=\"on\"" if s == current else ""}>{l}</a>'
         for s, l in TOP
@@ -86,6 +119,7 @@ SHELL = """<!doctype html>
 <meta name="color-scheme" content="light dark">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#128330;</text></svg>">
 <link rel="stylesheet" href="/docs.css">
+<script src="/docs.js" defer></script>
 </head>
 <body>
 
@@ -136,7 +170,11 @@ def render(md):
                 buf.append(html.escape(lines[i]))
                 i += 1
             i += 1
-            cls = f' class="lang-{lang}"' if lang else ""
+            if lang == "curl":
+                # A copyable command: docs.js gives these a Copy button.
+                cls = ' class="lang-bash" data-copy="curl"'
+            else:
+                cls = f' class="lang-{lang}"' if lang else ""
             out.append(f'<pre{cls}><code>{chr(10).join(buf)}</code></pre>')
             continue
 
@@ -213,6 +251,10 @@ def inline(s):
 
 
 PAGES = {}
+
+
+class Html(str):
+    """A page body that is already HTML (generated pages), not Markdown."""
 
 
 def page(slug, title, desc, body):
@@ -1731,16 +1773,1305 @@ directory's signing key out of band.
 """)
 
 
+# ---- Enterprise API ----------------------------------------------------------------
+
+page("org-api", "Enterprise API",
+     "Automate administration of a Pigeonpost organization: members, agents, rules, rooms, audit, usage and webhooks.",
+     """
+# Enterprise API
+
+The Enterprise API automates the **administration** of one Pigeonpost organization: onboarding and
+offboarding people, creating agent mailboxes, adding restrictive rules, creating rooms, streaming the
+audit log, reading usage and billing status, and receiving signed webhooks. It can also send direct
+messages from one org agent mailbox to the org's own mailboxes.
+
+It never reads message content, room ciphertext, attachments or key material. Messaging itself stays
+on the [member API](/api) with mailbox credentials.
+
+| | |
+|---|---|
+| Base URL | `https://postbox.pigeonpost.dev/org/v1` |
+| Credential | `Authorization: Bearer pk_org_…` |
+| Specification | [OpenAPI 3.1 (YAML)](https://github.com/bekirdag/pigeonpost/blob/main/openapi/pigeonpost-org.v1.yaml) |
+| Reference | [Every endpoint](/org-api-reference), [error codes](/org-api-errors) |
+| Collections | [Postman](/collections/pigeonpost-org.postman_collection.json), [Bruno](https://github.com/bekirdag/pigeonpost/tree/main/site-developers/collections/bruno/pigeonpost-org) |
+
+> The API is behind the `org_api` feature. While it is off for your org, every `/org/v1` route answers `404 feature_disabled`.
+
+```curl
+curl -sS https://postbox.pigeonpost.dev/org/v1/key \\
+  -H "Authorization: Bearer $PIGEONPOST_ORG_KEY"
+```
+
+## Keys
+
+An org API key (`pk_org_` and 32 characters) is an automation credential for one organization. It is
+not a person and not a mailbox. An owner or admin creates it in the enterprise portal on the
+**API keys** page (linked from Security), which asks for a fresh strong sign-in. Each key has:
+
+- a name and a set of **scopes**;
+- an optional expiry (1 to 730 days) and an optional IP allowlist (up to 20 CIDR ranges);
+- with `messages:send`, the one org **agent** mailbox it sends as (`send_as`).
+
+The secret is shown once and stored only as a SHA-256 hash; afterwards you see its last four
+characters. An org can have 25 live keys. Every request is audited as `api_key.use` with the key's
+id, and every change it makes carries the same actor.
+
+A key works only while the person who made it still has the authority for what it does. Demote or
+remove that person and each of their keys stops working at once. Keys can revoke themselves with
+`DELETE /key`; do that the moment one may have leaked.
+
+## Scopes
+
+| Scope | Allows | The key's creator must hold |
+|---|---|---|
+| `org:read` | Every `GET` except `/audit`, and `POST /rules/evaluate` | owner or admin |
+| `members:write` | Invite, rename, suspend, reactivate, remove members; resend invitations | people management |
+| `agents:write` | Create, delete and disconnect agents; revoke enrollment codes | agent management |
+| `rules:write` | Create, update and delete **restrictive** rules | member or agent rule editing |
+| `rooms:write` | Create, update, invite to and delete rooms | room creation and deletion |
+| `messages:send` | `POST /messages` as the key's `send_as` agent | agent management |
+| `audit:read` | `GET /audit` | security |
+| `webhooks:write` | Create, delete and rotate webhooks | security |
+
+`GET /key` and `DELETE /key` need no scope.
+
+## What a key can and cannot do
+
+| A key can | A key can never |
+|---|---|
+| Read the org, members, roles, agents, delegations, rules, rooms, usage and billing status | Read any message, room ciphertext, attachment or key material |
+| Invite, rename, suspend, reactivate and remove **ordinary members** | Touch the owner or anyone holding an admin role, or grant any role |
+| Create and delete agents, disconnect their devices, revoke unredeemed enrollment codes | Issue enrollment codes or device credentials, approve device logins |
+| Create, update and delete **restrictive** rules (block, review) | Create or widen a rule that raises trust (allow, known, auto, verbs, locked) |
+| Create rooms, change listing and auto-join, invite org mailboxes, delete rooms | Add anyone to a room's encryption group; only members' devices do that |
+| Send direct messages as the one org agent mailbox chosen when the key was made | Send as any other mailbox, or post into an end-to-end-encrypted room |
+| Read the audit log, manage webhooks | Create, list or revoke other API keys; perform any step-up action |
+
+Anything on the right answers `403 human_required`: a person has to do it in the portal.
+
+## Requests and responses
+
+- JSON in and out, `application/json; charset=utf-8`, snake_case field names.
+- Every success is `{"data": …}`. Errors are `{"error": {"code", "message", "doc_url"}}`.
+- Timestamps are ISO 8601 in UTC, for example `2026-10-27T10:15:00Z`. A field that can be empty is `null`, never missing.
+- Path segments: `{member}` is a member id (`mem_…`) or the name inside the org (`john` for `/acme/john`); `{agent}` is the agent's name (`ci-bot`) or its mailbox address; `{room}` is a room id.
+
+## Pagination
+
+Lists answer `{"data": […], "next_cursor": "…"}`. Pass `?limit=` (1 to 200, default 50) and, for the
+next page, `?cursor=` with `next_cursor` exactly as received. The cursor is opaque. `next_cursor` is
+`null` on the last page.
+
+```curl
+curl -sS "https://postbox.pigeonpost.dev/org/v1/members?status=active&limit=100" \\
+  -H "Authorization: Bearer $PIGEONPOST_ORG_KEY"
+```
+
+## Idempotency
+
+Send `Idempotency-Key: <1-255 printable ASCII characters>` on any `POST`, `PATCH` or `DELETE`. The key
+is scoped to your API key and the route, and the server hashes the method, path and body with it.
+
+- Repeat the same request within 24 hours and you get the recorded status and body again, with `Idempotent-Replayed: true`. Nothing happens twice.
+- Reuse the key for a different request and you get `409 idempotency_conflict`.
+- Only successful responses are recorded, so a failed request can be retried with the same key.
+
+Use one key per logical action (for example `onboard-<employee id>`), not one per HTTP attempt.
+
+## Rate limits
+
+Each key may make 600 requests a minute, of which 60 may be writes. Every response says where you
+stand in the bucket that applied:
+
+| Header | Meaning |
+|---|---|
+| `RateLimit-Limit` | Requests allowed in the window |
+| `RateLimit-Remaining` | Requests left |
+| `RateLimit-Reset` | Seconds until the window resets |
+| `Retry-After` | On `429 rate_limited` only: seconds to wait |
+
+## Errors
+
+| HTTP | Codes |
+|---|---|
+| 400 | `bad_request`, `invalid_handle`, `invalid_contact`, `invalid_rule`, `invalid_cursor`, `invalid_webhook_url` |
+| 401 | `unauthorized`: no key, unknown, revoked or expired (one answer for all four) |
+| 403 | `ip_not_allowed`, `insufficient_scope`, `forbidden`, `human_required`, `recipient_not_in_org`, `not_admitted` |
+| 404 | `not_found`, `feature_disabled` |
+| 409 | `seat_limit`, `agent_limit`, `handle_taken`, `already_invited`, `domain_not_verified`, `org_read_only`, `org_inactive`, `idempotency_conflict`, `room_encrypted`, `invite_used`, `webhook_limit`, `too_many_rules` |
+| 413 | `payload_too_large` |
+| 429 | `rate_limited` |
+| 500 | `store_error` |
+
+Branch on `code`, never on `message`. Each code has its own entry in the
+[error reference](/org-api-errors); `doc_url` links straight to it.
+
+## Versioning
+
+The version is in the path. Additive changes (new fields, new endpoints, new event types, new error
+codes) do not change it, so ignore fields you do not know. A breaking change goes to `/org/v2`, and
+v1 keeps working for 12 months after its deprecation is announced in the [changelog](/changelog).
+
+## Guides
+
+- [Onboard a new employee](/org-api-onboard)
+- [Install agents from CI using pre-authorized enrollment grants](/org-api-ci-agents)
+- [Post build results into a room](/org-api-room-posts)
+- [Stream audit logs to your SIEM](/org-api-siem)
+- [Verify webhook signatures](/org-api-webhooks)
+""")
+
+page("org-api-onboard", "Onboard a new employee",
+     "Invite a person into your Pigeonpost organization from an HR system, add them to rooms and welcome them.",
+     """
+# Onboard a new employee
+
+When your HR system hires someone, it can give them a Pigeonpost address in your org, put them in
+the right rooms and send them a welcome, all through the Enterprise API. Offboarding is the reverse.
+
+You need a key with `members:write` and `rooms:write` (and `messages:send` with a `send_as` agent,
+for the welcome). The person who creates the key must be allowed to manage people.
+
+## 1. Invite them
+
+```curl
+curl -sS -X POST https://postbox.pigeonpost.dev/org/v1/members \\
+  -H "Authorization: Bearer $PIGEONPOST_ORG_KEY" \\
+  -H "Content-Type: application/json" \\
+  -H "Idempotency-Key: onboard-E10442" \\
+  -d '{"first_name": "Jane", "last_name": "Doe", "contact": "jane.doe@example.com", "handle": "jane"}'
+```
+
+The answer is `201` with the new member (status `invited`) and the invitation:
+
+```json
+{"data": {
+  "member": {"id": "mem_…", "handle": "/acme/jane", "status": "invited", "…": "…"},
+  "invitation": {"id": "inv_…", "link": "https://enterprise.pigeonpost.dev/invite#…",
+                 "expires_at": "2026-11-03T10:15:00Z", "delivery": "queued"}
+}}
+```
+
+- `delivery: queued` means Pigeonpost sends the invitation to the contact address. With `copy_link`, deliver the link yourself, for example in the welcome pack.
+- The link is single-use and returned only in this response (`Cache-Control: no-store`). Do not log it.
+- The person accepts by signing in with the invited contact address; if your org requires MFA, they set it up then.
+- Use your HR system's employee id in the `Idempotency-Key`: a retry after a timeout returns the same invitation instead of a `409 already_invited`.
+
+The API invites **ordinary members** only. Roles are granted by a person in the portal.
+
+Common refusals: `409 seat_limit` (buy seats first), `409 handle_taken`, `409 domain_not_verified`
+(your org only invites verified domains) and `400 invalid_handle`.
+
+## 2. Add them to rooms
+
+Rooms with `auto_join` pick up new members automatically when they accept. For other rooms, send a
+room invitation:
+
+```curl
+curl -sS -X POST https://postbox.pigeonpost.dev/org/v1/rooms/grp_example/members \\
+  -H "Authorization: Bearer $PIGEONPOST_ORG_KEY" \\
+  -H "Content-Type: application/json" \\
+  -H "Idempotency-Key: onboard-E10442-room-engineering" \\
+  -d '{"handle": "jane"}'
+```
+
+Rooms are end-to-end encrypted. The invitation appears in the person's app; when they accept, a room
+member's device adds them to the encryption group. The API never adds anyone to a room's keys.
+
+## 3. Know when they joined
+
+Subscribe a webhook to `member.joined` (see [Verify webhook signatures](/org-api-webhooks)), or poll
+`GET /members/{member}` until `status` is `active`. If the invitation expires, issue a new link:
+
+```curl
+curl -sS -X POST https://postbox.pigeonpost.dev/org/v1/members/jane/resend-invite \\
+  -H "Authorization: Bearer $PIGEONPOST_ORG_KEY" \\
+  -H "Idempotency-Key: onboard-E10442-resend-1"
+```
+
+## 4. Say hello
+
+A key with `messages:send` sends direct messages as its `send_as` agent, for example `/acme/it-desk`,
+to mailboxes of the same org:
+
+```curl
+curl -sS -X POST https://postbox.pigeonpost.dev/org/v1/messages \\
+  -H "Authorization: Bearer $PIGEONPOST_ORG_KEY" \\
+  -H "Content-Type: application/json" \\
+  -H "Idempotency-Key: onboard-E10442-welcome" \\
+  -d '{"to": "/acme/jane", "thread_title": "Welcome", "body": "Your laptop is ready at the front desk."}'
+```
+
+## Offboarding
+
+Suspend first if you need to stop access right away, then remove:
+
+```curl
+curl -sS -X DELETE "https://postbox.pigeonpost.dev/org/v1/members/jane?mode=reserve" \\
+  -H "Authorization: Bearer $PIGEONPOST_ORG_KEY" \\
+  -H "Idempotency-Key: offboard-E10442"
+```
+
+Removal revokes memberships, rooms, delegations and any device credentials the person approved.
+With `mode=reserve` (the default) the address `/acme/jane` is held for a successor: invite the next
+person to the same handle. The old mailbox keeps its history, detached from the org, and is not
+handed to anyone. `mode=delete` releases the address instead.
+
+The owner and members with an admin role are out of a key's reach (`403 forbidden`); a person
+handles those in the portal.
+""")
+
+page("org-api-ci-agents", "Install agents from CI",
+     "Bring a CI machine up as an org agent with an enrollment code a person issued.",
+     """
+# Install agents from CI using pre-authorized enrollment grants
+
+An org agent is a mailbox the org owns, such as `/acme/ci-bot`. A machine becomes that agent by
+holding a **device credential** for it. Device credentials are only ever granted by a person: either
+by approving a device login, or by issuing a one-time **enrollment code** (`enr_…`) ahead of time.
+
+The second path is for machines nobody sits at, like CI runners.
+
+> An Enterprise API key cannot issue enrollment codes or device credentials, and cannot approve device logins (`403 human_required`). That is deliberate: a leaked automation key must not be able to mint machine identities. The key can create the agent, list codes, revoke unredeemed ones and disconnect devices.
+
+## 1. Create the agent (API or portal)
+
+```curl
+curl -sS -X POST https://postbox.pigeonpost.dev/org/v1/agents \\
+  -H "Authorization: Bearer $PIGEONPOST_ORG_KEY" \\
+  -H "Content-Type: application/json" \\
+  -H "Idempotency-Key: agent-ci-bot" \\
+  -d '{"handle": "ci-bot", "label": "CI runner"}'
+```
+
+The org may have up to 10 agents per seat (`409 agent_limit` beyond that).
+
+## 2. A person issues an enrollment code
+
+In the enterprise portal, an owner, admin or agent admin opens **Agents**, picks the agent and
+chooses **Create enrollment code**. The portal asks for a fresh strong sign-in, then shows the code
+once. It is valid for up to 24 hours and can be redeemed exactly once.
+
+Put it straight into your CI system's secret store, for example as `PIGEONPOST_ENROLL_CODE`. It never
+needs to appear in a script, a log or a command line.
+
+## 3. Enroll the runner
+
+On the machine, with the Pigeonpost CLI installed (`npm i -g @bekirdag/pigeonpost`):
+
+```curl
+printf '%s\\n' "$PIGEONPOST_ENROLL_CODE" | pigeonpost login --enroll-stdin --label "CI runner"
+```
+
+`--enroll-stdin` reads the code from standard input so it does not end up in shell history or the
+process list. The machine makes its own device key, redeems the code and stores only a credential
+for `/acme/ci-bot` in its Pigeonpost home. It does not hold an account sign-in. A code that is
+wrong, used, expired or revoked is refused with one message.
+
+Add `--onboard` to also record the current directory as the agent's workspace.
+
+## One code, one machine
+
+A code redeems once. Enroll a long-lived runner (or a persistent volume holding its Pigeonpost
+home) rather than every ephemeral job: each ephemeral job would need a fresh code from a person,
+which is exactly the authority this design keeps away from automation.
+
+## Keeping it tidy from the API
+
+```curl
+curl -sS https://postbox.pigeonpost.dev/org/v1/agents/ci-bot/enrollments \\
+  -H "Authorization: Bearer $PIGEONPOST_ORG_KEY"
+```
+
+lists the codes people issued for the agent (metadata only, never the code). If one leaks before it
+is used, revoke it:
+
+```curl
+curl -sS -X DELETE https://postbox.pigeonpost.dev/org/v1/agents/ci-bot/enrollments/enr_example \\
+  -H "Authorization: Bearer $PIGEONPOST_ORG_KEY" \\
+  -H "Idempotency-Key: revoke-enr-example"
+```
+
+To cut a runner off, `POST /agents/ci-bot/disconnect` revokes every device credential and unredeemed
+code while keeping the agent and its mailbox; `DELETE /agents/ci-bot` removes the agent entirely.
+Webhook events `agent.connected` and `agent.disconnected` tell you when devices come and go.
+""")
+
+page("org-api-room-posts", "Post build results into a room",
+     "Why the API key cannot post into an encrypted room, and how an enrolled agent does it with its own keys.",
+     """
+# Post build results into a room
+
+Org rooms are end-to-end encrypted with MLS. The postbox stores ciphertext and holds no room keys.
+For an API call to post into a room, the server would have to be a member of the room's encryption
+group, which would make every room readable by the server. So it is not offered:
+`POST /messages` only sends **direct messages** from the key's `send_as` agent to mailboxes of the
+same org, and a room as the target is refused with `409 room_encrypted`.
+
+To post into a room from automation, the poster must be a real member of the room with its own
+keys: an org agent enrolled on the machine. Its device encrypts each message before it leaves.
+
+## 1. Enroll an agent on the build machine
+
+Follow [Install agents from CI](/org-api-ci-agents) to bring the runner up as, say, `/acme/ci-bot`.
+
+## 2. Create the room
+
+A key with `rooms:write` can create the room. Make a **person** its `owner`: the owner's device
+activates the room's encryption, and the person's app does that the next time it syncs. Until
+then the room is `provisioning`. Keep the default `"join_policy": "public"`: inside the org, a
+public room is one any live member or agent mailbox may join.
+
+```curl
+curl -sS -X POST https://postbox.pigeonpost.dev/org/v1/rooms \\
+  -H "Authorization: Bearer $PIGEONPOST_ORG_KEY" \\
+  -H "Content-Type: application/json" \\
+  -H "Idempotency-Key: room-builds" \\
+  -d '{"name": "builds", "owner": "/acme/jane", "description": "CI results", "listed": true}'
+```
+
+> The CLI does not yet activate a room it did not create, so do not make the agent the `owner` of a room created through the API.
+
+## 3. Join from the machine
+
+Accepting an invitation is a person's decision, so an agent does not accept one (`human_required`);
+it **joins** the public room instead. A room member's device then adds the agent to the encryption
+group, and `group sync` processes that and makes the room usable on this machine:
+
+```curl
+pigeonpost group join grp_example
+pigeonpost group sync
+```
+
+The room's id (`grp_…`) is in the `POST /rooms` response and in `GET /rooms`. Once the agent is in
+the room, the group commands also take its exact name. If the machine holds more than one mailbox,
+add `--as /acme/ci-bot`. (`POST /rooms/{room}/members` invites **people**; they accept in their
+apps.)
+
+## 4. Post from the pipeline
+
+```curl
+printf 'Build %s on %s: %s\\n' "$BUILD_ID" "$GIT_BRANCH" "$BUILD_STATUS" | pigeonpost group send builds -
+```
+
+`-` reads the text from standard input. `--file <path>` attaches a file (encrypted on the machine
+before upload), and `pigeonpost group read builds` prints recent messages. Add `--json` for
+machine-readable output.
+
+The same operations are available over HTTP, with the agent's own credential, in the
+[groups section of the member API reference](/api-ref-groups) and the
+[MLS delivery service](/api-ref-mls). A client that posts over HTTP must do the MLS work itself; the
+CLI is the supported way to do it from scripts.
+
+## Direct messages instead
+
+If people only need a notification, not a shared room, a key with `messages:send` can message them
+directly as its `send_as` agent: see `POST /messages` in the [reference](/org-api-ref-messages).
+""")
+
+page("org-api-siem", "Stream audit logs to your SIEM",
+     "Poll the org audit log with a stored cursor and forward each entry to your SIEM.",
+     """
+# Stream audit logs to your SIEM
+
+`GET /audit` returns the org audit log **oldest first**, so a collector can read it forward and
+never miss or repeat an entry. It needs a key with `audit:read`, created by someone with the
+security permission.
+
+Every entry is `{id, at, actor_kind, actor, action, target, details}`. Details are sanitized: no
+tokens, contact addresses or message content. Every Enterprise API request is itself an entry
+(`api_key.use`, with the key id as actor), so the log also records what your automation did.
+
+## The loop
+
+1. On first run, start from a time: `?since=2026-10-27T00:00:00Z`.
+2. Follow `next_cursor` page by page, forwarding entries, and **store the cursor** after each page so a restart resumes where it stopped.
+3. On the last page `next_cursor` is `null`. Remember the last entry's `at` and `id`, wait a little, and ask again with `since` set to that `at`, skipping the entries you have already sent (`since` includes entries at that exact second).
+4. Filter with `?action=` (a prefix, such as `member.` or `api_key.`) if your SIEM only wants some.
+
+```python
+import json, os, time, urllib.error, urllib.parse, urllib.request
+
+BASE = "https://postbox.pigeonpost.dev/org/v1/audit"
+KEY = os.environ["PIGEONPOST_ORG_KEY"]
+STATE = "pigeonpost-audit.state.json"
+
+
+def load():
+    try:
+        with open(STATE) as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {"cursor": None, "since": "2026-10-27T00:00:00Z", "seen": []}
+
+
+def save(state):
+    tmp = STATE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(state, f)
+    os.replace(tmp, STATE)
+
+
+def fetch(params):
+    req = urllib.request.Request(BASE + "?" + urllib.parse.urlencode(params),
+                                 headers={"Authorization": "Bearer " + KEY})
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return json.load(resp)
+
+
+def forward(entry):
+    print(json.dumps(entry))  # replace with your SIEM's ingestion call
+
+
+state = load()
+while True:
+    params = {"limit": 200}
+    if state["cursor"]:
+        params["cursor"] = state["cursor"]
+    else:
+        params["since"] = state["since"]
+    try:
+        page = fetch(params)
+    except urllib.error.HTTPError as e:
+        time.sleep(int(e.headers.get("Retry-After", "30")))
+        continue
+    for entry in page["data"]:
+        if entry["id"] in state["seen"]:
+            continue
+        forward(entry)
+        if entry["at"] != state["since"]:
+            state["since"], state["seen"] = entry["at"], []
+        state["seen"].append(entry["id"])
+    state["cursor"] = page["next_cursor"]
+    save(state)
+    if page["next_cursor"] is None:
+        time.sleep(60)
+```
+
+Forward before you save, so a crash between the two re-sends a page rather than losing one; your
+SIEM can deduplicate on `id`.
+
+## Limits
+
+A full page every second is well inside the key's 600 requests a minute; when the log is quiet the
+loop makes one request a minute. On `429 rate_limited` wait `Retry-After` seconds. A cursor that was
+altered or comes from a different list is `400 invalid_cursor`: drop it and resume from `since`.
+
+To be told about specific events as they happen instead of polling, use
+[webhooks](/org-api-webhooks). They carry ids and handles only and complement the audit log rather
+than replace it.
+""")
+
+page("org-api-webhooks", "Verify webhook signatures",
+     "Check the Pigeonpost-Signature header on webhook deliveries in Node, Python and Go.",
+     """
+# Verify webhook signatures
+
+Pigeonpost signs every webhook delivery so you can tell it came from your org's webhook and was not
+altered or replayed. Verify before you act on the body.
+
+## What arrives
+
+```
+POST /hooks/pigeonpost HTTP/1.1
+Content-Type: application/json
+User-Agent: Pigeonpost-Webhooks/1
+Pigeonpost-Event-Id: evt_…
+Pigeonpost-Event-Type: member.joined
+Pigeonpost-Delivery-Id: whd_…
+Pigeonpost-Signature: t=1793095200,v1=5257a869e7ecebeda32affa62cdca3fa51cad7e77a0e56ff536d0ce8e108d8bd
+
+{"id":"evt_…","type":"member.joined","created_at":"2026-10-27T10:15:00Z","org_id":"org_…","data":{"member_id":"mem_…","handle":"/acme/jane"}}
+```
+
+`v1` is the hex HMAC-SHA256, keyed with your webhook's signing secret (the whole `whsec_…` string),
+over the bytes of `t`, a literal `.`, and the **raw request body** exactly as received. During the
+24 hours after you rotate the secret, the header carries two `v1=` entries, the new secret's first;
+accept the delivery if either matches a secret you hold.
+
+## The rules
+
+1. Read the raw body bytes before any JSON parsing. Re-serialized JSON will not match.
+2. Parse `t` and every `v1` from the header.
+3. Reject the delivery if `t` is more than **5 minutes** away from your clock.
+4. Compute the HMAC and compare in **constant time** against each `v1`.
+5. Deduplicate on `Pigeonpost-Event-Id` (the body's `id`): delivery is at least once, and retries reuse the event id.
+6. Answer `2xx` within 10 seconds, then do the work. Anything else, including redirects, is retried with backoff for 24 hours.
+
+## Node.js
+
+```js
+import crypto from "node:crypto";
+
+const TOLERANCE_SECONDS = 5 * 60;
+
+// rawBody: the request body as a Buffer, exactly as received.
+export function verifyPigeonpost(rawBody, header, secret, nowSeconds = Date.now() / 1000) {
+  let t = null;
+  const signatures = [];
+  for (const part of String(header || "").split(",")) {
+    const eq = part.indexOf("=");
+    if (eq < 0) continue;
+    const key = part.slice(0, eq).trim();
+    const value = part.slice(eq + 1).trim();
+    if (key === "t" && /^[0-9]+$/.test(value)) t = value;
+    if (key === "v1" && /^[0-9a-f]{64}$/.test(value)) signatures.push(Buffer.from(value, "hex"));
+  }
+  if (t === null || signatures.length === 0) return false;
+  if (Math.abs(nowSeconds - Number(t)) > TOLERANCE_SECONDS) return false;
+  const expected = crypto.createHmac("sha256", secret).update(`${t}.`).update(rawBody).digest();
+  return signatures.some((sig) => crypto.timingSafeEqual(sig, expected));
+}
+
+// Express: keep the body raw on this route.
+// app.post("/hooks/pigeonpost", express.raw({ type: "application/json" }), (req, res) => {
+//   if (!verifyPigeonpost(req.body, req.get("Pigeonpost-Signature"), process.env.PIGEONPOST_WEBHOOK_SECRET)) {
+//     return res.sendStatus(400);
+//   }
+//   const event = JSON.parse(req.body);
+//   if (alreadyProcessed(event.id)) return res.sendStatus(200);
+//   res.sendStatus(200);
+//   handle(event);
+// });
+```
+
+## Python
+
+```python
+import hashlib
+import hmac
+import time
+
+TOLERANCE_SECONDS = 5 * 60
+
+
+def verify_pigeonpost(raw_body: bytes, header: str, secret: str, now: float | None = None) -> bool:
+    \"\"\"raw_body: the request body bytes exactly as received.\"\"\"
+    t, signatures = None, []
+    for part in (header or "").split(","):
+        key, sep, value = part.strip().partition("=")
+        if not sep:
+            continue
+        if key == "t" and value.isascii() and value.isdigit():
+            t = value
+        elif key == "v1":
+            signatures.append(value)
+    if t is None or not signatures:
+        return False
+    if abs((time.time() if now is None else now) - int(t)) > TOLERANCE_SECONDS:
+        return False
+    expected = hmac.new(secret.encode(), t.encode() + b"." + raw_body, hashlib.sha256).hexdigest()
+    return any(hmac.compare_digest(expected, sig) for sig in signatures)
+```
+
+In Flask, pass `request.get_data()`; in Django, `request.body`; in FastAPI, `await request.body()`.
+
+## Go
+
+```go
+package webhook
+
+import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"strconv"
+	"strings"
+	"time"
+)
+
+const tolerance = 5 * time.Minute
+
+// VerifyPigeonpost checks a Pigeonpost-Signature header against the raw request body.
+func VerifyPigeonpost(rawBody []byte, header, secret string, now time.Time) bool {
+	var ts string
+	var signatures [][]byte
+	for _, part := range strings.Split(header, ",") {
+		key, value, ok := strings.Cut(strings.TrimSpace(part), "=")
+		if !ok {
+			continue
+		}
+		switch key {
+		case "t":
+			ts = value
+		case "v1":
+			if sig, err := hex.DecodeString(value); err == nil {
+				signatures = append(signatures, sig)
+			}
+		}
+	}
+	seconds, err := strconv.ParseInt(ts, 10, 64)
+	if err != nil || len(signatures) == 0 {
+		return false
+	}
+	if age := now.Sub(time.Unix(seconds, 0)); age > tolerance || age < -tolerance {
+		return false
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(ts + "."))
+	mac.Write(rawBody)
+	expected := mac.Sum(nil)
+	for _, sig := range signatures {
+		if hmac.Equal(sig, expected) {
+			return true
+		}
+	}
+	return false
+}
+```
+
+Read the body with `io.ReadAll(io.LimitReader(r.Body, 1<<20))` before verifying, and call
+`VerifyPigeonpost(body, r.Header.Get("Pigeonpost-Signature"), secret, time.Now())`.
+
+## Managing webhooks
+
+Create one with `POST /webhooks` (`webhooks:write`) or in the portal; the secret is shown once.
+Rotate with `POST /webhooks/{webhook}/rotate`, deploy the new secret, and the old one stops signing
+24 hours later. `GET /webhooks/{webhook}/deliveries` shows recent attempts with their status
+(`delivered`, `retrying`, `failed` or `blocked`) and your endpoint's response code.
+
+The URL must be `https://` on port 443 or 8443 and resolve only to public addresses; it is checked
+at registration and at every delivery. The [reference](/org-api-ref-webhooks) lists every event
+type and its fields: ids and handles only, never content.
+""")
+
+page("changelog", "Changelog",
+     "Changes to the Pigeonpost developer APIs.",
+     """
+# Changelog
+
+Additive changes (new fields, endpoints, event types or error codes) do not change an API's version.
+Breaking changes get a new version path and at least 12 months of overlap.
+
+## 2026-10-27
+
+**Enterprise API v1.** A new API at `https://postbox.pigeonpost.dev/org/v1` for administering an
+organization with scoped org API keys (`pk_org_…`): members, roles (read), agents, delegations and
+enrollment codes (read and revoke), restrictive rules, rooms, the audit log, usage, billing status,
+webhooks, and direct messages from one org agent mailbox.
+
+- [Overview](/org-api), [reference](/org-api-reference), [error codes](/org-api-errors).
+- Signed webhooks with secret rotation: [verifying signatures](/org-api-webhooks).
+- Guides: [onboarding](/org-api-onboard), [CI agents](/org-api-ci-agents), [room posts](/org-api-room-posts), [SIEM streaming](/org-api-siem).
+- OpenAPI 3.1 specification: `openapi/pigeonpost-org.v1.yaml`, with Postman and Bruno collections.
+
+**Member API reference.** The postbox `/v1` API now has a generated reference, one page per area,
+from `openapi/pigeonpost.v1.yaml`: [API reference](/api-reference). The dashboard API gained org API
+key and webhook routes under `/v1/orgs/{id}/api-keys` and `/v1/orgs/{id}/webhooks`.
+""")
+
+
+# ---- generated API reference -----------------------------------------------------
+#
+# The reference pages, the error reference and the Postman/Bruno collections are generated from
+# the JSON mirrors of the OpenAPI specs (openapi/*.json, written by
+# .github/scripts/openapi/export_json.py and kept in step with the YAML by CI). Standard library
+# only, deterministic output: CI rebuilds and diffs it.
+
+METHODS = ("get", "post", "put", "patch", "delete")
+WRITES = ("post", "put", "patch", "delete")
+
+
+class Api:
+    """One spec and how its pages, snippets and collections are named."""
+
+    def __init__(self, file, slug, page_prefix, title, token_var, collection):
+        self.spec = json.loads((SPECS / file).read_text(encoding="utf-8"))
+        self.file = file
+        self.slug = slug                # index page
+        self.prefix = page_prefix       # one page per tag: <prefix><tag-slug>
+        self.title = title
+        self.token_var = token_var      # shell variable in curl snippets
+        self.collection = collection    # collection file/directory stem
+        self.base = self.spec["servers"][0]["url"]
+        self.is_org = "x-error-codes" in self.spec
+        # The internal API (service tokens, a separate loopback/private listener) is not part of
+        # the public reference or the collections; the spec in the repository still documents it.
+        for path in list(self.spec["paths"]):
+            item = self.spec["paths"][path]
+            for method in METHODS:
+                if method in item and "internal" in (item[method].get("tags") or []):
+                    del item[method]
+            if not any(m in item for m in METHODS):
+                del self.spec["paths"][path]
+        self.spec["tags"] = [t for t in self.spec.get("tags", []) if t.get("name") != "internal"]
+
+    def resolve(self, node):
+        seen = 0
+        while isinstance(node, dict) and "$ref" in node and seen < 20:
+            parts = node["$ref"].lstrip("#/").split("/")
+            node = self.spec
+            for part in parts:
+                node = node[part]
+            seen += 1
+        return node
+
+    def tags(self):
+        """[(tag, description, [(method, path, op)])] in the spec's tag order, untagged last."""
+        order = [(t["name"], t.get("description", "")) for t in self.spec.get("tags", [])]
+        ops = {}
+        for path, item in self.spec["paths"].items():
+            for method in METHODS:
+                if method in item:
+                    op = item[method]
+                    tag = (op.get("tags") or ["other"])[0]
+                    ops.setdefault(tag, []).append((method, path, op))
+        known = [name for name, _ in order]
+        order += [(t, "") for t in sorted(ops) if t not in known]
+        return [(name, desc, ops[name]) for name, desc in order if name in ops]
+
+    def tag_slug(self, tag):
+        return self.prefix + anchor(tag)
+
+
+def op_anchor(method, path, op):
+    return op.get("operationId") or anchor(f"{method} {path}")
+
+
+def sample(api, schema, depth=0, seen=()):
+    """A deterministic example value for a schema (used when the spec gives none)."""
+    if not isinstance(schema, dict) or depth > 6:
+        return None
+    if "$ref" in schema:
+        if schema["$ref"] in seen:
+            return {}
+        return sample(api, api.resolve(schema), depth + 1, seen + (schema["$ref"],))
+    if "example" in schema:
+        return schema["example"]
+    if "examples" in schema and isinstance(schema["examples"], list) and schema["examples"]:
+        return schema["examples"][0]
+    if "const" in schema:
+        return schema["const"]
+    if "default" in schema:
+        return schema["default"]
+    if schema.get("enum"):
+        return schema["enum"][0]
+    for key in ("oneOf", "anyOf"):
+        if schema.get(key):
+            return sample(api, schema[key][0], depth + 1, seen)
+    if schema.get("allOf"):
+        out = {}
+        for part in schema["allOf"]:
+            value = sample(api, part, depth + 1, seen)
+            if isinstance(value, dict):
+                out.update(value)
+        return out
+    kind = schema.get("type")
+    if isinstance(kind, list):
+        kind = next((k for k in kind if k != "null"), "null")
+    if kind == "object" or "properties" in schema:
+        return {k: sample(api, v, depth + 1, seen) for k, v in schema.get("properties", {}).items()}
+    if kind == "array":
+        item = sample(api, schema.get("items", {}), depth + 1, seen)
+        return [] if item is None else [item]
+    if kind == "string":
+        fmt = schema.get("format")
+        if fmt == "date-time":
+            return "2026-10-27T10:15:00Z"
+        if fmt == "uri":
+            return "https://example.com/"
+        return "string"
+    if kind == "integer":
+        return schema.get("minimum", 0)
+    if kind == "number":
+        return 0
+    if kind == "boolean":
+        return False
+    return None
+
+
+def media_example(api, media):
+    """(example value, is_json) for one media-type object."""
+    media = api.resolve(media)
+    if "example" in media:
+        return media["example"]
+    if media.get("examples"):
+        return api.resolve(next(iter(media["examples"].values()))).get("value")
+    return sample(api, media.get("schema", {}))
+
+
+def pretty(value):
+    return json.dumps(value, indent=2, ensure_ascii=False)
+
+
+def type_label(api, schema):
+    schema = api.resolve(schema or {})
+    kind = schema.get("type", "")
+    if isinstance(kind, list):
+        kind = " or ".join(kind)
+    if kind == "array":
+        inner = type_label(api, schema.get("items", {}))
+        kind = f"array of {inner}" if inner else "array"
+    if not kind:
+        kind = "object" if "properties" in schema else ""
+    fmt = schema.get("format")
+    return f"{kind} ({fmt})" if fmt else kind
+
+
+def params_of(api, item, op):
+    out = []
+    for p in item.get("parameters", []) + op.get("parameters", []):
+        out.append(api.resolve(p))
+    return out
+
+
+def param_value(p):
+    if "example" in p:
+        return str(p["example"])
+    return None
+
+
+def concrete_path(api, path, params, style):
+    """The path with example values (or placeholders) for its parameters."""
+    def sub(m):
+        name = m.group(1)
+        p = next((q for q in params if q.get("in") == "path" and q.get("name") == name), {})
+        value = param_value(p)
+        if value is not None:
+            return value
+        if style == "shell":
+            return "$" + re.sub(r"[^A-Z0-9]+", "_", name.upper())
+        return "{{" + name + "}}"
+    return re.sub(r"\{([^}]+)\}", sub, path)
+
+
+def needs_auth(op, spec):
+    security = op.get("security", spec.get("security"))
+    return bool(security) and any(req for req in security)
+
+
+def json_body(api, op):
+    """(content type, example) of the request body, or (None, None)."""
+    body = op.get("requestBody")
+    if not body:
+        return None, None
+    body = api.resolve(body)
+    content = body.get("content", {})
+    if not content:
+        return None, None
+    ctype = "application/json" if "application/json" in content else next(iter(content))
+    return ctype, media_example(api, content[ctype])
+
+
+def curl_snippet(api, method, path, item, op):
+    params = params_of(api, item, op)
+    url = api.base + concrete_path(api, path, params, "shell")
+    query = [(p["name"], param_value(p)) for p in params
+             if p.get("in") == "query" and param_value(p) is not None]
+    if query:
+        url += "?" + "&".join(f"{k}={v}" for k, v in query)
+    first = "curl -sS"
+    if method != "get":
+        first += f" -X {method.upper()}"
+    lines = [f'{first} "{url}"']
+    if needs_auth(op, api.spec):
+        lines.append(f'-H "Authorization: Bearer ${api.token_var}"')
+    ctype, example = json_body(api, op)
+    if api.is_org and method in WRITES:
+        lines.append('-H "Idempotency-Key: $(uuidgen)"')
+    if ctype == "application/json":
+        lines.append('-H "Content-Type: application/json"')
+        data = json.dumps(example, ensure_ascii=False).replace("'", "'\\''")
+        lines.append(f"-d '{data}'")
+    elif ctype:
+        lines.append(f'-H "Content-Type: {ctype}"')
+        lines.append("--data-binary @file")
+    return " \\\n  ".join(lines)
+
+
+def table(head, rows):
+    out = ['<div class="tw"><table><thead><tr>']
+    out += [f"<th>{h}</th>" for h in head]
+    out.append("</tr></thead><tbody>")
+    for r in rows:
+        out.append("<tr>" + "".join(f"<td>{c}</td>" for c in r) + "</tr>")
+    out.append("</tbody></table></div>")
+    return "".join(out)
+
+
+def code(text):
+    return f"<code>{html.escape(str(text))}</code>"
+
+
+def pre(text, lang="json", copy=False):
+    attrs = f' class="lang-{lang}"'
+    if copy:
+        attrs = ' class="lang-bash" data-copy="curl"'
+    return f"<pre{attrs}><code>{html.escape(text)}</code></pre>"
+
+
+def description_html(api, text):
+    # The org spec repeats scope and errors in prose for spec readers; the page shows both as
+    # structured blocks, so they are not repeated here.
+    if api.is_org:
+        keep = [b for b in text.strip().split("\n\n") if not b.startswith(("Scope:", "Errors:"))]
+        text = "\n\n".join(keep)
+    return render(text.strip()) if text.strip() else ""
+
+
+def error_rows(api, op):
+    if api.is_org:
+        catalog = api.spec["x-error-codes"]
+        return [
+            [code(catalog[c]["status"]),
+             f'<a href="/org-api-errors#{html.escape(c)}">{code(c)}</a>',
+             inline(catalog[c]["description"])]
+            for c in op.get("x-error-codes", [])
+        ]
+    rows = []
+    for status, resp in op.get("responses", {}).items():
+        if status.startswith(("2", "3")):
+            continue
+        resp = api.resolve(resp)
+        rows.append([code(status), inline(resp.get("description", ""))])
+    return rows
+
+
+def operation_html(api, method, path, item, op):
+    a = html.escape(op_anchor(method, path, op))
+    out = [f'<section class="op">',
+           f'<h2 id="{a}"><span class="method">{method.upper()}</span> '
+           f'<code class="path">{html.escape(path)}</code><a class="ah" href="#{a}">#</a></h2>']
+    if op.get("summary"):
+        out.append(f'<p class="op-sum">{inline(op["summary"])}</p>')
+    facts = []
+    if api.is_org:
+        scope = op.get("x-required-scope")
+        facts.append("Scope: " + (code(scope) if scope else "none (any live key)"))
+    else:
+        security = op.get("security", api.spec.get("security")) or []
+        names = sorted({name for req in security for name in req})
+        optional = any(not req for req in security)
+        if names:
+            facts.append("Credentials: " + ", ".join(code(n) for n in names) + (" (optional)" if optional else ""))
+        else:
+            facts.append("Credentials: none")
+    if op.get("deprecated"):
+        facts.append("<strong>Deprecated</strong>")
+    out.append(f'<p class="op-facts">{" · ".join(facts)}</p>')
+    out.append(description_html(api, op.get("description", "")))
+
+    params = params_of(api, item, op)
+    if params:
+        rows = []
+        for p in params:
+            schema = p.get("schema", {})
+            desc = inline(p.get("description", ""))
+            enum = api.resolve(schema).get("enum")
+            if enum:
+                desc += (" " if desc else "") + "One of " + ", ".join(code(e) for e in enum) + "."
+            rows.append([code(p["name"]), html.escape(p.get("in", "")), html.escape(type_label(api, schema)),
+                         "yes" if p.get("required") else "", desc])
+        out.append("<h3>Parameters</h3>")
+        out.append(table(["Name", "In", "Type", "Required", "Description"], rows))
+
+    ctype, example = json_body(api, op)
+    if ctype:
+        out.append(f"<h3>Request body</h3><p>{code(ctype)}</p>")
+        if ctype == "application/json":
+            out.append(pre(pretty(example)))
+
+    out.append("<h3>Responses</h3>")
+    for status, resp in op.get("responses", {}).items():
+        if not status.startswith("2"):
+            continue
+        resp = api.resolve(resp)
+        out.append(f'<p class="resp">{code(status)} {inline(resp.get("description", ""))}</p>')
+        content = resp.get("content", {})
+        if "application/json" in content:
+            out.append(pre(pretty(media_example(api, content["application/json"]))))
+        elif content:
+            out.append(f"<p>{', '.join(code(c) for c in content)}</p>")
+
+    rows = error_rows(api, op)
+    if rows:
+        out.append("<h3>Errors</h3>")
+        out.append(table(["HTTP", "Code", "When"] if api.is_org else ["HTTP", "Meaning"], rows))
+
+    out.append("<h3>Example</h3>")
+    out.append(pre(curl_snippet(api, method, path, item, op), copy=True))
+    out.append("</section>")
+    return "\n".join(x for x in out if x)
+
+
+def webhook_html(api):
+    out = []
+    for name, item in api.spec.get("webhooks", {}).items():
+        for method in METHODS:
+            if method not in item:
+                continue
+            op = item[method]
+            a = html.escape(op_anchor(method, name, op))
+            out.append('<section class="op">')
+            out.append(f'<h2 id="{a}"><span class="method">{method.upper()}</span> '
+                       f'<code class="path">your endpoint</code><a class="ah" href="#{a}">#</a></h2>')
+            out.append(f'<p class="op-sum">{inline(op.get("summary", ""))}</p>')
+            out.append(render(op.get("description", "").strip()))
+            rows = [[code(p["name"]), "yes" if p.get("required") else "", inline(p.get("description", ""))]
+                    for p in (api.resolve(x) for x in op.get("parameters", []))]
+            out.append("<h3>Headers</h3>")
+            out.append(table(["Header", "Always", "Description"], rows))
+            media = op["requestBody"]["content"]["application/json"]
+            out.append("<h3>Body</h3>")
+            for key, ex in media.get("examples", {}).items():
+                out.append(f'<p class="resp">{code(key)}</p>')
+                out.append(pre(pretty(api.resolve(ex)["value"])))
+            out.append('<p>Signature checks in Node, Python and Go: '
+                       '<a href="/org-api-webhooks">Verify webhook signatures</a>.</p>')
+            out.append("</section>")
+    return "\n".join(out)
+
+
+def tag_nav(api, current):
+    links = []
+    for tag, _, _ in api.tags():
+        slug = api.tag_slug(tag)
+        cls = ' class="on"' if slug == current else ""
+        links.append(f'<a href="/{slug}"{cls}>{html.escape(tag)}</a>')
+    return f'<nav class="tagnav"><a href="/{api.slug}">All</a>{"".join(links)}</nav>'
+
+
+def tag_page(api, tag, desc, ops):
+    slug = api.tag_slug(tag)
+    out = [f"<h1>{html.escape(tag)}</h1>", tag_nav(api, slug)]
+    if desc:
+        out.append(f"<p>{inline(desc)}</p>")
+    rows = [[f'<a href="#{html.escape(op_anchor(m, p, o))}"><span class="method">{m.upper()}</span></a>',
+             code(p), inline(o.get("summary", ""))] for m, p, o in ops]
+    out.append(table(["Method", "Path", "Does"], rows))
+    if api.is_org:
+        out.append(f'<p>Base URL {code(api.base)}. Conventions, scopes and limits: '
+                   f'<a href="/org-api">Enterprise API overview</a>.</p>')
+    else:
+        out.append(f'<p>Base URL {code(api.base)}. Overview: <a href="/api">HTTP API</a>.</p>')
+    for method, path, op in ops:
+        out.append(operation_html(api, method, path, api.spec["paths"][path], op))
+    if api.is_org and tag == "Webhooks":
+        out.append(webhook_html(api))
+    page(slug, f"{tag} — {api.title}", f"{api.title} reference: {tag}.", Html("\n".join(out)))
+
+
+def index_page(api, intro):
+    out = [f"<h1>{html.escape(api.title)} reference</h1>", render(intro.strip())]
+    for tag, desc, ops in api.tags():
+        slug = api.tag_slug(tag)
+        out.append(f'<h2 id="{anchor(tag)}"><a href="/{slug}">{html.escape(tag)}</a>'
+                   f'<a class="ah" href="#{anchor(tag)}">#</a></h2>')
+        if desc:
+            out.append(f"<p>{inline(desc)}</p>")
+        rows = [[f'<span class="method">{m.upper()}</span>',
+                 f'<a href="/{slug}#{html.escape(op_anchor(m, p, o))}">{code(p)}</a>',
+                 inline(o.get("summary", ""))] for m, p, o in ops]
+        out.append(table(["Method", "Path", "Does"], rows))
+    page(api.slug, f"{api.title} reference", f"Generated reference for the {api.title}.", Html("\n".join(out)))
+
+
+def errors_page(api):
+    catalog = api.spec["x-error-codes"]
+    users = {}
+    for tag, _, ops in api.tags():
+        for m, p, o in ops:
+            for c in o.get("x-error-codes", []):
+                users.setdefault(c, []).append((api.tag_slug(tag), m, p, o))
+    out = ["<h1>Enterprise API errors</h1>",
+           render("""
+Every refusal is `{"error": {"code", "message", "doc_url"}}`. The `code` is stable: branch on it,
+never on `message`. `doc_url` points at the entry for its code on this page.
+
+```json
+{"error": {"code": "seat_limit", "message": "Every seat is in use.", "doc_url": "https://developers.pigeonpost.dev/org-api-errors#seat_limit"}}
+```
+""".strip())]
+    out.append(table(["Code", "HTTP"], [[f'<a href="#{html.escape(c)}">{code(c)}</a>', code(v["status"])]
+                                        for c, v in catalog.items()]))
+    for c, v in catalog.items():
+        e = html.escape(c)
+        out.append(f'<h2 id="{e}"><code>{e}</code><a class="ah" href="#{e}">#</a></h2>')
+        out.append(f'<p class="op-facts">HTTP {code(v["status"])}</p>')
+        out.append(f"<p>{inline(v['description'])}</p>")
+        ops = users.get(c, [])
+        if ops and len(ops) < len(api.spec["paths"]):
+            links = ", ".join(f'<a href="/{s}#{html.escape(op_anchor(m, p, o))}">{m.upper()} {html.escape(p)}</a>'
+                              for s, m, p, o in ops)
+            out.append(f'<p class="op-users">Returned by: {links}.</p>')
+        elif ops:
+            out.append('<p class="op-users">Any operation can return it.</p>')
+    page("org-api-errors", "Enterprise API errors", "Every Enterprise API error code, what it means and what to do.",
+         Html("\n".join(out)))
+
+
+# ---- collections ----------------------------------------------------------------------
+
+POSTMAN_SCHEMA = "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+
+
+def postman(api):
+    folders = []
+    for tag, desc, ops in api.tags():
+        items = []
+        for method, path, op in ops:
+            item = api.spec["paths"][path]
+            params = params_of(api, item, op)
+            segs = [(":" + s[1:-1]) if s.startswith("{") else s for s in path.strip("/").split("/")]
+            query = [{"key": p["name"], "value": param_value(p) or "", "disabled": param_value(p) is None,
+                      "description": p.get("description", "")}
+                     for p in params if p.get("in") == "query"]
+            variables = [{"key": p["name"], "value": param_value(p) or "", "description": p.get("description", "")}
+                         for p in params if p.get("in") == "path"]
+            raw = "{{baseUrl}}/" + "/".join(segs)
+            enabled = [q for q in query if not q["disabled"]]
+            if enabled:
+                raw += "?" + "&".join(f'{q["key"]}={q["value"]}' for q in enabled)
+            url = {"raw": raw, "host": ["{{baseUrl}}"], "path": segs}
+            if query:
+                url["query"] = query
+            if variables:
+                url["variable"] = variables
+            headers = []
+            if api.is_org and method in WRITES:
+                headers.append({"key": "Idempotency-Key", "value": "{{$guid}}"})
+            request = {"method": method.upper(), "header": headers, "url": url,
+                       "description": op.get("description", op.get("summary", ""))}
+            ctype, example = json_body(api, op)
+            if ctype == "application/json":
+                headers.append({"key": "Content-Type", "value": "application/json"})
+                request["body"] = {"mode": "raw", "raw": pretty(example),
+                                   "options": {"raw": {"language": "json"}}}
+            elif ctype:
+                headers.append({"key": "Content-Type", "value": ctype})
+                request["body"] = {"mode": "file", "file": {"src": ""}}
+            if not needs_auth(op, api.spec):
+                request["auth"] = {"type": "noauth"}
+            items.append({"name": op.get("summary") or f"{method.upper()} {path}", "request": request})
+        folders.append({"name": tag, "description": desc, "item": items})
+    collection = {
+        "info": {"name": api.spec["info"]["title"], "description": api.spec["info"].get("summary", ""),
+                 "version": api.spec["info"]["version"], "schema": POSTMAN_SCHEMA},
+        "auth": {"type": "bearer", "bearer": [{"key": "token", "value": "{{token}}", "type": "string"}]},
+        "variable": [{"key": "baseUrl", "value": api.base}, {"key": "token", "value": ""}],
+        "item": folders,
+    }
+    return pretty(collection) + "\n"
+
+
+def bru_block(name, pairs):
+    if not pairs:
+        return ""
+    lines = [f"{name} {{"] + [f"  {k}: {v}" for k, v in pairs] + ["}", ""]
+    return "\n".join(lines)
+
+
+def bruno(api, root):
+    """One directory per spec: bruno.json, an environment, a folder per tag, a .bru per operation."""
+    files = {
+        "bruno.json": pretty({"version": "1", "name": api.spec["info"]["title"], "type": "collection",
+                              "ignore": ["node_modules", ".git"]}) + "\n",
+        "environments/production.bru": f"vars {{\n  baseUrl: {api.base}\n}}\nvars:secret [\n  token\n]\n",
+    }
+    for seq_tag, (tag, _, ops) in enumerate(api.tags(), 1):
+        folder = anchor(tag)
+        files[f"{folder}/folder.bru"] = f"meta {{\n  name: {tag}\n  seq: {seq_tag}\n}}\n"
+        for seq, (method, path, op) in enumerate(ops, 1):
+            item = api.spec["paths"][path]
+            params = params_of(api, item, op)
+            url = "{{baseUrl}}" + re.sub(r"\{([^}]+)\}", r":\1", path)
+            query = [(p["name"], param_value(p)) for p in params
+                     if p.get("in") == "query" and param_value(p) is not None]
+            if query:
+                url += "?" + "&".join(f"{k}={v}" for k, v in query)
+            ctype, example = json_body(api, op)
+            body_kind = "json" if ctype == "application/json" else "none"
+            auth = "bearer" if needs_auth(op, api.spec) else "none"
+            parts = [f"meta {{\n  name: {op.get('summary') or method.upper() + ' ' + path}\n  type: http\n  seq: {seq}\n}}\n",
+                     f"{method} {{\n  url: {url}\n  body: {body_kind}\n  auth: {auth}\n}}\n"]
+            block = bru_block("params:query", query)
+            if block:
+                parts.append(block)
+            block = bru_block("params:path", [(p["name"], param_value(p) or "")
+                                              for p in params if p.get("in") == "path"])
+            if block:
+                parts.append(block)
+            headers = []
+            if api.is_org and method in WRITES:
+                headers.append(("~Idempotency-Key", "replace-with-a-unique-key"))
+            if ctype and ctype != "application/json":
+                headers.append(("Content-Type", ctype))
+            block = bru_block("headers", headers)
+            if block:
+                parts.append(block)
+            if auth == "bearer":
+                parts.append("auth:bearer {\n  token: {{token}}\n}\n")
+            if ctype == "application/json":
+                body = "\n".join("  " + ln for ln in pretty(example).split("\n"))
+                parts.append(f"body:json {{\n{body}\n}}\n")
+            docs = op.get("description", "").strip()
+            if docs:
+                parts.append("docs {\n" + "\n".join(("  " + ln) if ln else "" for ln in docs.split("\n")) + "\n}\n")
+            files[f"{folder}/{op_anchor(method, path, op)}.bru"] = "\n".join(parts)
+    if root.exists():
+        shutil.rmtree(root)
+    for rel, text in sorted(files.items()):
+        target = root / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+
+
+ORG_INTRO = """
+Every endpoint of the Enterprise API (`https://postbox.pigeonpost.dev/org/v1`), generated from
+`openapi/pigeonpost-org.v1.yaml`. Read the [overview](/org-api) first for keys, scopes, pagination,
+idempotency and rate limits; every error code is in the [error reference](/org-api-errors).
+
+Downloads: [OpenAPI (JSON)](https://github.com/bekirdag/pigeonpost/blob/main/openapi/pigeonpost-org.v1.json),
+[Postman collection](/collections/pigeonpost-org.postman_collection.json),
+[Bruno collection](https://github.com/bekirdag/pigeonpost/tree/main/site-developers/collections/bruno/pigeonpost-org).
+Both collections use the variables `{{baseUrl}}` and `{{token}}`; set `token` to your `pk_org_…` key.
+"""
+
+MEMBER_INTRO = """
+Every endpoint of the postbox member API (`https://postbox.pigeonpost.dev`), generated from
+`openapi/pigeonpost.v1.yaml`, one page per area. The [HTTP API](/api) page explains credentials and
+the common flows; this reference lists every operation with its parameters, bodies and responses.
+The internal service API (separate listener, service tokens) is not listed here.
+
+Downloads: [OpenAPI (JSON)](https://github.com/bekirdag/pigeonpost/blob/main/openapi/pigeonpost.v1.json),
+[Postman collection](/collections/pigeonpost.postman_collection.json),
+[Bruno collection](https://github.com/bekirdag/pigeonpost/tree/main/site-developers/collections/bruno/pigeonpost).
+Both collections use the variables `{{baseUrl}}` and `{{token}}`.
+"""
+
+
+def build_reference():
+    for stale in sorted(OUT.glob("api-ref-*.html")) + sorted(OUT.glob("org-api-ref-*.html")):
+        stale.unlink()
+    collections = OUT / "collections"
+    collections.mkdir(exist_ok=True)
+    for api, intro in (
+        (Api("pigeonpost-org.v1.json", "org-api-reference", "org-api-ref-", "Enterprise API",
+             "PIGEONPOST_ORG_KEY", "pigeonpost-org"), ORG_INTRO),
+        (Api("pigeonpost.v1.json", "api-reference", "api-ref-", "Member API",
+             "PIGEONPOST_TOKEN", "pigeonpost"), MEMBER_INTRO),
+    ):
+        index_page(api, intro)
+        for tag, desc, ops in api.tags():
+            tag_page(api, tag, desc, ops)
+        if api.is_org:
+            errors_page(api)
+        (collections / f"{api.collection}.postman_collection.json").write_text(postman(api), encoding="utf-8")
+        bruno(api, collections / "bruno" / api.collection)
+
+
 # ---- write -----------------------------------------------------------------------
 
 def main():
+    build_reference()
     for slug, (title, desc, body) in PAGES.items():
         page_html = SHELL.format(
             title=html.escape(title),
             desc=html.escape(desc),
             topnav=topnav(slug),
             sidebar=sidebar(slug),
-            body=render(body.strip()),
+            body=body if isinstance(body, Html) else render(body.strip()),
             gh=GH,
         )
         (OUT / f"{slug}.html").write_text(page_html, encoding="utf-8")

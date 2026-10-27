@@ -1,0 +1,19 @@
+meta {
+  name: Pictures for up to 100 addresses
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/v1/avatars
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  Each address is decided on its own; `null` means no picture or not visible to you.
+}

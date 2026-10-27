@@ -1,0 +1,19 @@
+meta {
+  name: Redeem enrollment
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/v1/enrollments/redeem
+  body: json
+  auth: none
+}
+
+body:json {
+  {}
+}
+
+docs {
+  See docs/orgs.md. Requires the `orgs` feature flag.
+}

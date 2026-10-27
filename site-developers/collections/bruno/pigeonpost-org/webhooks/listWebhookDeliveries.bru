@@ -1,0 +1,27 @@
+meta {
+  name: List delivery attempts
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/webhooks/:webhook/deliveries
+  body: none
+  auth: bearer
+}
+
+params:path {
+  webhook: wh_l2v6a376dfbkghh3usy7oy7hm5
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  Latest delivery attempts, newest first.
+
+  Scope: `org:read`.
+
+  Errors: `invalid_cursor` (400), `unauthorized` (401), `ip_not_allowed` (403), `insufficient_scope` (403), `forbidden` (403), `not_found` (404), `feature_disabled` (404), `org_inactive` (409), `rate_limited` (429), `store_error` (500).
+}

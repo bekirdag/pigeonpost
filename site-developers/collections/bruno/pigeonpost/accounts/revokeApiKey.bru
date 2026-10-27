@@ -1,0 +1,19 @@
+meta {
+  name: Revoke one of the account's API keys
+  type: http
+  seq: 7
+}
+
+delete {
+  url: {{baseUrl}}/v1/api-keys/:id
+  body: none
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}

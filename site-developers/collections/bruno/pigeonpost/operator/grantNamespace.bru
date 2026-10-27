@@ -1,0 +1,29 @@
+meta {
+  name: Bind a purchased namespace to an account
+  type: http
+  seq: 2
+}
+
+put {
+  url: {{baseUrl}}/v1/namespaces
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "namespace": "string",
+    "account_id": "string",
+    "expires_at": 0
+  }
+}
+
+docs {
+  Called by the billing/entitlement service only. Returns 404 `not_found` when no grant secret
+  is configured. Also ensures the namespace has a first mailbox (`/<namespace>/main`);
+  `mailbox` is null if that best-effort step failed.
+}

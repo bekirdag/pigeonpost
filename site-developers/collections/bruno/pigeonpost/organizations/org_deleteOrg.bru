@@ -1,0 +1,23 @@
+meta {
+  name: Delete org
+  type: http
+  seq: 4
+}
+
+delete {
+  url: {{baseUrl}}/v1/orgs/:id
+  body: none
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  See docs/orgs.md. Requires the `orgs` feature flag. Needs a recent strong sign-in (`step_up_required` with `acr_values` and `max_age`). A person signed in (member token); automation gets `human_required`.
+}

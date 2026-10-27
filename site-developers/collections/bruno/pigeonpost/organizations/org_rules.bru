@@ -1,0 +1,23 @@
+meta {
+  name: Rules
+  type: http
+  seq: 21
+}
+
+get {
+  url: {{baseUrl}}/v1/orgs/:id/rules
+  body: none
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  See docs/orgs.md. Requires the `orgs` feature flag. A person signed in (member token); automation gets `human_required`.
+}

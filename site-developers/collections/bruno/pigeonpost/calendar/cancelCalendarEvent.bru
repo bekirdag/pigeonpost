@@ -1,0 +1,27 @@
+meta {
+  name: Cancel an event, one occurrence or the rest of a series
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/v1/calendar/events/:id/cancel
+  body: json
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {}
+}
+
+docs {
+  See docs/calendar.md. Requires the `calendar` feature flag.
+}

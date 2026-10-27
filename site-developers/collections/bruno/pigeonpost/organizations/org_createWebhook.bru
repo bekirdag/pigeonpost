@@ -1,0 +1,34 @@
+meta {
+  name: Create webhook
+  type: http
+  seq: 46
+}
+
+post {
+  url: {{baseUrl}}/v1/orgs/:id/webhooks
+  body: json
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "url": "https://siem.example.com/hooks/pigeonpost",
+    "events": [
+      "member.joined",
+      "member.removed"
+    ],
+    "description": "SIEM"
+  }
+}
+
+docs {
+  See docs/org-api.md §6. Requires the `orgs` and `org_api` feature flags. Owner or admin, a person signed in (member token); no step-up. The URL must be `https://` on port 443 or 8443 and resolve only to public addresses (`invalid_webhook_url`). At most 10 per org (`webhook_limit`). The signing secret is returned once (`Cache-Control: no-store`).
+}

@@ -1,0 +1,23 @@
+meta {
+  name: Archive or restore a peer's conversation (local view only)
+  type: http
+  seq: 2
+}
+
+put {
+  url: {{baseUrl}}/v1/archive
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "peer": "string",
+    "archived": true,
+    "identity": "string"
+  }
+}

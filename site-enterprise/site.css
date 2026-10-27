@@ -222,3 +222,9 @@ details.more > div { padding: 0 20px 20px; }
 .kv dt { color: var(--muted); }
 .kv dd { margin: 0; color: var(--ink); }
 .cmd { display: block; font-family: var(--mono); font-size: 13px; background: var(--code-fill); border: 1px solid var(--code-edge); color: var(--code-text); border-radius: 8px; padding: 10px 12px; overflow-wrap: anywhere; margin: 8px 0; }
+
+/* ---- API keys and webhooks ------------------------------------------------------------------ */
+.check .sub, .deliveries .sub { display: block; color: var(--muted); font-size: 13px; }
+.deliveries { list-style: none; padding: 0; margin: 0; }
+.deliveries .chip { margin-left: 6px; }
+.kv dd.mono, td.mono { overflow-wrap: anywhere; }

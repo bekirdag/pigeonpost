@@ -1,0 +1,31 @@
+meta {
+  name: Suspend a member
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/members/:member/suspend
+  body: none
+  auth: bearer
+}
+
+params:path {
+  member: john
+}
+
+headers {
+  ~Idempotency-Key: replace-with-a-unique-key
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  The member's org mailbox stops sending and receiving; the seat stays taken.
+
+  Scope: `members:write`.
+
+  Errors: `unauthorized` (401), `ip_not_allowed` (403), `insufficient_scope` (403), `forbidden` (403), `not_found` (404), `feature_disabled` (404), `org_inactive` (409), `org_read_only` (409), `idempotency_conflict` (409), `rate_limited` (429), `store_error` (500).
+}

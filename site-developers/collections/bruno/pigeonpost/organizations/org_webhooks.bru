@@ -1,0 +1,23 @@
+meta {
+  name: List webhooks
+  type: http
+  seq: 45
+}
+
+get {
+  url: {{baseUrl}}/v1/orgs/:id/webhooks
+  body: none
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  See docs/org-api.md §3 and §6. Requires the `orgs` and `org_api` feature flags. Owner or admin, a person signed in (member token).
+}

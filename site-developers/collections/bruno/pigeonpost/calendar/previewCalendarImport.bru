@@ -1,0 +1,23 @@
+meta {
+  name: Parse an uploaded .ics into a private draft
+  type: http
+  seq: 23
+}
+
+post {
+  url: {{baseUrl}}/v1/calendar/import/preview
+  body: none
+  auth: bearer
+}
+
+headers {
+  Content-Type: text/calendar
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  See docs/calendar.md. Requires the `calendar` feature flag.
+}

@@ -1,0 +1,23 @@
+meta {
+  name: Members with roles and states
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/v1/groups/:id/members
+  body: none
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+}

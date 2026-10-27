@@ -1,0 +1,15 @@
+meta {
+  name: Generate a fresh device-authorization QR code
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/review-sign-in
+  body: none
+  auth: none
+}
+
+docs {
+  Globally rate limited to one code per 15 seconds. Responses are HTML.
+}

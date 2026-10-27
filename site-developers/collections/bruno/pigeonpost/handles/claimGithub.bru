@@ -1,0 +1,25 @@
+meta {
+  name: Finish a GitHub device login and record the username for this account
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/v1/github/claim
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "device_code": "string"
+  }
+}
+
+docs {
+  Polled; `pending` and `slow_down` are ordinary 200 answers.
+}

@@ -1,0 +1,15 @@
+meta {
+  name: Forget a contact
+  type: http
+  seq: 4
+}
+
+delete {
+  url: {{baseUrl}}/v1/contacts
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}

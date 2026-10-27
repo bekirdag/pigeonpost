@@ -1,0 +1,31 @@
+meta {
+  name: Delete a room
+  type: http
+  seq: 4
+}
+
+delete {
+  url: {{baseUrl}}/rooms/:room
+  body: none
+  auth: bearer
+}
+
+params:path {
+  room: grp_qrmudhkm7zvrvswbjgkbbkwp7l
+}
+
+headers {
+  ~Idempotency-Key: replace-with-a-unique-key
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  Deletes the room for everyone.
+
+  Scope: `rooms:write`.
+
+  Errors: `unauthorized` (401), `ip_not_allowed` (403), `insufficient_scope` (403), `forbidden` (403), `not_found` (404), `feature_disabled` (404), `org_inactive` (409), `org_read_only` (409), `idempotency_conflict` (409), `rate_limited` (429), `store_error` (500).
+}

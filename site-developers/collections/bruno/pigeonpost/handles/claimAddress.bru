@@ -1,0 +1,15 @@
+meta {
+  name: Prove the verified contact address this account signs in with, so it can be a handle
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/v1/claims/address
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}

@@ -168,6 +168,23 @@ pre {
 }
 pre code { background: none; border: 0; padding: 0; color: var(--ink); font-size: 13.6px; line-height: 1.62; word-break: normal; }
 
+/* A command snippet: docs.js adds a Copy button in the corner. */
+pre[data-copy] { position: relative; padding-right: 76px; }
+.copy-btn {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+  font: 600 12px/1 var(--sans);
+  color: var(--body);
+  background: var(--ground);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+.copy-btn:hover { color: var(--navy); border-color: var(--th-rule); }
+.copy-btn:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+
 /* ---- tables ---- */
 
 .tw { overflow-x: auto; margin: 0 0 22px; }
@@ -196,6 +213,31 @@ td code { white-space: nowrap; }
   font-size: 15.5px;
 }
 .note > :last-child { margin-bottom: 0; }
+
+/* ---- generated API reference ---- */
+
+.method {
+  display: inline-block;
+  min-width: 58px;
+  text-align: center;
+  font: 700 11.5px/1 var(--mono);
+  letter-spacing: .04em;
+  color: var(--navy);
+  background: var(--wash);
+  border: 1px solid var(--th-rule);
+  border-radius: 5px;
+  padding: 4px 6px;
+  vertical-align: 2px;
+}
+.op { margin: 0 0 8px; }
+.op h2 code.path { font-size: 17px; background: none; border: 0; padding: 0; color: var(--ink); word-break: break-all; }
+.op-sum { font-size: 17px; color: var(--ink); margin-bottom: 6px; }
+.op-facts { font-size: 14.5px; color: var(--muted); }
+.op-users { font-size: 14.5px; }
+.resp { margin: 0 0 8px; }
+.tagnav { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 14px; margin: -8px 0 22px; }
+.tagnav a { color: var(--body); }
+.tagnav a.on { color: var(--navy); font-weight: 600; }
 
 /* ---- footer ---- */
 

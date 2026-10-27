@@ -1,0 +1,23 @@
+meta {
+  name: Revoke one of the mailbox's devices
+  type: http
+  seq: 8
+}
+
+delete {
+  url: {{baseUrl}}/v1/mls/devices/:device_id
+  body: none
+  auth: bearer
+}
+
+params:path {
+  device_id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+}

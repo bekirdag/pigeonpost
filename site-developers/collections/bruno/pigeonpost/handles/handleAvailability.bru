@@ -1,0 +1,24 @@
+meta {
+  name: Is this namespace free to buy?
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/v1/handles/:name/availability
+  body: none
+  auth: bearer
+}
+
+params:path {
+  name: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  Public. When called with the account credential of a lapsed namespace's owner, may answer
+  `available - true, reason - renewal` (then `Cache-Control - private, no-store`).
+}

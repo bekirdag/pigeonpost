@@ -1,0 +1,27 @@
+meta {
+  name: Upload key packages from the acting device
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/v1/mls/key-packages
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "request_key": "string",
+    "key_packages": [],
+    "last_resort": "string"
+  }
+}
+
+docs {
+  See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+}

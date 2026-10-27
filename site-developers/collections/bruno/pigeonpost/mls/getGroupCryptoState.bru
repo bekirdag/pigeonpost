@@ -1,0 +1,23 @@
+meta {
+  name: Epoch, revision and pending tree operations
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/v1/groups/:id/crypto
+  body: none
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+}

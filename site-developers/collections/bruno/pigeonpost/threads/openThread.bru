@@ -1,0 +1,23 @@
+meta {
+  name: Open a named thread with a peer (created on both sides)
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/v1/threads
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "peer": "string",
+    "title": "string",
+    "identity": "string"
+  }
+}

@@ -1,0 +1,23 @@
+meta {
+  name: Rooms
+  type: http
+  seq: 17
+}
+
+get {
+  url: {{baseUrl}}/v1/orgs/:id/rooms
+  body: none
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  See docs/orgs.md. Requires the `orgs` feature flag. A person signed in (member token); automation gets `human_required`.
+}

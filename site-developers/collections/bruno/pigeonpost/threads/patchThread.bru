@@ -1,0 +1,32 @@
+meta {
+  name: Rename or archive one thread in this mailbox only, or set its disappearing timer on both sides
+  type: http
+  seq: 5
+}
+
+patch {
+  url: {{baseUrl}}/v1/threads/:id
+  body: json
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "title": "string",
+    "archived": false,
+    "ephemeral_secs": 0,
+    "identity": "string"
+  }
+}
+
+docs {
+  `ephemeral_secs` (null, 300, 3600, 28800, 86400, 604800, 2419200) needs the `disappearing` flag; it applies to both sides of the thread and only to new messages (SDS §17).
+}

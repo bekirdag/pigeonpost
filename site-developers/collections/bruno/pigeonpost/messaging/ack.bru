@@ -1,0 +1,23 @@
+meta {
+  name: Mark a message read
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/v1/ack
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "message_id": "string",
+    "identity": "string",
+    "with_edits": false
+  }
+}

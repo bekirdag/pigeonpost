@@ -1,0 +1,37 @@
+meta {
+  name: Submit an MLS commit (first valid commit per epoch wins)
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/v1/groups/:id/commits
+  body: json
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "request_key": "string",
+    "epoch": 0,
+    "commit_id": "string",
+    "commit": "string",
+    "envelope_signature": "string",
+    "welcome": "string",
+    "adds": [],
+    "removes": [],
+    "expected_revision": 0
+  }
+}
+
+docs {
+  See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+}

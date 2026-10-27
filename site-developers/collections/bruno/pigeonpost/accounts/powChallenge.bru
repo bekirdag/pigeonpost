@@ -1,0 +1,15 @@
+meta {
+  name: Issue a proof-of-work challenge
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/v1/pow/challenge
+  body: none
+  auth: none
+}
+
+docs {
+  Required for anonymous `POST /v1/identities` and for `POST /v1/accounts`.
+}

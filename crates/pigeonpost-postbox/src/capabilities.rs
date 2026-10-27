@@ -89,6 +89,10 @@ pub(crate) const KNOWN_FEATURES: &[(&str, &str)] = &[
         "Canonical recipient lookup before protected native sends: /v1/recipients/resolve",
     ),
     (
+        ORG_API,
+        "Enterprise API: org API keys, /org/v1 and org webhooks (SDS §18, docs/org-api.md)",
+    ),
+    (
         CALENDAR_EMAIL,
         "Calendar invitations, updates, reminders and codes sent to contact addresses (SDS §14B.6)",
     ),
@@ -133,6 +137,8 @@ pub(crate) const RECEIPTS: &str = "receipts";
 pub(crate) const AGENT_STATUS: &str = "agent_status";
 /// Canonical recipient lookup before persisting an immutable delivery intent.
 pub(crate) const RECIPIENT_LOOKUP: &str = "recipient_lookup";
+/// Enterprise API (Phase 5): org API keys, `/org/v1`, webhooks.
+pub(crate) const ORG_API: &str = "org_api";
 
 /// Typed event names the account stream may emit when `account_events` is on.
 pub(crate) const EVENT_TYPES: &[&str] = &[

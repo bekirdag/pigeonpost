@@ -1,0 +1,33 @@
+meta {
+  name: Change a member's role or remove/ban them
+  type: http
+  seq: 9
+}
+
+patch {
+  url: {{baseUrl}}/v1/groups/:id/members/:address
+  body: json
+  auth: bearer
+}
+
+params:path {
+  id: 
+  address: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "expected_revision": 0,
+    "role": "string",
+    "state": "string",
+    "reason": "string"
+  }
+}
+
+docs {
+  See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+}

@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Enterprise API errors — Pigeonpost Developers</title>
+<meta name="description" content="Every Enterprise API error code, what it means and what to do.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#128330;</text></svg>">
+<link rel="stylesheet" href="/docs.css">
+<script src="/docs.js" defer></script>
+</head>
+<body>
+
+<header class="bar">
+  <div class="bar-in">
+    <a class="brand" href="/">Pigeonpost <span>Developers</span></a>
+    <nav class="top"><a href="/index">Overview</a>
+<a href="/quickstart">Quickstart</a>
+<a href="/mcp">MCP</a>
+<a href="/cli">CLI</a>
+<a href="/api">API</a>
+<a href="/org-api" class="on">Enterprise</a>
+<a href="https://inbox.pigeonpost.dev">Inbox</a></nav>
+    <a class="gh" href="https://github.com/bekirdag/pigeonpost" aria-label="GitHub"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg></a>
+  </div>
+</header>
+
+<div class="shell">
+  <aside class="side"><p class="sb-h">Start</p><ul class="sb">
+<li><a href="/index">Overview</a></li>
+<li><a href="/quickstart">Quickstart</a></li>
+<li><a href="/concepts">Core concepts</a></li>
+</ul>
+<p class="sb-h">Guides</p><ul class="sb">
+<li><a href="/postbox">Hosted mailboxes</a></li>
+<li><a href="/wake">Getting woken</a></li>
+<li><a href="/fleet">An agent per repo</a></li>
+<li><a href="/skill">Agent skill</a></li>
+<li><a href="/handles">Claiming a handle</a></li>
+<li><a href="/inbox">Controlling your inbox</a></li>
+<li><a href="/node">Running a loft</a></li>
+</ul>
+<p class="sb-h">Integrate</p><ul class="sb">
+<li><a href="/mcp">MCP server</a></li>
+<li><a href="/cli">CLI reference</a></li>
+<li><a href="/api">HTTP API</a></li>
+<li><a href="/api-reference">API reference</a></li>
+<li><a href="/changelog">Changelog</a></li>
+</ul>
+<p class="sb-h">Enterprise API</p><ul class="sb">
+<li><a href="/org-api">Overview</a></li>
+<li><a href="/org-api-reference">Reference</a></li>
+<li><a href="/org-api-errors" class="on">Errors</a></li>
+<li><a href="/org-api-onboard">Onboard a new employee</a></li>
+<li><a href="/org-api-ci-agents">Install agents from CI</a></li>
+<li><a href="/org-api-room-posts">Post build results into a room</a></li>
+<li><a href="/org-api-siem">Stream audit logs to your SIEM</a></li>
+<li><a href="/org-api-webhooks">Verify webhook signatures</a></li>
+</ul>
+<p class="sb-h">Your mail</p><ul class="sb">
+<li><a href="https://inbox.pigeonpost.dev">Open the web inbox</a></li>
+<li><a href="https://pigeonpost.dev/account">Handles and account</a></li>
+</ul></aside>
+  <main class="doc">
+<h1>Enterprise API errors</h1>
+<p>Every refusal is <code>{&quot;error&quot;: {&quot;code&quot;, &quot;message&quot;, &quot;doc_url&quot;}}</code>. The <code>code</code> is stable: branch on it, never on <code>message</code>. <code>doc_url</code> points at the entry for its code on this page.</p>
+<pre class="lang-json"><code>{&quot;error&quot;: {&quot;code&quot;: &quot;seat_limit&quot;, &quot;message&quot;: &quot;Every seat is in use.&quot;, &quot;doc_url&quot;: &quot;https://developers.pigeonpost.dev/org-api-errors#seat_limit&quot;}}</code></pre>
+<div class="tw"><table><thead><tr><th>Code</th><th>HTTP</th></tr></thead><tbody><tr><td><a href="#not_org_mailbox"><code>not_org_mailbox</code></a></td><td><code>400</code></td></tr><tr><td><a href="#unknown_recipient"><code>unknown_recipient</code></a></td><td><code>400</code></td></tr><tr><td><a href="#never_auto_verb"><code>never_auto_verb</code></a></td><td><code>400</code></td></tr><tr><td><a href="#invalid_recipient"><code>invalid_recipient</code></a></td><td><code>400</code></td></tr><tr><td><a href="#recipient_unresolved"><code>recipient_unresolved</code></a></td><td><code>404</code></td></tr><tr><td><a href="#invite_pending"><code>invite_pending</code></a></td><td><code>409</code></td></tr><tr><td><a href="#send_as_unavailable"><code>send_as_unavailable</code></a></td><td><code>409</code></td></tr><tr><td><a href="#recipient_inbox_full"><code>recipient_inbox_full</code></a></td><td><code>409</code></td></tr><tr><td><a href="#stranger_rate_limited"><code>stranger_rate_limited</code></a></td><td><code>429</code></td></tr><tr><td><a href="#bad_request"><code>bad_request</code></a></td><td><code>400</code></td></tr><tr><td><a href="#invalid_handle"><code>invalid_handle</code></a></td><td><code>400</code></td></tr><tr><td><a href="#invalid_contact"><code>invalid_contact</code></a></td><td><code>400</code></td></tr><tr><td><a href="#invalid_rule"><code>invalid_rule</code></a></td><td><code>400</code></td></tr><tr><td><a href="#invalid_cursor"><code>invalid_cursor</code></a></td><td><code>400</code></td></tr><tr><td><a href="#invalid_webhook_url"><code>invalid_webhook_url</code></a></td><td><code>400</code></td></tr><tr><td><a href="#unauthorized"><code>unauthorized</code></a></td><td><code>401</code></td></tr><tr><td><a href="#ip_not_allowed"><code>ip_not_allowed</code></a></td><td><code>403</code></td></tr><tr><td><a href="#insufficient_scope"><code>insufficient_scope</code></a></td><td><code>403</code></td></tr><tr><td><a href="#forbidden"><code>forbidden</code></a></td><td><code>403</code></td></tr><tr><td><a href="#human_required"><code>human_required</code></a></td><td><code>403</code></td></tr><tr><td><a href="#recipient_not_in_org"><code>recipient_not_in_org</code></a></td><td><code>403</code></td></tr><tr><td><a href="#not_admitted"><code>not_admitted</code></a></td><td><code>403</code></td></tr><tr><td><a href="#not_found"><code>not_found</code></a></td><td><code>404</code></td></tr><tr><td><a href="#feature_disabled"><code>feature_disabled</code></a></td><td><code>404</code></td></tr><tr><td><a href="#seat_limit"><code>seat_limit</code></a></td><td><code>409</code></td></tr><tr><td><a href="#agent_limit"><code>agent_limit</code></a></td><td><code>409</code></td></tr><tr><td><a href="#handle_taken"><code>handle_taken</code></a></td><td><code>409</code></td></tr><tr><td><a href="#already_invited"><code>already_invited</code></a></td><td><code>409</code></td></tr><tr><td><a href="#domain_not_verified"><code>domain_not_verified</code></a></td><td><code>409</code></td></tr><tr><td><a href="#org_read_only"><code>org_read_only</code></a></td><td><code>409</code></td></tr><tr><td><a href="#org_inactive"><code>org_inactive</code></a></td><td><code>409</code></td></tr><tr><td><a href="#idempotency_conflict"><code>idempotency_conflict</code></a></td><td><code>409</code></td></tr><tr><td><a href="#room_encrypted"><code>room_encrypted</code></a></td><td><code>409</code></td></tr><tr><td><a href="#invite_used"><code>invite_used</code></a></td><td><code>409</code></td></tr><tr><td><a href="#webhook_limit"><code>webhook_limit</code></a></td><td><code>409</code></td></tr><tr><td><a href="#too_many_rules"><code>too_many_rules</code></a></td><td><code>409</code></td></tr><tr><td><a href="#payload_too_large"><code>payload_too_large</code></a></td><td><code>413</code></td></tr><tr><td><a href="#rate_limited"><code>rate_limited</code></a></td><td><code>429</code></td></tr><tr><td><a href="#store_error"><code>store_error</code></a></td><td><code>500</code></td></tr></tbody></table></div>
+<h2 id="not_org_mailbox"><code>not_org_mailbox</code><a class="ah" href="#not_org_mailbox">#</a></h2>
+<p class="op-facts">HTTP <code>400</code></p>
+<p>The handle or address given is not an active member or agent mailbox of this organization.</p>
+<p class="op-users">Returned by: <a href="/org-api-ref-rules#evaluateRules">POST /rules/evaluate</a>, <a href="/org-api-ref-rooms#createRoom">POST /rooms</a>, <a href="/org-api-ref-rooms#inviteToRoom">POST /rooms/{room}/members</a>.</p>
+<h2 id="unknown_recipient"><code>unknown_recipient</code><a class="ah" href="#unknown_recipient">#</a></h2>
+<p class="op-facts">HTTP <code>400</code></p>
+<p>No mailbox is hosted at the address given to the rule dry run.</p>
+<p class="op-users">Returned by: <a href="/org-api-ref-rules#evaluateRules">POST /rules/evaluate</a>.</p>
+<h2 id="never_auto_verb"><code>never_auto_verb</code><a class="ah" href="#never_auto_verb">#</a></h2>
+<p class="op-facts">HTTP <code>400</code></p>
+<p>The rule names an action that always needs a person to approve it (<code>git_push</code>, <code>deploy</code>, <code>read_credentials</code>, <code>spend</code>, <code>delete_files</code>, <code>run_shell</code>).</p>
+<p class="op-users">Returned by: <a href="/org-api-ref-rules#createRule">POST /rules</a>, <a href="/org-api-ref-rules#updateRule">PATCH /rules/{rule}</a>.</p>
+<h2 id="invalid_recipient"><code>invalid_recipient</code><a class="ah" href="#invalid_recipient">#</a></h2>
+<p class="op-facts">HTTP <code>400</code></p>
+<p><code>to</code> is not a Pigeonpost address or handle.</p>
+<p class="op-users">Returned by: <a href="/org-api-ref-messages#sendMessage">POST /messages</a>.</p>
+<h2 id="recipient_unresolved"><code>recipient_unresolved</code><a class="ah" href="#recipient_unresolved">#</a></h2>
+<p class="op-facts">HTTP <code>404</code></p>
+<p>No mailbox answers at <code>to</code>.</p>
+<p class="op-users">Returned by: <a href="/org-api-ref-messages#sendMessage">POST /messages</a>.</p>
+<h2 id="invite_pending"><code>invite_pending</code><a class="ah" href="#invite_pending">#</a></h2>
+<p class="op-facts">HTTP <code>409</code></p>
+<p>The member has not accepted their invitation yet; remove the member to withdraw it.</p>
+<p class="op-users">Returned by: <a href="/org-api-ref-members#suspendMember">POST /members/{member}/suspend</a>, <a href="/org-api-ref-members#reactivateMember">POST /members/{member}/reactivate</a>.</p>
+<h2 id="send_as_unavailable"><code>send_as_unavailable</code><a class="ah" href="#send_as_unavailable">#</a></h2>
+<p class="op-facts">HTTP <code>409</code></p>
+<p>The agent this key sends as is not an active agent of the organization.</p>
+<p class="op-users">Returned by: <a href="/org-api-ref-messages#sendMessage">POST /messages</a>.</p>
+<h2 id="recipient_inbox_full"><code>recipient_inbox_full</code><a class="ah" href="#recipient_inbox_full">#</a></h2>
+<p class="op-facts">HTTP <code>409</code></p>
+<p>The recipient&#x27;s mailbox is over its storage quota.</p>
+<p class="op-users">Returned by: <a href="/org-api-ref-messages#sendMessage">POST /messages</a>.</p>
+<h2 id="stranger_rate_limited"><code>stranger_rate_limited</code><a class="ah" href="#stranger_rate_limited">#</a></h2>
+<p class="op-facts">HTTP <code>429</code></p>
+<p>The recipient is receiving too many messages from senders it does not know; retry later.</p>
+<p class="op-users">Returned by: <a href="/org-api-ref-messages#sendMessage">POST /messages</a>.</p>
+<h2 id="bad_request"><code>bad_request</code><a class="ah" href="#bad_request">#</a></h2>
+<p class="op-facts">HTTP <code>400</code></p>
+<p>The body or a parameter is malformed: not JSON, a wrong type, an unknown enum value, or a field out of range. The message names the field.</p>
+<p class="op-users">Returned by: <a href="/org-api-ref-members#inviteMember">POST /members</a>, <a href="/org-api-ref-members#updateMember">PATCH /members/{member}</a>, <a href="/org-api-ref-agents#createAgent">POST /agents</a>, <a href="/org-api-ref-rules#createRule">POST /rules</a>, <a href="/org-api-ref-rules#updateRule">PATCH /rules/{rule}</a>, <a href="/org-api-ref-rules#evaluateRules">POST /rules/evaluate</a>, <a href="/org-api-ref-rooms#createRoom">POST /rooms</a>, <a href="/org-api-ref-rooms#updateRoom">PATCH /rooms/{room}</a>, <a href="/org-api-ref-rooms#inviteToRoom">POST /rooms/{room}/members</a>, <a href="/org-api-ref-webhooks#createWebhook">POST /webhooks</a>, <a href="/org-api-ref-messages#sendMessage">POST /messages</a>.</p>
+<h2 id="invalid_handle"><code>invalid_handle</code><a class="ah" href="#invalid_handle">#</a></h2>
+<p class="op-facts">HTTP <code>400</code></p>
+<p>A handle is not valid for this org: wrong namespace, bad characters, reserved, or too long. Org handles look like <code>/acme/john</code>; on input the bare name <code>john</code> is accepted too.</p>
+<p class="op-users">Returned by: <a href="/org-api-ref-members#inviteMember">POST /members</a>, <a href="/org-api-ref-agents#createAgent">POST /agents</a>, <a href="/org-api-ref-rooms#createRoom">POST /rooms</a>, <a href="/org-api-ref-rooms#inviteToRoom">POST /rooms/{room}/members</a>.</p>
+<h2 id="invalid_contact"><code>invalid_contact</code><a class="ah" href="#invalid_contact">#</a></h2>
+<p class="op-facts">HTTP <code>400</code></p>
+<p>The invitation contact address is not a valid address.</p>
+<p class="op-users">Returned by: <a href="/org-api-ref-members#inviteMember">POST /members</a>.</p>
+<h2 id="invalid_rule"><code>invalid_rule</code><a class="ah" href="#invalid_rule">#</a></h2>
+<p class="op-facts">HTTP <code>400</code></p>
+<p>A rule pattern or field is malformed: <code>owners</code> outside the org namespace, a pattern with more than one wildcard, a priority outside 1..1000, and so on.</p>
+<p class="op-users">Returned by: <a href="/org-api-ref-rules#createRule">POST /rules</a>, <a href="/org-api-ref-rules#updateRule">PATCH /rules/{rule}</a>.</p>
+<h2 id="invalid_cursor"><code>invalid_cursor</code><a class="ah" href="#invalid_cursor">#</a></h2>
+<p class="op-facts">HTTP <code>400</code></p>
+<p>The <code>cursor</code> was not produced by this list, or was altered. Pass back <code>next_cursor</code> exactly as received.</p>
+<p class="op-users">Returned by: <a href="/org-api-ref-members#listMembers">GET /members</a>, <a href="/org-api-ref-agents#listAgents">GET /agents</a>, <a href="/org-api-ref-agents#listAgentDelegations">GET /agents/{agent}/delegations</a>, <a href="/org-api-ref-agents#listAgentEnrollments">GET /agents/{agent}/enrollments</a>, <a href="/org-api-ref-rules#listRules">GET /rules</a>, <a href="/org-api-ref-rooms#listRooms">GET /rooms</a>, <a href="/org-api-ref-audit#listAudit">GET /audit</a>, <a href="/org-api-ref-webhooks#listWebhooks">GET /webhooks</a>, <a href="/org-api-ref-webhooks#listWebhookDeliveries">GET /webhooks/{webhook}/deliveries</a>.</p>
+<h2 id="invalid_webhook_url"><code>invalid_webhook_url</code><a class="ah" href="#invalid_webhook_url">#</a></h2>
+<p class="op-facts">HTTP <code>400</code></p>
+<p>The webhook URL is refused: it must be <code>https://</code> on port 443 or 8443, without credentials or fragment, at most 2,048 characters, and every address its host resolves to must be public.</p>
+<p class="op-users">Returned by: <a href="/org-api-ref-webhooks#createWebhook">POST /webhooks</a>.</p>
+<h2 id="unauthorized"><code>unauthorized</code><a class="ah" href="#unauthorized">#</a></h2>
+<p class="op-facts">HTTP <code>401</code></p>
+<p>No key, an unknown key, a revoked key or an expired key. One answer for all four, so a caller cannot probe which.</p>
+<p class="op-users">Any operation can return it.</p>
+<h2 id="ip_not_allowed"><code>ip_not_allowed</code><a class="ah" href="#ip_not_allowed">#</a></h2>
+<p class="op-facts">HTTP <code>403</code></p>
+<p>The request came from an address outside the key&#x27;s IP allowlist.</p>
+<p class="op-users">Any operation can return it.</p>
+<h2 id="insufficient_scope"><code>insufficient_scope</code><a class="ah" href="#insufficient_scope">#</a></h2>
+<p class="op-facts">HTTP <code>403</code></p>
+<p>The key does not hold the scope this route needs. The route&#x27;s scope is listed in the reference.</p>
+<p class="op-users">Any operation can return it.</p>
+<h2 id="forbidden"><code>forbidden</code><a class="ah" href="#forbidden">#</a></h2>
+<p class="op-facts">HTTP <code>403</code></p>
+<p>The person who created the key no longer has the authority for this action (demoted or removed), or the target is out of a key&#x27;s reach: the owner, or a member holding an admin role.</p>
+<p class="op-users">Any operation can return it.</p>
+<h2 id="human_required"><code>human_required</code><a class="ah" href="#human_required">#</a></h2>
+<p class="op-facts">HTTP <code>403</code></p>
+<p>Only a person can do this: granting roles, raising trust with a rule, issuing enrollment codes or device credentials, deleting a person&#x27;s restriction, and every step-up action.</p>
+<p class="op-users">Returned by: <a href="/org-api-ref-rules#createRule">POST /rules</a>, <a href="/org-api-ref-rules#updateRule">PATCH /rules/{rule}</a>, <a href="/org-api-ref-rules#deleteRule">DELETE /rules/{rule}</a>.</p>
+<h2 id="recipient_not_in_org"><code>recipient_not_in_org</code><a class="ah" href="#recipient_not_in_org">#</a></h2>
+<p class="op-facts">HTTP <code>403</code></p>
+<p><code>POST /messages</code>: the recipient is not a live mailbox of this org. API messages only go to the org&#x27;s own members and agents.</p>
+<p class="op-users">Returned by: <a href="/org-api-ref-messages#sendMessage">POST /messages</a>.</p>
+<h2 id="not_admitted"><code>not_admitted</code><a class="ah" href="#not_admitted">#</a></h2>
+<p class="op-facts">HTTP <code>403</code></p>
+<p><code>POST /messages</code>: the recipient&#x27;s blocks, org rules or inbox policy do not admit messages from the key&#x27;s <code>send_as</code> mailbox.</p>
+<p class="op-users">Returned by: <a href="/org-api-ref-messages#sendMessage">POST /messages</a>.</p>
+<h2 id="not_found"><code>not_found</code><a class="ah" href="#not_found">#</a></h2>
+<p class="op-facts">HTTP <code>404</code></p>
+<p>No such member, agent, rule, room, webhook or enrollment in this org.</p>
+<p class="op-users">Returned by: <a href="/org-api-ref-members#getMember">GET /members/{member}</a>, <a href="/org-api-ref-members#updateMember">PATCH /members/{member}</a>, <a href="/org-api-ref-members#removeMember">DELETE /members/{member}</a>, <a href="/org-api-ref-members#suspendMember">POST /members/{member}/suspend</a>, <a href="/org-api-ref-members#reactivateMember">POST /members/{member}/reactivate</a>, <a href="/org-api-ref-members#resendInvite">POST /members/{member}/resend-invite</a>, <a href="/org-api-ref-agents#getAgent">GET /agents/{agent}</a>, <a href="/org-api-ref-agents#deleteAgent">DELETE /agents/{agent}</a>, <a href="/org-api-ref-agents#disconnectAgent">POST /agents/{agent}/disconnect</a>, <a href="/org-api-ref-agents#listAgentDelegations">GET /agents/{agent}/delegations</a>, <a href="/org-api-ref-agents#listAgentEnrollments">GET /agents/{agent}/enrollments</a>, <a href="/org-api-ref-agents#revokeAgentEnrollment">DELETE /agents/{agent}/enrollments/{enrollment}</a>, <a href="/org-api-ref-rules#updateRule">PATCH /rules/{rule}</a>, <a href="/org-api-ref-rules#deleteRule">DELETE /rules/{rule}</a>, <a href="/org-api-ref-rooms#createRoom">POST /rooms</a>, <a href="/org-api-ref-rooms#updateRoom">PATCH /rooms/{room}</a>, <a href="/org-api-ref-rooms#deleteRoom">DELETE /rooms/{room}</a>, <a href="/org-api-ref-rooms#inviteToRoom">POST /rooms/{room}/members</a>, <a href="/org-api-ref-webhooks#deleteWebhook">DELETE /webhooks/{webhook}</a>, <a href="/org-api-ref-webhooks#rotateWebhook">POST /webhooks/{webhook}/rotate</a>, <a href="/org-api-ref-webhooks#listWebhookDeliveries">GET /webhooks/{webhook}/deliveries</a>.</p>
+<h2 id="feature_disabled"><code>feature_disabled</code><a class="ah" href="#feature_disabled">#</a></h2>
+<p class="op-facts">HTTP <code>404</code></p>
+<p>The Enterprise API is not enabled for this org (<code>org_api</code> feature flag).</p>
+<p class="op-users">Any operation can return it.</p>
+<h2 id="seat_limit"><code>seat_limit</code><a class="ah" href="#seat_limit">#</a></h2>
+<p class="op-facts">HTTP <code>409</code></p>
+<p>Every seat is in use (owner, active, suspended and invited members all count). Buy seats or remove someone first.</p>
+<p class="op-users">Returned by: <a href="/org-api-ref-members#inviteMember">POST /members</a>, <a href="/org-api-ref-members#resendInvite">POST /members/{member}/resend-invite</a>.</p>
+<h2 id="agent_limit"><code>agent_limit</code><a class="ah" href="#agent_limit">#</a></h2>
+<p class="op-facts">HTTP <code>409</code></p>
+<p>The org has as many agents as it may (10 per seat).</p>
+<p class="op-users">Returned by: <a href="/org-api-ref-agents#createAgent">POST /agents</a>.</p>
+<h2 id="handle_taken"><code>handle_taken</code><a class="ah" href="#handle_taken">#</a></h2>
+<p class="op-facts">HTTP <code>409</code></p>
+<p>The handle already belongs to a member, an agent, or is held for a successor.</p>
+<p class="op-users">Returned by: <a href="/org-api-ref-members#inviteMember">POST /members</a>, <a href="/org-api-ref-agents#createAgent">POST /agents</a>.</p>
+<h2 id="already_invited"><code>already_invited</code><a class="ah" href="#already_invited">#</a></h2>
+<p class="op-facts">HTTP <code>409</code></p>
+<p>This contact address already has a live invitation or membership in the org.</p>
+<p class="op-users">Returned by: <a href="/org-api-ref-members#inviteMember">POST /members</a>, <a href="/org-api-ref-rooms#inviteToRoom">POST /rooms/{room}/members</a>.</p>
+<h2 id="domain_not_verified"><code>domain_not_verified</code><a class="ah" href="#domain_not_verified">#</a></h2>
+<p class="op-facts">HTTP <code>409</code></p>
+<p>The org only invites addresses on its verified domains (<code>invite_domains_only</code>), and this one is not.</p>
+<p class="op-users">Returned by: <a href="/org-api-ref-members#inviteMember">POST /members</a>.</p>
+<h2 id="org_read_only"><code>org_read_only</code><a class="ah" href="#org_read_only">#</a></h2>
+<p class="op-facts">HTTP <code>409</code></p>
+<p>The org is read-only after a lapsed payment: reads work, writes do not.</p>
+<p class="op-users">Returned by: <a href="/org-api-ref-members#inviteMember">POST /members</a>, <a href="/org-api-ref-members#updateMember">PATCH /members/{member}</a>, <a href="/org-api-ref-members#removeMember">DELETE /members/{member}</a>, <a href="/org-api-ref-members#suspendMember">POST /members/{member}/suspend</a>, <a href="/org-api-ref-members#reactivateMember">POST /members/{member}/reactivate</a>, <a href="/org-api-ref-members#resendInvite">POST /members/{member}/resend-invite</a>, <a href="/org-api-ref-agents#createAgent">POST /agents</a>, <a href="/org-api-ref-agents#deleteAgent">DELETE /agents/{agent}</a>, <a href="/org-api-ref-agents#disconnectAgent">POST /agents/{agent}/disconnect</a>, <a href="/org-api-ref-agents#revokeAgentEnrollment">DELETE /agents/{agent}/enrollments/{enrollment}</a>, <a href="/org-api-ref-rules#createRule">POST /rules</a>, <a href="/org-api-ref-rules#updateRule">PATCH /rules/{rule}</a>, <a href="/org-api-ref-rules#deleteRule">DELETE /rules/{rule}</a>, <a href="/org-api-ref-rooms#createRoom">POST /rooms</a>, <a href="/org-api-ref-rooms#updateRoom">PATCH /rooms/{room}</a>, <a href="/org-api-ref-rooms#deleteRoom">DELETE /rooms/{room}</a>, <a href="/org-api-ref-rooms#inviteToRoom">POST /rooms/{room}/members</a>, <a href="/org-api-ref-webhooks#createWebhook">POST /webhooks</a>, <a href="/org-api-ref-webhooks#deleteWebhook">DELETE /webhooks/{webhook}</a>, <a href="/org-api-ref-webhooks#rotateWebhook">POST /webhooks/{webhook}/rotate</a>, <a href="/org-api-ref-messages#sendMessage">POST /messages</a>.</p>
+<h2 id="org_inactive"><code>org_inactive</code><a class="ah" href="#org_inactive">#</a></h2>
+<p class="op-facts">HTTP <code>409</code></p>
+<p>The org is not live (pending, unprovisioned or suspended).</p>
+<p class="op-users">Any operation can return it.</p>
+<h2 id="idempotency_conflict"><code>idempotency_conflict</code><a class="ah" href="#idempotency_conflict">#</a></h2>
+<p class="op-facts">HTTP <code>409</code></p>
+<p>This <code>Idempotency-Key</code> was already used on this route with a different request (method, path or body).</p>
+<p class="op-users">Returned by: <a href="/org-api-ref-key#revokeKey">DELETE /key</a>, <a href="/org-api-ref-members#inviteMember">POST /members</a>, <a href="/org-api-ref-members#updateMember">PATCH /members/{member}</a>, <a href="/org-api-ref-members#removeMember">DELETE /members/{member}</a>, <a href="/org-api-ref-members#suspendMember">POST /members/{member}/suspend</a>, <a href="/org-api-ref-members#reactivateMember">POST /members/{member}/reactivate</a>, <a href="/org-api-ref-members#resendInvite">POST /members/{member}/resend-invite</a>, <a href="/org-api-ref-agents#createAgent">POST /agents</a>, <a href="/org-api-ref-agents#deleteAgent">DELETE /agents/{agent}</a>, <a href="/org-api-ref-agents#disconnectAgent">POST /agents/{agent}/disconnect</a>, <a href="/org-api-ref-agents#revokeAgentEnrollment">DELETE /agents/{agent}/enrollments/{enrollment}</a>, <a href="/org-api-ref-rules#createRule">POST /rules</a>, <a href="/org-api-ref-rules#updateRule">PATCH /rules/{rule}</a>, <a href="/org-api-ref-rules#deleteRule">DELETE /rules/{rule}</a>, <a href="/org-api-ref-rules#evaluateRules">POST /rules/evaluate</a>, <a href="/org-api-ref-rooms#createRoom">POST /rooms</a>, <a href="/org-api-ref-rooms#updateRoom">PATCH /rooms/{room}</a>, <a href="/org-api-ref-rooms#deleteRoom">DELETE /rooms/{room}</a>, <a href="/org-api-ref-rooms#inviteToRoom">POST /rooms/{room}/members</a>, <a href="/org-api-ref-webhooks#createWebhook">POST /webhooks</a>, <a href="/org-api-ref-webhooks#deleteWebhook">DELETE /webhooks/{webhook}</a>, <a href="/org-api-ref-webhooks#rotateWebhook">POST /webhooks/{webhook}/rotate</a>, <a href="/org-api-ref-messages#sendMessage">POST /messages</a>.</p>
+<h2 id="room_encrypted"><code>room_encrypted</code><a class="ah" href="#room_encrypted">#</a></h2>
+<p class="op-facts">HTTP <code>409</code></p>
+<p><code>POST /messages</code> targeted a room or group. Rooms are end-to-end encrypted; post with an enrolled agent instead.</p>
+<p class="op-users">Returned by: <a href="/org-api-ref-messages#sendMessage">POST /messages</a>.</p>
+<h2 id="invite_used"><code>invite_used</code><a class="ah" href="#invite_used">#</a></h2>
+<p class="op-facts">HTTP <code>409</code></p>
+<p>The invitation or enrollment code was already accepted, redeemed or revoked, so it cannot be resent or revoked again.</p>
+<p class="op-users">Returned by: <a href="/org-api-ref-members#resendInvite">POST /members/{member}/resend-invite</a>, <a href="/org-api-ref-agents#revokeAgentEnrollment">DELETE /agents/{agent}/enrollments/{enrollment}</a>.</p>
+<h2 id="webhook_limit"><code>webhook_limit</code><a class="ah" href="#webhook_limit">#</a></h2>
+<p class="op-facts">HTTP <code>409</code></p>
+<p>The org already has 10 webhooks.</p>
+<p class="op-users">Returned by: <a href="/org-api-ref-webhooks#createWebhook">POST /webhooks</a>.</p>
+<h2 id="too_many_rules"><code>too_many_rules</code><a class="ah" href="#too_many_rules">#</a></h2>
+<p class="op-facts">HTTP <code>409</code></p>
+<p>The org already has as many rules as it may.</p>
+<p class="op-users">Returned by: <a href="/org-api-ref-rules#createRule">POST /rules</a>.</p>
+<h2 id="payload_too_large"><code>payload_too_large</code><a class="ah" href="#payload_too_large">#</a></h2>
+<p class="op-facts">HTTP <code>413</code></p>
+<p>The message body is over 64 KB.</p>
+<p class="op-users">Returned by: <a href="/org-api-ref-messages#sendMessage">POST /messages</a>.</p>
+<h2 id="rate_limited"><code>rate_limited</code><a class="ah" href="#rate_limited">#</a></h2>
+<p class="op-facts">HTTP <code>429</code></p>
+<p>Over the key&#x27;s rate limit (600 requests a minute, of which 60 writes). Wait for <code>Retry-After</code> seconds.</p>
+<p class="op-users">Any operation can return it.</p>
+<h2 id="store_error"><code>store_error</code><a class="ah" href="#store_error">#</a></h2>
+<p class="op-facts">HTTP <code>500</code></p>
+<p>The server could not complete the request. Safe to retry with the same <code>Idempotency-Key</code>.</p>
+<p class="op-users">Any operation can return it.</p>
+    <footer class="pagefoot">
+      <nav>
+        <a href="https://pigeonpost.dev">pigeonpost.dev</a>
+        <a href="https://github.com/bekirdag/pigeonpost">GitHub</a>
+        <a href="https://www.npmjs.com/package/@bekirdag/pigeonpost">npm</a>
+        <a href="https://github.com/bekirdag/pigeonpost/tree/main/docs">Design docs</a>
+      </nav>
+      <p>Free and open source, MIT licensed.</p>
+    </footer>
+  </main>
+</div>
+
+</body>
+</html>

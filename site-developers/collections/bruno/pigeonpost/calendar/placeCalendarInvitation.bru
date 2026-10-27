@@ -1,0 +1,27 @@
+meta {
+  name: Move an invitation to another of the caller's calendars
+  type: http
+  seq: 14
+}
+
+put {
+  url: {{baseUrl}}/v1/calendar/events/:id/placement
+  body: json
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {}
+}
+
+docs {
+  See docs/calendar.md. Requires the `calendar` feature flag.
+}

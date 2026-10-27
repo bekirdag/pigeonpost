@@ -1,0 +1,32 @@
+meta {
+  name: MCP over Streamable HTTP (JSON-RPC 2.0)
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/mcp
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "jsonrpc": "2.0",
+    "id": "string",
+    "method": "initialize",
+    "params": {}
+  }
+}
+
+docs {
+  Methods: `initialize`, `tools/list`, `ping`, `tools/call`. The bearer token is optional for
+  `initialize`/`tools/list`; tool calls authenticate with a capability token, an account API
+  key or a member token. Tool failures (including authentication failures) are reported as
+  error tool-results inside a 200 JSON-RPC response, not as HTTP errors. A notification
+  (no `id`) gets an empty 202.
+}

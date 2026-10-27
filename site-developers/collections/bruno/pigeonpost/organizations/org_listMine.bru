@@ -1,0 +1,19 @@
+meta {
+  name: List mine
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/v1/orgs
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  See docs/orgs.md. Requires the `orgs` feature flag.
+}

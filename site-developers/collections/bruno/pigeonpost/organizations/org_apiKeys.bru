@@ -1,0 +1,23 @@
+meta {
+  name: List org API keys
+  type: http
+  seq: 42
+}
+
+get {
+  url: {{baseUrl}}/v1/orgs/:id/api-keys
+  body: none
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  See docs/org-api.md §1. Requires the `orgs` and `org_api` feature flags. Owner or admin, a person signed in (member token). Never returns a secret.
+}

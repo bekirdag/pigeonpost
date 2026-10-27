@@ -1,0 +1,31 @@
+meta {
+  name: Delete an agent
+  type: http
+  seq: 4
+}
+
+delete {
+  url: {{baseUrl}}/agents/:agent
+  body: none
+  auth: bearer
+}
+
+params:path {
+  agent: ci-bot
+}
+
+headers {
+  ~Idempotency-Key: replace-with-a-unique-key
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  Deletes the agent; every device credential is revoked.
+
+  Scope: `agents:write`.
+
+  Errors: `unauthorized` (401), `ip_not_allowed` (403), `insufficient_scope` (403), `forbidden` (403), `not_found` (404), `feature_disabled` (404), `org_inactive` (409), `org_read_only` (409), `idempotency_conflict` (409), `rate_limited` (429), `store_error` (500).
+}

@@ -1,0 +1,37 @@
+meta {
+  name: Create org API key
+  type: http
+  seq: 43
+}
+
+post {
+  url: {{baseUrl}}/v1/orgs/:id/api-keys
+  body: json
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "name": "HR onboarding",
+    "scopes": [
+      "org:read",
+      "members:write"
+    ],
+    "expires_in_days": 365,
+    "ip_allowlist": [
+      "203.0.113.0/24"
+    ]
+  }
+}
+
+docs {
+  See docs/org-api.md §1. Requires the `orgs` and `org_api` feature flags. Owner or admin with a recent strong sign-in (`step_up_required` with `acr_values` and `max_age`; `403 step_up_unavailable` when the server has no strong-auth `acr` configured). `send_as` is required with `messages:send` and must be an active org agent. The secret is returned once (`Cache-Control: no-store`) and stored only as SHA-256. At most 25 live keys per org. A person signed in (member token); automation gets `human_required`.
+}

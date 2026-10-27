@@ -1,0 +1,33 @@
+meta {
+  name: Account-linked MCP surface for ChatGPT
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/chatgpt
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "jsonrpc": "2.0",
+    "id": "string",
+    "method": "initialize",
+    "params": {}
+  }
+}
+
+docs {
+  JSON-RPC 2.0 MCP endpoint exposing a restricted tool set. Tool calls require an OAuth access
+  token whose audience is this resource and that carries the `pigeonpost:read` or
+  `pigeonpost:write` scope. Requests from browser origins other than ChatGPT/OpenAI are refused
+  with 403. Unsupported `MCP-Protocol-Version` header values get 400. Missing or invalid
+  tokens get 401 (insufficient scope 403) with a JSON-RPC body carrying an
+  `mcp/www_authenticate` challenge. Body limit 128 KiB.
+}

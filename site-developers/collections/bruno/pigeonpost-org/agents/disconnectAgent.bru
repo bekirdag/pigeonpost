@@ -1,0 +1,31 @@
+meta {
+  name: Disconnect an agent
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/agents/:agent/disconnect
+  body: none
+  auth: bearer
+}
+
+params:path {
+  agent: ci-bot
+}
+
+headers {
+  ~Idempotency-Key: replace-with-a-unique-key
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  Revokes every device credential and unredeemed enrollment code. The agent and its mailbox stay.
+
+  Scope: `agents:write`.
+
+  Errors: `unauthorized` (401), `ip_not_allowed` (403), `insufficient_scope` (403), `forbidden` (403), `not_found` (404), `feature_disabled` (404), `org_inactive` (409), `org_read_only` (409), `idempotency_conflict` (409), `rate_limited` (429), `store_error` (500).
+}

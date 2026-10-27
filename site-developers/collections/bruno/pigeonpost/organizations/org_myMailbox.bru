@@ -1,0 +1,27 @@
+meta {
+  name: My mailbox
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/v1/orgs/:id/me/mailbox
+  body: json
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {}
+}
+
+docs {
+  See docs/orgs.md. Requires the `orgs` feature flag. A person signed in (member token); automation gets `human_required`.
+}

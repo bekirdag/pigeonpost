@@ -1,0 +1,35 @@
+meta {
+  name: Remove a member
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{baseUrl}}/members/:member?mode=reserve
+  body: none
+  auth: bearer
+}
+
+params:query {
+  mode: reserve
+}
+
+params:path {
+  member: john
+}
+
+headers {
+  ~Idempotency-Key: replace-with-a-unique-key
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  Offboards the member: memberships, roles, delegations, rooms and device credentials they approved are revoked. With `mode=reserve` (default) the address is held for a successor (invite someone to the same handle); the old mailbox keeps its history, detached from the org. `mode=delete` releases the address.
+
+  Scope: `members:write`.
+
+  Errors: `unauthorized` (401), `ip_not_allowed` (403), `insufficient_scope` (403), `forbidden` (403), `not_found` (404), `feature_disabled` (404), `org_inactive` (409), `org_read_only` (409), `idempotency_conflict` (409), `rate_limited` (429), `store_error` (500).
+}

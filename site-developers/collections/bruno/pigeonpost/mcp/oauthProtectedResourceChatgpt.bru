@@ -1,0 +1,11 @@
+meta {
+  name: OAuth protected-resource metadata for /chatgpt
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/.well-known/oauth-protected-resource/chatgpt
+  body: none
+  auth: none
+}
