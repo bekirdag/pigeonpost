@@ -1038,7 +1038,7 @@ pub(crate) async fn stop(
 
 // ---- the calls service (internal) --------------------------------------------------------------
 
-fn internal_auth(state: &AppState, headers: &HeaderMap) -> Result<(), Response> {
+fn internal_auth(state: &AppState, headers: &HeaderMap) -> Result<(), Box<Response>> {
     crate::internal_api::authorize_service(
         state,
         headers,
@@ -1046,7 +1046,6 @@ fn internal_auth(state: &AppState, headers: &HeaderMap) -> Result<(), Response> 
         Action::StreamAdmission,
     )
     .map(|_| ())
-    .map_err(|r| *r)
 }
 
 #[derive(Deserialize)]
@@ -1071,7 +1070,7 @@ pub(crate) async fn admission(
     body: Result<Json<AdmissionReq>, JsonRejection>,
 ) -> Response {
     if let Err(r) = internal_auth(&state, &headers) {
-        return r;
+        return *r;
     }
     let Ok(Json(req)) = body else {
         return ApiError::bad(
@@ -1165,7 +1164,7 @@ pub(crate) async fn check(
     body: Result<Json<CheckReq>, JsonRejection>,
 ) -> Response {
     if let Err(r) = internal_auth(&state, &headers) {
-        return r;
+        return *r;
     }
     let Ok(Json(req)) = body else {
         return ApiError::bad("bad_request", "expected {stream_id, viewers, members:[]}")
@@ -1245,7 +1244,7 @@ pub(crate) async fn end_internal(
     body: Result<Json<EndReq>, JsonRejection>,
 ) -> Response {
     if let Err(r) = internal_auth(&state, &headers) {
-        return r;
+        return *r;
     }
     let Ok(Json(req)) = body else {
         return ApiError::bad("bad_request", "expected {stream_id, reason}").into_response();
