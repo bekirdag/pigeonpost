@@ -1,0 +1,13 @@
+{
+  "name": "pigeonpost-meeting-intel",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Consented meeting notes: decrypts participants' own microphone chunks, transcribes them with whisper.cpp, summarizes with a local model and stores the brief encrypted for the attendees.",
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test test/*.test.mjs"
+  }
+}

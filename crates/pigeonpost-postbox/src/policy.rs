@@ -93,6 +93,13 @@ pub(crate) enum Action {
     CalendarUse,
     /// `POST /internal/v1/calendar/meeting-access` (SDS §14B.7).
     MeetingAccess,
+    /// Read, delete and key one's own meeting notes (`/v1/meetings…`, SDS §14.7): the account's own
+    /// credential — a person's session or the account key — never a mailbox token or a connector.
+    MeetingNotes,
+    /// The calls service opening meetings and recording consent (`/internal/v1/meetings…`).
+    MeetingsCalls,
+    /// meeting-intel reading recipients' public keys and storing the encrypted brief.
+    MeetingsIntel,
     /// One `/org/v1` operation by an org API key (SDS §18). Granted only when the key holds the
     /// operation's scope (`Facts::scope_granted`) **and** the person who created the key still has
     /// the authority for it (`Facts::org_permitted`) — a key can never exceed either.
@@ -187,6 +194,8 @@ impl Action {
             | Action::GroupCallAdmission => Requirement::Service,
             Action::GroupParticipate | Action::CalendarUse => Requirement::NotConnector,
             Action::MeetingAccess => Requirement::Service,
+            Action::MeetingNotes => Requirement::AccountHolder,
+            Action::MeetingsCalls | Action::MeetingsIntel => Requirement::Service,
             Action::GroupManage | Action::OrgAdminister => Requirement::Human,
             Action::OrgSensitive => Requirement::HumanStepUp,
             Action::DeviceEnroll => Requirement::Anyone,
