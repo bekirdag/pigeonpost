@@ -30,6 +30,8 @@ public sealed partial class MainWindow
         public required CheckBox Listed;
         public required ProgressRing Busy;
         public bool Rendering;
+        // Rebuild lists only when their content changes, so keyboard and Narrator focus stays put.
+        public object? CatalogKey, PickerKey, DirectoryKey;
     }
 
     private void CreateRoomStore()
@@ -175,8 +177,10 @@ public sealed partial class MainWindow
                 : state.Organizations.Count == 0 ? "This inbox is not an organization member inbox." : "");
             AutomationProperties.SetName(view.Status, view.Status.Text);
             view.Status.Visibility = ToVisibility(view.Status.Text.Length > 0);
-            view.Organizations.Children.Clear();
-            foreach (var other in state.Organizations.Count == 0 ? state.OtherInboxes : Array.Empty<RoomOrganization>())
+            var catalogKey = (state.Catalog, state.Mailbox);
+            var rebuildCatalog = !Equals(view.CatalogKey, catalogKey); view.CatalogKey = catalogKey;
+            if (rebuildCatalog) view.Organizations.Children.Clear();
+            if (rebuildCatalog) foreach (var other in state.Organizations.Count == 0 ? state.OtherInboxes : Array.Empty<RoomOrganization>())
             {
                 var inbox = ViewModel.Mailboxes.FirstOrDefault(m => m.Address == other.Mailbox!.Address);
                 var label = other.Mailbox!.Handle ?? other.Mailbox.Address;
@@ -191,8 +195,8 @@ public sealed partial class MainWindow
                 }
                 view.Organizations.Children.Add(row);
             }
-            view.Delegated.Children.Clear();
-            if (state.Delegated.Count > 0)
+            if (rebuildCatalog) view.Delegated.Children.Clear();
+            if (rebuildCatalog && state.Delegated.Count > 0)
             {
                 view.Delegated.Children.Add(new TextBlock { Text = "Agents you operate", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
                 foreach (var agent in state.Delegated)
@@ -201,8 +205,9 @@ public sealed partial class MainWindow
             var org = state.Organization;
             view.OrganizationTitle.Text = org is null ? "" : org.Name + (org.Writable ? "" : " (read-only)");
             view.OrganizationTitle.Visibility = ToVisibility(org is not null);
-            view.OrganizationPicker.Items.Clear();
-            foreach (var option in state.Organizations)
+            var pickerKey = (state.Catalog, state.Mailbox, state.SelectedOrganizationId);
+            if (!Equals(view.PickerKey, pickerKey)) { view.PickerKey = pickerKey; view.OrganizationPicker.Items.Clear(); }
+            if (view.OrganizationPicker.Items.Count == 0) foreach (var option in state.Organizations)
             {
                 var item = new ComboBoxItem { Content = option.Name, Tag = option.Id };
                 view.OrganizationPicker.Items.Add(item);
@@ -213,10 +218,12 @@ public sealed partial class MainWindow
             view.Search.IsEnabled = view.SearchButton.IsEnabled = current && org is not null && !state.Busy;
             view.NewRoom.IsEnabled = roomStore.CanCreate(state.ContextId) && !editing;
             view.NewRoom.Visibility = ToVisibility(org is not null);
-            view.Directory.Children.Clear();
-            if (org is not null && state.Rooms.Count == 0 && !state.LoadingRooms)
+            var directoryKey = (state.DirectoryProof, state.Busy, current, state.LoadingRooms);
+            var rebuildDirectory = !Equals(view.DirectoryKey, directoryKey); view.DirectoryKey = directoryKey;
+            if (rebuildDirectory) view.Directory.Children.Clear();
+            if (rebuildDirectory && org is not null && state.Rooms.Count == 0 && !state.LoadingRooms)
                 view.Directory.Children.Add(new TextBlock { Text = "No rooms found.", Opacity = 0.75 });
-            foreach (var room in state.Rooms)
+            if (rebuildDirectory) foreach (var room in state.Rooms)
             {
                 var label = room.Action switch { RoomAction.Open => "Open", RoomAction.Join => "Join", RoomAction.AcceptInvitation => "Invitation", _ => "Not available" };
                 var members = room.MemberCount == 1 ? "1 member" : room.MemberCount + " members";
