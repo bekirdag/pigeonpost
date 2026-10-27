@@ -5,7 +5,7 @@ public sealed partial class CalendarStore
     private object? activity;
     private object StartActivity(Operation operation)
     {
-        var token = new object(); operation.Local(() => { activity = token; state = state with { Busy = true, Error = null }; }); Publish(); return token;
+        var token = new object(); operation.Local(() => { activity = token; state = state with { Busy = true, Error = null, RevisionConflict = false }; }); Publish(); return token;
     }
     private void FinishActivity(Actor owner, object token)
     {

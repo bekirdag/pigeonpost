@@ -1,7 +1,7 @@
 using Pigeonpost.Core;
 using Pigeonpost.Core.Calendar;
 
-internal static class CalendarStoreTests
+internal static partial class CalendarStoreTests
 {
     private const string A = "/k/aaaaaaaaaaaaaaaaaaaaaaaaaa", B = "/k/bbbbbbbbbbbbbbbbbbbbbbbbbb";
     private static readonly ServerFeatures Features = new(new HashSet<string> { ServerFeatures.Calendar });
@@ -168,7 +168,11 @@ internal static class CalendarStoreTests
     private static string Name(string mailbox) => mailbox == A ? "a" : "b";
     private static TaskCompletionSource Signal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
     private static void Require(bool value) { if (!value) throw new Exception("Calendar store assertion failed."); }
-    private sealed class Clock : TimeProvider { public override DateTimeOffset GetUtcNow() => DateTimeOffset.Parse("2026-10-27T00:00:00Z"); }
+    private sealed class Clock : TimeProvider
+    {
+        internal DateTimeOffset Now = DateTimeOffset.Parse("2026-10-27T00:00:00Z");
+        public override DateTimeOffset GetUtcNow() => Now;
+    }
     private sealed class Fixture : IDisposable
     {
         internal readonly Source Source = new(); internal readonly CalendarStore Model;
@@ -185,7 +189,7 @@ internal static class CalendarStoreTests
         }
         public void Dispose() { Model.Dispose(); Source.Root.Retire(); protector?.Dispose(); if (folder is not null) Directory.Delete(folder, recursive: true); }
     }
-    private sealed class Source : ICalendarService, IProtectedCalendarService
+    private sealed partial class Source : ICalendarActionsService, IProtectedCalendarService
     {
         internal AuthorizationLease Root = new(); public AuthorizationLease? AcceptedAuthorization => Root;
         public string? RecoveryOwnerKey => new string('a', 64); public string? RecoveryOrigin => "https://calendar-store-fixture.invalid";
