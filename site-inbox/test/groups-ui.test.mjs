@@ -57,7 +57,7 @@ function fakeClient(server) {
   };
 }
 
-async function app(t, { features = ["groups", "disappearing"], groups = [group()], histories = {}, members = null, crypto = true, configure = () => {} } = {}) {
+async function app(t, { features = ["groups", "disappearing"], groups = [group()], histories = {}, members = null, crypto = true, configure = () => {}, live = null } = {}) {
   const server = fixtureServer();
   Object.assign(server, { features, groups, histories, syncs: [], pendings: [], sent: [], dropped: [], gcalls: [] });
   server.members = members || [
@@ -115,6 +115,7 @@ async function app(t, { features = ["groups", "disappearing"], groups = [group()
   // The MLS client is replaced; loading the library either succeeds (stand-in) or fails.
   w.PigeonpostGroupsCore.createClient = () => fakeClient(server);
   w.PigeonpostGroupCryptoLoader = crypto ? async () => ({ fingerprintDigits: () => "00000 00000 00000 00000 00000 00000" }) : async () => { throw new Error("no wasm"); };
+  if (live) w.PigeonpostLive = live; // Phase 6: live.js's surface, stubbed
   w.eval(read("groups.js"));
   w.eval(read("app.js"));
   t.after(async () => { await tick(120); w.close(); assert.deepEqual(errors, [], "No uncaught script errors"); });
@@ -372,4 +373,65 @@ test("Phase 1e: group bubbles get the action row, ticks from member cursors, rep
   await until(() => a.server.sent.length === 2);
   assert.equal(a.server.sent[1].doc.edit_of, 5);
   assert.equal(a.server.sent[1].doc.reply_to, "3", "an edited reply stays a reply");
+});
+
+test("a live stream shows a LIVE banner with Watch, Go live opens its sheet, and the stream notice reads as a sentence", async (t) => {
+  const gid = group().id;
+  const calls = [];
+  const live = {
+    supported: () => true, current: () => null, show() {}, onGroupStream() {}, onGroupMember() {},
+    watch: async (g, sid) => { calls.push(["watch", g, sid]); return { ok: true }; },
+    goLive: async (g, opts) => { calls.push(["goLive", g, opts]); return { ok: true }; },
+  };
+  let streams = [{ id: "str_" + "q".repeat(26), group_id: gid, title: "Sprint demo", by: JANE, state: "live", viewers: 4, stage: [], sources: ["camera"] }];
+  const a = await app(t, {
+    features: ["groups", "streaming"], live,
+    groups: [group({ stream_policy: "admins" })],
+    histories: { [gid]: [{ kind: "notice", seq: 8, notice: "stream", actor: JANE, metadata: { stream_id: "str_x", duration: 2040, viewers: 18 }, created_at: NOW - 30 }] },
+    configure: (server) => {
+      const inner = server.fetch;
+      server.fetch = async (url, opts = {}) => {
+        const path = new URL(url, "https://postbox.pigeonpost.dev").pathname;
+        if (path === `/v1/groups/${gid}/streams`) { server.gcalls.push({ path, method: opts.method || "GET" }); return response({ streams }); }
+        return inner(url, opts);
+      };
+    },
+  });
+  await until(() => a.$("groups-list") && a.$("groups-list").querySelector(".group-row"));
+  a.$("groups-list").querySelector(".group-row").click();
+  await until(() => !a.$("group-live-banner").hidden, "the LIVE banner shows");
+  assert.equal(a.$("group-live-text").textContent, "Jane is live: Sprint demo");
+  assert.equal(a.$("group-live-watch").textContent, "Watch");
+  assert.ok(a.$("group-live-btn").hidden, "nobody else goes live while someone is");
+  a.$("group-live-banner").click();
+  await until(() => calls.length === 1);
+  assert.deepEqual([calls[0][0], calls[0][1].id, calls[0][2]], ["watch", gid, streams[0].id]);
+  const notice = [...a.w.document.querySelectorAll(".group-notice")].map((n) => n.textContent);
+  assert.ok(notice.includes("Jane streamed for 34 min · 18 viewers"), JSON.stringify(notice));
+  // The stream ends: the banner goes, and the owner may go live.
+  streams = [];
+  a.w.PigeonpostGroups.onEvent("group.stream", { mailbox: OWNER, data: { group_id: gid, stream_id: "str_" + "q".repeat(26), state: "ended", by: JANE, title: "Sprint demo" } });
+  await until(() => a.$("group-live-banner").hidden && !a.$("group-live-btn").hidden, "Go live is offered to an admin");
+  a.$("group-live-btn").click();
+  assert.equal(a.$("group-live-sheet").hidden, false);
+  a.$("gl-start").click();
+  assert.equal(a.$("gl-error").hidden, false, "a title is required");
+  a.$("gl-title").value = "Town hall";
+  a.$("gl-start").click();
+  await until(() => calls.length === 2);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls[1][2])), { title: "Town hall", camera: true, screen: false });
+  // Who may go live is a group setting.
+  a.$("group-info-btn").click();
+  await until(() => a.$("gi-live"));
+  assert.equal(a.$("gi-live").value, "admins");
+});
+
+test("without the streaming flag there is no banner and no Go live", async (t) => {
+  const live = { supported: () => true, current: () => null, onGroupStream() {}, onGroupMember() {} };
+  const a = await app(t, { features: ["groups"], live });
+  await until(() => a.$("groups-list") && a.$("groups-list").querySelector(".group-row"));
+  a.$("groups-list").querySelector(".group-row").click();
+  await tick(80);
+  assert.ok(a.$("group-live-btn").hidden && a.$("group-live-banner").hidden);
+  assert.ok(!a.server.gcalls.some((c) => c.path.endsWith("/streams")), "never asks for streams");
 });

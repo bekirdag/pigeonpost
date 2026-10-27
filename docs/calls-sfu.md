@@ -1,5 +1,8 @@
 # Large calls (7–30 people): media server, end-to-end encryption, threat model
 
+Live streams in groups use the same media server and frame encryption, with the stream key
+distributed through the postbox's key directory; see `docs/streaming.md`.
+
 Calls of up to six people stay a WebRTC mesh: every pair of browsers has its own DTLS-SRTP
 connection (see `deploy/calls/README.md`). A seventh person moves the call onto a media server, a
 self-hosted LiveKit SFU (`livekit-server` 1.13.9, Apache-2.0) on the media host. Calls can hold up to

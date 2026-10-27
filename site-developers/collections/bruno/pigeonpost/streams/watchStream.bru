@@ -1,0 +1,29 @@
+meta {
+  name: Register this device's receive key and learn the streamer's
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/v1/streams/:id/watch
+  body: json
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "public_key": "string"
+  }
+}
+
+docs {
+  The key directory for the stream's end-to-end encryption (docs/streaming.md §4). Up to 4 keys per member.
+}

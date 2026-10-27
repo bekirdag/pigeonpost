@@ -56,6 +56,8 @@ pub(crate) enum Endpoint {
     CallRing,
     /// `POST /internal/v1/calendar/meeting-access` (Phase 3B).
     CalendarMeetingAccess,
+    /// `POST /internal/v1/stream-admission`, `/stream-check`, `/stream-end` (Phase 6).
+    StreamAdmission,
 }
 
 /// The services this postbox knows, the variable each one's token lives in, and what each may
@@ -72,6 +74,7 @@ const SERVICES: &[(&str, &str, &[Endpoint])] = &[
             Endpoint::GroupCallAdmission,
             Endpoint::CallRing,
             Endpoint::CalendarMeetingAccess,
+            Endpoint::StreamAdmission,
         ],
     ),
     (
@@ -262,6 +265,15 @@ pub(crate) fn router(state: AppState) -> Router {
         .route(
             "/internal/v1/calendar/meeting-access",
             post(crate::calendar::meeting::meeting_access),
+        )
+        .route(
+            "/internal/v1/stream-admission",
+            post(crate::streams::admission),
+        )
+        .route("/internal/v1/stream-check", post(crate::streams::check))
+        .route(
+            "/internal/v1/stream-end",
+            post(crate::streams::end_internal),
         )
         .route("/internal/v1/avatar-reports", get(crate::avatars::reports))
         .route(

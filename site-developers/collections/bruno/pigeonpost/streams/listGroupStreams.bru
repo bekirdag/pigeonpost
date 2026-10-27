@@ -1,0 +1,23 @@
+meta {
+  name: The group's live stream, if any
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/v1/groups/:id/streams
+  body: none
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  Active members. Requires the `groups` and `streaming` feature flags (docs/streaming.md).
+}

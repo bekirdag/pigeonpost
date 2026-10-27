@@ -61,6 +61,7 @@
     attach: ["M13.5 6.5l-5.9 5.9a1.8 1.8 0 002.5 2.5l6.2-6.2a3.3 3.3 0 00-4.7-4.7L4.6 10.9a4.8 4.8 0 006.8 6.8l5.3-5.3"],
     send: ["M3 10l14-6-6 14-2.2-5.8L3 10z"],
     lock: ["M5.5 9h9v7.5h-9zM7.2 9V6.8a2.8 2.8 0 015.6 0V9"],
+    live: ["M10 11.6a1.6 1.6 0 100-3.2 1.6 1.6 0 000 3.2zM6.6 13.4a4.8 4.8 0 010-6.8M13.4 6.6a4.8 4.8 0 010 6.8M4.3 15.7a8 8 0 010-11.4M15.7 4.3a8 8 0 010 11.4"],
   };
 
   // ---- state ----------------------------------------------------------------------------------
@@ -88,6 +89,9 @@
     receipts: new Map(), // gid → {members:[{address, handle, delivered_seq, seen_seq}], read_receipts} (Phase 1e)
     receiptsPoll: null,
     compose: null,       // {kind: "reply"|"edit", gid, x} while replying to or editing one message (Phase 1e)
+    streaming: false,    // Phase 6: `streaming` is on
+    streams: new Map(),  // gid → the live stream (or null), Phase 6
+    dock: null,          // Phase 6: {container} while the chat is docked beside a live stream
   };
   const client = () => G.clients.get(G.mailbox) || null;
   const me = () => G.mailbox;
@@ -182,6 +186,7 @@
     const features = h ? h.features() : new Set();
     const gen = ++G.generation;
     G.disappearing = features.has("disappearing");
+    G.streaming = features.has("streaming") && Boolean(window.PigeonpostLive);
     if (!mb || !features.has("groups")) {
       teardown();
       renderAll();
@@ -332,8 +337,12 @@
       case "group.crypto_pending":
         if (gid) soon("pending:" + gid, () => syncGroup(gid, { pending: true }), 50);
         break;
+      case "group.stream": // Phase 6
+        onStreamEvent(data);
+        break;
       case "group.member":
         if (gid) G.members.delete(gid);
+        window.PigeonpostLive?.onGroupMember(data); // the streamer re-reads the stream's key directory
         soon("refresh", refresh);
         if (gid && gid === G.open) soon("info:" + gid, () => { loadMembers(gid).then(renderInfo); });
         break;
@@ -551,9 +560,12 @@
           el("span", { class: "thread-name", id: "group-head-name" }),
           el("span", { class: "thread-sub", id: "group-head-sub" })),
         el("button", { class: "btn-ghost call-join-btn", id: "group-call-join", type: "button", hidden: true, onclick: () => joinCall() }, "Call in progress — Join"),
+        el("button", { class: "icon-btn", id: "group-live-btn", type: "button", title: "Go live", "aria-label": "Go live", hidden: true, onclick: () => openGoLive() }, svg(ICON.live)),
         el("button", { class: "icon-btn", id: "group-call-audio", type: "button", title: "Group voice call", "aria-label": "Group voice call", onclick: () => startCall("audio") }, svg(ICON.phone)),
         el("button", { class: "icon-btn", id: "group-call-video", type: "button", title: "Group video call", "aria-label": "Group video call", onclick: () => startCall("video") }, svg(ICON.video)),
         el("button", { class: "icon-btn", id: "group-info-btn", type: "button", title: "Group info", "aria-label": "Group info", "aria-haspopup": "dialog", onclick: () => openInfo() }, svg(ICON.info))),
+      el("button", { class: "group-live-banner", id: "group-live-banner", type: "button", hidden: true, onclick: () => watchStream() },
+        el("span", { class: "live-badge", text: "LIVE" }), el("span", { class: "group-live-text", id: "group-live-text" }), el("span", { class: "group-live-watch", id: "group-live-watch", text: "Watch" })),
       el("div", { class: "thread-scroll", id: "group-scroll" },
         el("p", { class: "group-e2ee-note", id: "group-e2ee-note" }, svg(ICON.lock), el("span", { text: "Messages in this group are end-to-end encrypted. The postbox cannot read them." })),
         el("p", { class: "group-empty", id: "group-empty", hidden: true }),
@@ -594,8 +606,9 @@
     clearInterval(G.receiptsPoll);
     G.receiptsPoll = setInterval(() => { if (G.open) loadReceipts(G.open); }, 10000);
     pollCall();
+    pollStream(gid);
     clearInterval(G.callPoll);
-    G.callPoll = setInterval(pollCall, 15000);
+    G.callPoll = setInterval(() => { pollCall(); pollStream(G.open); }, 15000);
     if (!h.onPhone()) setTimeout(() => { const c = $("group-compose"); if (c && !c.closest("[hidden]")) c.focus({ preventScroll: true }); }, 0);
   }
 
@@ -640,6 +653,7 @@
     const active = g.my && g.my.state === "active";
     for (const id of ["group-call-audio", "group-call-video"]) $(id).hidden = !active || !window.PigeonpostCalls;
     $("group-call-join").hidden = !(active && G.callState && G.callState.active);
+    renderLive(g, active);
 
     const status = $("group-status");
     const c = client();
@@ -681,6 +695,11 @@
       case "ownership_transferred": return `${actor} made ${who} the owner`;
       case "call_started": return `${actor} started a ${m.kind === "video" ? "video" : "voice"} call`;
       case "call_ended": return m.duration ? `Call ended · ${Math.round(m.duration / 60)} min` : "Call ended";
+      case "stream": { // Phase 6: rendered here from the notice's metadata
+        const mins = Math.max(1, Math.round((m.duration || 0) / 60));
+        const viewers = Number(m.viewers) || 0;
+        return `${actor} streamed for ${mins} min · ${viewers} ${viewers === 1 ? "viewer" : "viewers"}`;
+      }
       case "link_reset": return `${actor} reset the invite link`;
       case "you_joined": return "You joined this group. Earlier messages are not available on this device.";
       case "device_removed": return `${who}'s device was removed`;
@@ -1048,6 +1067,113 @@
     calls.joinGroup((G.callState && G.callState.kind) || "audio", { id: g.id, name: g.name });
   }
 
+  // ---- Phase 6: live streams (live.js does the media; this is the group's side of it) ----------------
+
+  async function pollStream(gid) {
+    if (!gid || !G.streaming) return;
+    try {
+      const body = await api(groupPath(gid, "/streams"));
+      G.streams.set(gid, (body.streams || [])[0] || null);
+    } catch (_) { G.streams.set(gid, null); }
+    if (gid === G.open) renderView();
+  }
+
+  function onStreamEvent(data) {
+    const gid = data.group_id;
+    if (!gid) return;
+    window.PigeonpostLive?.onGroupStream(data);
+    if (data.state === "ended") {
+      G.streams.set(gid, null);
+      soon("sync:" + gid, () => syncGroup(gid)); // the "streamed for" notice
+    } else {
+      soon("stream:" + gid, () => pollStream(gid), 100);
+      const mine = window.PigeonpostLive?.current();
+      if (!data.stage && data.revision === 1 && data.by !== me() && !(mine && mine.id === data.stream_id)) {
+        const g = groupById(gid);
+        host().toast(`${nameOf(data.by)} is live${g ? " in " + g.name : ""}: ${data.title}`);
+      }
+    }
+    if (gid === G.open) renderView();
+  }
+
+  function canGoLive(g) {
+    if (!g || !g.my || g.my.state !== "active" || g.my.role === "restricted" || g.activation_state !== "active") return false;
+    return g.stream_policy === "everyone" || isAdmin(g);
+  }
+
+  function renderLive(g, active) {
+    const live = G.streaming && active ? G.streams.get(g.id) : null;
+    const mine = window.PigeonpostLive?.current();
+    $("group-live-btn").hidden = !(G.streaming && active && canGoLive(g) && !live && window.PigeonpostLive.supported());
+    const banner = $("group-live-banner");
+    banner.hidden = !live;
+    if (live) {
+      const who = live.by === me() ? "You are" : nameOf(live.by) + " is";
+      $("group-live-text").textContent = `${who} live: ${live.title}`;
+      $("group-live-watch").textContent = mine && mine.id === live.id ? "Return" : live.by === me() ? "Open" : "Watch";
+    }
+  }
+
+  function watchStream() {
+    const g = groupById(G.open);
+    const live = g && G.streams.get(g.id);
+    if (!live) return;
+    const L = window.PigeonpostLive;
+    if (!L.supported()) { host().toast("Live streams need a newer browser or app — one that can encrypt and decrypt audio and video itself."); return; }
+    const mine = L.current();
+    if (mine && mine.id === live.id) { L.show(); return; }
+    L.watch({ id: g.id, name: g.name }, live.id);
+  }
+
+  function buildGoLiveSheet() {
+    sheet("group-live-sheet", "Go live", [
+      el("label", { class: "field" }, el("span", { text: "Title" }), el("input", { type: "text", id: "gl-title", maxlength: "100", required: true, placeholder: "Sprint demo" })),
+      el("fieldset", { class: "field" }, el("legend", { text: "Show" }),
+        el("label", { class: "peer-toggle" }, el("span", { text: "Camera" }), el("input", { type: "checkbox", id: "gl-camera", checked: true })),
+        navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia ? el("label", { class: "peer-toggle" }, el("span", { text: "Screen" }), el("input", { type: "checkbox", id: "gl-screen" })) : null),
+      el("p", { class: "note", text: "Everyone in this group can watch. The stream is end-to-end encrypted and isn’t recorded; it can run for up to 4 hours." }),
+      el("p", { class: "sheet-error", id: "gl-error", role: "alert", hidden: true }),
+    ], [
+      el("button", { class: "btn-ghost", type: "button", text: "Cancel", onclick: () => hideSheet("group-live-sheet") }),
+      el("button", { class: "btn-primary", id: "gl-start", type: "button", text: "Go live", onclick: () => startLive() }),
+    ]);
+  }
+  function openGoLive() {
+    if (!$("group-live-sheet")) buildGoLiveSheet();
+    $("gl-error").hidden = true;
+    showSheet("group-live-sheet", "gl-title");
+  }
+  async function startLive() {
+    const g = groupById(G.open);
+    const title = $("gl-title").value.trim();
+    const camera = $("gl-camera").checked, screen = Boolean($("gl-screen") && $("gl-screen").checked);
+    const err = $("gl-error");
+    if (!title || (!camera && !screen)) { err.textContent = !title ? "Give your stream a title." : "Choose camera, screen or both."; err.hidden = false; return; }
+    hideSheet("group-live-sheet");
+    const r = await window.PigeonpostLive.goLive({ id: g.id, name: g.name }, { title, camera, screen });
+    if (r && r.ok) { $("gl-title").value = ""; pollStream(g.id); }
+  }
+
+  // The group's chat beside the live player: this very view, moved into the stream screen's panel
+  // while watching, and put back afterwards.
+  function dock(gid, container) {
+    if (!G.enabled || !container) return false;
+    if (G.open !== gid) openGroup(gid);
+    const view = $("group-view");
+    if (!view) return false;
+    G.dock = { home: view.parentNode };
+    view.classList.add("docked");
+    container.append(view);
+    return true;
+  }
+  function undock() {
+    if (!G.dock) return;
+    const view = $("group-view");
+    if (view) { view.classList.remove("docked"); G.dock.home.append(view); }
+    G.dock = null;
+    renderView();
+  }
+
   // ---- creating ------------------------------------------------------------------------------------
 
   const create = { chips: [] };
@@ -1245,12 +1371,15 @@
       inv.checked = Boolean(g.members_can_invite);
       const tmr = el("input", { type: "checkbox", id: "gi-timer-members", role: "switch" });
       tmr.checked = Boolean(g.members_can_change_timer);
+      const live = el("select", { id: "gi-live" }, el("option", { value: "admins", text: "Only admins" }), el("option", { value: "everyone", text: "Everyone" }));
+      live.value = g.stream_policy || "admins";
       body.append(section("Settings",
         el("label", { class: "field" }, el("span", { text: "Who can join" }), join),
         el("label", { class: "field" }, el("span", { text: "Who can post" }), post),
+        G.streaming ? el("label", { class: "field" }, el("span", { text: "Who can go live" }), live) : null,
         el("label", { class: "peer-toggle" }, el("span", { text: "Members can add people" }), inv),
         G.disappearing ? el("label", { class: "peer-toggle" }, el("span", { text: "Members can change the timer" }), tmr) : null,
-        el("button", { type: "button", class: "btn-ghost", text: "Save settings", onclick: () => patch(g, { join_policy: join.value, post_policy: post.value, members_can_invite: inv.checked, ...(G.disappearing ? { members_can_change_timer: tmr.checked } : {}) }) })));
+        el("button", { type: "button", class: "btn-ghost", text: "Save settings", onclick: () => patch(g, { join_policy: join.value, post_policy: post.value, members_can_invite: inv.checked, ...(G.disappearing ? { members_can_change_timer: tmr.checked } : {}), ...(G.streaming ? { stream_policy: live.value } : {}) }) })));
     }
 
     // Disappearing messages
@@ -1563,6 +1692,7 @@
     onMailbox, onEvent, reset, close,
     render: () => { if (G.enabled || $("groups-section")) renderAll(); else renderDirect(); },
     isOpen: () => Boolean(G.open),
+    dock, undock, // Phase 6
     // For tests and automation: state without message contents.
     inspect: () => ({ enabled: G.enabled, mailbox: G.mailbox, open: G.open, groups: G.groups.map((g) => ({ id: g.id, name: g.name, state: g.my && g.my.state })), deviceId: client() && client().deviceId() }),
     _client: () => client(),

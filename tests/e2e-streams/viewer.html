@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stream viewer check</title>
+<link rel="stylesheet" href="/app.css">
+<!-- Test only (engines.mjs): the native apps' call page scripts, driven by an autopilot that watches
+     one stream and reports what it decoded. Synthetic data only. -->
+</head><body data-page="native">
+<div hidden><button id="call-audio-btn" type="button"></button><button id="call-video-btn" type="button"></button></div>
+<script>
+  const q = new URLSearchParams(location.search);
+  window.PIGEONPOST_INBOX = { postbox: q.get("pb") };
+</script>
+<script src="/names.js"></script>
+<script src="/native-call.js"></script>
+<script src="/calls.js"></script>
+<script src="/live.js"></script>
+<script>
+(async () => {
+  const q = new URLSearchParams(location.search);
+  const report = (body) => fetch("/__report", { method: "POST", body: JSON.stringify({ engine: q.get("engine"), ua: navigator.userAgent, ...body }) }).catch(() => {});
+  try {
+    report({ phase: "start", e2ee: window.PigeonpostLive.supported() });
+    window.PigeonpostNative.configure({ token: "tok-" + q.get("who"), mailbox: { address: "/k/" + q.get("who"), handle: null } });
+    const r = await window.PigeonpostNative.watchStream({ id: q.get("group"), name: "Crew" }, q.get("stream"));
+    report({ phase: "watch", result: r });
+    for (let i = 0; i < 6; i++) {
+      await new Promise((ok) => setTimeout(ok, 4000));
+      const stats = await window.PigeonpostLive.stats();
+      report({ phase: "stats", i, inspect: window.PigeonpostLive.inspect(), stats });
+    }
+  } catch (e) { report({ phase: "error", error: String(e && (e.stack || e)) }); }
+})();
+</script>
+</body></html>

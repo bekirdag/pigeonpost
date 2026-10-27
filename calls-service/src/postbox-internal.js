@@ -234,6 +234,64 @@ export function createPostboxInternal({ url, token, fetch, now, setTimeout: setT
     return value;
   }
 
+  // ---- Phase 6: live streams in groups (docs/streaming.md) ------------------------------------------
+  //
+  // Never cached: every join, role refresh and heartbeat asks again, so a removal, a stage change or
+  // a policy change reaches the media room at the next check. null = unconfigured, unreachable or
+  // an answer that does not validate; callers fail closed.
+
+  const STREAM_ROLES = new Set(["host", "speaker", "invited", "viewer"]);
+  const PUBLIC_KEY = /^B[A-Za-z0-9_-]{86}$/;
+
+  function validStreamAdmission(v) {
+    if (!v || typeof v !== "object" || typeof v.allowed !== "boolean") return null;
+    if (!v.allowed) return { allowed: false, reason: typeof v.reason === "string" && /^[a-z_]{1,32}$/.test(v.reason) ? v.reason : "not_member" };
+    if (!STREAM_ROLES.has(v.role) || typeof v.group_id !== "string" || !/^grp_[a-z2-7]{26}$/.test(v.group_id)
+      || typeof v.host !== "string" || !ADDRESS.test(v.host) || v.state !== "live") return null;
+    const sources = (Array.isArray(v.sources) ? v.sources : []).filter((x) => x === "camera" || x === "screen");
+    return {
+      allowed: true, role: v.role, group_id: v.group_id, host: v.host,
+      host_key: typeof v.host_key === "string" && PUBLIC_KEY.test(v.host_key) ? v.host_key : null,
+      sources, state: "live",
+      ends_by: Number.isInteger(v.ends_by) ? v.ends_by : 0,
+      max_viewers: Number.isInteger(v.max_viewers) && v.max_viewers > 0 ? Math.min(v.max_viewers, 10_000) : 200,
+      key_attested: v.key_attested === true,
+    };
+  }
+
+  async function ask(path, body, validate) {
+    if (!configured) return null;
+    let value = null;
+    try {
+      const res = await post(path, body, L.admissionTimeoutMs);
+      if (res.ok) value = validate(await res.json());
+    } catch (_) {
+      value = null;
+    }
+    if (!value) {
+      counters.admission_failed++;
+      console.warn(`calls: ${path.slice(13)} unavailable (failures=${counters.admission_failed})`);
+      return null;
+    }
+    counters.admission_ok++;
+    return value;
+  }
+
+  const streamAdmit = ({ stream_id, from, public_key }) => ask("/internal/v1/stream-admission",
+    { stream_id, from: { mailbox: from.address }, ...(public_key ? { public_key } : {}) }, validStreamAdmission);
+
+  function validStreamCheck(v) {
+    if (!v || typeof v !== "object" || (v.state !== "live" && v.state !== "ended") || !v.roles || typeof v.roles !== "object") return null;
+    const roles = new Map();
+    for (const [k, r] of Object.entries(v.roles)) if (ADDRESS.test(k)) roles.set(k, STREAM_ROLES.has(r) ? r : null);
+    return { state: v.state, reason: typeof v.reason === "string" ? v.reason.slice(0, 32) : null, roles,
+      host_key: typeof v.host_key === "string" && PUBLIC_KEY.test(v.host_key) ? v.host_key : null };
+  }
+  const streamCheck = ({ stream_id, viewers, members }) => ask("/internal/v1/stream-check",
+    { stream_id, viewers, members: members.slice(0, 2_000) }, validStreamCheck);
+  const streamEnd = ({ stream_id, reason }) => ask("/internal/v1/stream-end", { stream_id, reason },
+    (v) => (v && v.ok === true ? v : null));
+
   // ---- lifecycle events ---------------------------------------------------------------------------
 
   function report(event) {
@@ -306,5 +364,5 @@ export function createPostboxInternal({ url, token, fetch, now, setTimeout: setT
     return { configured, queued: queue.length, ...counters };
   }
 
-  return { configured, admit, groupAdmit, meetingAccess, report, health, flush, _queue: queue, _cache: cache };
+  return { configured, admit, groupAdmit, meetingAccess, streamAdmit, streamCheck, streamEnd, report, health, flush, _queue: queue, _cache: cache };
 }

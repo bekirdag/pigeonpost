@@ -1,0 +1,30 @@
+meta {
+  name: Invite onto, accept or leave the stage
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/v1/streams/:id/stage
+  body: json
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "address": "string",
+    "true": false
+  }
+}
+
+docs {
+  Streamer/admin about someone else (invite or remove); the invited member about themself (accept or decline, a person only).
+}

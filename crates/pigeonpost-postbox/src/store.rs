@@ -30,6 +30,7 @@ mod msgactions;
 mod org_api;
 mod org_model;
 mod orgs;
+mod streams;
 pub use audit::AuditRow;
 pub use avatars::{AvatarRow, NewAvatar, SetAvatar, Visibility};
 pub use calllog::{CallEvent, CallEventKind, LogFilter};
@@ -969,6 +970,7 @@ impl Store {
         conn.execute_batch(groups::SCHEMA)?;
         conn.execute_batch(calendar::SCHEMA)?;
         conn.execute_batch(msgactions::SCHEMA)?;
+        conn.execute_batch(streams::SCHEMA)?;
         for stmt in MIGRATIONS
             .iter()
             .chain(filtering::MIGRATIONS)

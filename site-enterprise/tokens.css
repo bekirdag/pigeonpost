@@ -1,4 +1,4 @@
-/* Copied verbatim from site-inbox/app.css lines 9-455 (fonts and design tokens). A test keeps
+/* Copied verbatim from site-inbox/app.css lines 9-458 (fonts and design tokens). A test keeps
    the copy exact; change the inbox first, then re-copy. */
 @font-face {
   font-family: "Geist";
@@ -152,6 +152,7 @@
 
   /* The call screen: dark in either appearance (see the calls section). */
   --call-ground: #0d0f12;
+  --call-player: #000000;
   --call-ink: #e8eaed;
   --call-muted: #9aa3ae;
   --call-body: #c3c9d1;
@@ -288,6 +289,7 @@
     --doodle-veil: rgba(15, 18, 22, 0.90);
     /* The call screen is the same dark in both appearances. */
     --call-ground: #0d0f12;
+    --call-player: #000000;
     --call-ink: #e8eaed;
     --call-muted: #9aa3ae;
     --call-body: #c3c9d1;
@@ -421,6 +423,7 @@
   --doodle-veil: rgba(15, 18, 22, 0.90);
   /* The call screen is the same dark in both appearances. */
   --call-ground: #0d0f12;
+  --call-player: #000000;
   --call-ink: #e8eaed;
   --call-muted: #9aa3ae;
   --call-body: #c3c9d1;

@@ -85,6 +85,10 @@
       "description": "End-to-end-encrypted groups (ciphertext and routing metadata only; docs/groups.md)."
     },
     {
+      "name": "streams",
+      "description": "Live streams in groups (Phase 6; end-to-end encrypted media, key directory; docs/streaming.md)."
+    },
+    {
       "name": "mls",
       "description": "MLS delivery service for groups (devices, key packages, commits, Welcomes; docs/group-e2ee.md)."
     },
@@ -7313,6 +7317,14 @@
                   "post_policy": {
                     "type": "string"
                   },
+                  "stream_policy": {
+                    "type": "string",
+                    "enum": [
+                      "admins",
+                      "everyone"
+                    ],
+                    "description": "Who may go live in the group (Phase 6, docs/streaming.md). Default admins."
+                  },
                   "visibility": {
                     "type": "string"
                   },
@@ -7610,6 +7622,14 @@
                   },
                   "post_policy": {
                     "type": "string"
+                  },
+                  "stream_policy": {
+                    "type": "string",
+                    "enum": [
+                      "admins",
+                      "everyone"
+                    ],
+                    "description": "Who may go live in the group (Phase 6, docs/streaming.md). Default admins."
                   },
                   "visibility": {
                     "type": "string"
@@ -9460,6 +9480,478 @@
             "$ref": "#/components/responses/GroupError"
           },
           "409": {
+            "$ref": "#/components/responses/GroupError"
+          }
+        }
+      }
+    },
+    "/v1/groups/{id}/streams": {
+      "get": {
+        "tags": [
+          "streams"
+        ],
+        "operationId": "listGroupStreams",
+        "summary": "The group's live stream, if any",
+        "description": "Active members. Requires the `groups` and `streaming` feature flags (docs/streaming.md).",
+        "security": [
+          {
+            "capToken": []
+          },
+          {
+            "apiKey": []
+          },
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Identity"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`{streams:[stream]}`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/GroupError"
+          },
+          "404": {
+            "$ref": "#/components/responses/GroupError"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "streams"
+        ],
+        "operationId": "startGroupStream",
+        "summary": "Go live in a group",
+        "description": "A person only; the group's `stream_policy` decides who. One live stream per group, at most 4 hours. Registers the streamer's per-stream key.",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Identity"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "title",
+                  "sources",
+                  "public_key"
+                ],
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "maxLength": 100
+                  },
+                  "sources": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "camera",
+                        "screen"
+                      ]
+                    }
+                  },
+                  "public_key": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "`{stream, role: host, host_key, media:{join}}`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "400": {
+            "$ref": "#/components/responses/GroupError"
+          },
+          "403": {
+            "$ref": "#/components/responses/GroupError"
+          },
+          "404": {
+            "$ref": "#/components/responses/GroupError"
+          },
+          "409": {
+            "$ref": "#/components/responses/GroupError"
+          },
+          "429": {
+            "$ref": "#/components/responses/GroupError"
+          }
+        }
+      }
+    },
+    "/v1/streams/{id}": {
+      "get": {
+        "tags": [
+          "streams"
+        ],
+        "operationId": "getStream",
+        "summary": "One stream and the caller's role",
+        "description": "Members of the stream's group only.",
+        "security": [
+          {
+            "capToken": []
+          },
+          {
+            "apiKey": []
+          },
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Identity"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`{stream, role}`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/GroupError"
+          },
+          "404": {
+            "$ref": "#/components/responses/GroupError"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "streams"
+        ],
+        "operationId": "stopStream",
+        "summary": "Stop a stream",
+        "description": "The streamer or a group owner/admin, as a person. Posts the group's `stream` notice. Idempotent.",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Identity"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`{stream}`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/GroupError"
+          },
+          "404": {
+            "$ref": "#/components/responses/GroupError"
+          }
+        }
+      }
+    },
+    "/v1/streams/{id}/watch": {
+      "post": {
+        "tags": [
+          "streams"
+        ],
+        "operationId": "watchStream",
+        "summary": "Register this device's receive key and learn the streamer's",
+        "description": "The key directory for the stream's end-to-end encryption (docs/streaming.md §4). Up to 4 keys per member.",
+        "security": [
+          {
+            "capToken": []
+          },
+          {
+            "apiKey": []
+          },
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Identity"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "public_key"
+                ],
+                "properties": {
+                  "public_key": {
+                    "type": "string",
+                    "description": "Uncompressed P-256 public key, base64url (87 characters, starting with B)."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "`{stream, role, host_key, media:{join}}`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "400": {
+            "$ref": "#/components/responses/GroupError"
+          },
+          "403": {
+            "$ref": "#/components/responses/GroupError"
+          },
+          "404": {
+            "$ref": "#/components/responses/GroupError"
+          },
+          "410": {
+            "$ref": "#/components/responses/GroupError"
+          }
+        }
+      }
+    },
+    "/v1/streams/{id}/audience": {
+      "get": {
+        "tags": [
+          "streams"
+        ],
+        "operationId": "streamAudience",
+        "summary": "The stream's key directory (streamer only)",
+        "description": "Current active members with registered receive keys; the streamer wraps the stream key to these and no others.",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Identity"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`{stream_id, revision, audience:[{address, handle, role, keys}]}`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/GroupError"
+          },
+          "404": {
+            "$ref": "#/components/responses/GroupError"
+          },
+          "410": {
+            "$ref": "#/components/responses/GroupError"
+          }
+        }
+      }
+    },
+    "/v1/streams/{id}/stage": {
+      "post": {
+        "tags": [
+          "streams"
+        ],
+        "operationId": "streamStage",
+        "summary": "Invite onto, accept or leave the stage",
+        "description": "Streamer/admin about someone else (invite or remove); the invited member about themself (accept or decline, a person only).",
+        "security": [
+          {
+            "capToken": []
+          },
+          {
+            "apiKey": []
+          },
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Identity"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "address",
+                  true
+                ],
+                "properties": {
+                  "address": {
+                    "type": "string"
+                  },
+                  "true": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "`{stream, address, role}`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "400": {
+            "$ref": "#/components/responses/GroupError"
+          },
+          "403": {
+            "$ref": "#/components/responses/GroupError"
+          },
+          "404": {
+            "$ref": "#/components/responses/GroupError"
+          },
+          "409": {
+            "$ref": "#/components/responses/GroupError"
+          },
+          "410": {
             "$ref": "#/components/responses/GroupError"
           }
         }
@@ -15149,6 +15641,202 @@
           },
           "404": {
             "$ref": "#/components/responses/CalendarError"
+          }
+        }
+      }
+    },
+    "/internal/v1/stream-admission": {
+      "post": {
+        "tags": [
+          "internal"
+        ],
+        "x-internal": true,
+        "operationId": "internalStreamAdmission",
+        "summary": "May this mailbox join this stream's media room, and as what (calls service)",
+        "security": [
+          {
+            "serviceToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "stream_id",
+                  "from"
+                ],
+                "properties": {
+                  "stream_id": {
+                    "type": "string"
+                  },
+                  "from": {
+                    "type": "object",
+                    "properties": {
+                      "mailbox": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "public_key": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "`{allowed, reason?, role, group_id, host, host_key, sources, state, ends_by, max_viewers, key_attested}`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request."
+          },
+          "401": {
+            "description": "Missing or invalid service token."
+          },
+          "403": {
+            "description": "This service may not call this endpoint."
+          }
+        }
+      }
+    },
+    "/internal/v1/stream-check": {
+      "post": {
+        "tags": [
+          "internal"
+        ],
+        "x-internal": true,
+        "operationId": "internalStreamCheck",
+        "summary": "Heartbeat for a live stream (viewer count in; state and current roles out), for the calls service",
+        "security": [
+          {
+            "serviceToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "stream_id"
+                ],
+                "properties": {
+                  "stream_id": {
+                    "type": "string"
+                  },
+                  "viewers": {
+                    "type": "integer"
+                  },
+                  "members": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "`{state, reason, ends_by, host_key, revision, roles:{mailbox: role|null}}`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request."
+          },
+          "401": {
+            "description": "Missing or invalid service token."
+          },
+          "403": {
+            "description": "This service may not call this endpoint."
+          }
+        }
+      }
+    },
+    "/internal/v1/stream-end": {
+      "post": {
+        "tags": [
+          "internal"
+        ],
+        "x-internal": true,
+        "operationId": "internalStreamEnd",
+        "summary": "End a stream from the media side (calls service)",
+        "security": [
+          {
+            "serviceToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "stream_id",
+                  "reason"
+                ],
+                "properties": {
+                  "stream_id": {
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "enum": [
+                      "host_left",
+                      "media_failed",
+                      "max_duration",
+                      "capacity"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "`{ok, state}`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request."
+          },
+          "401": {
+            "description": "Missing or invalid service token."
+          },
+          "403": {
+            "description": "This service may not call this endpoint."
           }
         }
       }

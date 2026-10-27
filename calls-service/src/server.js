@@ -29,6 +29,7 @@ import { readFileSync } from "node:fs";
 import { createGroupCalls } from "./group-calls.js"; // Phase 3a
 import { createRingAlerts, newRingToken, ringTokenMatches } from "./ring-alerts.js"; // Phase 1c
 import { createScheduledMeetings } from "./scheduled.js"; // Phase 3B
+import { createStreams, streamConfigFromEnv } from "./streams.js"; // Phase 6
 
 export function configFromEnv(env = process.env) {
   const turnUrls = (env.CALLS_TURN_URLS || "").split(/[\s,]+/).filter(Boolean);
@@ -56,6 +57,7 @@ export function configFromEnv(env = process.env) {
     // Calls stay a mesh up to this many people; beyond it they move to the media server.
     meshMax: Number(env.CALLS_MESH_MAX || 6),
     sfu: sfuConfigFromEnv(env),
+    streams: streamConfigFromEnv(env), // Phase 6
   };
 }
 
@@ -428,12 +430,16 @@ export function createCallsService(cfgIn, deps = {}) {
 
   const sfuEnabled = () => Boolean(cfg.sfu && cfg.sfu.url && cfg.sfu.key && cfg.sfu.secret && cfg.sfu.budgetMbps > 0);
 
-  function sfuLoadMbps(except) {
+  function callsLoadMbps(except) {
     let total = 0;
     for (const r of rooms.values()) {
       if (r !== except && r.state !== "ended" && r.topology === "sfu") total += sfuRoomMbps(r.participants.size, cfg.sfu.model);
     }
     return total;
+  }
+  // Calls and live streams share the media server's one budget (Phase 6).
+  function sfuLoadMbps(except) {
+    return callsLoadMbps(except) + streams.loadMbps();
   }
 
   // Whether one more person can come in, and if not, why. A call grows past `meshMax` only onto the
@@ -510,6 +516,20 @@ export function createCallsService(cfgIn, deps = {}) {
     if (room.topology !== "sfu" || !sfuEnabled() || !cfg.sfu.apiUrl) return;
     sfuAdmin("DeleteRoom", { room: room.id }, { roomCreate: true });
   }
+
+  // Phase 6: live streams in groups, in their own media-server rooms (streams.js).
+  const streams = createStreams({
+    cfg, internal, HttpError, now, liveSession, mailboxFor, limited, send, sessions, signSfuToken, newId,
+    sfuEnabled, otherLoadMbps: () => callsLoadMbps(),
+    sfuAdmin: (method, body, grant) => { if (sfuEnabled() && cfg.sfu.apiUrl) sfuAdmin(method, body, grant); },
+    // Awaited: a stream's media room must exist with its own size before the first ticket is used.
+    sfuCall: async (method, body, grant) => {
+      if (!sfuEnabled() || !cfg.sfu.apiUrl) return 200;
+      const t = Math.floor(now() / 1000);
+      return sfuApi(cfg.sfu, method, body, signSfuToken(cfg.sfu, { nbf: t - 5, exp: t + 60, video: grant }));
+    },
+    limits: deps.streamLimits,
+  });
 
   function sfuAdmin(method, body, grant) {
     const t = Math.floor(now() / 1000);
@@ -941,6 +961,7 @@ export function createCallsService(cfgIn, deps = {}) {
   }
 
   function sessionGone(session) {
+    streams.sessionGone(session); // Phase 6
     for (const room of rooms.values()) {
       if (room.state === "ended") continue;
       if (room.ring && room.ring.ringing.delete(session.id) && !room.ring.ringing.size && room.state === "ringing") {
@@ -1007,7 +1028,7 @@ export function createCallsService(cfgIn, deps = {}) {
       if (req.method === "GET" && path === "/v1/health") {
         let large = 0;
         for (const r of rooms.values()) if (r.state !== "ended" && r.topology === "sfu") large++;
-        return json(res, 200, { ok: true, sessions: sessions.size, rooms: rooms.size, postbox: internal.health(), large_rooms: large, large_calls: sfuEnabled(), ring_push: alerts.health() });
+        return json(res, 200, { ok: true, sessions: sessions.size, rooms: rooms.size, postbox: internal.health(), large_rooms: large, large_calls: sfuEnabled(), ring_push: alerts.health(), streams: streams.health() });
       }
       if (req.method === "POST") {
         const origin = req.headers.origin;
@@ -1038,6 +1059,11 @@ export function createCallsService(cfgIn, deps = {}) {
       const group = /^\/v1\/groups\/([A-Za-z0-9_]{1,80})\/(call|join)$/.exec(path); // Phase 3a
       if (req.method === "GET" && group && group[2] === "call") return json(res, 200, await groupCalls.status(auth, group[1], url.searchParams.get("from"))); // Phase 3a
       if (req.method === "POST" && group && group[2] === "join") return json(res, 200, await groupCalls.join(auth, group[1], await readJson(req))); // Phase 3a
+      if (path.startsWith("/v1/streams/")) { // Phase 6
+        if (auth.guest) throw new HttpError(403, "members_only");
+        const out = await streams.handle(req, path, auth, readJson);
+        if (out !== undefined) return json(res, 200, out);
+      }
       if (req.method === "POST" && path === "/v1/knocks") return json(res, 200, knock(req, auth, await readJson(req)));
       if (req.method === "POST" && path === "/v1/knocks/withdraw") return json(res, 200, withdrawKnock(auth, await readJson(req)));
       const knockAnswer = /^\/v1\/rooms\/([A-Za-z0-9_-]{10,64})\/knocks\/([A-Za-z0-9_-]{10,64})$/.exec(path);
@@ -1065,7 +1091,7 @@ export function createCallsService(cfgIn, deps = {}) {
     }
   }
 
-  return { handle, state: { sessions, rooms, roomsByCode, authCache, guests }, internal, sfuLoadMbps, scheduled: scheduledMeetings }; // Phase 3B: scheduled
+  return { handle, state: { sessions, rooms, roomsByCode, authCache, guests }, internal, sfuLoadMbps, scheduled: scheduledMeetings, streams }; // Phase 6: streams // Phase 3B: scheduled
 }
 
 // The media server's admin API (LiveKit's Twirp RoomService), reached over TLS that trusts exactly

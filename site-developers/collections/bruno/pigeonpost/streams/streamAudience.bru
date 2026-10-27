@@ -1,0 +1,23 @@
+meta {
+  name: The stream's key directory (streamer only)
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/v1/streams/:id/audience
+  body: none
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  Current active members with registered receive keys; the streamer wraps the stream key to these and no others.
+}

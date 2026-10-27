@@ -1,0 +1,23 @@
+meta {
+  name: Stop a stream
+  type: http
+  seq: 4
+}
+
+delete {
+  url: {{baseUrl}}/v1/streams/:id
+  body: none
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  The streamer or a group owner/admin, as a person. Posts the group's `stream` notice. Idempotent.
+}

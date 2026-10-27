@@ -141,6 +141,26 @@
         }, () => finishScheduled(attempt, { state: "error", code: "network" }));
       });
     },
+    // Phase 6: watch a group's live stream, or go live, as the mailbox the app is showing. Who may do
+    // either is decided by the postbox and the calls service; the stream is end-to-end encrypted
+    // in this page (live.js), with no fallback on a web view that cannot encrypt frames.
+    watchStream(group, streamId) {
+      const live = window.PigeonpostLive;
+      if (!token || !me) return Promise.resolve({ ok: false, code: "signed_out" });
+      if (!live) return Promise.resolve({ ok: false, code: "bridge_unavailable" });
+      if (!group || !/^grp_[a-z2-7]{26}$/.test(group.id || "") || !/^str_[a-z2-7]{26}$/.test(streamId || "")) return Promise.resolve({ ok: false, code: "invalid_stream" });
+      if (!live.supported()) return Promise.resolve({ ok: false, code: "needs_e2ee" });
+      return live.watch({ id: group.id, name: String(group.name || "").slice(0, 80) }, streamId);
+    },
+    goLive(group, options) {
+      const live = window.PigeonpostLive, o = options || {};
+      if (!token || !me) return Promise.resolve({ ok: false, code: "signed_out" });
+      if (!live) return Promise.resolve({ ok: false, code: "bridge_unavailable" });
+      if (!group || !/^grp_[a-z2-7]{26}$/.test(group.id || "")) return Promise.resolve({ ok: false, code: "invalid_group" });
+      if (!live.supported()) return Promise.resolve({ ok: false, code: "needs_e2ee" });
+      return live.goLive({ id: group.id, name: String(group.name || "").slice(0, 80) }, { title: String(o.title || "").slice(0, 100), camera: o.camera !== false, screen: o.screen === true });
+    },
+    stopStream() { const live = window.PigeonpostLive; if (live && live.active()) live.stop(); },
     // Phase 1c: act on a ring the app showed itself. `ringToken` comes from the push, or is null for
     // a ring the page reported.
     answer(room, ringToken) { if (calls()) calls().answer(room, ringToken || null); },
@@ -149,6 +169,7 @@
     hangUp() { cancelScheduled(); if (calls()) calls().hangUp(); },
     signOut() {
       cancelRenewal(); cancelScheduled();
+      window.PigeonpostLive?.stop?.();
       if (calls()) calls().stop();
       token = null; me = null; peer = null;
     },
@@ -158,7 +179,7 @@
   let last = null;
   function report() {
     const shown = (id) => { const node = document.getElementById(id); return Boolean(node && !node.hidden); };
-    const mode = shown("call-ring") || shown("call-ui") ? "full" : shown("call-mini") ? "mini" : "hidden";
+    const mode = shown("call-ring") || shown("call-ui") || shown("live-ui") ? "full" : shown("call-mini") ? "mini" : "hidden";
     if (mode === last) return;
     last = mode;
     tell({ type: "mode", mode });

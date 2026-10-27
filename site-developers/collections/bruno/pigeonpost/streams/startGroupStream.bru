@@ -1,0 +1,33 @@
+meta {
+  name: Go live in a group
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/v1/groups/:id/streams
+  body: json
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "title": "string",
+    "sources": [
+      "camera"
+    ],
+    "public_key": "string"
+  }
+}
+
+docs {
+  A person only; the group's `stream_policy` decides who. One live stream per group, at most 4 hours. Registers the streamer's per-stream key.
+}

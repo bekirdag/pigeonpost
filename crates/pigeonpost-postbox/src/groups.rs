@@ -425,7 +425,7 @@ impl Ctx {
     }
 }
 
-fn header_value<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+pub(crate) fn header_value<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
     headers
         .get(name)
         .and_then(|v| v.to_str().ok())
@@ -583,13 +583,15 @@ pub(crate) struct GroupRow {
     pub created_at: i64,
     pub last_at: i64,
     pub deleted_at: Option<i64>,
+    /// Who may go live (SDS §14A.1): `admins` (default) or `everyone`.
+    pub stream_policy: String,
 }
 
 const GROUP_COLS: &str =
     "id, org_id, name, description, avatar_id, join_policy, post_policy, visibility,
     members_can_invite, members_can_change_timer, revision, activation_state, link_token_hash,
     ephemeral_secs, max_members, epoch, last_seq, pruned_through_seq, created_by, created_at,
-    last_at, deleted_at";
+    last_at, deleted_at, stream_policy";
 
 fn map_group(r: &rusqlite::Row<'_>) -> rusqlite::Result<GroupRow> {
     Ok(GroupRow {
@@ -615,6 +617,7 @@ fn map_group(r: &rusqlite::Row<'_>) -> rusqlite::Result<GroupRow> {
         created_at: r.get(19)?,
         last_at: r.get(20)?,
         deleted_at: r.get(21)?,
+        stream_policy: r.get(22)?,
     })
 }
 
@@ -702,7 +705,7 @@ pub(crate) fn active_member(c: &Connection, gid: &str, who: &str) -> GResult<Mem
     }
 }
 
-fn is_admin(m: &MemberRow) -> bool {
+pub(crate) fn is_admin(m: &MemberRow) -> bool {
     m.role == "owner" || m.role == "admin"
 }
 
@@ -941,6 +944,7 @@ pub(crate) fn group_view(c: &Connection, g: &GroupRow, m: &MemberRow, now: u64) 
         "visibility": g.visibility,
         "members_can_invite": g.members_can_invite,
         "members_can_change_timer": g.members_can_change_timer,
+        "stream_policy": g.stream_policy,
         "ephemeral_secs": g.ephemeral_secs,
         "revision": g.revision,
         "epoch": g.epoch,
@@ -991,6 +995,8 @@ struct CreateReq {
     org_id: Option<String>,
     #[serde(default)]
     history_visible_to_new_members: Option<bool>,
+    #[serde(default)]
+    stream_policy: Option<String>,
 }
 
 fn check_name(name: &str) -> GResult<String> {
@@ -1244,6 +1250,8 @@ pub(crate) async fn create(
             .unwrap_or_else(|| "everyone".into());
         let visibility = check_enum(req.visibility, ["unlisted", "listed"], "visibility")?
             .unwrap_or_else(|| "unlisted".into());
+        let stream_policy = check_enum(req.stream_policy, ["admins", "everyone"], "stream_policy")?
+            .unwrap_or_else(|| "admins".into());
         if req.history_visible_to_new_members == Some(true) {
             return Err(GErr::bad(
                 "unsupported",
@@ -1301,12 +1309,12 @@ pub(crate) async fn create(
                     tx.execute(
                         "INSERT INTO groups (id, org_id, name, description, join_policy, post_policy, visibility,
                                 members_can_invite, members_can_change_timer, ephemeral_secs, created_by,
-                                created_by_account, created_at, last_at)
-                         VALUES (?1, ?13, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)",
+                                created_by_account, created_at, last_at, stream_policy)
+                         VALUES (?1, ?13, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12, ?14)",
                         params![
                             gid, name, description, join_policy, post_policy, visibility,
                             mcan as i64, mtimer as i64, timer.map(|t| t as i64), me, account,
-                            now as i64, org_id
+                            now as i64, org_id, stream_policy
                         ],
                     )?;
                     tx.execute(
@@ -1480,6 +1488,8 @@ struct PatchReq {
     ephemeral_secs: Option<Option<u64>>,
     #[serde(default)]
     history_visible_to_new_members: Option<bool>,
+    #[serde(default)]
+    stream_policy: Option<String>,
 }
 
 /// `Some(None)` for an explicit `null`, `None` when absent.
@@ -1517,6 +1527,7 @@ pub(crate) async fn patch(
         let join_policy = check_enum(req.join_policy, ["private", "public"], "join_policy")?;
         let post_policy = check_enum(req.post_policy, ["everyone", "admins"], "post_policy")?;
         let visibility = check_enum(req.visibility, ["unlisted", "listed"], "visibility")?;
+        let stream_policy = check_enum(req.stream_policy, ["admins", "everyone"], "stream_policy")?;
         if let Some(t) = req.ephemeral_secs {
             if !timer_ok(t) {
                 return Err(GErr::bad("bad_request", "unsupported ephemeral_secs"));
@@ -1553,6 +1564,7 @@ pub(crate) async fn patch(
                     && join_policy.is_none()
                     && post_policy.is_none()
                     && visibility.is_none()
+                    && stream_policy.is_none()
                     && mci.is_none()
                     && mct.is_none()
                     && timer.is_some();
@@ -1598,6 +1610,9 @@ pub(crate) async fn patch(
                 if let Some(v) = &visibility {
                     set("visibility", v, "visibility")?;
                 }
+                if let Some(p) = &stream_policy {
+                    set("stream_policy", p, "stream_policy")?;
+                }
                 if let Some(v) = mci {
                     set("members_can_invite", &(v as i64), "members_can_invite")?;
                 }
@@ -1637,6 +1652,9 @@ pub(crate) async fn patch(
                     }
                     if let Some(p) = &join_policy {
                         meta["join_policy"] = json!(p);
+                    }
+                    if let Some(p) = &stream_policy {
+                        meta["stream_policy"] = json!(p);
                     }
                     if let Some(n) = &name {
                         meta["name"] = json!(n);

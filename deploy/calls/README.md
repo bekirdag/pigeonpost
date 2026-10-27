@@ -187,6 +187,19 @@ Clients publish three simulcast layers (180p, 360p, top at most 1.7 Mbit/s; VP8)
 the top layer only for the view on the stage. Some WebKit clients (the macOS app) publish a single
 360p layer instead (`docs/calls-sfu.md`).
 
+### Live streams (Phase 6)
+
+Group live streams (`docs/streaming.md`) run in their own media-server rooms (`stream_<id>`), which
+the calls service creates through the admin API with their own size before the first ticket; the
+media server's default room size (30, `livekit.yaml`) stays the calls' limit and needs no change.
+They share `CALLS_SFU_BUDGET_MBPS` with large calls. The `CALLS_STREAM_*` lines in `calls.env.example`
+hold the measured per-viewer costs (2.1 Mbit/s camera, 3.2 Mbit/s with a shared screen) and limits
+(200 per stream, 400 in total). With the 400 Mbit/s budget an idle media server takes 190 viewers of
+a camera stream or 125 of a screen stream; beyond that, starting or watching answers
+`503 stream_capacity`. The calls service also needs the postbox's internal API (as for group calls):
+without it streams are refused (`streams_unavailable`). Turn streams on with the postbox flag
+`streaming` after the calls service and the inbox files are deployed.
+
 ### Rotating the media-server secret
 
 Generate a new `LIVEKIT_KEYS` on the media host, copy the key and secret to `calls.env` on raijin,

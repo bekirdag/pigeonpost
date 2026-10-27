@@ -93,6 +93,10 @@ pub(crate) const KNOWN_FEATURES: &[(&str, &str)] = &[
         "Enterprise API: org API keys, /org/v1 and org webhooks (SDS §18, docs/org-api.md)",
     ),
     (
+        STREAMING,
+        "Live streams in groups: /v1/groups/{id}/streams, /v1/streams/*, group.stream events (SDS §14A)",
+    ),
+    (
         CALENDAR_EMAIL,
         "Calendar invitations, updates, reminders and codes sent to contact addresses (SDS §14B.6)",
     ),
@@ -113,6 +117,8 @@ pub(crate) const CALL_HISTORY: &str = "call_history";
 pub(crate) const AVATARS: &str = "avatars";
 /// Groups (SDS §4).
 pub(crate) const GROUPS: &str = "groups";
+/// Live streams in groups (SDS §14A). Needs `groups` too.
+pub(crate) const STREAMING: &str = "streaming";
 /// Disappearing messages (SDS §17).
 pub(crate) const DISAPPEARING: &str = "disappearing";
 /// Organizations (SDS §6).
