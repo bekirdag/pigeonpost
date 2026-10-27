@@ -48,6 +48,8 @@ public sealed partial class MainWindow : Window
         PreviewSideData.Seed(stand_in);
         if (Environment.GetEnvironmentVariable("PIGEONPOST_UI_MESSAGE_MODES_STATE") is not null)
             stand_in.Features.UnionWith([ServerFeatures.MessageEdit, ServerFeatures.MessageReply, ServerFeatures.Receipts]);
+        if (Environment.GetEnvironmentVariable("PIGEONPOST_UI_CALENDAR_STATE") is not null)
+            stand_in.Features.Add(ServerFeatures.Calendar);
         postbox.Dispose();
         postbox = new PostboxClient(new HttpClient(new PreviewRouter(new AttachmentFixtureHandler(preview), stand_in)), new AttachmentFixtureTokens());
         if (Environment.GetEnvironmentVariable("PIGEONPOST_UI_MESSAGE_MODES_STATE") is { } modesState)
@@ -96,8 +98,10 @@ public sealed partial class MainWindow : Window
             ViewModel.Dispose();
 #if UI_TESTS
             deliveryUiFixture?.Root.Retire();
+            calendarUiFixture?.Root.Retire();
 #endif
             groupsModel.Dispose();
+            calendarPage?.Dispose(); calendarModel.Dispose();
         };
     }
 
