@@ -235,8 +235,10 @@ public sealed class PreviewPostbox : HttpMessageHandler
         }
         return null;
     }
-    // Every fixture inbox belongs to one person here; a real server checks the account.
-    private static bool SameAccount(string inbox, string acting) => inbox == acting;
+    // Inboxes of one person (the real server groups them by account). Unlinked inboxes stand alone.
+    private readonly Dictionary<string, string> accounts = new(StringComparer.Ordinal);
+    public void LinkAccount(string account, params string[] inboxes) { lock (sync) foreach (var inbox in inboxes) accounts[inbox] = account; }
+    private bool SameAccount(string inbox, string acting) => accounts.GetValueOrDefault(inbox, inbox) == accounts.GetValueOrDefault(acting, acting);
 
     private readonly Dictionary<(string, string), Device> devices = [];
     private readonly Dictionary<string, Grp> groups = new(StringComparer.Ordinal);

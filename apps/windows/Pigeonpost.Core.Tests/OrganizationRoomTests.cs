@@ -245,7 +245,16 @@ internal static class OrganizationRoomTests
             var owner = server.AddMailbox(Pigeonpost.Core.Preview.PreviewPostbox.Seed(92), "/example/owner");
             server.AddOrganization("org_example", "Example", [me, owner], [("/k/cz6900v2h90vnwefj7g7ezvbh4", "/example/agent")]);
             var seeded = server.SeedOrganizationRoom("org_example", owner, "Design", "public", "Product design");
+            var personal = server.AddMailbox(Pigeonpost.Core.Preview.PreviewPostbox.Seed(93), "/person/main"); server.LinkAccount("person", me, personal);
             var tokens = new Tokens(); var mailbox = new Mailbox(me, "/example/me");
+            using (var personalClient = new PostboxClient(new HttpClient(server), tokens, new Uri("http://127.0.0.1:9")))
+            {
+                var elsewhere = new OrganizationRoomStore(personalClient, new StandInInbox(personalClient, tokens, [new(personal)]), new MemoryRoomCreationStore(),
+                    () => new(new string('d', 64), tokens.AcceptedAuthorization!, personal));
+                elsewhere.Synchronize(); await Done(elsewhere.LoadOrganizations());
+                Require(elsewhere.State.Organizations.Count == 0 && elsewhere.State.OtherInboxes.Single().Mailbox!.Address == me && !elsewhere.CanCreate(elsewhere.State.ContextId));
+                Require(elsewhere.LoadRooms("") is null); // No organization is selected for a personal inbox: nothing to read.
+            }
             using var client = new PostboxClient(new HttpClient(server), tokens, new Uri("http://127.0.0.1:9"));
             var inbox = new StandInInbox(client, tokens, [mailbox]);
             var store = new OrganizationRoomStore(client, inbox, new MemoryRoomCreationStore(), () => new(new string('d', 64), tokens.AcceptedAuthorization!, me));

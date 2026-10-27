@@ -30,6 +30,7 @@ internal static class PreviewRooms
     {
         const string team = "/k/rywv63mb6h0hhrpfjewrrttspw"; // PreviewInboxService.TeamSeed's canonical inbox.
         var owner = server.AddMailbox(PreviewPostbox.Seed(0xB3), "/example/owner");
+        server.LinkAccount("preview-person", "/k/ec55xq18rbwdnwpsvkht07az40", team); // Main and team inboxes are one person.
         server.AddOrganization(OrganizationId, "Example Organization", [team, owner], [("/k/cz6900v2h90vnwefj7g7ezvbh4", "/example/agent")]);
         server.SeedOrganizationRoom(OrganizationId, owner, "Design studio", "public", "Product design reviews");
         server.SeedOrganizationRoom(OrganizationId, owner, "Leadership", "private", "Invitation only");
