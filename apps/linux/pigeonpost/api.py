@@ -13,9 +13,11 @@ MAX_FILE = 25 * 1024 * 1024
 
 
 class APIError(Exception):
-    def __init__(self, status=0, code="network_error", detail="", body=None):
+    def __init__(self, status=0, code="network_error", detail="", body=None, headers=None):
         self.status, self.code = status, code
         self.body = body if isinstance(body, dict) else {}
+        # Only the bounded challenge and retry hints; never cookies or other response headers.
+        self.headers = headers if isinstance(headers, dict) else {}
         messages = {
             "network_error": "Could not reach Pigeonpost. Check your connection and try again.",
             "invalid_grant": "Your session has expired. Please sign in again.",
@@ -76,8 +78,13 @@ class Transport:
                         error = {}
                 except (ValueError, UnicodeError):
                     error = {}
-            raise APIError(exc.code, error.get("error", f"http_{exc.code}"),
-                           error.get("detail") or error.get("message") or "", error) from None
+            hints = {}
+            for name in ("WWW-Authenticate", "Retry-After"):
+                value = exc.headers.get(name) if exc.headers else None
+                if isinstance(value, str) and len(value) <= 2048:
+                    hints[name.lower()] = value
+            code = error.get("error") if isinstance(error.get("error"), str) else f"http_{exc.code}"
+            raise APIError(exc.code, code, error.get("detail") or error.get("message") or "", error, hints) from None
         except (urllib.error.URLError, OSError, TimeoutError):
             raise APIError() from None
         except (ValueError, UnicodeError):
@@ -85,10 +92,17 @@ class Transport:
 
 
 class Postbox:
-    def __init__(self, session, transport=None, base=POSTBOX):
+    def __init__(self, session, transport=None, base=POSTBOX, lease=None):
         self.session = session
         self.transport = transport or Transport()
         self.base = base.rstrip("/")
+        # With a lease (binding.Lease), every request first checks that its login is still the
+        # accepted one; work begun under an earlier login stops instead of borrowing a newer token.
+        self.lease = lease
+
+    def bound(self, lease):
+        """The same postbox, for work that must stay with `lease`'s login."""
+        return Postbox(self.session, self.transport, self.base, lease)
 
     def call(self, method, path, identity=None, data=None, query=None, **kwargs):
         params = dict(query or {})
@@ -103,16 +117,28 @@ class Postbox:
         url = self.base + path + ("?" + urllib.parse.urlencode(params) if params else "")
         return self._send(method, url, data=data, **kwargs)
 
+    def _token(self, rejected=None):
+        if self.lease is None:
+            return self.session.access_token(rejected=rejected) if rejected else self.session.access_token()
+        return self.session.access_token(rejected=rejected, lease=self.lease)
+
     def _send(self, method, url, **kwargs):
-        token = self.session.access_token()
+        token = self._token()
         try:
             return self.transport.request(method, url, token=token, **kwargs)
         except APIError as exc:
             if exc.status != 401:
                 raise
             # A 401 rejects the operation before it is processed. Other failures never replay writes.
-            token = self.session.access_token(rejected=token)
+            token = self._token(rejected=token)
             return self.transport.request(method, url, token=token, **kwargs)
+
+    def post_exact(self, path, wire, timeout=35):
+        """POST these exact JSON bytes (a protected, reviewed request); nothing is added to them."""
+        if not isinstance(wire, (bytes, bytearray)):
+            raise TypeError("wire bytes required")
+        return self._send("POST", self.base + path, raw=bytes(wire), timeout=timeout,
+                          headers={"Content-Type": "application/json"})
 
     def scoped(self, method, path, identity, data=None, *, device=None, raw=None,
                content_type="application/octet-stream", binary=False, timeout=35):
@@ -146,10 +172,13 @@ class Postbox:
                 pass  # A failed name lookup must not hide a working mailbox.
         return rows
 
-    def inbox(self, identity, wait=0):
-        return self.call("GET", "/v1/inbox", identity, query={
-            "include_sent": "true", "include_read": "true", "wait": str(wait)
-        }).get("messages", [])
+    def inbox(self, identity, wait=0, actions=False):
+        """Messages of one mailbox. `actions` asks for msg_ref/reply/receipt fields with edits
+        folded into their originals (docs/message-actions.md §3), as people's clients use it."""
+        query = {"include_sent": "true", "include_read": "true", "wait": str(wait)}
+        if actions:
+            query.update(actions="1", fold="1")
+        return self.call("GET", "/v1/inbox", identity, query=query).get("messages", [])
 
     def upload(self, identity, name, media_type, content):
         if len(content) > MAX_FILE:

@@ -357,8 +357,8 @@ def commit_lines(items, commit, me, my_device, name_of):
 
 def preview_of(items, me, name_of):
     for item in reversed(items):
-        if item.get("kind") != "message" or item.get("replaced_by"):
-            continue
+        if item.get("kind") != "message" or item.get("replaced_by") or item.get("missing"):
+            continue  # superseded versions and placeholders for history this device never received
         if item.get("deleted"):
             return "Message deleted"
         if item.get("undecryptable"):

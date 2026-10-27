@@ -5,6 +5,7 @@ import time
 from urllib.parse import urlsplit
 
 from .api import APIError, CLIENT_ID, ISSUER, Transport
+from .binding import owner_key
 
 
 class Session:
@@ -13,17 +14,29 @@ class Session:
         self.lock = threading.RLock()
         self.token = self.refresh = None
         self.expires = 0
+        # The accepted login: a new epoch for every sign-in, restore, sign-out or account change.
+        # Work bound to an older epoch (binding.Lease) stops instead of using this login.
+        self.epoch = 0
+        self.owner = None
+
+    def _new_login(self, owner):
+        self.epoch += 1
+        self.owner = owner
 
     def form(self, endpoint, **values):
         return self.transport.request("POST", ISSUER + "/protocol/openid-connect/" + endpoint,
                                       form={"client_id": CLIENT_ID, **values}, timeout=20)
 
-    def _accept(self, result):
+    def _accept(self, result, new_login=False):
         if not result.get("access_token") or not result.get("refresh_token", self.refresh):
             raise APIError(0, "invalid_response")
         refresh = result.get("refresh_token", self.refresh)
         # Persist first. A keyring failure must not silently create a supposedly remembered session.
         self.vault.save(refresh)
+        owner = owner_key(result["access_token"])
+        if new_login or owner != self.owner:
+            # A renewal that names another account is a different login, never a continuation.
+            self._new_login(owner)
         self.refresh, self.token = refresh, result["access_token"]
         self.expires = time.monotonic() + max(0, int(result.get("expires_in", 60)) - 30)
 
@@ -32,11 +45,17 @@ class Session:
             self.refresh = self.vault.load()
             if not self.refresh:
                 return False
+            self._new_login(None)
+            self.token, self.expires = None, 0
             self.access_token()
             return True
 
-    def access_token(self, rejected=None):
+    def access_token(self, rejected=None, lease=None):
+        """The current access token. With a lease, only while that lease's login is still the
+        accepted one: a request never borrows a newer login's token (binding.Retired)."""
         with self.lock:
+            if lease is not None:
+                lease.require()
             if self.token and time.monotonic() < self.expires and self.token != rejected:
                 return self.token
             if not self.refresh:
@@ -47,7 +66,10 @@ class Session:
                 if exc.code == "invalid_grant":
                     self.vault.clear()
                     self.token = self.refresh = None
+                    self._new_login(None)
                 raise
+            if lease is not None:
+                lease.require()
             return self.token
 
     def begin(self):
@@ -74,7 +96,7 @@ class Session:
                 with self.lock:
                     if cancel.is_set():
                         return False
-                    self._accept(result)
+                    self._accept(result, new_login=True)
                     if cancel.is_set():
                         self.sign_out()
                         return False
@@ -97,6 +119,7 @@ class Session:
             self.vault.clear()  # Do not claim local sign-out if credential removal fails.
             self.token = self.refresh = None
             self.expires = 0
+            self._new_login(None)
         if refresh:
             try:
                 self.form("logout", refresh_token=refresh)
