@@ -2,8 +2,8 @@
 (function () {
   const q = new URLSearchParams(location.search);
   const as = q.get("as") === "bob" ? "bob" : "alice";
-  const P = { alice: { token: "tok-alice", address: "/k/alice0000000000000000000a", handle: "/alice", peer: "/bob" },
-              bob: { token: "tok-bob", address: "/k/bob00000000000000000000000b", handle: "/bob", peer: "/alice" } }[as];
+  const P = { alice: { token: "tok-alice", address: "/k/ec55xq18rbwdnwpsvkht07az40", handle: "/alice", peer: "/bob" },
+              bob: { token: "tok-bob", address: "/k/rywv63mb6h0hhrpfjewrrttspw", handle: "/bob", peer: "/alice" } }[as];
   localStorage.setItem("ppi_token", P.token);
   try { if (q.get("relay") === "1") localStorage.setItem("ppi_calls_relay", "1"); else localStorage.removeItem("ppi_calls_relay"); } catch (_) {}
 

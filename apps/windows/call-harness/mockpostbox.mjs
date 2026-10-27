@@ -1,5 +1,5 @@
 import http from "node:http";
-const ACCOUNTS = { "tok-alice": [{ address: "/k/alice0000000000000000000a", handle: "/alice" }], "tok-bob": [{ address: "/k/bob00000000000000000000000b", handle: "/bob" }] };
+const ACCOUNTS = { "tok-alice": [{ address: "/k/ec55xq18rbwdnwpsvkht07az40", handle: "/alice" }], "tok-bob": [{ address: "/k/rywv63mb6h0hhrpfjewrrttspw", handle: "/bob" }] };
 const serviceToken = process.env.PIGEONPOST_TEST_INTERNAL_TOKEN || "";
 const alice = ACCOUNTS["tok-alice"][0], bob = ACCOUNTS["tok-bob"][0];
 const firstOccurrence = "occ_nativeCalendar_first", secondOccurrence = "occ_nativeCalendar_second";
@@ -41,7 +41,26 @@ export const server = http.createServer(async (req, res) => {
     return out(404, {});
   }
   if (!owned) return out(401, { error: "unauthorized" });
+  if (u.pathname === "/v1/capabilities") return out(200, { features: ["calendar"] });
   if (u.pathname === "/v1/identities") return out(200, { identities: owned.map(m => ({ address: m.address, label: null })) });
   if (u.pathname === "/v1/whoami") { const m = owned.find(x => x.address === u.searchParams.get("identity")); return m ? out(200, m) : out(403, {}); }
+  if (u.pathname === "/v1/calendars" || u.pathname.startsWith("/v1/calendar/")) {
+    const identity = u.searchParams.get("identity");
+    if (!owned.some(mailbox => mailbox.address === identity) || req.headers["x-pigeonpost-identity"] !== identity) return out(403, { error: "forbidden" });
+    if (u.pathname === "/v1/calendars") return out(200, { calendars: [{ id: "cal_native", name: "Synthetic calendar" }] });
+    if (u.pathname === "/v1/calendar/settings") return out(200, { timezone: "UTC", week_start: 1, previews: false });
+    if (u.pathname === "/v1/calendar/invitations") return out(200, { invitations: [] });
+    if (u.pathname === "/v1/calendar/events") return out(200, { occurrences: [] });
+    if (u.pathname === "/v1/calendar/events/evt_nativeCalendar") {
+      const occurrence_id = u.searchParams.get("occurrence_id");
+      if (![firstOccurrence, secondOccurrence].includes(occurrence_id)) return out(404, { error: "not_found" });
+      const now = Math.floor(Date.now() / 1000), starts_at = now - 60, ends_at = now + 1800;
+      const start = new Date(starts_at * 1000).toISOString().slice(0, 19), end = new Date(ends_at * 1000).toISOString().slice(0, 19);
+      return out(200, { event: { id: "evt_nativeCalendar", revision: 1, status: "confirmed", title: "Synthetic calendar meeting", all_day: false, start, end, tzid: "UTC", starts_at, ends_at,
+        my: identity === alice.address ? { role: "organizer" } : { role: "attendee", attendee_id: "att_nativeBob", rsvp: "accepted" },
+        can_edit: identity === alice.address, meeting: { code: "ABCDEFGHJK", waiting: "everyone_except_hosts", admit: "hosts", transport: "mesh" } },
+        occurrence: { occurrence_id, all_day: false, starts_at, ends_at, status: "confirmed" } });
+    }
+  }
   out(404, {});
 }).listen(Number(process.argv[2] || 8792), "127.0.0.1");

@@ -47,8 +47,9 @@ public sealed partial class MainWindow
     // remote debugging for the test driver).
     private static string? CallsDebug(string name) =>
         Environment.GetEnvironmentVariable("PIGEONPOST_CALLS_" + name) is { Length: > 0 } value ? value : null;
-    private sealed class FixtureCallTokens(string token) : IAccessTokenProvider
+    private sealed class FixtureCallTokens(string token, AuthorizationLease? authorization = null) : IAccessTokenProvider
     {
+        public AuthorizationLease? AcceptedAuthorization => authorization;
         public Task<string> GetTokenAsync(CancellationToken ct) => Task.FromResult(token);
         public Task<string> RefreshTokenAsync(CancellationToken ct) => Task.FromResult(token);
     }
@@ -65,7 +66,14 @@ public sealed partial class MainWindow
     private IAccessTokenProvider CallTokenProvider()
     {
 #if DEBUG || UI_TESTS
-        if (CallsDebug("TOKEN") is { } token) return fixtureCallTokens ??= new FixtureCallTokens(token);
+        if (CallsDebug("TOKEN") is { } token)
+        {
+#if UI_TESTS
+            return fixtureCallTokens ??= new FixtureCallTokens(token, scheduledFixtureAuthorization);
+#else
+            return fixtureCallTokens ??= new FixtureCallTokens(token);
+#endif
+        }
 #endif
 #if UI_TESTS
         if (CallsDebug("PAGE") is null) return fixtureCallTokens ??= new FixtureCallTokens("ui-preview-only-call-token");
@@ -289,6 +297,10 @@ public sealed partial class MainWindow
                 await AnswerPendingCallAsync();
                 if (!CallPageCurrent(page)) return;
                 if (pendingCall is { } call && ReferenceEquals(call.Actor, page.Actor)) { pendingCall = null; await PlaceCallAsync(call.Peer, call.Video); }
+#if UI_TESTS
+                await RunScheduledFixtureAsync(page);
+                if (!CallPageCurrent(page)) return;
+#endif
 #if DEBUG || UI_TESTS
                 if (CallsDebug("CALL") is { } auto && auto.LastIndexOf(':') is > 0 and var colon)
                 {

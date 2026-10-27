@@ -41,9 +41,9 @@ public sealed partial class MainWindow : Window
         vaultTest.Clear();
         if (vaultTest.Load() is not null) throw new InvalidOperationException("Native vault clearing failed.");
         ViewModel.Dispose();
-        preview = new PreviewInboxService(longHistory: true);
+        preview = new PreviewInboxService(longHistory: true, authorization: scheduledFixtureAuthorization);
         postbox.Dispose();
-        postbox = new PostboxClient(new HttpClient(new AttachmentFixtureHandler(preview)), new AttachmentFixtureTokens());
+        postbox = new PostboxClient(new HttpClient(new AttachmentFixtureHandler(preview)), new AttachmentFixtureTokens(scheduledFixtureAuthorization));
         var stand_in = new Pigeonpost.Core.Preview.PreviewPostbox();
         PreviewSideData.Seed(stand_in);
         if (Environment.GetEnvironmentVariable("PIGEONPOST_UI_MESSAGE_MODES_STATE") is not null)
@@ -51,7 +51,7 @@ public sealed partial class MainWindow : Window
         if (Environment.GetEnvironmentVariable("PIGEONPOST_UI_CALENDAR_STATE") is not null)
             stand_in.Features.Add(ServerFeatures.Calendar);
         postbox.Dispose();
-        postbox = new PostboxClient(new HttpClient(new PreviewRouter(new AttachmentFixtureHandler(preview), stand_in)), new AttachmentFixtureTokens());
+        postbox = new PostboxClient(new HttpClient(new PreviewRouter(new AttachmentFixtureHandler(preview), stand_in)), new AttachmentFixtureTokens(scheduledFixtureAuthorization));
         if (Environment.GetEnvironmentVariable("PIGEONPOST_UI_MESSAGE_MODES_STATE") is { } modesState)
         {
             var folder = Environment.GetEnvironmentVariable("PIGEONPOST_UI_MESSAGE_MODES_FOLDER") ?? throw new InvalidOperationException("Message modes fixture folder missing.");
@@ -99,6 +99,7 @@ public sealed partial class MainWindow : Window
 #if UI_TESTS
             deliveryUiFixture?.Root.Retire();
             calendarUiFixture?.Root.Retire();
+            scheduledFixtureAuthorization?.Retire();
 #endif
             groupsModel.Dispose();
             calendarPage?.Dispose(); calendarModel.Dispose();

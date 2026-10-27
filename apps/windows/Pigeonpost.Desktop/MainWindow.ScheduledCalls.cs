@@ -63,6 +63,7 @@ public sealed partial class MainWindow
                 await Task.WhenAny(attempt.Result.Task, Task.Delay(100, lifetime.Token));
             }
             var result = await attempt.Result.Task; Check();
+            DesktopLog.Write("Scheduled call result: " + result.State);
             AccountStatus.Text = result.State switch
             {
                 "joined" => "", "waiting" => "Waiting for a host to admit you.", "cancelled" => "Joining was cancelled.",

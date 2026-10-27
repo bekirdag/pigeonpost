@@ -19,8 +19,8 @@ const simulate = app === "--simulate";
 mkdirSync(out, { recursive: true });
 const here = (name) => fileURLToPath(new URL("./" + name, import.meta.url));
 const SITE = 8460, CALLS = 8791, POSTBOX = 8792, DEVTOOLS = 9333;
-const ALICE = { token: "tok-alice", address: "/k/alice0000000000000000000a", handle: "/alice" };
-const BOB = { address: "/k/bob00000000000000000000000b", handle: "/bob" };
+const ALICE = { token: "tok-alice", address: "/k/ec55xq18rbwdnwpsvkht07az40", handle: "/alice" };
+const BOB = { address: "/k/rywv63mb6h0hhrpfjewrrttspw", handle: "/bob" };
 const result = { checks: [], passed: false };
 const check = (name, ok, detail) => { result.checks.push({ name, ok: Boolean(ok), detail }); console.log(`${ok ? "PASS" : "FAIL"} ${name}${detail === undefined ? "" : " " + JSON.stringify(detail)}`); if (!ok) throw new Error(name); };
 const note = (name, detail) => { result.checks.push({ name, ok: null, detail }); console.log(`NOTE ${name} ${JSON.stringify(detail)}`); };
@@ -186,8 +186,30 @@ try {
   check("A changed occurrence requires explicit selection instead of joining the first window", choose?.state === "choose_occurrence");
   const waiting = await B.evaluate(`PigeonpostCalls.joinScheduled("ABCDEFGHJK", ${JSON.stringify({ as: BOB.address, occurrenceId, kind: "video", title: "Synthetic calendar meeting", role: "host" })})`);
   check("The first attendee waits in the scheduled lobby and does not become host", waiting?.state === "waiting");
-  const joined = await nativeJoin("ABCDEFGHJK", { as: ALICE.address, occurrenceId, kind: "video", title: "Synthetic calendar meeting" });
-  check("The native member joins the exact scheduled occurrence", joined?.state === "joined");
+  if (simulate) {
+    const joined = await nativeJoin("ABCDEFGHJK", { as: ALICE.address, occurrenceId, kind: "video", title: "Synthetic calendar meeting" });
+    check("The native member joins the exact scheduled occurrence", joined?.state === "joined");
+  } else {
+    // A separate disposable test process supplies one shared synthetic account to the preview,
+    // HTTP client and call host. Its real CalendarStore prepares the selected occurrence and
+    // the production host dispatches/receives the operation-tagged native bridge unchanged.
+    result.adHocAppLog = appLog().map(line => line.replace(/^\S+ \[\d+\] /, ""));
+    A.close(); const earlier = appProcess; earlier.kill();
+    await until(() => earlier.exitCode !== null, 10000, 100, "the earlier app process to exit");
+    const scheduledPort = DEVTOOLS + 1;
+    appProcess = spawn(app, [], { stdio: "ignore", env: {
+      ...process.env, PIGEONPOST_CALLS_PAGE: `http://127.0.0.1:${SITE}/native-call.html`,
+      PIGEONPOST_CALLS_TOKEN: ALICE.token, PIGEONPOST_CALLS_MAILBOX: ALICE.address, PIGEONPOST_CALLS_HANDLE: ALICE.handle,
+      PIGEONPOST_CALLS_CALL: "", PIGEONPOST_CALLS_POSTBOX: `http://127.0.0.1:${POSTBOX}/`,
+      PIGEONPOST_CALLS_SCHEDULED: JSON.stringify({ code: "ABCDEFGHJK", event_id: "evt_nativeCalendar", occurrence_id: occurrenceId, video: true }),
+      PIGEONPOST_CALLS_BROWSER_ARGS: `--use-fake-device-for-media-stream --remote-debugging-port=${scheduledPort}`,
+    } });
+    A = await attach(scheduledPort, target => target.type === "page" && target.url.includes("native-call.html"), 60000);
+    await until(() => logged("Scheduled call result: joined"), 45000, 200, "the original native scheduled operation result");
+    check("The typed calendar request completes through the real native host and operation result", true);
+    const nativeRoom = (await inspect(A)).room, waitingRoom = (await inspect(B)).room;
+    check("The native member joins the exact selected occurrence's room", nativeRoom?.code === "ABCDEFGHJK" && nativeRoom?.id === waitingRoom?.id);
+  }
   await until(() => A.evaluate("Boolean(document.querySelector('#call-knocks .call-pill-primary'))"), 15000, 200, "the host's lobby controls");
   check("Only the scheduled host sees end/extend controls", await A.evaluate("!document.getElementById('call-host-tools').hidden") && await B.evaluate("document.getElementById('call-host-tools').hidden"));
   capture("scheduled-call-lobby.png");
