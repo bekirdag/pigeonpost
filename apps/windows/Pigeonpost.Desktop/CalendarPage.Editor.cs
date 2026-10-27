@@ -62,9 +62,9 @@ internal sealed partial class CalendarPage
         }
         allDay.Click += (_, _) => UpdateInputs(); meeting.Click += (_, _) => UpdateInputs(); admit.SelectionChanged += (_, _) => UpdateInputs(); UpdateInputs();
         var form = Form(reviewed is null ? "New event" : "Edit event", fields, reviewed is null ? "Create event" : "Save changes");
-        form.PrimaryButtonClick += async (_, args) =>
+        form.PrimaryButtonClick += async (sender, args) =>
         {
-            args.Cancel = true; var deferred = args.GetDeferral(); form.IsPrimaryButtonEnabled = false; fields.IsEnabled = false;
+            args.Cancel = true; var deferred = args.GetDeferral(); form.IsPrimaryButtonEnabled = false; EnableFormFields(form, false);
             try
             {
                 if (!target.IsCurrent || model.State.ContextId != initial.ContextId) return;
@@ -96,7 +96,7 @@ internal sealed partial class CalendarPage
             finally
             {
                 form.IsPrimaryButtonEnabled = target.IsCurrent && !model.State.Busy && (reviewed is not null || model.State.CanCreate && !model.State.Pending.Any(p => p.Kind == CalendarAttemptKind.Event));
-                fields.IsEnabled = true;
+                EnableFormFields(form, true);
                 deferred.Complete();
             }
         };

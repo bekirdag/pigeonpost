@@ -9,15 +9,17 @@ internal sealed partial class CalendarPage
     private static ContentDialog Form(string title, StackPanel fields, string primary = "Save") => new()
     {
         Title = title, PrimaryButtonText = primary, CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary,
-        Content = new ScrollViewer { Content = fields, MaxHeight = 460, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled }
+        Content = new ScrollViewer { Content = new ContentControl { Content = fields, HorizontalContentAlignment = HorizontalAlignment.Stretch }, MaxHeight = 460, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled }
     };
+    private static void EnableFormFields(ContentDialog form, bool enabled)
+    { if (form.Content is ScrollViewer { Content: ContentControl host }) host.IsEnabled = enabled; }
     private async Task NewCalendar(CalendarActionTarget target)
     {
         var name = Field("Calendar name", ""); var color = Choice("Color", ["blue", "green", "purple", "red", "orange", "gray"]);
         var error = Text(""); var fields = new StackPanel { Spacing = 12, MinWidth = 280, Children = { name, color, error } }; var form = Form("New calendar", fields, "Create calendar");
-        form.PrimaryButtonClick += async (_, args) =>
+        form.PrimaryButtonClick += async (sender, args) =>
         {
-            args.Cancel = true; var deferred = args.GetDeferral(); form.IsPrimaryButtonEnabled = false; fields.IsEnabled = false;
+            args.Cancel = true; var deferred = args.GetDeferral(); form.IsPrimaryButtonEnabled = false; EnableFormFields(form, false);
             try
             {
                 if (string.IsNullOrWhiteSpace(name.Text) || name.Text.Length > 100) { error.Text = "Enter a calendar name of at most 100 characters."; return; }
@@ -26,7 +28,7 @@ internal sealed partial class CalendarPage
             }
             catch (OperationCanceledException) { }
             catch (Exception) { error.Text = "Could not create the calendar. Your request has not been sent again."; }
-            finally { fields.IsEnabled = true; form.IsPrimaryButtonEnabled = target.IsCurrent && model.State.CanCreate && !model.State.Pending.Any(p => p.Kind == CalendarAttemptKind.Calendar); deferred.Complete(); }
+            finally { EnableFormFields(form, true); form.IsPrimaryButtonEnabled = target.IsCurrent && model.State.CanCreate && !model.State.Pending.Any(p => p.Kind == CalendarAttemptKind.Calendar); deferred.Complete(); }
         };
         await Show(target, form);
     }
@@ -115,13 +117,13 @@ internal sealed partial class CalendarPage
     {
         var input = Field("Minutes before (separate with commas)", string.Join(", ", current?.Select(r => r.MinutesBefore) ?? []));
         var error = Text(""); var form = Form("Your reminders", new() { Spacing = 12, Children = { input, Text("Only your own reminders change. Leave empty for no reminders."), error } });
-        form.PrimaryButtonClick += async (_, args) =>
+        form.PrimaryButtonClick += async (sender, args) =>
         {
-            args.Cancel = true; var deferred = args.GetDeferral(); form.IsPrimaryButtonEnabled = false;
+            args.Cancel = true; var deferred = args.GetDeferral(); form.IsPrimaryButtonEnabled = false; EnableFormFields(form, false);
             try { var reminders = CalendarReminderInput.Parse(input.Text).Select(n => new CalendarReminder(n, "push")).ToArray(); if (await model.SaveRemindersAsync(target, key, reminders, lifetime)) form.Hide(); else error.Text = model.State.Error ?? "The reminders were not confirmed."; }
             catch (ArgumentException exception) { error.Text = exception.Message; }
             catch (OperationCanceledException) { }
-            finally { form.IsPrimaryButtonEnabled = target.IsCurrent; deferred.Complete(); }
+            finally { EnableFormFields(form, true); form.IsPrimaryButtonEnabled = target.IsCurrent; deferred.Complete(); }
         };
         await Show(target, form);
     }
@@ -131,9 +133,9 @@ internal sealed partial class CalendarPage
         var week = Choice("First day of week", System.Globalization.CultureInfo.CurrentCulture.DateTimeFormat.DayNames, state.WeekStart);
         var previews = new CheckBox { Content = "Show event details in reminder notifications", IsChecked = state.Settings.Previews == true };
         var error = Text(""); var form = Form("Calendar settings", new() { Spacing = 12, MinWidth = 280, Children = { zone, week, previews, error } });
-        form.PrimaryButtonClick += async (_, args) =>
+        form.PrimaryButtonClick += async (sender, args) =>
         {
-            args.Cancel = true; var deferred = args.GetDeferral(); form.IsPrimaryButtonEnabled = false;
+            args.Cancel = true; var deferred = args.GetDeferral(); form.IsPrimaryButtonEnabled = false; EnableFormFields(form, false);
             try
             {
                 _ = CalendarTime.Zone(zone.Text.Trim());
@@ -142,7 +144,7 @@ internal sealed partial class CalendarPage
             }
             catch (ArgumentException exception) { error.Text = exception.Message; }
             catch (OperationCanceledException) { }
-            finally { form.IsPrimaryButtonEnabled = target.IsCurrent; deferred.Complete(); }
+            finally { EnableFormFields(form, true); form.IsPrimaryButtonEnabled = target.IsCurrent; deferred.Complete(); }
         };
         await Show(target, form);
     }
