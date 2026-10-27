@@ -178,9 +178,9 @@ internal sealed partial class CalendarPage : UserControl, IDisposable
     private async Task<ContentDialogResult> Show(CalendarActionTarget target, ContentDialog next)
     {
         if (disposed || !target.IsCurrent || XamlRoot is null || dialog is not null || dialogBusy()) return ContentDialogResult.None;
-        next.XamlRoot = XamlRoot; next.RequestedTheme = ActualTheme; dialog = next; setDialogBusy(true);
+        next.XamlRoot = XamlRoot; next.RequestedTheme = ActualTheme; dialog = next; setDialogBusy(true); scroll.IsEnabled = false;
         try { var result = await next.ShowAsync(); return !disposed && target.IsCurrent ? result : ContentDialogResult.None; }
-        finally { if (ReferenceEquals(dialog, next)) { dialog = null; setDialogBusy(false); } }
+        finally { if (ReferenceEquals(dialog, next)) { dialog = null; setDialogBusy(false); if (!disposed) scroll.IsEnabled = true; } }
     }
     private Task Problem(CalendarActionTarget target, string message) => Show(target, new ContentDialog { Title = "Calendar", Content = Text(message), CloseButtonText = "Done" });
 }
