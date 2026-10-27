@@ -238,6 +238,7 @@
   }
 
   function stop() {
+    window.PigeonpostLive?.stop?.(); // Phase 6: signing out ends one's own stream too
     streamWanted = false;
     streamGen += 1;
     if (streamAbort) streamAbort.abort();
@@ -317,6 +318,7 @@
         // Events missed while the stream was down (people leaving, keys announced) come back with the room.
         if (room && room.you) post(`/rooms/${room.id}/resume`, { session, participant: room.you }).then(resync).catch(() => {});
         if (PAGE === "join") Join.onReady();
+        window.PigeonpostLive?.onReady(session); // Phase 6: a stream rejoins on the new session
         return;
       case "incoming": return onIncoming(data);
       case "ring_ended":
@@ -400,6 +402,8 @@
         if (room && room.id === data.room) endRoom(endedMessage(data.reason), { notify: false });
         return;
       default:
+        // Phase 6: live streams (live.js) share this event stream.
+        if (name.startsWith("stream_")) window.PigeonpostLive?.onCallsEvent(name, data);
     }
   }
 
@@ -413,7 +417,7 @@
     const h = host();
     const me = h && h.mailbox(), peer = h && h.peer();
     if (!me || !peer || !supported) return;
-    if (room || ring) { toast("Finish the current call first."); return; }
+    if (room || ring || window.PigeonpostLive?.active()) { toast("Finish the current call first."); return; }
     if (!session) { toast("Calling isn’t ready yet. Try again in a moment."); start(); return; }
     openRoomUI({ title: callName(peer), sub: peer, face: peer, status: "Starting " + kindWord(kind) + "…" });
     room = newRoom({ kind, title: displayName(peer), peerKey: peer });
@@ -445,7 +449,7 @@
     const h = host();
     const me = h && h.mailbox();
     if (!me || !group || !supported) return;
-    if (room || ring) { toast("Finish the current call first."); return; }
+    if (room || ring || window.PigeonpostLive?.active()) { toast("Finish the current call first."); return; }
     if (!session) { toast("Calling isn’t ready yet. Try again in a moment."); start(); return; }
     openRoomUI({ title: group.name, sub: join ? "Joining group call" : "Group call", face: group.name, status: (join ? "Joining " : "Starting ") + kindWord(kind) + "…" });
     room = newRoom({ kind, title: group.name, peerKey: group.id, groupId: group.id });
@@ -476,7 +480,7 @@
   }
 
   function onIncoming(data) {
-    if (room || ring) {
+    if (room || ring || window.PigeonpostLive?.active()) {
       post(`/rooms/${data.room}/decline`, { session, reason: "busy" }).catch(() => {});
       return;
     }
@@ -1943,6 +1947,7 @@
     }
 
     return {
+      loadLibs, singleLayer, // Phase 6: live streams reuse the vendored client and the WebKit check
       enter, onMembers, onWrappedKey, updateSlot, sync, send, leave, closeMesh, stats, inspect,
       ready: () => Boolean(active() && s.connected && s.sendEpoch),
       code: () => (active() ? s.code : null),
@@ -3195,6 +3200,13 @@
 
   window.PigeonpostCalls = {
     start, stop, renderHead,
+    // Phase 6: what live.js (a group's live stream) borrows from the call client — the same event
+    // stream, session, relay credentials and vendored media-server client.
+    _live: {
+      request, post, whenReady, session: () => session, turnServers, toast, el, svg, ICON, host,
+      loadLibs: () => Sfu.loadLibs(), singleLayer: () => Sfu.singleLayer, canEncryptFrames, forceRelay, E2EE_WORKER,
+      busy: () => Boolean(room || ring), start,
+    },
     // For automated checks of large calls: receive statistics of the media server's tracks.
     sfuStats: () => Sfu.stats(),
     // Phase 3a

@@ -158,6 +158,7 @@
 
   /* The call screen: dark in either appearance (see the calls section). */
   --call-ground: #0d0f12;
+  --call-player: #000000;
   --call-ink: #e8eaed;
   --call-muted: #9aa3ae;
   --call-body: #c3c9d1;
@@ -294,6 +295,7 @@
     --doodle-veil: rgba(15, 18, 22, 0.90);
     /* The call screen is the same dark in both appearances. */
     --call-ground: #0d0f12;
+    --call-player: #000000;
     --call-ink: #e8eaed;
     --call-muted: #9aa3ae;
     --call-body: #c3c9d1;
@@ -427,6 +429,7 @@
   --doodle-veil: rgba(15, 18, 22, 0.90);
   /* The call screen is the same dark in both appearances. */
   --call-ground: #0d0f12;
+  --call-player: #000000;
   --call-ink: #e8eaed;
   --call-muted: #9aa3ae;
   --call-body: #c3c9d1;
@@ -2651,3 +2654,70 @@ audio.viewer-media { width: min(560px, 100%); background: none; }
 .msg-info .info-versions li { display: flex; flex-direction: column; gap: 3px; }
 .msg-info .info-version-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; color: var(--body);
   background: var(--inset); border-radius: 8px; padding: 8px 10px; }
+
+/* ---- Phase 6: live streams in groups (live.js) ------------------------------------------------- */
+/* The stream screen is the call screen's shell: the same ground, header scrim, dock and panel. The
+   player fills the stage (the whole picture, letterboxed); the group chat docks in the panel, and on
+   phones the panel lies over the bottom of the player. */
+.live-ui { display: flex; }
+.live-ui[hidden] { display: none; }
+.live-main { position: relative; flex: 1; min-width: 0; height: 100%; overflow: hidden; }
+.live-top { align-items: center; }
+.live-who { display: flex; align-items: center; gap: 12px; min-width: 0; margin-right: auto; }
+.live-badge {
+  flex: none; display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 9px;
+  border-radius: 6px; background: var(--call-end); color: var(--call-on-solid); font-size: 12px; font-weight: 700; letter-spacing: .08em;
+}
+.live-badge::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--call-on-solid); animation: live-pulse 1.6s ease-in-out infinite; }
+@keyframes live-pulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .live-badge::before { animation: none; } }
+.live-titles { min-width: 0; }
+.live-title { margin: 0; font-size: 15px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.live-sub { margin: 2px 0 0; font-size: 12.5px; color: var(--call-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.live-count { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--call-edge); background: var(--call-chip); font-size: 13px; font-variant-numeric: tabular-nums; }
+.live-count svg { width: 16px; height: 16px; }
+.live-player { position: absolute; inset: 0; display: grid; place-items: center; background: var(--call-player); }
+.live-video { width: 100%; height: 100%; object-fit: contain; background: var(--call-player); }
+.live-pip { position: absolute; right: 20px; bottom: calc(var(--call-controls-h, 100px) + 12px); width: min(26%, 260px); aspect-ratio: 16 / 9; object-fit: cover; border-radius: 10px; border: 1px solid var(--call-edge); background: var(--call-player); }
+.live-pip[hidden], .live-waiting[hidden] { display: none; }
+.live-waiting { position: absolute; margin: 0; color: var(--call-muted); font-size: 14px; }
+.live-audio { display: none; }
+.live-reactions { position: absolute; left: 0; right: 0; bottom: calc(var(--call-controls-h, 100px) + 4px); height: 45%; pointer-events: none; overflow: hidden; }
+.live-float { position: absolute; bottom: 0; font-size: 30px; animation: live-rise 2.6s ease-out forwards; }
+@keyframes live-rise { from { transform: translateY(0); opacity: 1; } to { transform: translateY(-260px); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .live-float { animation: live-fade 2.6s linear forwards; } @keyframes live-fade { to { opacity: 0; } } }
+.live-react { font-size: 21px; line-height: 1; }
+.live-controls .call-btn[hidden] { display: none; }
+.call-btn.off { background: var(--call-btn-hover); color: var(--call-muted); }
+.live-stage-offer {
+  position: absolute; left: 50%; top: calc(var(--call-top-h, 86px) + 8px); transform: translateX(-50%); z-index: 6;
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 10px; max-width: min(560px, calc(100% - 32px));
+  padding: 12px 16px; border-radius: 14px; background: var(--call-dock); border: 1px solid var(--call-rule);
+}
+.live-stage-offer[hidden] { display: none; }
+.live-stage-offer p { margin: 0; flex: 1 1 100%; font-size: 13.5px; text-align: center; }
+.live-person { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--call-rule); }
+.live-person-name { flex: 1; min-width: 0; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.live-panel { width: 380px; }
+.live-chat-dock { padding: 0; position: relative; background: var(--wash); color: var(--ink); }
+.live-chat-dock .group-view { position: absolute; inset: 0; }
+.group-view.docked .group-back, .group-view.docked #group-call-join, .group-view.docked #group-call-audio,
+.group-view.docked #group-call-video, .group-view.docked #group-live-btn, .group-view.docked .group-live-banner { display: none; }
+/* In the group: who is live, and the way in. */
+.group-live-banner {
+  display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 16px; border: 0; border-bottom: 1px solid var(--rule);
+  background: color-mix(in srgb, var(--call-end) 9%, transparent); color: inherit; font: inherit; font-size: 14px; text-align: left; cursor: pointer;
+}
+.group-live-banner[hidden] { display: none; }
+.group-live-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.group-live-watch { flex: none; font-weight: 650; color: var(--call-end); }
+@media (max-width: 780px) {
+  .live-ui[data-panel="chat"] .live-panel, .live-ui[data-panel="people"] .live-panel, .live-ui[data-panel="info"] .live-panel {
+    position: absolute; left: 0; right: 0; bottom: 0; width: auto; height: 46%; z-index: 7;
+    border-left: 0; border-top: 1px solid var(--call-rule); border-radius: 14px 14px 0 0; overflow: hidden;
+  }
+  .live-controls { gap: 8px; padding: 8px 10px; }
+  .live-controls .call-btn { width: 44px; height: 44px; }
+  .live-top { padding-left: 16px; padding-right: 16px; }
+  .live-pip { right: 12px; width: 34%; }
+}
