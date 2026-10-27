@@ -82,6 +82,9 @@ mod groups;
 mod groups_tests;
 mod internal_api;
 mod mcp;
+mod meetings;
+#[cfg(test)]
+mod meetings_tests;
 mod mls;
 mod msgactions;
 #[cfg(test)]
@@ -831,6 +834,8 @@ fn build_router(state: AppState) -> Router {
         .merge(org_api_keys::router())
         .merge(webhooks::router())
         .merge(org_api::router(state.clone()))
+        // Phase 7: meeting summaries (SDS §14, docs/meeting-summaries.md).
+        .merge(meetings::router())
         // Phase 3B: calendar and scheduled meetings (SDS §14B.5, docs/calendar.md).
         .route(
             "/v1/calendars",
@@ -6392,6 +6397,11 @@ async fn reaper(cfg: Config) {
                     )
                 });
                 ephemeral::sweep_once(&store, blobs.as_ref(), group_blobs.as_ref()).await;
+                match meetings::purge(&store, now_unix()).await {
+                    Ok((0, 0)) => {}
+                    Ok((purged, timed_out)) => tracing::info!(purged, timed_out, "meeting notes past retention purged"),
+                    Err(e) => tracing::error!(code = e.code, "meeting notes retention failed"),
+                }
                 match store.reap_call_log(now_unix()).await {
                     Ok(0) => {}
                     Ok(n) => tracing::info!(purged = n, "call history past retention purged"),

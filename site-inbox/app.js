@@ -3157,6 +3157,7 @@
     render();
     window.PigeonpostGroups?.onMailbox(); // Phase 3a
     window.PigeonpostCalendar?.onMailbox(); // Phase 3B
+    window.PigeonpostNotes?.onMailbox(); // Phase 7
     // The stream regardless: an opening that did not arrive is exactly when the mailbox most needs
     // something retrying behind it.
     try { await loadAll(); }
@@ -4360,6 +4361,7 @@
     syncSideNav();
     window.PigeonpostGroups?.onMailbox(); // Phase 3a
     window.PigeonpostCalendar?.onMailbox(); // Phase 3B
+    window.PigeonpostNotes?.onMailbox(); // Phase 7
   }
 
   function resetPhase1b() {
@@ -4411,6 +4413,7 @@
     }
     if (/^(group\.|mls\.|message\.expired|thread\.settings)/.test(event)) window.PigeonpostGroups?.onEvent(event, frame); // Phase 3a
     if (/^event\./.test(event)) window.PigeonpostCalendar?.onEvent(event, frame); // Phase 3B
+    if (/^meeting\./.test(event)) window.PigeonpostNotes?.onEvent(event, frame); // Phase 7
   }
 
   // ---- profile pictures ---------------------------------------------------------------------
@@ -5076,7 +5079,7 @@
   // ---- side views: calls and filtered ---------------------------------------------------------
 
   function syncSideNav() {
-    const on = (has("call_history") || has("calendar")) && Boolean(state.me); // Phase 3B: or calendar
+    const on = (has("call_history") || has("calendar") || has("meeting_summaries")) && Boolean(state.me); // Phase 3B: or calendar // Phase 7: or meeting notes
     $("side-nav").hidden = !on;
     $("calls-btn").hidden = !has("call_history"); // Phase 3B
     window.PigeonpostCalendar?.syncNav(); // Phase 3B
@@ -5753,6 +5756,17 @@
       setLeftView("inbox");
       openThread(peer);
     },
+  };
+
+  // Phase 7: what meeting-notes.js may ask of the inbox. Notes are ciphertext from the postbox and
+  // are decrypted in meeting-notes.js with this device's own key; nothing passes through here.
+  window.PigeonpostNotesHost = {
+    postbox: () => cfg.postbox,
+    token: () => getToken(),
+    renew: () => renewSession(),
+    mailbox: () => (state.me ? { address: state.me.address, handle: state.me.handle || null } : null),
+    features: () => new Set(features),
+    toast,
   };
 
   async function boot() {

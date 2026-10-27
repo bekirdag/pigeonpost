@@ -49,6 +49,9 @@ jobs:
       - name: Call signaling (authorization, ringing, signals, TURN credentials)
         working-directory: calls-service
         run: npm test
+      - name: Meeting notes service (encrypted chunks, queue bounds, audio wiped on every path)
+        working-directory: meeting-intel
+        run: npm test
       - name: Call screen layout (no tile button over a header control; headless Chrome, synthetic media)
         timeout-minutes: 6
         env:

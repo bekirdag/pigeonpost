@@ -1473,6 +1473,169 @@
       ]
     },
     {
+      "name": "meetings",
+      "description": "Consented meeting notes, delivered as ciphertext to attending devices (Phase 7, docs/meeting-summaries.md).",
+      "item": [
+        {
+          "name": "Meetings whose notes the caller agreed to, newest first (feature `meeting_summaries`)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/meetings",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "meetings"
+              ]
+            },
+            "description": "Only meetings where this account consented to notes and has not removed its copy, before the retention date. Briefs are ciphertext; see docs/meeting-summaries.md."
+          }
+        },
+        {
+          "name": "This account's notes keys (public halves)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/meetings/keys",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "meetings",
+                "keys"
+              ]
+            },
+            "description": "This account's notes keys (public halves)"
+          }
+        },
+        {
+          "name": "Register this device's notes key (idempotent; at most 10 per account, the oldest is dropped)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/meetings/keys/:key_id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "meetings",
+                "keys",
+                ":key_id"
+              ],
+              "variable": [
+                {
+                  "key": "key_id",
+                  "value": "",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Register this device's notes key (idempotent; at most 10 per account, the oldest is dropped)",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"public_key\": \"string\",\n  \"label\": \"string\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Forget a notes key; its wraps on stored briefs are deleted too",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/meetings/keys/:key_id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "meetings",
+                "keys",
+                ":key_id"
+              ],
+              "variable": [
+                {
+                  "key": "key_id",
+                  "value": "",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Forget a notes key; its wraps on stored briefs are deleted too"
+          }
+        },
+        {
+          "name": "One meeting's status and, when ready, its encrypted brief with the caller's own key wraps",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/meetings/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "meetings",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Absent, expired, removed, declined and never-attended meetings all answer 404 `not_found`. The brief (summary, decisions, action items, open questions and transcript) is AES-256-GCM ciphertext; each `keys` entry wraps the content key for one of the caller's notes keys (ECDH P-256 + HKDF-SHA256 + AES-256-GCM, docs/meeting-summaries.md)."
+          }
+        },
+        {
+          "name": "Remove the caller's copy; the last attendee's removal deletes the brief",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/meetings/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "meetings",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Remove the caller's copy; the last attendee's removal deletes the brief"
+          }
+        }
+      ]
+    },
+    {
       "name": "accounts",
       "description": "Accounts, API keys and account deletion.",
       "item": [

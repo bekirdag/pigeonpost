@@ -21,6 +21,10 @@
       "description": "Health, onboarding and discovery."
     },
     {
+      "name": "meetings",
+      "description": "Consented meeting notes, delivered as ciphertext to attending devices (Phase 7, docs/meeting-summaries.md)."
+    },
+    {
       "name": "accounts",
       "description": "Accounts, API keys and account deletion."
     },
@@ -6935,6 +6939,1040 @@
           },
           "403": {
             "$ref": "#/components/responses/EndpointNotAllowed"
+          }
+        }
+      }
+    },
+    "/v1/meetings": {
+      "get": {
+        "tags": [
+          "meetings"
+        ],
+        "operationId": "listMeetings",
+        "summary": "Meetings whose notes the caller agreed to, newest first (feature `meeting_summaries`)",
+        "description": "Only meetings where this account consented to notes and has not removed its copy, before the retention date. Briefs are ciphertext; see docs/meeting-summaries.md.",
+        "security": [
+          {
+            "apiKey": []
+          },
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The list.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "meetings": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/MeetingSummaryRow"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "description": "`credential_not_accepted` (a mailbox token or connector)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/meetings/keys": {
+      "get": {
+        "tags": [
+          "meetings"
+        ],
+        "operationId": "listMeetingNotesKeys",
+        "summary": "This account's notes keys (public halves)",
+        "security": [
+          {
+            "apiKey": []
+          },
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The keys.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "keys": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "key_id": {
+                            "type": "string"
+                          },
+                          "public_key": {
+                            "type": "string",
+                            "description": "Base64 of the 65-byte uncompressed P-256 point."
+                          },
+                          "label": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "created_at": {
+                            "type": "integer"
+                          },
+                          "last_used_at": {
+                            "type": [
+                              "integer",
+                              "null"
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "description": "`credential_not_accepted`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/meetings/keys/{key_id}": {
+      "parameters": [
+        {
+          "name": "key_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{8,64}$"
+          }
+        }
+      ],
+      "put": {
+        "tags": [
+          "meetings"
+        ],
+        "operationId": "putMeetingNotesKey",
+        "summary": "Register this device's notes key (idempotent; at most 10 per account, the oldest is dropped)",
+        "security": [
+          {
+            "apiKey": []
+          },
+          {
+            "memberToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "public_key"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "public_key": {
+                    "type": "string",
+                    "description": "Base64 of the 65-byte uncompressed P-256 point. The private key stays on the device."
+                  },
+                  "label": {
+                    "type": "string",
+                    "maxLength": 60
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Registered.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "key_id": {
+                      "type": "string"
+                    },
+                    "registered": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`bad_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "description": "`credential_not_accepted`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`feature_disabled`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`key_exists` (this id holds a different key)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "meetings"
+        ],
+        "operationId": "deleteMeetingNotesKey",
+        "summary": "Forget a notes key; its wraps on stored briefs are deleted too",
+        "security": [
+          {
+            "apiKey": []
+          },
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "deleted": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "description": "`credential_not_accepted`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/meetings/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^mtg_[a-z0-9]{26}$"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "meetings"
+        ],
+        "operationId": "getMeetingBrief",
+        "summary": "One meeting's status and, when ready, its encrypted brief with the caller's own key wraps",
+        "description": "Absent, expired, removed, declined and never-attended meetings all answer 404 `not_found`. The brief (summary, decisions, action items, open questions and transcript) is AES-256-GCM ciphertext; each `keys` entry wraps the content key for one of the caller's notes keys (ECDH P-256 + HKDF-SHA256 + AES-256-GCM, docs/meeting-summaries.md).",
+        "security": [
+          {
+            "apiKey": []
+          },
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Status, plus ciphertext when `state` is `ready`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/MeetingSummaryRow"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "alg": {
+                          "type": "string",
+                          "enum": [
+                            "A256GCM"
+                          ]
+                        },
+                        "iv": {
+                          "type": "string"
+                        },
+                        "ciphertext": {
+                          "type": "string"
+                        },
+                        "keys": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "key_id": {
+                                "type": "string"
+                              },
+                              "epk": {
+                                "type": "string"
+                              },
+                              "iv": {
+                                "type": "string"
+                              },
+                              "wrapped": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "description": "`credential_not_accepted`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "meetings"
+        ],
+        "operationId": "removeMeetingBrief",
+        "summary": "Remove the caller's copy; the last attendee's removal deletes the brief",
+        "security": [
+          {
+            "apiKey": []
+          },
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Removed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "removed": {
+                      "type": "boolean"
+                    },
+                    "brief_deleted": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "description": "`credential_not_accepted`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/v1/meetings": {
+      "post": {
+        "tags": [
+          "internal"
+        ],
+        "x-internal": true,
+        "operationId": "internalOpenMeeting",
+        "summary": "May this host request notes, and if so open a meeting record (calls service)",
+        "description": "Refusals are `200 {allowed:false, reason}` with `feature_disabled` or `unknown_host`. With `check_only` nothing is created.",
+        "security": [
+          {
+            "serviceToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "host"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "host": {
+                    "type": "string",
+                    "description": "The host's mailbox address, as the calls service authenticated it."
+                  },
+                  "room_ref": {
+                    "type": "string",
+                    "description": "Hex reference to the call room (a hash; never the room id itself)."
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "direct",
+                      "room",
+                      "group",
+                      "scheduled"
+                    ]
+                  },
+                  "group_id": {
+                    "type": "string"
+                  },
+                  "calendar_event_id": {
+                    "type": "string"
+                  },
+                  "occurrence_id": {
+                    "type": "string"
+                  },
+                  "check_only": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The decision.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "allowed": {
+                      "type": "boolean"
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "meeting_id": {
+                      "type": "string"
+                    },
+                    "retention_days": {
+                      "type": "integer"
+                    },
+                    "expires_at": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`bad_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/InvalidServiceToken"
+          },
+          "403": {
+            "$ref": "#/components/responses/EndpointNotAllowed"
+          },
+          "429": {
+            "description": "`rate_limited`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/v1/meetings/{id}/attendees": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "tags": [
+          "internal"
+        ],
+        "x-internal": true,
+        "operationId": "internalMeetingAttendee",
+        "summary": "Record one member's consent answer, with the consenting device's notes key (calls service)",
+        "security": [
+          {
+            "serviceToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "address",
+                  "consent"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "address": {
+                    "type": "string"
+                  },
+                  "consent": {
+                    "type": "string",
+                    "enum": [
+                      "yes",
+                      "no",
+                      "withdrawn"
+                    ]
+                  },
+                  "notes_key": {
+                    "type": "object",
+                    "required": [
+                      "key_id",
+                      "public_key"
+                    ],
+                    "properties": {
+                      "key_id": {
+                        "type": "string"
+                      },
+                      "public_key": {
+                        "type": "string"
+                      },
+                      "label": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Recorded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "recorded": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`bad_request`, `unknown_member`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/InvalidServiceToken"
+          },
+          "403": {
+            "$ref": "#/components/responses/EndpointNotAllowed"
+          },
+          "404": {
+            "description": "`not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`meeting_closed`, `attendee_limit`, `key_exists`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/v1/meetings/{id}/end": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "tags": [
+          "internal"
+        ],
+        "x-internal": true,
+        "operationId": "internalEndMeeting",
+        "summary": "Capture is over; the brief is being made (calls service)",
+        "security": [
+          {
+            "serviceToken": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "reason": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done (idempotent).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ended": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/InvalidServiceToken"
+          },
+          "403": {
+            "$ref": "#/components/responses/EndpointNotAllowed"
+          },
+          "404": {
+            "description": "`not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/v1/meetings/{id}/recipients": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "internal"
+        ],
+        "x-internal": true,
+        "operationId": "internalMeetingRecipients",
+        "summary": "The consenting attendees and their notes keys (meeting-intel)",
+        "security": [
+          {
+            "serviceToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The audience.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "meeting_id": {
+                      "type": "string"
+                    },
+                    "recipients": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "account_id": {
+                            "type": "string"
+                          },
+                          "address": {
+                            "type": "string"
+                          },
+                          "keys": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "key_id": {
+                                  "type": "string"
+                                },
+                                "public_key": {
+                                  "type": "string"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/InvalidServiceToken"
+          },
+          "403": {
+            "$ref": "#/components/responses/EndpointNotAllowed"
+          },
+          "404": {
+            "description": "`not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`meeting_closed`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/v1/meetings/{id}/brief": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "tags": [
+          "internal"
+        ],
+        "x-internal": true,
+        "operationId": "internalStoreMeetingBrief",
+        "summary": "Store the encrypted brief, or a failure, and notify the attendees (meeting-intel)",
+        "description": "Every wrap must name a consenting attendee and one of that attendee's registered keys (`403 not_a_recipient` otherwise). A failure carries no content. Body up to 4 MiB.",
+        "security": [
+          {
+            "serviceToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "status"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "ready",
+                      "failed"
+                    ]
+                  },
+                  "alg": {
+                    "type": "string",
+                    "enum": [
+                      "A256GCM"
+                    ]
+                  },
+                  "iv": {
+                    "type": "string"
+                  },
+                  "ciphertext": {
+                    "type": "string"
+                  },
+                  "wraps": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "account_id",
+                        "key_id",
+                        "epk",
+                        "iv",
+                        "wrapped"
+                      ],
+                      "properties": {
+                        "account_id": {
+                          "type": "string"
+                        },
+                        "key_id": {
+                          "type": "string"
+                        },
+                        "epk": {
+                          "type": "string"
+                        },
+                        "iv": {
+                          "type": "string"
+                        },
+                        "wrapped": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Stored.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "stored": {
+                      "type": "boolean"
+                    },
+                    "notified": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`bad_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/InvalidServiceToken"
+          },
+          "403": {
+            "description": "`endpoint_not_allowed`, `not_a_recipient`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`meeting_closed`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         }
       }
@@ -16698,6 +17736,63 @@
           "detail": {
             "type": "string",
             "description": "Human-readable explanation; not stable."
+          }
+        }
+      },
+      "MeetingSummaryRow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "direct",
+              "room",
+              "group",
+              "scheduled"
+            ]
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "active",
+              "processing",
+              "ready",
+              "failed"
+            ]
+          },
+          "created_at": {
+            "type": "integer"
+          },
+          "ended_at": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "ready_at": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "expires_at": {
+            "type": "integer"
+          },
+          "host": {
+            "type": "string"
+          },
+          "as": {
+            "type": "string",
+            "description": "The caller's mailbox that took part."
+          },
+          "failure": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },

@@ -69,6 +69,10 @@ pub(crate) const KNOWN_FEATURES: &[(&str, &str)] = &[
         "Calendar and scheduled meetings: /v1/calendars, /v1/calendar/*, event.* events (SDS §14B)",
     ),
     (
+        MEETING_SUMMARIES,
+        "Meeting summaries: consented notes in calls, /v1/meetings, meeting.brief events (SDS §14)",
+    ),
+    (
         MESSAGE_EDIT,
         "Editing sent direct messages: edit_of on /v1/send, message.edited (SDS §14C)",
     ),
@@ -133,6 +137,9 @@ pub(crate) const CALENDAR: &str = "calendar";
 /// it waits on the sender domain being verified.
 pub(crate) const CALENDAR_EMAIL: &str = "calendar_email";
 
+/// Meeting summaries (SDS §14, docs/meeting-summaries.md).
+pub(crate) const MEETING_SUMMARIES: &str = "meeting_summaries";
+
 /// Message edits (SDS §14C).
 pub(crate) const MESSAGE_EDIT: &str = "message_edit";
 /// Replies to a specific message (SDS §14C).
@@ -174,6 +181,7 @@ pub(crate) const EVENT_TYPES: &[&str] = &[
     "event.reminder",
     "message.receipt",
     "message.edited",
+    "meeting.brief",
 ];
 
 pub(crate) fn known_names() -> Vec<&'static str> {

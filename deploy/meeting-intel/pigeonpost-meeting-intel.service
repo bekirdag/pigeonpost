@@ -1,0 +1,33 @@
+[Unit]
+Description=Pigeonpost meeting notes (consented, encrypted audio -> transcript -> encrypted brief)
+After=network-online.target pigeonpost-whisper.service pigeonpost-postbox-tunnel.service
+Wants=pigeonpost-whisper.service
+
+[Service]
+DynamicUser=yes
+EnvironmentFile=/etc/pigeonpost-meeting-intel/meeting-intel.env
+# The signing key stays root-only on disk; systemd hands this process a private copy.
+LoadCredential=signing.pem:/etc/pigeonpost-meeting-intel/signing.pem
+ExecStart=/usr/bin/node /opt/pigeonpost-meeting-intel/src/server.js
+Restart=always
+RestartSec=2
+# Audio is held in memory only and never written: no writable paths at all.
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+# Only loopback: the calls service, whisper, the local model and the postbox tunnel.
+IPAddressDeny=any
+IPAddressAllow=localhost
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+MemoryMax=1536M
+CPUQuota=200%
+LimitCORE=0
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,19 @@
+meta {
+  name: Meetings whose notes the caller agreed to, newest first (feature `meeting_summaries`)
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/v1/meetings
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  Only meetings where this account consented to notes and has not removed its copy, before the retention date. Briefs are ciphertext; see docs/meeting-summaries.md.
+}

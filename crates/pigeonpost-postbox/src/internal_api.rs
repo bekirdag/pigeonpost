@@ -40,6 +40,10 @@ pub(crate) enum Endpoint {
     Health,
     FeaturesRead,
     FeaturesWrite,
+    /// `/internal/v1/meetings`, `…/attendees`, `…/end` (Phase 7, calls service).
+    MeetingsCalls,
+    /// `/internal/v1/meetings/{id}/recipients` and `…/brief` (Phase 7, meeting-intel).
+    MeetingsIntel,
     /// Entitlement upserts and reads (SDS §8.8, §21.2).
     Entitlements,
     /// Org drafts, activation and org entitlements (SDS §8.5, §21.2).
@@ -69,6 +73,7 @@ const SERVICES: &[(&str, &str, &[Endpoint])] = &[
         "POSTBOX_SVC_TOKEN_CALLS",
         &[
             Endpoint::Health,
+            Endpoint::MeetingsCalls,
             Endpoint::CallAdmission,
             Endpoint::CallEvents,
             Endpoint::GroupCallAdmission,
@@ -85,7 +90,7 @@ const SERVICES: &[(&str, &str, &[Endpoint])] = &[
     (
         "meeting_intel",
         "POSTBOX_SVC_TOKEN_MEETING_INTEL",
-        &[Endpoint::Health],
+        &[Endpoint::Health, Endpoint::MeetingsIntel],
     ),
     (
         "ops",
@@ -228,6 +233,8 @@ pub(crate) fn router(state: AppState) -> Router {
         .route("/internal/v1/health", get(health))
         .route("/internal/v1/features", get(list_features))
         .route("/internal/v1/features/{name}", put(set_feature))
+        // Phase 7: meeting summaries (calls service and meeting-intel).
+        .merge(crate::meetings::internal_router())
         .route(
             "/internal/v1/entitlements/{provider}/{environment}/{reference}",
             put(billing_internal::put_entitlement),

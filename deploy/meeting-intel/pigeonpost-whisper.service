@@ -1,0 +1,33 @@
+[Unit]
+Description=Pigeonpost meeting notes: whisper.cpp speech-to-text (loopback only, CPU)
+After=network-online.target
+
+[Service]
+DynamicUser=yes
+# Pinned build and models: see deploy/meeting-intel/README.md for versions and SHA-256 sums.
+ExecStart=/opt/pigeonpost-whisper/bin/whisper-server \
+  -m /opt/pigeonpost-whisper/models/ggml-small.bin \
+  --vad -vm /opt/pigeonpost-whisper/models/ggml-silero-v6.2.0.bin \
+  -t 6 -l auto --host 127.0.0.1 --port 8798 --public /opt/pigeonpost-whisper/public
+Restart=always
+RestartSec=3
+# A shared box: bounded CPU and memory, lower priority than interactive services.
+CPUQuota=600%
+MemoryMax=3G
+Nice=10
+IPAddressDeny=any
+IPAddressAllow=localhost
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

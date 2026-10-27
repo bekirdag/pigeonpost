@@ -608,6 +608,11 @@ fn every_route_is_in_the_openapi_spec_and_nothing_else_is() {
         (include_str!("org_agents.rs"), "pub(crate) fn router("),
         (include_str!("org_api_keys.rs"), "pub(crate) fn router("),
         (include_str!("webhooks.rs"), "pub(crate) fn router("),
+        (include_str!("meetings.rs"), "pub(crate) fn router("),
+        (
+            include_str!("meetings.rs"),
+            "pub(crate) fn internal_router(",
+        ),
     ] {
         served.extend(routes_in(source, router_fn));
     }

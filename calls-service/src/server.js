@@ -30,6 +30,7 @@ import { createGroupCalls } from "./group-calls.js"; // Phase 3a
 import { createRingAlerts, newRingToken, ringTokenMatches } from "./ring-alerts.js"; // Phase 1c
 import { createScheduledMeetings } from "./scheduled.js"; // Phase 3B
 import { createStreams, streamConfigFromEnv } from "./streams.js"; // Phase 6
+import { createSummaries } from "./summaries.js"; // Phase 7
 
 export function configFromEnv(env = process.env) {
   const turnUrls = (env.CALLS_TURN_URLS || "").split(/[\s,]+/).filter(Boolean);
@@ -58,6 +59,9 @@ export function configFromEnv(env = process.env) {
     meshMax: Number(env.CALLS_MESH_MAX || 6),
     sfu: sfuConfigFromEnv(env),
     streams: streamConfigFromEnv(env), // Phase 6
+    // Phase 7: meeting notes. The meeting-intel service on this host; unset = notes unavailable.
+    intelUrl: (env.CALLS_INTEL_URL || "").replace(/\/+$/, ""),
+    intelToken: env.CALLS_INTEL_TOKEN || "",
   };
 }
 
@@ -206,6 +210,7 @@ export function createCallsService(cfgIn, deps = {}) {
     cfg, internal, HttpError, LIMITS, now, norm, liveSession, mailboxFor, sessionInRoom, limited, makeRoom, addParticipant, reportCall, sessions, send, endRoom, // Phase 3B
     roomView, admitted, participantName, roomsByCode, removeParticipant, resolveKnock, broadcast, clientIp, cleanName, authenticate, participantFor, // Phase 3B
   }); // Phase 3B
+  const summaries = createSummaries({ cfg, HttpError, now, liveSession, sessions, send, limited, rooms, readJson, fetch: fetchImpl }); // Phase 7
   // One lifecycle event for the room, with a per-room increasing sequence number.
   function reportCall(room, event, extra = {}) {
     if (!room.caller) return;
@@ -423,6 +428,7 @@ export function createCallsService(cfgIn, deps = {}) {
     const p = { id: newId(), sessionId: session.id, account: session.account, name, mailbox: mailbox || null, guest: Boolean(guest), e2ee: e2ee === true, key: null, epoch: 0, joinedAt: now(), grace: null };
     if (sched) { p.sched = sched; if (room.state === "waiting") room.state = "active"; } // Phase 3B
     room.participants.set(p.id, p);
+    summaries.memberAdded(room, p); // Phase 7: notes pause before a newcomer gets anyone's media
     return p;
   }
 
@@ -752,6 +758,7 @@ export function createCallsService(cfgIn, deps = {}) {
   function removeParticipant(room, p, reason) {
     clearTimeout(p.grace);
     room.participants.delete(p.id);
+    summaries.memberRemoved(room, p); // Phase 7
     sfuRemove(room, p);
     broadcast(room, "participant_left", { room: room.id, participant: p.id, reason });
     if (room.state === "ringing" && room.participants.size === 0) {
@@ -768,6 +775,7 @@ export function createCallsService(cfgIn, deps = {}) {
     // Phase 1b: an answered call's end; unanswered outcomes were reported where they happened.
     if (room.state === "active") reportCall(room, "end", { participants: [...room.participants.values()].map(participantName) });
     room.state = "ended";
+    summaries.roomEnded(room); // Phase 7: notes end with the call
     for (const t of room.timers) clearTimeout(t);
     stopRinging(room, reason);
     for (const p of room.participants.values()) {
@@ -1028,7 +1036,7 @@ export function createCallsService(cfgIn, deps = {}) {
       if (req.method === "GET" && path === "/v1/health") {
         let large = 0;
         for (const r of rooms.values()) if (r.state !== "ended" && r.topology === "sfu") large++;
-        return json(res, 200, { ok: true, sessions: sessions.size, rooms: rooms.size, postbox: internal.health(), large_rooms: large, large_calls: sfuEnabled(), ring_push: alerts.health(), streams: streams.health() });
+        return json(res, 200, { ok: true, sessions: sessions.size, rooms: rooms.size, postbox: internal.health(), large_rooms: large, large_calls: sfuEnabled(), ring_push: alerts.health(), streams: streams.health(), summaries: summaries.health() }); // Phase 7: summaries
       }
       if (req.method === "POST") {
         const origin = req.headers.origin;
@@ -1071,6 +1079,8 @@ export function createCallsService(cfgIn, deps = {}) {
         const body = await readJson(req);
         return json(res, 200, answerKnock(auth, roomFor(knockAnswer[1]), knockAnswer[2], body));
       }
+      const summaryRoute = /^\/v1\/rooms\/([A-Za-z0-9_-]{10,64})\/summary(?:\/(consent|audio))?$/.exec(path); // Phase 7
+      if (req.method === "POST" && summaryRoute) return json(res, 200, await summaries.route(req, auth, roomFor(summaryRoute[1]), summaryRoute[2] || "control", url)); // Phase 7
       const hostAction = /^\/v1\/rooms\/([A-Za-z0-9_-]{10,64})\/(end|extend)$/.exec(path); // Phase 3B
       if (req.method === "POST" && hostAction) { const body = await readJson(req); return json(res, 200, await scheduledMeetings[hostAction[2]](auth, roomFor(hostAction[1]), body)); } // Phase 3B
       const m = /^\/v1\/rooms\/([A-Za-z0-9_-]{10,64})\/(accept|decline|leave|signal|resume|report|sfu|e2ee)$/.exec(path);
@@ -1091,7 +1101,7 @@ export function createCallsService(cfgIn, deps = {}) {
     }
   }
 
-  return { handle, state: { sessions, rooms, roomsByCode, authCache, guests }, internal, sfuLoadMbps, scheduled: scheduledMeetings, streams }; // Phase 6: streams // Phase 3B: scheduled
+  return { handle, state: { sessions, rooms, roomsByCode, authCache, guests }, internal, sfuLoadMbps, scheduled: scheduledMeetings, streams, summaries }; // Phase 6: streams // Phase 3B: scheduled // Phase 7: summaries
 }
 
 // The media server's admin API (LiveKit's Twirp RoomService), reached over TLS that trusts exactly

@@ -1,0 +1,23 @@
+meta {
+  name: One meeting's status and, when ready, its encrypted brief with the caller's own key wraps
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/v1/meetings/:id
+  body: none
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  Absent, expired, removed, declined and never-attended meetings all answer 404 `not_found`. The brief (summary, decisions, action items, open questions and transcript) is AES-256-GCM ciphertext; each `keys` entry wraps the content key for one of the caller's notes keys (ECDH P-256 + HKDF-SHA256 + AES-256-GCM, docs/meeting-summaries.md).
+}
