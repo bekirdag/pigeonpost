@@ -191,7 +191,12 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
             if (!operation.IsMailbox(generation) || requestVersion != loadVersion) return;
             snapshot = loaded;
             var serverIds = loaded.Messages.Select(m => m.MessageId).ToHashSet(StringComparer.Ordinal);
-            pending.RemoveAll(p => p.Mailbox == mailbox.Address && p.SentCopyId is { } id && serverIds.Contains(id));
+            var ownReferences = loaded.Messages.Where(m => m.IsOutgoing && m.From == mailbox.Address && m.MsgRef is not null)
+                .Select(m => m.MsgRef!).ToHashSet(StringComparer.Ordinal);
+            var coveredRows = deliveryDraftOwners.Where(pair => ownReferences.Contains(pair.Key)).Select(pair => pair.Value.Row.Id).ToHashSet(StringComparer.Ordinal);
+            // A matching owned server reference replaces its visual placeholder. Keep the
+            // protected recovery intent and draft until the user confirms the exact result.
+            pending.RemoveAll(p => p.Mailbox == mailbox.Address && (p.SentCopyId is { } id && serverIds.Contains(id) || coveredRows.Contains(p.Id)));
             Rebuild();
             InboxUpdated?.Invoke(this, new(mailbox, snapshot));
         }
