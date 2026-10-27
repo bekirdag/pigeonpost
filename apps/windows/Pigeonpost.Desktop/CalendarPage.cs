@@ -29,6 +29,7 @@ internal sealed partial class CalendarPage : UserControl, IDisposable
     private bool disposed;
     private bool filtersExpanded;
     private int renderQueued;
+    private int renderVersion;
 
     internal CalendarPage(CalendarStore model, nint window, CancellationToken lifetime, Func<bool> dialogBusy, Action<bool> setDialogBusy, CalendarMeetingAction joinMeeting)
     {
@@ -99,7 +100,7 @@ internal sealed partial class CalendarPage : UserControl, IDisposable
     private void Render()
     {
         if (disposed) return;
-        var offset = scroll.VerticalOffset; var state = model.State;
+        var version = ++renderVersion; var offset = scroll.VerticalOffset; var state = model.State;
         if (context != state.ContextId || !state.Enabled)
         {
             rendered?.Retire(); rendered = null; dialog?.Hide(); context = state.ContextId;
@@ -183,7 +184,7 @@ internal sealed partial class CalendarPage : UserControl, IDisposable
             foreach (var item in invitations) contents.Children.Add(Action(item.Title ?? "Untitled invitation", view, target => Detail(target, item.Key), accessible: "Open invitation " + item.Title));
         }
         Invitations("Invitations", state.Invitations); Invitations("Filtered invitations", state.FilteredInvitations);
-        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () => { if (!disposed && ReferenceEquals(rendered, view)) scroll.ChangeView(null, offset, null, true); });
+        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () => { if (!disposed && version == renderVersion && ReferenceEquals(rendered, view)) scroll.ChangeView(null, offset, null, true); });
     }
     private async Task<ContentDialogResult> Show(CalendarActionTarget target, ContentDialog next)
     {
