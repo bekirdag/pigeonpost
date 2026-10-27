@@ -797,6 +797,7 @@ fn require_step_up(state: &AppState, p: &Person) -> GResult<()> {
     .map_err(auth_denial)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn audit_in(
     c: &Connection,
     state: &AppState,
