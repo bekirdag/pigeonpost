@@ -562,7 +562,7 @@
                             <TextBlock Text="{x:Bind ViewModel.ComposerActionTitle, Mode=OneWay}" FontWeight="SemiBold" FontSize="13" Foreground="{ThemeResource AccentBrush}" />
                             <TextBlock Text="{x:Bind ViewModel.ComposerActionQuote, Mode=OneWay}" TextWrapping="Wrap" MaxLines="2" TextTrimming="CharacterEllipsis" FontSize="12.5" Foreground="{ThemeResource TextSecondaryBrush}" />
                             <TextBlock Text="{x:Bind ViewModel.ComposerActionProblem, Mode=OneWay}" TextWrapping="Wrap" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}"
-                                       Visibility="{x:Bind ViewModel.ComposerActionProblem, Mode=OneWay, Converter={StaticResource TextVisibility}}" />
+                                       Visibility="{x:Bind ToVisibility(ViewModel.HasComposerActionProblem), Mode=OneWay}" />
                         </StackPanel>
                         <Button Grid.Column="1" Content="Cancel" Click="CancelComposerAction_Click" Style="{StaticResource SecondaryActionButton}" VerticalAlignment="Top"
                                 IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" AutomationProperties.Name="Cancel message action" />
