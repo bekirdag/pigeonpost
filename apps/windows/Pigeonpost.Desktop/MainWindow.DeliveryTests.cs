@@ -89,7 +89,13 @@ public sealed partial class MainWindow
             if (LoseNext || preview is not null) { LoseNext = false; throw new HttpRequestException("Synthetic committed response loss."); }
             return receipt;
         }
-        public Task<InboxSnapshot> LoadAsync(string identity, CancellationToken ct) => preview?.LoadAsync(identity, ct) ?? throw new NotSupportedException();
+        public async Task<InboxSnapshot> LoadAsync(string identity, CancellationToken ct)
+        {
+            if (preview is null) throw new NotSupportedException();
+            var snapshot = await preview.LoadAsync(identity, ct);
+            var references = receipts.Values.Where(r => r.SentCopyId is not null).ToDictionary(r => r.SentCopyId!, r => r.MsgRef);
+            return snapshot with { Messages = snapshot.Messages.Select(m => m.IsOutgoing && references.TryGetValue(m.MessageId, out var reference) ? m with { MsgRef = reference } : m).ToArray() };
+        }
         public Task<SendReceipt> SendAsync(string identity, string peer, string body, string? threadId, CancellationToken ct) => throw new NotSupportedException();
         public Task<string> CreateThreadAsync(string identity, string peer, string title, CancellationToken ct) => preview?.CreateThreadAsync(identity, peer, title, ct) ?? throw new NotSupportedException();
         public Task SetArchivedAsync(string identity, string peer, bool archived, CancellationToken ct) => preview?.SetArchivedAsync(identity, peer, archived, ct) ?? throw new NotSupportedException();

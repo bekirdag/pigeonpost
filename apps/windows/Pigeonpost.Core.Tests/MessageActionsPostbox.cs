@@ -140,6 +140,9 @@ internal static class MessageActionsPostbox
                 var saved = (await coordinator.GetPendingAsync(scope)).Single();
                 await CheckAttempts(http, proxy, 1, saved.Request.MsgRef);
                 Check((await b.GetInboxAsync(to)).Messages!.Count(m => m.MsgRef == saved.Request.MsgRef) == 1);
+                await model.RefreshAsync(background: true);
+                Check(model.Messages.Count(m => m.DisplayBody == "Real postbox composer fixture ğ 😀") == 1
+                    && model.Draft == "Real postbox composer fixture ğ 😀" && model.HasPendingDeliveries);
                 await Control(http, proxy, "off");
                 Check(await model.RetryPendingDeliveryAsync(model.PendingDeliveries.Single().BeginAction() ?? throw new InvalidOperationException()));
                 Check(model.Draft == "" && !model.HasPendingDeliveries && !model.IsSending);

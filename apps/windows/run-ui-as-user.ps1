@@ -67,6 +67,8 @@ try {
     `$principal = [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
     if (`$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'UI process is elevated.' }
     Write-Host 'Native UI checks are running as a standard Windows user.'
+    # The parent verified this marker; pass only it into the clean test-user environment.
+    `$env:GITHUB_ACTIONS = 'true'
     `$env:PIGEONPOST_NOTIFICATION_TEST_RESULT = $(Literal (Join-Path $directory 'notifications.json'))
     `$notificationProcess = Start-Process -FilePath $(Literal (Resolve-Path $Executable).Path) -PassThru
     if (-not `$notificationProcess.WaitForExit(60000)) { `$notificationProcess.Kill(); throw 'Notification integration timed out.' }

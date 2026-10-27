@@ -19,7 +19,7 @@ internal static class ProtectedComposerTests
             await f.Model.SendDraftAsync();
             Require(f.Model.Draft == "Lost composer fixture" && f.Model.HasPendingDeliveries && f.Service.Posts == 1);
             await f.Model.RefreshAsync(background: true); await f.Model.RefreshPendingDeliveriesAsync();
-            Require(f.Service.Posts == 1);
+            Require(f.Service.Posts == 1 && f.Model.Messages.Count(m => m.DisplayBody == "Lost composer fixture") == 1 && f.Model.Draft == "Lost composer fixture");
             var view = f.Model.PendingDeliveries.Single(); var target = view.BeginAction() ?? throw new Exception("Fixture target missing.");
             Require(await f.Model.RetryPendingDeliveryAsync(target));
             Require(f.Service.Posts == 2 && f.Service.Committed.Count == 1 && f.Model.Draft == "" && !f.Model.HasPendingDeliveries
@@ -157,7 +157,12 @@ internal static class ProtectedComposerTests
         { LegacyPosts++; throw new InvalidOperationException("Protected fixture cannot use legacy send."); }
         public Task<SendReceipt> SendAttachmentsAsync(string identity, string peer, string body, string? threadId, IReadOnlyList<string> ids, CancellationToken ct)
         { LegacyPosts++; throw new InvalidOperationException("Protected fixture cannot use legacy attachment send."); }
-        public Task<InboxSnapshot> LoadAsync(string identity, CancellationToken ct) => preview.LoadAsync(identity, ct);
+        public async Task<InboxSnapshot> LoadAsync(string identity, CancellationToken ct)
+        {
+            var snapshot = await preview.LoadAsync(identity, ct);
+            var references = Committed.Values.Where(r => r.SentCopyId is not null).ToDictionary(r => r.SentCopyId!, r => r.MsgRef);
+            return snapshot with { Messages = snapshot.Messages.Select(m => m.IsOutgoing && references.TryGetValue(m.MessageId, out var reference) ? m with { MsgRef = reference } : m).ToArray() };
+        }
         public Task<string> CreateThreadAsync(string identity, string peer, string title, CancellationToken ct) => preview.CreateThreadAsync(identity, peer, title, ct);
         public Task SetArchivedAsync(string identity, string peer, bool archived, CancellationToken ct) => preview.SetArchivedAsync(identity, peer, archived, ct);
         public Task AcknowledgeAsync(string identity, string messageId, CancellationToken ct) => preview.AcknowledgeAsync(identity, messageId, ct);
