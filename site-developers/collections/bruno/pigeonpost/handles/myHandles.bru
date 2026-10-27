@@ -1,0 +1,15 @@
+meta {
+  name: Every namespace the signed-in account holds
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/v1/me/handles
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}

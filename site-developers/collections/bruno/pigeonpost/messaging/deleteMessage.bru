@@ -1,0 +1,27 @@
+meta {
+  name: Permanently delete one message (and its attachments) from the acting mailbox
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/v1/messages/delete
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "message_id": "string",
+    "identity": "string",
+    "with_edits": false
+  }
+}
+
+docs {
+  Deleting something absent or not yours answers `deleted - false`, not an error.
+}

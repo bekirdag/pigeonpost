@@ -1,0 +1,24 @@
+meta {
+  name: Store the acting mailbox's encrypted workspace context
+  type: http
+  seq: 7
+}
+
+put {
+  url: {{baseUrl}}/v1/workspace
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "nonce": "string",
+    "ciphertext": "string",
+    "kdf_salt": "string",
+    "identity": "string"
+  }
+}

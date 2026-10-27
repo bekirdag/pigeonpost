@@ -927,11 +927,12 @@ jobs:
       - run: cargo test --locked -p pigeonpost-compliance --test conformance
 
   openapi:
-    # The postbox route-drift test reads the spec as text, so it cannot notice a merge that
-    # leaves the file unparseable. This parses it strictly (duplicate keys fail) and validates it
-    # as OpenAPI 3.1 with the hash-locked validator in .github/scripts/openapi/requirements.txt.
+    # The postbox route-drift tests read the specs as text, so they cannot notice a merge that
+    # leaves a file unparseable. This parses both specs strictly (duplicate keys fail), validates
+    # them as OpenAPI 3.1 with the hash-locked validator in .github/scripts/openapi/requirements.txt,
+    # and checks that each JSON mirror (read by site-developers/build.py) matches its YAML.
     # No secrets and no persistent state, so it always uses a GitHub-hosted runner.
-    name: OpenAPI spec (YAML + OpenAPI 3.1)
+    name: OpenAPI specs (YAML + OpenAPI 3.1 + JSON mirrors)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -940,8 +941,8 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/openapi-venv"
           "$RUNNER_TEMP/openapi-venv/bin/pip" install --quiet --require-hashes --no-deps \
             --only-binary :all: -r .github/scripts/openapi/requirements.txt
-      - name: Parse and validate openapi/pigeonpost.v1.yaml
-        run: '"$RUNNER_TEMP/openapi-venv/bin/python" .github/scripts/openapi/check_openapi.py'
+      - name: Parse and validate openapi/pigeonpost.v1.yaml and openapi/pigeonpost-org.v1.yaml
+        run: '"$RUNNER_TEMP/openapi-venv/bin/python" .github/scripts/openapi/check_openapi.py openapi/pigeonpost.v1.yaml openapi/pigeonpost-org.v1.yaml'
 
   acceptance:
     # Exercise the built product as two isolated agents, including an offline loft/outbox retry,

@@ -1,0 +1,30 @@
+meta {
+  name: Transfer ownership to an active admin
+  type: http
+  seq: 14
+}
+
+post {
+  url: {{baseUrl}}/v1/groups/:id/transfer
+  body: json
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "to": "string",
+    "expected_revision": 0
+  }
+}
+
+docs {
+  See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+}

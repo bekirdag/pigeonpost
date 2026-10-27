@@ -1,0 +1,19 @@
+meta {
+  name: Stop pushing to a device (scoped to the caller's account or mailbox)
+  type: http
+  seq: 2
+}
+
+delete {
+  url: {{baseUrl}}/v1/devices/:token
+  body: none
+  auth: bearer
+}
+
+params:path {
+  token: 
+}
+
+auth:bearer {
+  token: {{token}}
+}

@@ -1,0 +1,19 @@
+meta {
+  name: The guest's own iCalendar copy
+  type: http
+  seq: 26
+}
+
+post {
+  url: {{baseUrl}}/v1/calendar/guest/ics
+  body: json
+  auth: none
+}
+
+body:json {
+  {}
+}
+
+docs {
+  Guest route (no Pigeonpost account): see docs/calendar.md §6. Purpose-bound credentials in the body; refusals are a generic `guest_token_invalid`.
+}

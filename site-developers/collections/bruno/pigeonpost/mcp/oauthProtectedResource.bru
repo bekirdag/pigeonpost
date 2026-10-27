@@ -1,0 +1,11 @@
+meta {
+  name: OAuth protected-resource metadata (RFC 9728)
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/.well-known/oauth-protected-resource
+  body: none
+  auth: none
+}

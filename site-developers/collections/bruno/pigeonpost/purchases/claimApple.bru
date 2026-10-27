@@ -1,0 +1,26 @@
+meta {
+  name: Turn a verified App Store purchase into a namespace or plan
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/v1/claims/apple
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "transaction_id": "string",
+    "namespace": "string"
+  }
+}
+
+docs {
+  404 `not_found` when App Store verification is not configured. The transaction is verified with Apple; nothing in the body is trusted.
+}

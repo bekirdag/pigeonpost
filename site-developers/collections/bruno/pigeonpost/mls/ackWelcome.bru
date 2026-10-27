@@ -1,0 +1,31 @@
+meta {
+  name: Report whether the device could join
+  type: http
+  seq: 12
+}
+
+post {
+  url: {{baseUrl}}/v1/mls/welcomes/:welcome_id/ack
+  body: json
+  auth: bearer
+}
+
+params:path {
+  welcome_id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "request_key": "string",
+    "joined": false,
+    "error_code": "string"
+  }
+}
+
+docs {
+  See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+}

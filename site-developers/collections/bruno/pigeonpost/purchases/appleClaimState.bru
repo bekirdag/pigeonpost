@@ -1,0 +1,19 @@
+meta {
+  name: App Store catalog and what this account already holds
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/v1/claims/apple
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  404 `not_found` when App Store verification is not configured.
+}

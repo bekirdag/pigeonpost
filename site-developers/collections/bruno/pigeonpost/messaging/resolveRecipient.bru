@@ -1,0 +1,30 @@
+meta {
+  name: Resolve a recipient before preparing a protected delivery
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/v1/recipients/resolve
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "identity": "string",
+    "to": "string"
+  }
+}
+
+docs {
+  Requires `recipient_lookup`. Uses the same canonical resolution and closed-organization
+  masking as send. This does not send a message or change contacts, threads or admission.
+  At most 60 lookups per minute per acting inbox. Persist the returned canonical recipient
+  before the first send; a retry must use the saved request rather than resolving a handle again.
+  Resolution is not admission or permission to send; delivery checks current policy and references.
+}

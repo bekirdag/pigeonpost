@@ -1,0 +1,25 @@
+meta {
+  name: Upload a file for a later send
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/v1/attachments
+  body: none
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/octet-stream
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  The raw bytes are the request body; metadata travels in headers. The upload stays unclaimed
+  (and counts against the mailbox quota) until a send names it. 404 `not_found` when this
+  postbox has attachments disabled.
+}

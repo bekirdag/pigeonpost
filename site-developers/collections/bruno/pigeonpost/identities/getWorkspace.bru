@@ -1,0 +1,15 @@
+meta {
+  name: Fetch the acting mailbox's encrypted workspace context
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/v1/workspace
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}

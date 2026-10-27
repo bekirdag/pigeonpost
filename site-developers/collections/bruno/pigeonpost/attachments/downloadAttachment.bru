@@ -1,0 +1,23 @@
+meta {
+  name: Download an attachment held by the acting mailbox
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/v1/attachments/:id
+  body: none
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  Always served with `Content-Disposition - attachment`. Not-yours and not-there both answer 404 `not_found`.
+}

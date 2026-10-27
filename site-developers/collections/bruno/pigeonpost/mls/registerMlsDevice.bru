@@ -1,0 +1,27 @@
+meta {
+  name: Register an MLS device; the postbox attests it for hosted mailboxes
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/v1/mls/devices
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "device_id": "string",
+    "signature_key": "string",
+    "attestation": "string"
+  }
+}
+
+docs {
+  See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+}

@@ -1,0 +1,27 @@
+meta {
+  name: List members
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/members?status=active
+  body: none
+  auth: bearer
+}
+
+params:query {
+  status: active
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  Every member of the org, invited, active and suspended. Filter with `status`.
+
+  Scope: `org:read`.
+
+  Errors: `invalid_cursor` (400), `unauthorized` (401), `ip_not_allowed` (403), `insufficient_scope` (403), `forbidden` (403), `feature_disabled` (404), `org_inactive` (409), `rate_limited` (429), `store_error` (500).
+}

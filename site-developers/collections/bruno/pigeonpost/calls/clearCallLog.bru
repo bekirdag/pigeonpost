@@ -1,0 +1,15 @@
+meta {
+  name: Delete the whole call history
+  type: http
+  seq: 2
+}
+
+delete {
+  url: {{baseUrl}}/v1/calls/log
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}

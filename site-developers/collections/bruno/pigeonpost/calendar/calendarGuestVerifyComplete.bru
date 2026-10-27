@@ -1,0 +1,19 @@
+meta {
+  name: Confirm the code and get a device-bound guest session
+  type: http
+  seq: 29
+}
+
+post {
+  url: {{baseUrl}}/v1/calendar/guest/verify/complete
+  body: json
+  auth: none
+}
+
+body:json {
+  {}
+}
+
+docs {
+  Guest route (no Pigeonpost account): see docs/calendar.md §6. Purpose-bound credentials in the body; refusals are a generic `guest_token_invalid`.
+}

@@ -1,0 +1,22 @@
+meta {
+  name: Redeem a Google Play purchase token (optionally naming the handle)
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/v1/claims/google
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "purchase_token": "string",
+    "namespace": "string"
+  }
+}

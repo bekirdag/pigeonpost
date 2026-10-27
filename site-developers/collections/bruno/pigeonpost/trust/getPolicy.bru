@@ -1,0 +1,15 @@
+meta {
+  name: The acting mailbox's stranger defaults and filtering settings
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/v1/policy
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}

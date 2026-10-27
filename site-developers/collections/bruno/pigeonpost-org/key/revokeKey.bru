@@ -1,0 +1,27 @@
+meta {
+  name: Revoke this key
+  type: http
+  seq: 2
+}
+
+delete {
+  url: {{baseUrl}}/key
+  body: none
+  auth: bearer
+}
+
+headers {
+  ~Idempotency-Key: replace-with-a-unique-key
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  Revokes the calling key at once. Later requests with it get `401 unauthorized`. Use it when a key may have leaked.
+
+  Scope: none (any live key).
+
+  Errors: `unauthorized` (401), `ip_not_allowed` (403), `feature_disabled` (404), `org_inactive` (409), `idempotency_conflict` (409), `rate_limited` (429), `store_error` (500).
+}

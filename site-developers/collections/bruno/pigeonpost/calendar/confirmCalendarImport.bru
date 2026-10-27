@@ -1,0 +1,32 @@
+meta {
+  name: Create private copies of selected draft events
+  type: http
+  seq: 24
+}
+
+post {
+  url: {{baseUrl}}/v1/calendar/import/:draft/confirm
+  body: json
+  auth: bearer
+}
+
+params:path {
+  draft: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "select": [
+      0
+    ],
+    "calendar_id": "string"
+  }
+}
+
+docs {
+  Requires the `calendar` feature flag. Repeated selection indices are imported once. The same selection and destination replay the original result for seven days after confirmation, without creating events or notices again. Omitting calendar_id uses the preview's destination; naming that same destination is equivalent. A changed selection or destination returns 409 idempotency_conflict. Replay requires continuing ownership of the destination calendar. See docs/calendar.md.
+}

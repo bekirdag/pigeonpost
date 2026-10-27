@@ -1,0 +1,15 @@
+meta {
+  name: The acting mailbox's contacts, stranger policy and verb vocabulary
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/v1/contacts
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}

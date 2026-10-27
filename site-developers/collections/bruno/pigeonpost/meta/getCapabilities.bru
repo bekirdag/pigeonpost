@@ -1,0 +1,15 @@
+meta {
+  name: What this server and this credential can do
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/v1/capabilities
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}

@@ -1,0 +1,15 @@
+meta {
+  name: Read the acting mailbox's messages (optionally long-polling)
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/v1/inbox
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}

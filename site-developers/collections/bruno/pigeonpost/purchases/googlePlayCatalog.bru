@@ -1,0 +1,15 @@
+meta {
+  name: Google Play catalog and this account's subscriptions
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/v1/claims/google
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}

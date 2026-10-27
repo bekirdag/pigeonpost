@@ -1,0 +1,19 @@
+meta {
+  name: Ask for a code for a live invitation (always the same answer)
+  type: http
+  seq: 30
+}
+
+post {
+  url: {{baseUrl}}/v1/calendar/guest/recover
+  body: json
+  auth: none
+}
+
+body:json {
+  {}
+}
+
+docs {
+  Guest route (no Pigeonpost account): see docs/calendar.md §6. Purpose-bound credentials in the body; refusals are a generic `guest_token_invalid`.
+}

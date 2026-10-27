@@ -1,0 +1,23 @@
+meta {
+  name: Change calendar settings
+  type: http
+  seq: 18
+}
+
+put {
+  url: {{baseUrl}}/v1/calendar/settings
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {}
+}
+
+docs {
+  See docs/calendar.md. Requires the `calendar` feature flag.
+}

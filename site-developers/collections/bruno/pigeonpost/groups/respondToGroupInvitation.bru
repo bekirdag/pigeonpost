@@ -1,0 +1,29 @@
+meta {
+  name: Accept or decline an invitation
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{baseUrl}}/v1/groups/:id/invitation
+  body: json
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "accept": false
+  }
+}
+
+docs {
+  See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+}

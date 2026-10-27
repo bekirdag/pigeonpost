@@ -1,0 +1,22 @@
+meta {
+  name: Create an account (proof-of-work gated)
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/v1/accounts
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "pow_challenge": "string",
+    "pow_solution": "string"
+  }
+}
+
+docs {
+  Returns the account's first API key, shown once. Subject to the same per-IP mint budget as anonymous inboxes.
+}

@@ -1,0 +1,19 @@
+meta {
+  name: Pending or filtered invitations
+  type: http
+  seq: 16
+}
+
+get {
+  url: {{baseUrl}}/v1/calendar/invitations
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  See docs/calendar.md. Requires the `calendar` feature flag.
+}

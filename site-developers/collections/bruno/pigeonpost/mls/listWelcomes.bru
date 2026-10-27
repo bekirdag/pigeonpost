@@ -1,0 +1,19 @@
+meta {
+  name: Pending Welcomes for the acting device
+  type: http
+  seq: 11
+}
+
+get {
+  url: {{baseUrl}}/v1/mls/welcomes
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+}

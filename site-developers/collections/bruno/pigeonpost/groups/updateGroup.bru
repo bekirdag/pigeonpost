@@ -1,0 +1,37 @@
+meta {
+  name: Change group settings (owner/admins; human only)
+  type: http
+  seq: 5
+}
+
+patch {
+  url: {{baseUrl}}/v1/groups/:id
+  body: json
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "expected_revision": 0,
+    "name": "string",
+    "description": "string",
+    "join_policy": "string",
+    "post_policy": "string",
+    "visibility": "string",
+    "members_can_invite": false,
+    "members_can_change_timer": false,
+    "ephemeral_secs": 0
+  }
+}
+
+docs {
+  See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+}

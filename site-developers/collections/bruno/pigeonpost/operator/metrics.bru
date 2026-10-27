@@ -1,0 +1,19 @@
+meta {
+  name: Prometheus metrics for attachment storage
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/metrics
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  Returns 404 `not_found` when no metrics secret is configured on this postbox.
+}

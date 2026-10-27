@@ -1,0 +1,15 @@
+meta {
+  name: Start a GitHub device login to prove a GitHub username
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/v1/github/device
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}

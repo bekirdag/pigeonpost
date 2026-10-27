@@ -1,0 +1,36 @@
+meta {
+  name: Create a room
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/rooms
+  body: json
+  auth: bearer
+}
+
+headers {
+  ~Idempotency-Key: replace-with-a-unique-key
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "name": "builds",
+    "owner": "/acme/ci-bot",
+    "description": "CI results for the web app",
+    "listed": true
+  }
+}
+
+docs {
+  Creates a room owned by `owner`, an active org member or agent mailbox. The room is `provisioning` until the owner's device activates its encryption (their app does this the next time it syncs).
+
+  Scope: `rooms:write`.
+
+  Errors: `invalid_handle` (400), `bad_request` (400), `unauthorized` (401), `ip_not_allowed` (403), `insufficient_scope` (403), `forbidden` (403), `not_found` (404), `feature_disabled` (404), `org_inactive` (409), `org_read_only` (409), `idempotency_conflict` (409), `rate_limited` (429), `store_error` (500).
+}

@@ -1,0 +1,24 @@
+meta {
+  name: Delete for everyone (sender within 24 h, or admin)
+  type: http
+  seq: 18
+}
+
+delete {
+  url: {{baseUrl}}/v1/groups/:id/messages/:seq
+  body: none
+  auth: bearer
+}
+
+params:path {
+  id: 
+  seq: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+}

@@ -1,0 +1,28 @@
+meta {
+  name: Add or amend a contact (human path; may raise trust)
+  type: http
+  seq: 3
+}
+
+put {
+  url: {{baseUrl}}/v1/contacts
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "peer": "string",
+    "alias": "string",
+    "admission": "allow",
+    "autonomy": "review",
+    "allowed_verbs": [
+      "string"
+    ],
+    "identity": "string"
+  }
+}

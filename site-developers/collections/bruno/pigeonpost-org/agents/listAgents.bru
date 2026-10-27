@@ -1,0 +1,23 @@
+meta {
+  name: List agents
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/agents
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  Every org agent.
+
+  Scope: `org:read`.
+
+  Errors: `invalid_cursor` (400), `unauthorized` (401), `ip_not_allowed` (403), `insufficient_scope` (403), `forbidden` (403), `feature_disabled` (404), `org_inactive` (409), `rate_limited` (429), `store_error` (500).
+}

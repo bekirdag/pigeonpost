@@ -1,0 +1,23 @@
+meta {
+  name: Members' delivered and seen cursors, for group ticks
+  type: http
+  seq: 20
+}
+
+get {
+  url: {{baseUrl}}/v1/groups/:id/receipts
+  body: none
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  See docs/message-actions.md §5. Requires the `groups` and `receipts` feature flags.
+}

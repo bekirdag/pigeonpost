@@ -1,0 +1,23 @@
+meta {
+  name: Leave a group
+  type: http
+  seq: 13
+}
+
+post {
+  url: {{baseUrl}}/v1/groups/:id/leave
+  body: none
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+}

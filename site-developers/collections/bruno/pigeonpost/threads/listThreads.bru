@@ -1,0 +1,15 @@
+meta {
+  name: The acting mailbox's conversations, most recent first
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/v1/threads
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}

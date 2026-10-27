@@ -1,0 +1,29 @@
+meta {
+  name: Move the read cursor forward
+  type: http
+  seq: 19
+}
+
+post {
+  url: {{baseUrl}}/v1/groups/:id/read
+  body: json
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "seq": 0
+  }
+}
+
+docs {
+  See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+}

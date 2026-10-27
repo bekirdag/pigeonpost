@@ -1,0 +1,19 @@
+meta {
+  name: Receipts, versions and reply parent of one of the caller's copies
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/v1/messages/:id/info
+  body: none
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}

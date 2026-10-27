@@ -1,0 +1,35 @@
+meta {
+  name: Record delivered, seen or agent status for received messages
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/v1/receipts
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "identity": "string",
+    "message_ids": [
+      "string"
+    ],
+    "msg_refs": [
+      "string"
+    ],
+    "kind": "delivered",
+    "status": "working"
+  }
+}
+
+docs {
+  Recipient side. At most 100 references per call and 60 calls per minute per mailbox.
+  Only the caller's own received copies count. Blocked senders and Filtered messages are
+  handled as in docs/message-actions.md §4.
+}

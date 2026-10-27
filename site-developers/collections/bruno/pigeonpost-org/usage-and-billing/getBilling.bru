@@ -1,0 +1,23 @@
+meta {
+  name: Get billing status
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/billing
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  Plan and status. The key's creator must be the owner or an admin. Changes stay on the dashboard.
+
+  Scope: `org:read`.
+
+  Errors: `unauthorized` (401), `ip_not_allowed` (403), `insufficient_scope` (403), `forbidden` (403), `feature_disabled` (404), `org_inactive` (409), `rate_limited` (429), `store_error` (500).
+}

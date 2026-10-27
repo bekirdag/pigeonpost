@@ -1,0 +1,24 @@
+meta {
+  name: Delete webhook
+  type: http
+  seq: 47
+}
+
+delete {
+  url: {{baseUrl}}/v1/orgs/:id/webhooks/:webhook
+  body: none
+  auth: bearer
+}
+
+params:path {
+  id: 
+  webhook: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  See docs/org-api.md §3. Requires the `orgs` and `org_api` feature flags. Owner or admin, a person signed in (member token). Pending deliveries are cancelled.
+}

@@ -1,0 +1,29 @@
+meta {
+  name: Join a public group (listed, or with the current link token)
+  type: http
+  seq: 12
+}
+
+post {
+  url: {{baseUrl}}/v1/groups/:id/join
+  body: json
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "link_token": "string"
+  }
+}
+
+docs {
+  See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+}

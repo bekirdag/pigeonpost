@@ -1,0 +1,21 @@
+meta {
+  name: Claim a complimentary namespace (approved testers only)
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/v1/claims/test
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "namespace": "string"
+  }
+}

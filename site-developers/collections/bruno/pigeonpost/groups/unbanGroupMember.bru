@@ -1,0 +1,24 @@
+meta {
+  name: Lift a ban (admins)
+  type: http
+  seq: 10
+}
+
+delete {
+  url: {{baseUrl}}/v1/groups/:id/bans/:address
+  body: none
+  auth: bearer
+}
+
+params:path {
+  id: 
+  address: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+}

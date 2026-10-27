@@ -1,0 +1,27 @@
+meta {
+  name: Upload a sealed attachment (raw bytes)
+  type: http
+  seq: 22
+}
+
+post {
+  url: {{baseUrl}}/v1/groups/:id/attachments
+  body: none
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+headers {
+  Content-Type: application/octet-stream
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+}

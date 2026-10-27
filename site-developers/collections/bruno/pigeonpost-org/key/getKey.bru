@@ -1,0 +1,23 @@
+meta {
+  name: Describe this key
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/key
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  The calling key: id, name, org, scopes, expiry, IP allowlist and `send_as`. Useful as a credential check.
+
+  Scope: none (any live key).
+
+  Errors: `unauthorized` (401), `ip_not_allowed` (403), `feature_disabled` (404), `org_inactive` (409), `rate_limited` (429), `store_error` (500).
+}

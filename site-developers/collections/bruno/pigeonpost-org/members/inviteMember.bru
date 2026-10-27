@@ -1,0 +1,36 @@
+meta {
+  name: Invite a member
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/members
+  body: json
+  auth: bearer
+}
+
+headers {
+  ~Idempotency-Key: replace-with-a-unique-key
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "first_name": "Jane",
+    "last_name": "Doe",
+    "contact": "jane.doe@example.com",
+    "handle": "jane"
+  }
+}
+
+docs {
+  Invites one **ordinary** member (no roles; role grants stay on the dashboard). The invitation link in the response is single-use and returned only here (`Cache-Control: no-store`); with `delivery: copy_link` deliver it yourself. Seats, verified domains and handle rules apply as in the dashboard.
+
+  Scope: `members:write`.
+
+  Errors: `invalid_handle` (400), `invalid_contact` (400), `bad_request` (400), `unauthorized` (401), `ip_not_allowed` (403), `insufficient_scope` (403), `forbidden` (403), `feature_disabled` (404), `seat_limit` (409), `handle_taken` (409), `already_invited` (409), `domain_not_verified` (409), `org_inactive` (409), `org_read_only` (409), `idempotency_conflict` (409), `rate_limited` (429), `store_error` (500).
+}

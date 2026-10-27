@@ -1,0 +1,27 @@
+meta {
+  name: Add or remove attendees (organizer)
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/v1/calendar/events/:id/attendees
+  body: json
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {}
+}
+
+docs {
+  See docs/calendar.md. Requires the `calendar` feature flag.
+}

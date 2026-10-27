@@ -1,0 +1,28 @@
+meta {
+  name: Patch member
+  type: http
+  seq: 10
+}
+
+patch {
+  url: {{baseUrl}}/v1/orgs/:id/members/:member
+  body: json
+  auth: bearer
+}
+
+params:path {
+  id: 
+  member: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {}
+}
+
+docs {
+  See docs/orgs.md. Requires the `orgs` feature flag. A person signed in (member token); automation gets `human_required`.
+}

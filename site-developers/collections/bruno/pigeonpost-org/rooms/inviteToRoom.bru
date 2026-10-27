@@ -1,0 +1,37 @@
+meta {
+  name: Invite a mailbox to a room
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/rooms/:room/members
+  body: json
+  auth: bearer
+}
+
+params:path {
+  room: grp_qrmudhkm7zvrvswbjgkbbkwp7l
+}
+
+headers {
+  ~Idempotency-Key: replace-with-a-unique-key
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "handle": "john"
+  }
+}
+
+docs {
+  Sends a room invitation to a live org mailbox. The person (or agent) accepts it in their app; a room member's device then adds them to the encryption group. The API never adds anyone to the encryption group itself.
+
+  Scope: `rooms:write`.
+
+  Errors: `invalid_handle` (400), `bad_request` (400), `unauthorized` (401), `ip_not_allowed` (403), `insufficient_scope` (403), `forbidden` (403), `not_found` (404), `feature_disabled` (404), `already_invited` (409), `org_inactive` (409), `org_read_only` (409), `idempotency_conflict` (409), `rate_limited` (429), `store_error` (500).
+}

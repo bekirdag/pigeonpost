@@ -1,0 +1,29 @@
+meta {
+  name: Create, reset or disable the join link (shown once)
+  type: http
+  seq: 15
+}
+
+post {
+  url: {{baseUrl}}/v1/groups/:id/link
+  body: json
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "enabled": false
+  }
+}
+
+docs {
+  See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+}

@@ -1,0 +1,22 @@
+meta {
+  name: Change who may see the picture (bumps its version; old URLs stop working)
+  type: http
+  seq: 3
+}
+
+patch {
+  url: {{baseUrl}}/v1/profile/avatar
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "visibility": "everyone",
+    "identity": "string"
+  }
+}

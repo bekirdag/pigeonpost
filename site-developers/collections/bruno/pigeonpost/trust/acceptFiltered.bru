@@ -1,0 +1,27 @@
+meta {
+  name: Accept a sender out of Filtered (feature `message_filtering`)
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/v1/filtered/accept
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "peer": "string",
+    "identity": "string"
+  }
+}
+
+docs {
+  Adds the sender as a contact with `admission=allow` (by handle when it has one) and moves
+  all of its filtered messages into the inbox. Not available through a connector.
+}

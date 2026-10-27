@@ -1,0 +1,15 @@
+meta {
+  name: Issue a new account API key
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/v1/api-keys
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}

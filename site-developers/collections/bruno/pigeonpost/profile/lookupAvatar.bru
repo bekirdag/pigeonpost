@@ -1,0 +1,19 @@
+meta {
+  name: One mailbox's picture, if you may see it
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/v1/avatars/:address
+  body: none
+  auth: bearer
+}
+
+params:path {
+  address: 
+}
+
+auth:bearer {
+  token: {{token}}
+}

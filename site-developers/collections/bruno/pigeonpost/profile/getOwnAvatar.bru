@@ -1,0 +1,15 @@
+meta {
+  name: The acting mailbox's own picture (feature `avatars`)
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/v1/profile/avatar
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}

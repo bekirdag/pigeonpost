@@ -1,0 +1,35 @@
+meta {
+  name: Send a direct message
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/messages
+  body: json
+  auth: bearer
+}
+
+headers {
+  ~Idempotency-Key: replace-with-a-unique-key
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "to": "/acme/john",
+    "body": "Your laptop is ready for pickup at the front desk.",
+    "thread_title": "Onboarding"
+  }
+}
+
+docs {
+  Sends a direct message **as the key's `send_as` org agent mailbox** to a member or agent mailbox of the same org. It takes the normal hosted direct path: the recipient's blocks, org rules, inbox policy, filters and quotas all apply. Rooms are end-to-end encrypted and cannot be posted to with a key (`409 room_encrypted`); see the guide "Post build results into a room".
+
+  Scope: `messages:send`.
+
+  Errors: `bad_request` (400), `unauthorized` (401), `ip_not_allowed` (403), `insufficient_scope` (403), `forbidden` (403), `recipient_not_in_org` (403), `not_admitted` (403), `feature_disabled` (404), `room_encrypted` (409), `org_inactive` (409), `org_read_only` (409), `idempotency_conflict` (409), `payload_too_large` (413), `rate_limited` (429), `store_error` (500).
+}

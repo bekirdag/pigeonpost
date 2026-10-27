@@ -1,0 +1,37 @@
+meta {
+  name: Rename a member
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/members/:member
+  body: json
+  auth: bearer
+}
+
+params:path {
+  member: john
+}
+
+headers {
+  ~Idempotency-Key: replace-with-a-unique-key
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "last_name": "Smith-Jones"
+  }
+}
+
+docs {
+  Changes the member's first and last name. Owner and admins are out of a key's reach (`forbidden`).
+
+  Scope: `members:write`.
+
+  Errors: `bad_request` (400), `unauthorized` (401), `ip_not_allowed` (403), `insufficient_scope` (403), `forbidden` (403), `not_found` (404), `feature_disabled` (404), `org_inactive` (409), `org_read_only` (409), `idempotency_conflict` (409), `rate_limited` (429), `store_error` (500).
+}

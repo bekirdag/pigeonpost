@@ -1,0 +1,15 @@
+meta {
+  name: Peers whose conversations this mailbox has archived
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/v1/archive
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}

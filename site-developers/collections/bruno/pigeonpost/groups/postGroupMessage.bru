@@ -1,0 +1,38 @@
+meta {
+  name: Post one client-encrypted application message
+  type: http
+  seq: 17
+}
+
+post {
+  url: {{baseUrl}}/v1/groups/:id/messages
+  body: json
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "request_key": "string",
+    "client_message_id": "string",
+    "epoch": 0,
+    "enc_scheme": "string",
+    "ciphertext": "string",
+    "envelope_signature": "string",
+    "attachments": [],
+    "reply_to": 0,
+    "edit_of": 0,
+    "mentions": []
+  }
+}
+
+docs {
+  See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+}

@@ -1,0 +1,23 @@
+meta {
+  name: Busy intervals (own mailboxes only in this phase; others `unknown`)
+  type: http
+  seq: 19
+}
+
+post {
+  url: {{baseUrl}}/v1/calendar/freebusy
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {}
+}
+
+docs {
+  See docs/calendar.md. Requires the `calendar` feature flag.
+}

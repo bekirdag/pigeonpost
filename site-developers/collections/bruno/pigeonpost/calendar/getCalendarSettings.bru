@@ -1,0 +1,19 @@
+meta {
+  name: Calendar settings
+  type: http
+  seq: 17
+}
+
+get {
+  url: {{baseUrl}}/v1/calendar/settings
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  See docs/calendar.md. Requires the `calendar` feature flag.
+}

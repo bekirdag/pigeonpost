@@ -1,0 +1,36 @@
+meta {
+  name: Create a restrictive rule
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/rules
+  body: json
+  auth: bearer
+}
+
+headers {
+  ~Idempotency-Key: replace-with-a-unique-key
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "owners": "agents",
+    "peers": "*",
+    "admission": "block",
+    "description": "Agents only talk to the company"
+  }
+}
+
+docs {
+  Restrictive only: `admission` `block` or null, `autonomy` `review` or null, no `verbs`, `known` false, `locked` false. Anything else is `403 human_required`.
+
+  Scope: `rules:write`.
+
+  Errors: `invalid_rule` (400), `bad_request` (400), `unauthorized` (401), `ip_not_allowed` (403), `insufficient_scope` (403), `forbidden` (403), `human_required` (403), `feature_disabled` (404), `too_many_rules` (409), `org_inactive` (409), `org_read_only` (409), `idempotency_conflict` (409), `rate_limited` (429), `store_error` (500).
+}

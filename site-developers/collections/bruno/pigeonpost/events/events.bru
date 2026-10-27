@@ -1,0 +1,37 @@
+meta {
+  name: Server-Sent Events stream for an account
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/v1/events
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  One stream per account covering all of its mailboxes. Only metadata crosses the stream,
+  never message bodies. Keep-alive comments are sent every 15 seconds. Without a resume
+  cursor the stream starts at "now".
+
+  **Event types**
+
+  * `mail` — legacy format, unchanged. The `id:` line is the message cursor (a decimal
+    integer). Data: `{event_id: integer, mailbox, message_id, sender, created_at}`.
+  * Typed events — sent when the `account_events` feature flag is enabled for the
+    account, or when the client asks with `typed=1` (Phase 3a: `group.*`, `mls.*`,
+    `message.expired`, `thread.settings`; see docs/groups.md §4). The `id:` line is `"<mail_cursor>.<event_seq>"`. Data:
+    `{event_id: string, type: string, mailbox: string|null, data: object}`. Initial type:
+    `features.changed` with data `{feature, enabled}`.
+  * `resync_required` — no `id:` line. Data
+    `{type: "resync_required", reason: "cursor_expired"}`. Sent when the resume cursor is older
+    than the retained window (7 days / 10,000 events per account). The client must reload
+    authoritative state (inbox, threads, capabilities) and then continue from the new ids.
+
+  Clients must ignore event types they do not recognise.
+}

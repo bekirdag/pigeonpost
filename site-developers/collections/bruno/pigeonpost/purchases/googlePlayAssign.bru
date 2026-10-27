@@ -1,0 +1,22 @@
+meta {
+  name: Assign a name to an active, unnamed Google Play subscription
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/v1/claims/google/assign
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "product_id": "string",
+    "namespace": "string"
+  }
+}

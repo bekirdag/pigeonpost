@@ -1,0 +1,15 @@
+meta {
+  name: App-review sign-in demonstration page
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/review-sign-in
+  body: none
+  auth: none
+}
+
+docs {
+  HTML page that lets an app reviewer generate a real device-authorization QR code. Never returns user tokens.
+}
