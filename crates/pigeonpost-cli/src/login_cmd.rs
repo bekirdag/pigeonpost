@@ -315,6 +315,75 @@ pub async fn login_device(home: &Path, issuer: &str) -> Result<(), Error> {
     }
 }
 
+/// A fresh, strong sign-in for one sensitive request (SDS §3.4), such as opening an SSH session.
+///
+/// Authorization Code + PKCE through the browser with the server's `acr_values` and `max_age=0`,
+/// so the identity provider asks for the second factor now. Only `openid` is requested — no
+/// offline session is created — and the access token is returned to the caller for one request.
+/// Nothing is saved: the machine's ordinary session is unchanged.
+pub async fn step_up_token(home: &Path, acr_values: &str) -> Result<String, Error> {
+    let session = load(home)?.ok_or("not signed in — run: pigeonpost login")?;
+    let endpoints = discover(&session.issuer).await?;
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let port = listener.local_addr()?.port();
+    let redirect = format!("http://127.0.0.1:{port}/callback");
+    let verifier = random_verifier();
+    let challenge = b64url(&Sha256::digest(verifier.as_bytes()));
+    let state = random_verifier();
+    let url = step_up_url(
+        &endpoints.authorization_endpoint,
+        &redirect,
+        &state,
+        &challenge,
+        acr_values,
+    );
+    eprintln!("Confirm it's you (two-step sign-in):\n\n  {url}\n");
+    open_in_browser(&url);
+    let code = tokio::task::spawn_blocking(move || {
+        wait_for_callback(listener, &state).map_err(|e| e.to_string())
+    })
+    .await??;
+    let response = http_client()?
+        .post(&endpoints.token_endpoint)
+        .form(&[
+            ("grant_type", "authorization_code"),
+            ("client_id", CLIENT_ID),
+            ("code", code.as_str()),
+            ("redirect_uri", redirect.as_str()),
+            ("code_verifier", verifier.as_str()),
+        ])
+        .send()
+        .await?;
+    if !response.status().is_success() {
+        return Err("the strong sign-in was refused".into());
+    }
+    let body: serde_json::Value = response.json().await?;
+    body["access_token"]
+        .as_str()
+        .map(str::to_string)
+        .ok_or_else(|| "the identity provider returned no access token".into())
+}
+
+fn step_up_url(
+    authorization_endpoint: &str,
+    redirect: &str,
+    state: &str,
+    challenge: &str,
+    acr_values: &str,
+) -> String {
+    let mut url = format!(
+        "{authorization_endpoint}?response_type=code&client_id={}&redirect_uri={}&scope=openid&state={}&code_challenge={}&code_challenge_method=S256&max_age=0",
+        urlencode(CLIENT_ID),
+        urlencode(redirect),
+        urlencode(state),
+        urlencode(challenge),
+    );
+    if !acr_values.trim().is_empty() {
+        url.push_str(&format!("&acr_values={}", urlencode(acr_values.trim())));
+    }
+    url
+}
+
 /// Block until the browser hits the loopback redirect, and return the authorization code.
 ///
 /// Single-threaded and single-shot on purpose: this listener exists for one redirect and then
@@ -834,6 +903,23 @@ pub(crate) fn print_qr(text: &str) {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn step_up_asks_for_a_fresh_strong_sign_in_without_an_offline_session() {
+        let u = super::step_up_url(
+            "https://idp/auth",
+            "http://127.0.0.1:5/callback",
+            "st",
+            "ch",
+            "mfa",
+        );
+        assert!(
+            u.contains("max_age=0")
+                && u.contains("acr_values=mfa")
+                && u.contains("code_challenge_method=S256")
+        );
+        assert!(u.contains("scope=openid&") && !u.contains("offline_access"));
+    }
     use super::*;
 
     #[test]

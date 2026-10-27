@@ -160,6 +160,13 @@ fn notify(summary: &str, body: &str) {
     let _ = attempt;
 }
 
+/// A desktop notification that an SSH session opened on this machine (SDS §11.5: the machine's
+/// owner hears about every session). Same switch as mail notifications.
+#[cfg_attr(not(unix), allow(dead_code))]
+pub(crate) fn notify_shell(summary: &str, body: &str) {
+    notify(summary, body);
+}
+
 #[cfg(target_os = "macos")]
 fn applescript_quote(value: &str) -> String {
     // AppleScript string literals escape backslash and quote, and nothing else.
@@ -191,6 +198,13 @@ pub async fn run(home: &Path, once: bool) -> Result<(), Error> {
             home,
             &format!("released {n} claim(s) left by an interrupted run"),
         ),
+    }
+
+    // Agent SSH (SDS §11): one supervisor per mailbox whose `[mailbox.shell]` enables it. They run
+    // beside the mail stream and need no account sign-in: each uses its mailbox's own credential.
+    #[cfg(unix)]
+    if !once {
+        crate::shell::agent::start(home);
     }
 
     let mut backoff = BACKOFF_MIN;
@@ -879,6 +893,12 @@ pub fn answer(home: &Path, spec: &Answer<'_>) -> Result<(), Error> {
         permission,
         branches: branches.to_vec(),
         daily_runs_per_sender: daily_runs.unwrap_or(0),
+        // The SSH opt-in is its own decision: re-running `answer` never adds, drops or changes it.
+        shell: config
+            .mailbox
+            .iter()
+            .find(|m| m.address == address)
+            .and_then(|m| m.shell.clone()),
         panel,
     };
 
@@ -2014,6 +2034,7 @@ mod tests {
                 permission: crate::executor::Permission::ReadOnly,
                 branches: Vec::new(),
                 daily_runs_per_sender: 50,
+                shell: None,
                 panel: None,
             }],
             max_concurrent: 2,
@@ -2262,6 +2283,7 @@ mod tests {
             permission: crate::executor::Permission::ReadOnly,
             branches: Vec::new(),
             daily_runs_per_sender: 50,
+            shell: None,
             panel: None,
         };
         let config = crate::executor::RoutingConfig {

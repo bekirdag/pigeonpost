@@ -23,6 +23,7 @@ mod registry_cmd;
 mod runner;
 mod runtime_config;
 mod runtime_pick;
+mod shell;
 mod submit_cmd;
 #[cfg(test)]
 mod test_support;
@@ -269,6 +270,27 @@ enum Command {
         action: AgentdAction,
     },
 
+    /// Open a terminal on an agent's workspace over end-to-end encrypted SSH (SDS §11).
+    ///
+    /// Needs a person's own sign-in with a recent two-step verification, and the agent's owner
+    /// (or an `ssh` delegation from its organization). The agent's machine must have enabled
+    /// `[mailbox.shell]` in its agentd.toml. Everything after `--` runs as one command instead of a
+    /// shell — the only way into an agent in `allowlist` mode.
+    Ssh {
+        /// The agent: its handle (`/acme/agent1`) or address.
+        agent: String,
+        /// Trust a changed host key with exactly this fingerprint (`SHA256:…`), after checking it
+        /// on the agent machine with `pigeonpost agentd shell status`.
+        #[arg(long)]
+        accept_host_key: Option<String>,
+        /// Postbox to ask.
+        #[arg(long, env = "PIGEONPOST_POSTBOX", default_value = postbox_cmd::DEFAULT_POSTBOX)]
+        postbox: String,
+        /// A command to run instead of an interactive shell.
+        #[arg(last = true)]
+        command: Vec<String>,
+    },
+
     /// Show whether this machine is signed in. Never prints a token.
     Whoami,
 
@@ -393,6 +415,9 @@ enum AgentdAction {
     Resume,
     /// What the daemon has seen, and what is waiting in the spool.
     Status,
+    /// SSH to this machine's agent workspaces (SDS §11): which mailboxes offer it, in which mode,
+    /// and this machine's host-key fingerprint — the one people connecting should see.
+    Shell,
     /// Print the spooled events and clear them. What a session start-up hook calls.
     Drain {
         /// Print without clearing.
@@ -1428,6 +1453,23 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             };
         }
         Command::Whoami => return login_cmd::status(&home, cli.json).await,
+        Command::Ssh {
+            agent,
+            accept_host_key,
+            postbox,
+            command,
+        } => {
+            let code = shell::client::run(shell::client::Options {
+                home: &home,
+                postbox,
+                agent,
+                command: (!command.is_empty()).then(|| command.join(" ")),
+                accept_host_key: accept_host_key.clone(),
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+            std::process::exit(code);
+        }
         // Like the read-only commands above, the daemon must not mint an identity in someone's
         // home as a side effect of being started by a service manager.
         Command::Agentd { action } => {
@@ -1473,6 +1515,10 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 AgentdAction::Install => agentd_cmd::install(&home),
                 AgentdAction::Uninstall => agentd_cmd::uninstall(&home),
                 AgentdAction::Status => agentd_cmd::status(&home, cli.json),
+                #[cfg(unix)]
+                AgentdAction::Shell => shell::agent::status(&home, cli.json),
+                #[cfg(not(unix))]
+                AgentdAction::Shell => Err("agent SSH runs on Linux and macOS only".into()),
                 AgentdAction::Drain { keep, hook } => agentd_cmd::drain(&home, *keep, *hook),
             }
         }
@@ -2255,6 +2301,7 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         | Command::Group(_)
         | Command::Login { .. }
         | Command::Whoami
+        | Command::Ssh { .. }
         | Command::Logout => {
             unreachable!("handled before identity setup")
         }
