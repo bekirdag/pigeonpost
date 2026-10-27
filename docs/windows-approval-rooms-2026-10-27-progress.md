@@ -16,3 +16,27 @@ Follow-on ledger to [the enterprise progress](windows-enterprise-2026-10-27-prog
 - **21/21 focused session/socket/approval cases** with `--strong-signin` (`windows-approval-strong-focused.log`); the hosted x64 job runs the same set on Windows.
 - Release Core: zero warnings/errors (`windows-approval-release-core.log`).
 - New native UI script `test-approval.ps1` (standard-user runner) covers: malformed code refusal, review contents, a short press that does not approve, keyboard confirmation cancelled with Escape, MFA refusal, verification with real grant rotation and reread, a deliberate hold, a lost committed reply that is not resent, status check, existing-agent denial, and the inbox draft surviving the rebind. Hosted results and screenshots are recorded below once CI finishes.
+
+### Hosted qualification (PR #137)
+
+- Exact head `91f2f5f`: Windows native run `40475435961` (Core, x64, ARM64) and general CI `40475436006`. The x64 job ran the 21 focused session/socket/approval cases on Windows and every native UI script; `approval-ui.json` passed all 27 checks (state: 5 resolves, 2 approvals, 1 denial, 1 verification, 1 grant rotation, 0 foreign actors). Review, verification, confirmation-dialog, unconfirmed and draft-kept screenshots were inspected. Two cosmetic follow-ups (a truncated navigation label and empty status gaps) are fixed in the rooms branch.
+
+## Dedicated Windows OAuth client (Keycloak, realm `pigeonpost-prod`)
+
+- Backed up only the client representation server-side first: `/var/backups/pigeonpost/keycloak-windows-client-20261027T090041Z/client.json` on raijin (root-only `0700` directory, `0600` file, 2101 bytes). Nothing was copied to this Mac or printed; `provision-oauth.py` was not run.
+- Changed: `standardFlowEnabled` false → true; `redirectUris` [] → [`http://127.0.0.1`, `http://127.0.0.1/`] (the documented native loopback entry, any port, plus its exact root-path form); added `pkce.code.challenge.method=S256`; added `acr.loa.map={"mfa":2}`, the same step-up mapping the mobile client uses, so `acr_values=mfa` resolves.
+- Preserved and verified read-only: public client, consent required, device authorization grant enabled, direct/implicit/service-account flows off, default and optional scopes, mappers. A server-side comparison against the backup lists only those four intended changes. One intermediate write stored the ACR map with literal backslashes for about two minutes (Keycloak rejected it as invalid configuration, so no flow could use it); a guarded full-representation edit changed only that line. No token exchange or device authorization request was made.
+
+## Organization rooms
+
+- `Enterprise/OrganizationRoomModels.cs`, `PostboxClient.Organizations.cs`: canonical catalog (`my_mailbox` only; handles, other inboxes and delegation grant nothing), organization-scoped directory, bounded strict decoding (duplicate keys, explicit `org_id`/`my.state`/`my.role`, bare or enveloped single-group read), exact creation bytes and request key.
+- `Enterprise/OrganizationRoomStore.cs`: catalog, directory, review and mutation lanes bound to person, grant and canonical inbox; reviewed-screen proofs for joins and invitation acceptance; a fresh group read confirms organization and membership before opening; refusal clears private metadata. Personal inboxes are offered an explicit switch to the member inbox.
+- **Durable custody (release gate implemented):** `Enterprise/RoomCreationCustody.cs` keeps one uncertain creation per server-authorized inbox in DPAPI-protected custody (`%LOCALAPPDATA%\Pigeonpost\room-creations`). The intent is saved before the POST; a lost reply survives restarts and is retried only by explicit action with identical bytes within 24 hours; a known created room is checked by reading it, never created again; discard is explicit and local. Creation is disabled when custody cannot be authorized.
+- **Operated agents (release gate, gated off):** explicitly delegated `read_inbox` agents are listed as "Agents you operate … isn't available in this app yet" and are never opened or treated as owned inboxes.
+- `GroupsModel.PrepareOrganizationRoomAsync` rechecks the organization and live membership, activates an owned provisioning room with real MLS and selects it in Groups.
+- Native Rooms page (`MainWindow.Rooms.cs`) plus stand-in organization routes in `PreviewPostbox` and `test-rooms.ps1`: personal-inbox refusal, delegated-agent gate, explicit inbox switch, reviewed public join (keying), lost committed creation, DPAPI file without the room name, restart restore without resend, explicit exact retry, MLS-activated room with composer, custody cleared.
+
+### Evidence (local, rooms branch)
+
+- **475/475 Core/MLS** (`windows-rooms-core.log`), adding 9 room cases (models, actual HTTP, store binding, replacement, custody with file protection and restart, candidate check/discard, custody/read-only gates, stand-in real-MLS opening and offboarding); Release Core zero warnings/errors.
+- Actual disposable Rust postbox built from this worktree: `windows.sh … orgs` passes (catalog, personal-inbox separation, outsider denial, committed lost reply with protected custody across a store restart and byte-identical retry, MLS activation, one directory row, reviewed join with matching safety numbers and decrypted message, private acceptance, offboarding refusal). Direct-message and calendar regressions also pass (`windows-rooms-real-{direct,calendar,orgs}.log`).
