@@ -63,6 +63,7 @@ public sealed partial class MainWindow
         private readonly Dictionary<string, MessageSendRequest> requests = [];
         private readonly Dictionary<string, List<MessageVersion>> history = [];
         private int infoReads;
+        private readonly long fixtureTime = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         private bool exactRetries = true;
         private void Diagnostics()
         {
@@ -104,7 +105,7 @@ public sealed partial class MainWindow
             var snapshot = await preview.LoadAsync(identity, ct);
             if (messageModes)
             {
-                var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                var now = fixtureTime;
                 var own = snapshot.Messages.Single(m => m.MessageId == "design-2");
                 if (!history.ContainsKey(own.MessageId)) history[own.MessageId] = [new(own.MessageId, "Earlier native fixture version", now - 180), new(own.MessageId, own.Body, now - 120)];
                 snapshot = snapshot with { Messages = snapshot.Messages.Select(m => m.MessageId == "design-2"

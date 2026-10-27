@@ -56,7 +56,7 @@ try {
     Invoke-Control 'Cancel message action'
     Check ((Read-Text) -eq 'Ordinary native draft') 'Cancelling reply preserves the existing text'
     Invoke-Control 'Message actions' 'design-2'; Invoke-Control 'Edit message'
-    Check ((Read-Text) -eq "I'll check the layout, keyboard shortcuts, and how it works in a smaller window.") 'Edit is offered on the owned recent message and prefills its displayed text'
+    Wait-Check { $null -ne (Control 'Editing message') -and (Read-Text) -eq "I'll check the layout, keyboard shortcuts, and how it works in a smaller window." } 'Edit is offered on the owned recent message and prefills its displayed text'
     Check (-not (Control 'Attach files…').Current.IsEnabled) 'Edit disables file attachment controls'
     Set-Text 'Cancelled native edit'; Invoke-Control 'Cancel message action'
     Check ((Read-Text) -eq 'Ordinary native draft') 'Cancelling edit restores the previous ordinary draft'
@@ -80,6 +80,7 @@ try {
     Capture 'message-modes-complete.png'
     @{ passed = $true; checks = $checks } | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $directory 'message-modes-ui.json')
 } catch {
+    try { if ($root) { Capture 'message-modes-failure.png' } } catch { }
     @{ passed = $false; checks = $checks; error = $_.Exception.Message } | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $directory 'message-modes-ui.json')
     throw
 } finally {
