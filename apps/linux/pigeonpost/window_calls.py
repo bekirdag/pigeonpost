@@ -91,6 +91,10 @@ class CallsMixin:
             self.load_calls()
         elif name == "filtered":
             self.render_filtered()
+        else:
+            shown = getattr(self, "page_shown_" + name, None)  # calendar, orgs: their mixins
+            if shown:
+                shown()
         self.sync_side_nav()
 
     def page(self):

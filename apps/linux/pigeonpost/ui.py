@@ -25,8 +25,14 @@ from .widgets import (SettingsNavigation, address_row, box, button, clear, label
                       settings_row)
 from .avatars import AvatarCache
 from .features import AVATARS, CALL_HISTORY, DISAPPEARING, GROUPS, MESSAGE_FILTERING, live_messages, missed_call_lines, timer_label
+from .binding import Lease, Retired
+from .protected import open_store
+from .window_calendar import CalendarMixin
 from .window_calls import CallsMixin
 from .window_groups import GroupsMixin
+from .window_messages import MessagesMixin
+from .window_orgs import OrgsMixin
+from .window_pairing import PairingMixin
 from .window_privacy import PrivacyMixin
 
 WEB_INBOX = "https://inbox.pigeonpost.dev/"
@@ -61,8 +67,8 @@ def main_later(seconds, fn):
     GLib.timeout_add_seconds(seconds, lambda: (fn(), False)[1])
 
 
-class Window(PrivacyMixin, CallsMixin, GroupsMixin, Adw.ApplicationWindow):
-    def __init__(self, app, session=None, api=None, restore=True, preferences=None, calls=None):
+class Window(MessagesMixin, PairingMixin, OrgsMixin, CalendarMixin, PrivacyMixin, CallsMixin, GroupsMixin, Adw.ApplicationWindow):
+    def __init__(self, app, session=None, api=None, restore=True, preferences=None, calls=None, protected=None):
         super().__init__(application=app, title="Pigeonpost", default_width=1180, default_height=780)
         self.set_size_request(800, 540)
         self.preferences = preferences or getattr(app, "preferences", None) or Preferences()
@@ -75,6 +81,10 @@ class Window(PrivacyMixin, CallsMixin, GroupsMixin, Adw.ApplicationWindow):
         self.calls = calls if calls is not None or api is not None else CallAlerts(
             self.session, CallNotifier(app), self.open_url, dispatch=on_main, later=main_later, name_for=self.caller_name)
         self.generation, self.revision, self.closed = 0, 0, False
+        # The accepted login and the selected mailbox (binding.Lease). Protected work keeps its own
+        # lease and is published only while that login is still current, whatever is selected.
+        self.lease = self.mailbox_lease = None
+        self.protected = protected if protected is not None else open_store()
         self.cancel = threading.Event()
         self.mailboxes, self.messages, self.threads, self.contacts, self.archived = [], [], [], [], []
         self.vocabulary, self.quota = {}, {}
@@ -88,6 +98,10 @@ class Window(PrivacyMixin, CallsMixin, GroupsMixin, Adw.ApplicationWindow):
         self.avatars = AvatarCache(self)
         self.reset_calls()
         self.reset_groups()
+        self.reset_calendar()
+        self.reset_orgs()
+        self.reset_pairing()
+        self.reset_messages()
         self.drafts, self.files = {}, {}
         self.previews = ThumbnailCache()
         self.polling = self.sending = self.rendering = self.acking = False
@@ -146,6 +160,37 @@ class Window(PrivacyMixin, CallsMixin, GroupsMixin, Adw.ApplicationWindow):
                     GLib.idle_add(deliver, value)
         threading.Thread(target=run, daemon=True).start()
 
+    def api_for(self, lease):
+        """The postbox for work that must stay with `lease`'s login (injected test APIs as is)."""
+        bound = getattr(self.api, "bound", None)
+        return bound(lease) if lease is not None and callable(bound) else self.api
+
+    def bound_work(self, lease, operation, done=None, failed=None):
+        """Like _work, but tied to a login rather than to the current selection: the result is
+        delivered while `lease` is still current, even after the person moved to another mailbox
+        or conversation, and dropped (never shown in a newer login) once it is retired."""
+        def deliver(value, error=False):
+            if self.closed or lease is None or not lease.current:
+                return False
+            if error:
+                if not isinstance(value, Retired):
+                    (failed or self.error)(value)
+            elif done:
+                done(value)
+            return False
+
+        def run():
+            with self.pool:
+                if self.closed or lease is None or not lease.current:
+                    return
+                try:
+                    value = operation()
+                except Exception as exc:
+                    GLib.idle_add(deliver, exc, True)
+                else:
+                    GLib.idle_add(deliver, value)
+        threading.Thread(target=run, daemon=True).start()
+
     @staticmethod
     def error_text(error):
         if isinstance(error, APIError):
@@ -157,6 +202,8 @@ class Window(PrivacyMixin, CallsMixin, GroupsMixin, Adw.ApplicationWindow):
         return "This action could not be completed. Please try again."
 
     def error(self, error):
+        if isinstance(error, Retired):
+            return  # work of an earlier sign-in: nothing to show in this one
         self.toast(self.error_text(error))
         if isinstance(error, APIError) and error.code == "invalid_grant":
             self.generation += 1
@@ -238,6 +285,10 @@ class Window(PrivacyMixin, CallsMixin, GroupsMixin, Adw.ApplicationWindow):
         self._work(self.api.identities, self.account_loaded, lambda e: self.show_signin(self.error_text(e)))
 
     def account_loaded(self, rows):
+        if self.lease is None or not self.lease.current:
+            if self.lease is not None:
+                self.lease.retire()
+            self.lease = Lease(self.session)
         self.mailboxes = rows
         self.account_button.set_sensitive(True)
         self.refresh_button.set_sensitive(True)
@@ -279,6 +330,8 @@ class Window(PrivacyMixin, CallsMixin, GroupsMixin, Adw.ApplicationWindow):
         self.start_groups()
         self.load_calls(quiet=True)
         self.load_filtered()
+        self.calendar_features_changed()
+        self.orgs_features_changed()
         if changed:
             self.render_all()
 
@@ -328,6 +381,10 @@ class Window(PrivacyMixin, CallsMixin, GroupsMixin, Adw.ApplicationWindow):
         self.calls_button.connect("clicked", lambda _: self.show_page("calls"))
         self.calls_button.set_visible(False)
         sidebar.append(self.calls_button)
+        self.calendar_button = self.side_button("Calendar", "x-office-calendar-symbolic", "Calendar", lambda: self.show_page("calendar"))
+        sidebar.append(self.calendar_button)
+        self.orgs_button = self.side_button("Organizations", "system-users-symbolic", "Organization rooms", lambda: self.show_page("orgs"))
+        sidebar.append(self.orgs_button)
         self.peer_search = Gtk.SearchEntry(placeholder_text="Search conversations")
         self.peer_search.connect("search-changed", lambda _: self.render_peers())
         sidebar.append(self.peer_search)
@@ -365,6 +422,9 @@ class Window(PrivacyMixin, CallsMixin, GroupsMixin, Adw.ApplicationWindow):
         sidebar.append(scroll(self.peer_list))
         self.connection_status = label("", "pp-status", wrap=True)
         sidebar.append(self.connection_status)
+        self.recovery_button = self.side_button("Unconfirmed", "dialog-warning-symbolic", "Review unconfirmed messages",
+                                                lambda: self.review_deliveries())
+        sidebar.append(self.recovery_button)
         sidebar.append(button("Handles", self.handles, style="pp-pill-button"))
         subpanel = box(10, margin=12)
         subpanel.set_size_request(165, -1)
@@ -438,6 +498,9 @@ class Window(PrivacyMixin, CallsMixin, GroupsMixin, Adw.ApplicationWindow):
         self.blocked_banner.append(button("Unblock", lambda: self.unblock_peer()))
         self.blocked_banner.set_visible(False)
         detail.append(self.blocked_banner)
+        self.mode_holder = box(0)
+        self.mode_holder.set_visible(False)
+        detail.append(self.mode_holder)
         composer = box(6, horizontal=True, margin=16)
         composer.set_margin_top(4)
         composer.add_css_class("pp-composer")
@@ -476,6 +539,8 @@ class Window(PrivacyMixin, CallsMixin, GroupsMixin, Adw.ApplicationWindow):
         self.main_stack.add_named(self.build_calls_page(), "calls")
         self.main_stack.add_named(self.build_filtered_page(), "filtered")
         self.main_stack.add_named(self.build_group_page(), "group")
+        self.main_stack.add_named(self.build_calendar_page(), "calendar")
+        self.main_stack.add_named(self.build_orgs_page(), "orgs")
         self.main_stack.set_visible_child_name("conversation")
         panes = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL, position=270)
         panes.set_start_child(sidebar_ground)
@@ -484,6 +549,21 @@ class Window(PrivacyMixin, CallsMixin, GroupsMixin, Adw.ApplicationWindow):
         panes.set_shrink_start_child(False)
         panes.set_shrink_end_child(False)
         self.stack.add_named(panes, "inbox")
+
+    def side_button(self, text, icon, tooltip, clicked):
+        """A flat sidebar entry like Calls; hidden until its feature is on."""
+        widget = Gtk.Button()
+        content = box(8, horizontal=True)
+        content.append(Gtk.Image(icon_name=icon))
+        widget.label = label(text)
+        content.append(widget.label)
+        widget.set_child(content)
+        widget.add_css_class("flat")
+        widget.set_tooltip_text(tooltip)
+        widget.update_property([Gtk.AccessibleProperty.LABEL], [tooltip])
+        widget.connect("clicked", lambda _: clicked())
+        widget.set_visible(False)
+        return widget
 
     def select_mailbox(self):
         if self.rendering or not self.mailboxes:
@@ -500,12 +580,17 @@ class Window(PrivacyMixin, CallsMixin, GroupsMixin, Adw.ApplicationWindow):
         for dialog in list(self.dialogs):
             dialog.close()
         self.identity, self.peer, self.subject = row["address"], None, None
+        if self.mailbox_lease is not None:
+            self.mailbox_lease.retire()
+        self.mailbox_lease = self.lease.child(row["address"]) if self.lease is not None else None
         self.messages, self.contacts, self.threads, self.archived = [], [], [], []
         self.quota, self.vocabulary, self.known_ids = {}, {}, None
         self.polling = self.sending = self.acking = False
         self.filtered = []
         self.reset_calls()
         self.reset_groups()
+        self.reset_calendar()
+        self.reset_orgs()
         self.avatars.reset(AVATARS in self.features)
         if self.page() != "conversation":
             self.main_stack.set_visible_child_name("conversation")
@@ -513,6 +598,7 @@ class Window(PrivacyMixin, CallsMixin, GroupsMixin, Adw.ApplicationWindow):
         self.restore_draft()
         self.render_all()
         self.refresh()
+        self.load_saved_work()
         if self.features:
             self.sync_side_nav()
             self.start_groups()
@@ -530,6 +616,8 @@ class Window(PrivacyMixin, CallsMixin, GroupsMixin, Adw.ApplicationWindow):
             elif self.features and now - self.side_data_at > 30 * 1_000_000:
                 self.refresh_side_data()
             self.groups_tick()
+            self.calendar_tick()
+            self.orgs_tick()
             if any(m.get("expires_at") for m in self.messages):
                 live = live_messages(self.messages)
                 if len(live) != len(self.messages):
@@ -545,7 +633,7 @@ class Window(PrivacyMixin, CallsMixin, GroupsMixin, Adw.ApplicationWindow):
         if self.known_ids is None:
             self.connection_status.set_text("Loading inbox…")
         def read():
-            messages = self.api.inbox(identity, wait)
+            messages = self.read_inbox(identity, wait)
             threads = self.api.call("GET", "/v1/threads", identity).get("threads", [])
             contacts = self.api.call("GET", "/v1/contacts", identity)
             archived = self.api.call("GET", "/v1/archive", identity).get("archived", [])
@@ -591,6 +679,7 @@ class Window(PrivacyMixin, CallsMixin, GroupsMixin, Adw.ApplicationWindow):
         self.render_subjects()
         self.render_messages()
         self.update_unread_indicator()
+        self.render_pending_chrome()
 
     def update_unread_indicator(self):
         count = unread_count(self.messages)
@@ -654,7 +743,8 @@ class Window(PrivacyMixin, CallsMixin, GroupsMixin, Adw.ApplicationWindow):
             content.append(self.avatars.widget(peer, name, 32))
             text = box(3)
             unread = unread_count(messages)
-            text.append(label(name + (f"  • {unread}" if unread else ""), "pp-peer"))
+            waiting = any(a.peer == peer for a in self.pending.get(self.identity) or [])
+            text.append(label(name + (f"  • {unread}" if unread else "") + ("  ⚠ unconfirmed" if waiting else ""), "pp-peer"))
             text.append(label(message_text(messages[-1]).replace("\n", " ")[:120] if messages else "Start a conversation", "pp-preview"))
             content.append(text)
             row.set_child(content)
@@ -791,6 +881,7 @@ class Window(PrivacyMixin, CallsMixin, GroupsMixin, Adw.ApplicationWindow):
         adj = self.message_scroll.get_vadjustment()
         bottom = adj.get_value() + adj.get_page_size() >= adj.get_upper() - 80
         clear(self.message_list)
+        self.message_widgets = {}
         query = self.message_search.get_text().casefold()
         rows = [m for m in self.shown_messages() if query in message_text(m).casefold()]
         # Missed calls read as small lines in the conversation they belong to (SDS §12.1).
@@ -814,11 +905,14 @@ class Window(PrivacyMixin, CallsMixin, GroupsMixin, Adw.ApplicationWindow):
             while pending and pending[0]["at"] <= when_s:
                 self.message_list.append(self.call_line(pending.pop(0)))
             outgoing = message.get("direction") == "out"
+            holder = box(4)
+            # (holders are not focusable: their buttons and selectable text are)
             bubble = box(6)
             bubble.add_css_class("pp-bubble")
             if outgoing:
                 bubble.add_css_class("pp-mine")
             bubble.insert_action_group("message", self.message_actions(message, outgoing))
+            holder.insert_action_group("message", self.message_actions(message, outgoing))
             inner = box(8, margin=14)
             inner.set_margin_start(16)
             inner.set_margin_end(16)
@@ -828,9 +922,10 @@ class Window(PrivacyMixin, CallsMixin, GroupsMixin, Adw.ApplicationWindow):
                 suffix = datetime.datetime.fromtimestamp(when / 1000 if when > 10**11 else when).strftime("%d %b · %H:%M") if when else ""
             except (ValueError, OSError, OverflowError):
                 suffix = ""
-            meta = label(who + "   " + suffix, "pp-meta")
-            meta.add_css_class("pp-mono" if not outgoing else "pp-meta")
-            inner.append(meta)
+            inner.append(self.message_meta(message, outgoing, who, suffix))
+            quoted = self.reply_header(message)
+            if quoted is not None:
+                inner.append(quoted)
             if message.get("verb"):
                 state = "Review required" if message.get("autonomy") != "auto" else "Automatic handling allowed"
                 verb = label(state + " · " + str(message["verb"]), "pp-verb", wrap=True)
@@ -857,27 +952,23 @@ class Window(PrivacyMixin, CallsMixin, GroupsMixin, Adw.ApplicationWindow):
                               lambda a=attachment: self.save_attachment(a), style="pp-file")
                 save.set_halign(Gtk.Align.START)
                 inner.append(save)
-            actions = box(2, horizontal=True)
-            if message.get("expires_at"):
-                timer = Gtk.Image(icon_name="alarm-symbolic")
-                try:
-                    timer.set_tooltip_text("Disappears " + datetime.datetime.fromtimestamp(message["expires_at"]).strftime("%d %b %H:%M"))
-                except (ValueError, OSError, OverflowError):
-                    pass
-                timer.set_valign(Gtk.Align.CENTER)
-                actions.append(timer)
-            actions.append(button("Copy message", lambda m=message: self.get_clipboard().set(message_text(m)), "edit-copy-symbolic", "flat"))
-            actions.append(button("Delete message", lambda m=message: self.delete_message(m), "user-trash-symbolic", "flat"))
-            if not outgoing:
-                actions.append(button("Report spam", lambda m=message: self.report_message(m), "dialog-warning-symbolic", "flat"))
-                actions.append(button("Block sender", lambda m=message: self.block_sender(m), "action-unavailable-symbolic", "flat"))
-            inner.append(actions)
             bubble.append(inner)
-            bubble.set_margin_start(64 if outgoing else 0)
-            bubble.set_margin_end(0 if outgoing else 64)
-            self.message_list.append(bubble)
+            holder.append(bubble)
+            holder.append(self.bubble_actions(message, outgoing))
+            self.context_menu(bubble, self.message_menu(message, outgoing))
+            holder.add_css_class("pp-message")
+            holder.message = message
+            holder.set_margin_start(64 if outgoing else 0)
+            holder.set_margin_end(0 if outgoing else 64)
+            for reference in (message.get("msg_ref"), message.get("message_id")):
+                if reference:
+                    self.message_widgets[reference] = holder
+            self.message_list.append(holder)
         for line in pending:
             self.message_list.append(self.call_line(line))
+        for attempt in self.pending_here():
+            self.message_list.append(self.pending_bubble(attempt))
+        self.render_mode()
         self.update_send()
         if bottom and not query:
             GLib.idle_add(lambda: adj.set_value(max(0, adj.get_upper() - adj.get_page_size())))
@@ -890,13 +981,7 @@ class Window(PrivacyMixin, CallsMixin, GroupsMixin, Adw.ApplicationWindow):
         text = label(message_text(message), "pp-body", wrap=True)
         text.set_selectable(True)
         text.set_use_markup(False)
-        menu = Gio.Menu()
-        menu.append("Copy message", "message.copy")
-        menu.append("Delete message", "message.delete")
-        if message.get("direction") != "out":
-            menu.append("Report spam", "message.report")
-            menu.append("Block sender", "message.block")
-        text.set_extra_menu(menu)
+        text.set_extra_menu(self.message_menu(message, message.get("direction") == "out"))
         return text
 
     def call_line(self, line):
@@ -916,6 +1001,7 @@ class Window(PrivacyMixin, CallsMixin, GroupsMixin, Adw.ApplicationWindow):
         if not outgoing:
             handlers["report"] = lambda: self.report_message(message)
             handlers["block"] = lambda: self.block_sender(message)
+        self.extra_actions(message, outgoing, handlers)
         for name, handler in handlers.items():
             action = Gio.SimpleAction.new(name, None)
             action.connect("activate", lambda *_, run=handler: run())
@@ -938,14 +1024,7 @@ class Window(PrivacyMixin, CallsMixin, GroupsMixin, Adw.ApplicationWindow):
             return
         self.acking = True
         def ack():
-            succeeded = []
-            for mid in ids:
-                try:
-                    self.api.call("POST", "/v1/ack", identity, data={"message_id": mid})
-                    succeeded.append(mid)
-                except APIError:
-                    break
-            return succeeded
+            return self.ack_ids(identity, ids)
         def done(acked):
             self.acking = False
             for m in self.messages:
@@ -961,7 +1040,11 @@ class Window(PrivacyMixin, CallsMixin, GroupsMixin, Adw.ApplicationWindow):
 
     def draft_changed(self, buffer):
         if not self.rendering:
-            self.drafts[self.draft_key()] = buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), False)
+            key = self.draft_key()
+            self.drafts[key] = buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), False)
+            mode = self.compose_modes.get(key)
+            if not mode or mode["kind"] != "edit":
+                self.schedule_draft_save(key)  # an edit's text is not a draft; the saved draft waits
         self.update_send()
 
     def restore_draft(self):
@@ -984,7 +1067,8 @@ class Window(PrivacyMixin, CallsMixin, GroupsMixin, Adw.ApplicationWindow):
         self.voice_call_button.set_sensitive(bool(self.peer and self.identity))
         self.video_call_button.set_sensitive(bool(self.peer and self.identity))
         self.composer.set_sensitive(enabled)
-        self.attach_button.set_sensitive(enabled)
+        mode = self.compose_modes.get(self.draft_key())
+        self.attach_button.set_sensitive(enabled and not (mode and mode["kind"] == "edit"))
         self.send_button.set_sensitive(enabled and not self.staging.get(self.draft_key(), 0) and bool(self.drafts.get(self.draft_key(), "").strip() or self.files.get(self.draft_key())))
 
     def stage_started(self, key):
@@ -1025,6 +1109,9 @@ class Window(PrivacyMixin, CallsMixin, GroupsMixin, Adw.ApplicationWindow):
         if key in (Gdk.KEY_Return, Gdk.KEY_KP_Enter) and not state & Gdk.ModifierType.SHIFT_MASK:
             self.send()
             return True
+        if key == Gdk.KEY_Escape and self.compose_modes.get(self.draft_key()):
+            self.cancel_mode()
+            return True
         return False
 
     def shortcuts(self, _, key, code, state):
@@ -1046,44 +1133,7 @@ class Window(PrivacyMixin, CallsMixin, GroupsMixin, Adw.ApplicationWindow):
     def send(self):
         if not self.send_button.get_sensitive():
             return
-        key = self.draft_key()
-        identity, peer, selected = key
-        body = self.drafts.get(key, "").strip()
-        files = list(self.files.get(key, []))
-        thread = target_thread(selected, subjects(peer, self.messages, self.threads))
-        self.sending = True
-        self.update_send()
-        def send():
-            attachments = []
-            for file in files:
-                if not file.get("uploaded"):
-                    file["uploaded"] = self.api.upload(identity, file["name"], file["media_type"], file["content"])
-                attachments.append(file["uploaded"]["id"])
-            payload = {"from": identity, "to": peer, "body": body}
-            if thread:
-                payload["thread_id"] = thread
-            if attachments:
-                payload["attachments"] = attachments
-            return self.api.call("POST", "/v1/send", data=payload)
-        def sent(result):
-            self.sending = False
-            self.revision += 1
-            self.drafts.pop(key, None)
-            self.files.pop(key, None)
-            self.restore_draft()
-            self.keep_composer_focus(key)
-            self.toast("Message sent")
-            # Read immediately; the long-poll worker may still be waiting on another update.
-            self.reload_messages()
-        def failed(error):
-            self.sending = False
-            self.update_send()
-            self.keep_composer_focus(key)
-            message = self.error_text(error)
-            if getattr(error, "status", 0) == 0 or getattr(error, "status", 0) >= 500:
-                message += " Your draft is saved here. Check the conversation before retrying; delivery may have succeeded."
-            self.notice("Message could not be confirmed", message)
-        self._work(send, sent, failed)
+        self.send_protected()
 
     def keep_composer_focus(self, key):
         """Back to the message box after Send or Enter, so the next message can be typed at once.
@@ -1128,7 +1178,7 @@ class Window(PrivacyMixin, CallsMixin, GroupsMixin, Adw.ApplicationWindow):
 
     def reload_messages(self):
         identity, revision = self.identity, self.revision
-        self._work(lambda: self.api.inbox(identity),
+        self._work(lambda: self.read_inbox(identity),
                    lambda rows: self.sent_snapshot(rows) if revision == self.revision else None)
 
     def pick_file(self):
@@ -1428,6 +1478,9 @@ class Window(PrivacyMixin, CallsMixin, GroupsMixin, Adw.ApplicationWindow):
                                              lambda: self.blocked_settings(navigation)))
         if privacy_rows:
             settings_group(content, *privacy_rows)
+        pairing_rows = self.pairing_settings_rows(navigation) if self.identity else []
+        if pairing_rows:
+            settings_group(content, *pairing_rows)
         settings_group(content,
             settings_row("Handles", "Your names and subscriptions", "insert-link-symbolic", lambda: self.handles(navigation)),
             settings_row("Inbox and storage", "Storage and archived conversations", "mail-unread-symbolic", lambda: self.inbox_settings(navigation)),
@@ -1675,10 +1728,23 @@ class Window(PrivacyMixin, CallsMixin, GroupsMixin, Adw.ApplicationWindow):
         if self.page() != "conversation":
             self.main_stack.set_visible_child_name("conversation")
         self.new_group_button.set_visible(False)
+        for lease in (self.mailbox_lease, self.lease):
+            if lease is not None:
+                lease.retire()
+        self.lease = self.mailbox_lease = None
+        self.reset_calendar()
+        self.reset_orgs()
+        self.reset_pairing()
+        self.calendar_button.set_visible(False)
+        self.orgs_button.set_visible(False)
         self.sync_side_nav()
         self.identity = self.peer = self.subject = None
         self.messages, self.contacts, self.threads, self.archived, self.mailboxes = [], [], [], [], []
         self.drafts, self.files, self.quota, self.vocabulary = {}, {}, {}, {}
+        for timer in list(getattr(self, "draft_timers", {}).values()):
+            GLib.source_remove(timer)
+        self.memory_work = None
+        self.reset_messages()
         self.staging.clear()
         self.previews.clear()
         self.known_ids = None
@@ -1695,6 +1761,7 @@ class Window(PrivacyMixin, CallsMixin, GroupsMixin, Adw.ApplicationWindow):
             self.cancel.set()
             mailboxes = [row["address"] for row in self.mailboxes] if GROUPS in self.features else []
             clients = dict(self.group_clients)
+            owner = self.lease.owner if self.lease is not None else None
             self.generation += 1
             self.clear_account()
             self.show_signin("Signing out…")
@@ -1708,10 +1775,17 @@ class Window(PrivacyMixin, CallsMixin, GroupsMixin, Adw.ApplicationWindow):
                     self.retire_group_devices(mailboxes)
                 finally:
                     self.group_clients = {}
+                try:
+                    self.protected.forget_owner(owner)  # this account's drafts and unconfirmed work here
+                except Exception:
+                    pass
                 self.session.sign_out()
             self._work(leave, lambda _: self.show_signin("You have signed out."),
                        lambda error: self.show_signin("Could not clear your desktop keyring. Unlock it and sign out again."))
-        self.confirm("Sign out?", "Unsent drafts and staged attachments on this device will be discarded.", signout, "Sign out")
+        waiting = sum(len(rows) for rows in self.pending.values())
+        self.confirm("Sign out?", "Unsent drafts and staged attachments on this device will be discarded" +
+                     (f", and {waiting} unconfirmed {'message' if waiting == 1 else 'messages'} will be forgotten here." if waiting else "."),
+                     signout, "Sign out")
 
     def on_close(self, *_):
         self.closed = True

@@ -142,6 +142,14 @@ toast { background-color: @pp_toast; color: #FFFFFF; border-radius: 10px; }
 
 _registered = None
 
+# Feature modules add their own rules here at import time (theme.add_css); they use the tokens above.
+EXTRA_CSS = []
+
+
+def add_css(text):
+    if text not in EXTRA_CSS:
+        EXTRA_CSS.append(text)
+
 
 def register_fonts():
     """Add the bundled faces to this process's fontconfig set. Safe to call more than once."""
@@ -182,7 +190,7 @@ def stylesheet(dark):
         "success_color": tokens["green"], "warning_color": tokens["amber"],
     }
     defined += "".join(f"@define-color {name} {value};\n" for name, value in named.items())
-    return defined + STYLE
+    return defined + STYLE + "".join(EXTRA_CSS)
 
 
 class Design:

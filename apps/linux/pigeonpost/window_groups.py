@@ -18,11 +18,13 @@ from . import groupcrypto
 from .api import MAX_FILE, APIError
 from .features import (DISAPPEARING, E2EE_NOTE, GROUPS, HOSTED_NOTE, LIMITS_NOTE, ROLE_LABEL, SAFETY_NOTE, TIMERS, WARNINGS, can_post,
                        commit_lines, explain, is_admin, notice_text, parse_invite_link, preview_of, spaced, timer_label)
-from .groups_core import GroupClient, quote
+from .actions import MESSAGE_EDIT, MESSAGE_REPLY, RECEIPTS, group_tick, group_tick_names, quote_text
+from .groups_core import GroupClient, UncertainSend, quote
+from .message_ui import action_row, highlight, mode_bar, quote_block, tick_widget
 from .model import contact_for, display_name, safe_filename, valid_peer
 from .previews import viewer_kind
 from .viewer import AttachmentViewer
-from .widgets import action_row, box, button, clear, label, scroll, plain_row
+from .widgets import action_row as settings_action_row, box, button, clear, label, scroll, plain_row
 
 CALLS = "https://inbox.pigeonpost.dev/calls/v1"
 CYCLE_SECONDS = 8
@@ -31,6 +33,22 @@ CRYPTO_SECONDS = 20
 TOP_UP_SECONDS = 300
 CALL_POLL_SECONDS = 15
 FOREVER = 4102444800  # "muted" with no end, as the web inbox sets it
+RECEIPTS_SECONDS = 10
+RECONCILE_SECONDS = 60
+ACTION_ERRORS = {
+    "outbox_full": "Review the unconfirmed messages in your groups (retry or dismiss them) before sending more.",
+    "outbox_expired": "This message is more than a day old and can no longer be retried. Dismiss it.",
+    "not_editable": "This message can no longer be edited.",
+    "empty_edit": "An edited message needs text.",
+}
+
+
+def group_explain(error):
+    return ACTION_ERRORS.get(getattr(error, "code", None)) or explain(error)
+
+
+GROUP_WARNINGS = {**WARNINGS,
+                  "edit_unverified": "Security warning: a message claimed to change another one but could not be verified. Both are shown as sent."}
 
 
 class GroupsMixin:
@@ -56,6 +74,11 @@ class GroupsMixin:
         self.group_drafts = {}
         self.group_files = {}
         self.group_sending = False
+        self.group_mode = None           # {"gid", "kind": "edit"|"reply", "seq", "saved", ...}
+        self.group_receipts = {}         # gid → GET …/receipts, for ticks on the open group
+        self.group_receipts_at = {}
+        self.group_reconciled = {}
+        self.group_bubbles = {}          # seq → bubble widget of the open group (jump to a reply's parent)
 
     def groups_on(self):
         return GROUPS in self.features and self.group_state == "ready"
@@ -68,9 +91,14 @@ class GroupsMixin:
         return GroupStorage(gc)
 
     def group_api(self, mailbox):
+        # The client belongs to this mailbox under the login that made it: a later sign-in to
+        # another account never posts this mailbox's queued work (binding.Lease).
+        lease = getattr(self, "lease", None)
+        api = self.api_for(lease) if hasattr(self, "api_for") else self.api
+
         def call(method, path, body=None, device=None, raw=None, binary=False):
-            return self.api.scoped(method, path, mailbox, body, device=device, raw=raw, binary=binary,
-                                   timeout=120 if raw is not None or binary else 35)
+            return api.scoped(method, path, mailbox, body, device=device, raw=raw, binary=binary,
+                              timeout=120 if raw is not None or binary else 35)
         return call
 
     def client_for(self, mailbox):
@@ -141,6 +169,7 @@ class GroupsMixin:
         open_gid = self.group_open
         top_up = time.monotonic() - self.group_last_top_up >= TOP_UP_SECONDS
         crypto_due = {gid for gid, at in self.group_last_crypto.items() if time.monotonic() - at < CRYPTO_SECONDS}
+        reconcile = open_gid if open_gid and (force or time.monotonic() - self.group_reconciled.get(open_gid, 0) >= RECONCILE_SECONDS) else None
 
         def cycle():
             if top_up:
@@ -176,12 +205,19 @@ class GroupsMixin:
                 except Exception as exc:
                     if getattr(exc, "code", None) in ("not_member", "group_deleted"):
                         continue
+            if reconcile and client.in_group(reconcile):
+                try:
+                    client.reconcile(reconcile)
+                except Exception:
+                    pass  # tried again on a later pass
             client.prune_expired()
             return groups, checked
 
         def done(result):
             self.group_busy = False
             groups, checked = result
+            if reconcile:
+                self.group_reconciled[reconcile] = time.monotonic()
             for gid in checked:
                 self.group_last_crypto[gid] = time.monotonic()
             if top_up:
@@ -192,6 +228,7 @@ class GroupsMixin:
             if self.group_open:
                 self.render_group_view()
                 self.mark_group_read()
+                self.load_group_receipts(self.group_open)
 
         def failed(error):
             self.group_busy = False
@@ -385,6 +422,8 @@ class GroupsMixin:
         page.append(self.group_announce)
         self.group_chips = box(horizontal=True, margin=8)
         page.append(self.group_chips)
+        self.group_mode_holder = box(0)
+        page.append(self.group_mode_holder)
         composer = box(6, horizontal=True, margin=16)
         composer.set_margin_top(4)
         composer.add_css_class("pp-composer")
@@ -412,6 +451,8 @@ class GroupsMixin:
         return page
 
     def open_group(self, gid):
+        if self.group_mode:
+            self.cancel_group_mode()
         self.group_open = gid
         self.peer = self.subject = None
         self.group_call = None
@@ -419,12 +460,14 @@ class GroupsMixin:
         self.show_page("group")
         self.render_group_view()
         self.restore_group_draft()
+        self.render_group_mode()
         self.render_peers()
         self.mark_group_read()
         client = self.group_client()
         if client and self.group_state == "ready":
             mailbox = self.identity
             self._work(lambda: self.load_group_members(mailbox, gid), lambda _: self.render_group_view(), lambda _: None)
+            self.load_group_receipts(gid, force=True)
             self.groups_cycle()
 
     def load_group_members(self, mailbox, gid):
@@ -492,6 +535,7 @@ class GroupsMixin:
         adj = self.group_scroll.get_vadjustment()
         bottom = adj.get_value() + adj.get_page_size() >= adj.get_upper() - 80
         clear(self.group_messages)
+        self.group_bubbles = {}
         client = self.group_client()
         if not client:
             return
@@ -527,12 +571,15 @@ class GroupsMixin:
                 last_sender = None
                 continue
             if kind == "warning":
-                self.group_messages.append(self.system_line(WARNINGS.get(item.get("warning"), "Security warning."), security=True))
+                self.group_messages.append(self.system_line(GROUP_WARNINGS.get(item.get("warning"), "Security warning."), security=True))
                 last_sender = None
                 continue
-            if kind != "message" or item.get("replaced_by"):
+            if kind != "message" or item.get("replaced_by") is not None:
                 continue
-            self.group_messages.append(self.group_bubble(g, item, show_sender=item.get("sender") != last_sender))
+            bubble = self.group_bubble(g, item, show_sender=item.get("sender") != last_sender)
+            self.group_messages.append(bubble)
+            if isinstance(item.get("seq"), int):
+                self.group_bubbles[item["seq"]] = bubble
             last_sender = item.get("sender")
         if bottom:
             GLib.idle_add(lambda: (adj.set_value(max(0, adj.get_upper() - adj.get_page_size())), False)[1])
@@ -548,7 +595,10 @@ class GroupsMixin:
 
     def group_bubble(self, g, item, show_sender):
         mine = item.get("sender") == self.identity
+        gid = g["id"]
+        client = self.group_client()
         outer = box(8, horizontal=True)
+        outer.add_css_class("pp-message")
         outer.set_halign(Gtk.Align.END if mine else Gtk.Align.START)
         sender_key = self.group_handles.get(item.get("sender")) or item.get("sender")
         if not mine:
@@ -558,6 +608,8 @@ class GroupsMixin:
                 holder.append(self.avatars.widget(sender_key, self.name_of(item.get("sender")), 28))
             holder.set_valign(Gtk.Align.START)
             outer.append(holder)
+        column = box(2)
+        column.set_halign(Gtk.Align.END if mine else Gtk.Align.START)
         bubble = box(6)
         bubble.add_css_class("pp-bubble")
         if mine:
@@ -568,10 +620,15 @@ class GroupsMixin:
         if not mine and show_sender:
             inner.append(label(self.name_of(item.get("sender")), "pp-meta"))
         hidden = not mine and (self.blocked(sender_key) or self.blocked(item.get("sender")))
+        readable = not (item.get("deleted") or item.get("undecryptable") or item.get("missing") or hidden)
+        if item.get("reply_to") and readable:
+            inner.append(self.group_quote(gid, item))
         if item.get("deleted"):
             inner.append(label("This message was deleted", "dim-label"))
         elif item.get("undecryptable"):
             inner.append(label("Encrypted message — not readable on this device", "dim-label"))
+        elif item.get("missing"):
+            inner.append(label("An earlier version of this message is not on this device", "dim-label"))
         elif hidden:
             inner.append(label("Message from someone you blocked", "dim-label"))
         else:
@@ -583,11 +640,12 @@ class GroupsMixin:
             for file in item.get("files") or []:
                 name = safe_filename(file.get("name") or "file")
                 opener = button(name + (" · " + self.size_label(file.get("size")) if file.get("size") else ""),
-                                lambda f=file: self.group_open_file(g["id"], f), style="pp-file")
+                                lambda f=file: self.group_open_file(gid, f), style="pp-file")
                 opener.set_halign(Gtk.Align.START)
                 opener.update_property([Gtk.AccessibleProperty.LABEL], ["Open " + name])
                 inner.append(opener)
         meta = box(6, horizontal=True)
+        meta.set_halign(Gtk.Align.END if mine else Gtk.Align.START)
         if item.get("expires_at"):
             timer = Gtk.Image(icon_name="alarm-symbolic")
             try:
@@ -596,19 +654,237 @@ class GroupsMixin:
                 pass
             meta.append(timer)
         at = item.get("created_at")
-        meta.append(label("Sending…" if item.get("pending") else (datetime.datetime.fromtimestamp(at).strftime("%H:%M") if at else ""), "pp-meta"))
-        if item.get("edit_of"):
-            meta.append(label("edited", "pp-meta"))
-        if not item.get("deleted") and isinstance(item.get("seq"), int) and (mine or is_admin(g)) and not item.get("pending"):
-            delete = button("Delete this message for everyone", lambda s=item["seq"]: self.group_delete_message(g["id"], s), "user-trash-symbolic", "flat")
-            meta.append(delete)
-        if not mine and item.get("sender") and not hidden:
-            meta.append(button("Block sender", lambda: self.ask_block(sender_key, self.name_of(item.get("sender"))), "action-unavailable-symbolic", "flat"))
+        if item.get("uncertain"):
+            when = "Not confirmed"
+        elif item.get("pending"):
+            when = "Sending…"
+        else:
+            when = datetime.datetime.fromtimestamp(at).strftime("%H:%M") if at else ""
+        meta.append(label(when, "pp-meta"))
+        if item.get("edit_of") and readable:
+            meta.append(label("edited", "pp-edited"))
+        if mine and readable and not item.get("uncertain"):
+            if item.get("pending"):
+                state, accessible = "sending", "Sending"
+            elif RECEIPTS in self.features and isinstance(item.get("seq"), int):
+                state, accessible = group_tick(item["seq"], self.group_receipts.get(gid))
+            else:
+                state, accessible = "sent", "Sent"
+            meta.append(tick_widget(state, accessible))
         inner.append(meta)
         bubble.append(inner)
-        outer.append(bubble)
+        column.append(bubble)
+        actions = self.group_message_actions(g, item, mine, readable, sender_key)
+        buttons = []
+        if item.get("uncertain"):
+            entry = next((e for e in (client.outbox(gid) if client else []) if e["cmid"] == item.get("cmid")), None)
+            if entry and entry["retryable"]:
+                buttons.append(("Retry sending", "view-refresh-symbolic", lambda c=item.get("cmid"): self.group_retry(gid, c)))
+            buttons.append(("Dismiss on this device", "edit-clear-symbolic", lambda c=item.get("cmid"): self.group_dismiss(gid, c)))
+            if item.get("text"):
+                buttons.append(("Copy message", "edit-copy-symbolic", actions["copy"]))
+        elif readable and not item.get("pending"):
+            if mine:
+                if "edit" in actions:
+                    buttons.append(("Edit message", "document-edit-symbolic", actions["edit"]))
+                buttons.append(("Copy message", "edit-copy-symbolic", actions["copy"]))
+            else:
+                buttons.append(("Copy message", "edit-copy-symbolic", actions["copy"]))
+                if "reply" in actions:
+                    buttons.append(("Reply", "mail-reply-sender-symbolic", actions["reply"]))
+        row = action_row(mine, buttons) if buttons or actions else None
+        if row is not None:
+            menu = self.group_menu(actions)
+            if menu is not None:
+                more = Gtk.MenuButton(icon_name="view-more-symbolic", menu_model=menu)
+                more.add_css_class("flat")
+                more.set_tooltip_text("More actions")
+                more.update_property([Gtk.AccessibleProperty.LABEL], ["More actions"])
+                row.append(more)
+                click = Gtk.GestureClick(button=3)
+
+                def pressed(_, _n, x, y, model=menu, anchor=bubble):
+                    # Made on demand and unparented when it closes, so a redraw leaves nothing behind.
+                    popover = Gtk.PopoverMenu.new_from_model(model)
+                    popover.set_parent(anchor)
+                    popover.set_has_arrow(False)
+                    rect = Gdk.Rectangle()
+                    rect.x, rect.y, rect.width, rect.height = int(x), int(y), 1, 1
+                    popover.set_pointing_to(rect)
+                    popover.connect("closed", lambda p: GLib.idle_add(lambda: (p.unparent() if p.get_parent() else None, False)[1]))
+                    popover.popup()
+                click.connect("pressed", pressed)
+                bubble.add_controller(click)
+                long_press = Gtk.GestureLongPress()
+                long_press.connect("pressed", lambda _, x, y, f=pressed: f(None, 1, x, y))
+                bubble.add_controller(long_press)
+            column.append(row)
+        group = Gio.SimpleActionGroup()
+        for name, handler in actions.items():
+            action = Gio.SimpleAction.new(name, None)
+            action.connect("activate", lambda *_, run=handler: run())
+            group.add_action(action)
+        outer.insert_action_group("gmsg", group)
+        outer.append(column)
         outer.item = item
+        outer.bubble = bubble
+        outer.actions = actions
+        outer.action_row = row
         return outer
+
+    def group_message_actions(self, g, item, mine, readable, sender_key):
+        """Every action of one message: the row shows the frequent ones, the menu keeps all."""
+        gid, client = g["id"], self.group_client()
+        seq = item.get("seq") if isinstance(item.get("seq"), int) else None
+        actions = {}
+        if not readable or item.get("pending"):
+            if item.get("uncertain") and item.get("text"):
+                actions["copy"] = lambda: self.get_clipboard().set(item.get("text") or "")
+            return actions
+        actions["copy"] = lambda: self.get_clipboard().set(item.get("text") or "")
+        posting = can_post(g) and bool(client and client.in_group(gid)) and not g.get("deleted_at")
+        if MESSAGE_REPLY in self.features and seq is not None and posting:
+            actions["reply"] = lambda: self.start_group_reply(gid, item)
+        if mine and MESSAGE_EDIT in self.features and seq is not None and posting and client and client.editable(gid, seq):
+            actions["edit"] = lambda: self.start_group_edit(gid, item)
+        if seq is not None:
+            actions["info"] = lambda: self.group_message_info(gid, seq)
+        if seq is not None and (mine or is_admin(g)):
+            actions["delete"] = lambda: self.group_delete_message(gid, seq)
+        if not mine and item.get("sender"):
+            actions["block"] = lambda: self.ask_block(sender_key, self.name_of(item.get("sender")))
+        return actions
+
+    @staticmethod
+    def group_menu(actions):
+        names = [("reply", "Reply"), ("copy", "Copy message"), ("edit", "Edit message"), ("info", "Message info"),
+                 ("delete", "Delete for everyone…"), ("block", "Block sender…")]
+        menu = Gio.Menu()
+        for name, text in names:
+            if name in actions:
+                menu.append(text, "gmsg." + name)
+        return menu if menu.get_n_items() else None
+
+    def group_quote(self, gid, item):
+        client = self.group_client()
+        try:
+            parent_seq = int(item["reply_to"])
+        except (TypeError, ValueError):
+            parent_seq = None
+        parent = client.current(gid, parent_seq) if client and parent_seq is not None else None
+        if not parent or parent.get("deleted") or parent.get("missing") or parent.get("undecryptable"):
+            return quote_block("Reply", "Message unavailable")
+        name = self.name_of(parent.get("sender"))
+        text = quote_text(parent.get("text")) or ("📎 " + parent["files"][0]["name"] if parent.get("files") else "Message")
+        target = parent.get("seq")
+        return quote_block(name, text, lambda: self.jump_to_group_message(target))
+
+    def jump_to_group_message(self, seq):
+        widget = self.group_bubbles.get(seq)
+        if widget is None:
+            self.toast("The original message is not on this device any more.")
+            return
+        ok, bounds = widget.compute_bounds(self.group_messages)
+        if ok:
+            adj = self.group_scroll.get_vadjustment()
+            adj.set_value(max(0, min(bounds.get_y() - 40, adj.get_upper() - adj.get_page_size())))
+        highlight(getattr(widget, "bubble", widget))
+        widget.grab_focus()
+
+    def load_group_receipts(self, gid, force=False):
+        if RECEIPTS not in self.features or not gid:
+            return
+        client = self.group_client()
+        if not client or not client.in_group(gid):
+            return
+        if not force and time.monotonic() - self.group_receipts_at.get(gid, 0) < RECEIPTS_SECONDS:
+            return
+        self.group_receipts_at[gid] = time.monotonic()
+
+        def loaded(receipts):
+            if not isinstance(receipts, dict):
+                return
+            changed = self.group_receipts.get(gid) != receipts
+            self.group_receipts[gid] = receipts
+            if changed and gid == self.group_open and self.page() == "group":
+                self.render_group_view()
+        self._work(lambda: client.receipts(gid), loaded, lambda _: None)
+
+    def group_message_info(self, gid, seq):
+        client = self.group_client()
+        if not client:
+            return
+        item = client.current(gid, seq) or {}
+        info = client.versions(gid, seq)
+        window, content = self.dialog("Message info")
+        window.info_content = content
+        at = item.get("created_at")
+        who = self.name_of(item.get("sender"))
+        content.append(label(f"From {who}" + (" · " + datetime.datetime.fromtimestamp(at).strftime("%d %b %Y %H:%M") if at else ""), "heading"))
+        content.append(label("Versions on this device", "heading"))
+        for version in info["versions"]:
+            when = datetime.datetime.fromtimestamp(version["created_at"]).strftime("%d %b %H:%M") if version.get("created_at") else ""
+            row = box(2)
+            row.append(label(when, "pp-meta"))
+            text = label(version.get("text") or "", wrap=True)
+            text.set_selectable(True)
+            row.append(text)
+            content.append(row)
+        if info["missing"]:
+            content.append(label("Some earlier versions were sent before this device received them, so they are not shown.", "dim-label", wrap=True))
+        if item.get("sender") == self.identity and RECEIPTS in self.features and isinstance(item.get("seq"), int):
+            receipts = self.group_receipts.get(gid)
+            seen, delivered, waiting = group_tick_names(item["seq"], receipts, self.name_of)
+            content.append(label("Receipts", "heading"))
+            for title, names in (("Seen by", seen), ("Delivered to", delivered), ("Not delivered yet", waiting)):
+                if names:
+                    content.append(label(f"{title}: " + ", ".join(names), wrap=True))
+            if receipts and not receipts.get("read_receipts", True):
+                content.append(label("You turned read receipts off, so you don’t see who has read your messages.", "dim-label", wrap=True))
+        window.present()
+        return window
+
+    # ---- reply and edit modes ------------------------------------------------------------------
+
+    def start_group_reply(self, gid, item):
+        if self.group_mode:
+            self.cancel_group_mode()
+        name = self.name_of(item.get("sender"))
+        self.group_mode = {"gid": gid, "kind": "reply", "seq": item["seq"], "name": name, "text": quote_text(item.get("text"))}
+        self.render_group_mode()
+        self.group_composer.grab_focus()
+
+    def start_group_edit(self, gid, item):
+        if self.group_mode:
+            self.cancel_group_mode()
+        self.group_mode = {"gid": gid, "kind": "edit", "seq": item["seq"], "saved": self.group_drafts.get(gid, ""),
+                           "original": item.get("text") or ""}
+        self.rendering = True
+        self.group_composer.get_buffer().set_text(item.get("text") or "")
+        self.rendering = False
+        self.render_group_mode()
+        self.update_group_send()
+        self.group_composer.grab_focus()
+
+    def cancel_group_mode(self):
+        """✕ or Esc: leave reply/edit mode; an edit gives the ordinary draft back."""
+        mode, self.group_mode = self.group_mode, None
+        if mode and mode["kind"] == "edit":
+            self.group_drafts[mode["gid"]] = mode.get("saved", "")
+            if mode["gid"] == self.group_open:
+                self.restore_group_draft()
+        self.render_group_mode()
+        self.update_group_send()
+
+    def render_group_mode(self):
+        clear(self.group_mode_holder)
+        mode = self.group_mode
+        if not mode or mode["gid"] != self.group_open:
+            return
+        if mode["kind"] == "edit":
+            self.group_mode_holder.append(mode_bar("Editing message", None, self.cancel_group_mode))
+        else:
+            self.group_mode_holder.append(mode_bar("Replying to " + mode["name"], mode.get("text"), self.cancel_group_mode))
 
     @staticmethod
     def size_label(size):
@@ -631,7 +907,12 @@ class GroupsMixin:
 
     def group_draft_changed(self, buffer):
         if not self.rendering and self.group_open:
-            self.group_drafts[self.group_open] = buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), False)
+            text = buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), False)
+            mode = self.group_mode
+            if mode and mode["kind"] == "edit" and mode["gid"] == self.group_open:
+                mode["text"] = text
+            else:
+                self.group_drafts[self.group_open] = text
         self.update_group_send()
 
     def restore_group_draft(self):
@@ -648,9 +929,20 @@ class GroupsMixin:
         ready = bool(gid and not self.group_sending)
         self.group_composer.set_sensitive(ready)
         self.group_attach.set_sensitive(ready)
+        mode = self.group_mode if self.group_mode and self.group_mode["gid"] == gid else None
+        if mode and mode["kind"] == "edit":
+            text = mode.get("text", mode.get("original", ""))
+            self.group_attach.set_sensitive(False)
+            self.group_send_button.set_sensitive(ready and bool(text.strip()))
+            self.group_send_button.set_tooltip_text("Save edit")
+            return
+        self.group_send_button.set_tooltip_text("Send to group")
         self.group_send_button.set_sensitive(ready and bool(self.group_drafts.get(gid, "").strip() or self.group_files.get(gid)))
 
     def group_composer_keys(self, _, key, code, state):
+        if key == Gdk.KEY_Escape and self.group_mode:
+            self.cancel_group_mode()
+            return True
         if key in (Gdk.KEY_Return, Gdk.KEY_KP_Enter) and not state & Gdk.ModifierType.SHIFT_MASK:
             self.group_send()
             return True
@@ -701,11 +993,20 @@ class GroupsMixin:
         gid, client = self.group_open, self.group_client()
         if not gid or not client or not self.group_send_button.get_sensitive():
             return
+        mode = self.group_mode if self.group_mode and self.group_mode["gid"] == gid else None
+        if mode and mode["kind"] == "edit":
+            return self.group_save_edit(gid, client, mode)
         text = self.group_drafts.get(gid, "").strip()
         files = list(self.group_files.get(gid, []))
+        doc = {"text": text, "files": files}
+        if mode and mode["kind"] == "reply":
+            doc["reply_to"] = mode["seq"]
         self.group_sending = True
         self.group_drafts.pop(gid, None)
         self.group_files.pop(gid, None)
+        if mode:
+            self.group_mode = None
+            self.render_group_mode()
         self.restore_group_draft()
 
         def sent(_):
@@ -718,14 +1019,78 @@ class GroupsMixin:
 
         def failed(error):
             self.group_sending = False
+            if isinstance(error, UncertainSend):
+                # Kept with its exact request: the bubble offers Retry or Dismiss.
+                self.update_group_send()
+                if gid == self.group_open:
+                    self.render_group_view()
+                self.toast("Not confirmed. Check the conversation, then retry or dismiss it.")
+                return
             self.group_drafts[gid] = text
             self.group_files[gid] = files
+            if mode and gid == self.group_open and not self.group_mode:
+                self.group_mode = mode
+                self.render_group_mode()
             if gid == self.group_open:
                 self.restore_group_draft()
                 self.render_group_view()
-            self.toast("Not sent: " + explain(error))
-        self._work(lambda: client.send(gid, {"text": text, "files": files}), sent, failed)
+            self.toast("Not sent: " + group_explain(error))
+        self._work(lambda: client.send(gid, doc), sent, failed)
         self.render_group_view()
+
+    def group_save_edit(self, gid, client, mode):
+        text = mode.get("text", mode.get("original", "")).strip()
+        if not text or text == (mode.get("original") or "").strip():
+            self.cancel_group_mode()
+            return
+        self.group_sending = True
+        self.update_group_send()
+
+        def done(_):
+            self.group_sending = False
+            if self.group_mode is mode:
+                self.cancel_group_mode()
+            if gid == self.group_open:
+                self.render_group_view()
+            self.render_peers()
+
+        def failed(error):
+            self.group_sending = False
+            if isinstance(error, UncertainSend):
+                if self.group_mode is mode:
+                    self.cancel_group_mode()
+                if gid == self.group_open:
+                    self.render_group_view()
+                self.toast("Edit not confirmed. Check the conversation, then retry or dismiss it.")
+                return
+            self.update_group_send()
+            self.toast("Not saved: " + group_explain(error))
+        self._work(lambda: client.edit(gid, mode["seq"], text), done, failed)
+
+    def group_retry(self, gid, cmid):
+        client = self.group_client()
+        if not client:
+            return
+
+        def done(_):
+            if gid == self.group_open:
+                self.render_group_view()
+            self.toast("Sent")
+
+        def failed(error):
+            if gid == self.group_open:
+                self.render_group_view()
+            self.toast("Still not confirmed. Try again later." if isinstance(error, UncertainSend) else "Not sent: " + group_explain(error))
+        self._work(lambda: client.retry_outbox(cmid), done, failed)
+
+    def group_dismiss(self, gid, cmid):
+        client = self.group_client()
+        if not client:
+            return
+        self.confirm("Dismiss this message on this device?",
+                     "If it already reached the group, it stays there; delete it for everyone from the conversation.",
+                     lambda: self._work(lambda: client.dismiss_outbox(cmid),
+                                        lambda _: self.render_group_view() if gid == self.group_open else None), "Dismiss")
 
     def group_open_file(self, gid, file):
         client = self.group_client()
@@ -741,14 +1106,17 @@ class GroupsMixin:
         self._work(read, opened, lambda error: self.toast("Could not open the file: " + explain(error)))
 
     def group_delete_message(self, gid, seq):
-        mailbox = self.identity
         client = self.group_client()
+        if not client:
+            return
 
         def delete():
-            self.api.scoped("DELETE", f"/v1/groups/{quote(gid)}/messages/{int(seq)}", mailbox)
-            client.sync(gid)
+            # The postbox erases every version of this message; so does this device.
+            client.delete_message(gid, seq)
+            if self.group_mode and self.group_mode["gid"] == gid and self.group_mode["kind"] == "edit":
+                GLib.idle_add(lambda: (self.cancel_group_mode() if self.group_mode and self.group_mode["kind"] == "edit" else None, False)[1])
         self.confirm("Delete this message for everyone?",
-                     "It is removed from the postbox. Copies people already saw on their screens stay where they are.",
+                     "Every version is removed from the postbox. Copies people already saw on their screens stay where they are.",
                      lambda: self._work(delete, lambda _: self.render_group_view(), lambda error: self.toast(explain(error))))
 
     # ---- calls: they run in the web inbox ------------------------------------------------------
@@ -991,7 +1359,7 @@ class GroupsMixin:
             if member.get("state") in ("active", "keying") or (admin and member.get("state") == "invited"):
                 listing.append(self.member_row(g, member, client))
         if not members:
-            listing.append(action_row(title="Loading members…"))
+            listing.append(settings_action_row(title="Loading members…"))
         content.append(listing)
         if admin or (g.get("members_can_invite") and (g.get("my") or {}).get("state") == "active"):
             add = box(6, horizontal=True)
@@ -1130,7 +1498,7 @@ class GroupsMixin:
             holder.set_child(actions)
             row.add_row(holder)
         if state == "active":
-            devices_row = action_row(title="Devices", subtitle="Loading…")
+            devices_row = settings_action_row(title="Devices", subtitle="Loading…")
             devices_row.set_subtitle_lines(0)
             row.add_row(devices_row)
             row.connect("notify::expanded", lambda r, _: self.load_member_devices(address, devices_row, client) if r.get_expanded() else None)

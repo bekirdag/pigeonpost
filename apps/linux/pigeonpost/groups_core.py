@@ -30,6 +30,22 @@ SELF_UPDATE_AFTER = 7 * 24 * 3600   # P-2 §13.7: refresh an idle leaf at least 
 TIMERS = [None, 300, 3600, 28800, 86400, 604800, 2419200]
 BASE32 = "abcdefghijklmnopqrstuvwxyz234567"
 REMOVE_GONE = ("not_member", "group_deleted", "not_found", "feature_disabled")
+EDIT_WINDOW = 24 * 3600              # an edit is allowed within 24 h of the chain's original
+OUTBOX_LIMIT = 16                    # unconfirmed sends kept for an explicit retry (docs/groups.md)
+OUTBOX_BYTES = 8 * 1024 * 1024
+OUTBOX_RETRY_SECONDS = 24 * 3600
+RECONCILE_PAGES = 20                 # metadata-only pages per reconciliation (100 items each)
+
+
+def _int(value):
+    """A message seq from the encrypted body (a string) or the envelope (an int); None otherwise."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdigit() and len(value) <= 18:
+        return int(value)
+    return None
 
 
 def b64(data):
@@ -73,6 +89,23 @@ class GroupError(Exception):
     def __init__(self, status, code, body=None):
         super().__init__(code)
         self.status, self.code, self.body = status, code, body or {}
+
+
+class UncertainSend(GroupError):
+    """The post may or may not have reached the postbox. Its exact request is kept in the sealed
+    record for an explicit Retry (same bytes) or Dismiss; it is never replayed automatically."""
+
+    def __init__(self, cmid):
+        super().__init__(0, "send_uncertain")
+        self.cmid = cmid
+
+
+def ambiguous(error):
+    """No answer, or a server failure: the request may have been processed."""
+    if not hasattr(error, "status"):
+        return False  # a local failure (library, bug): nothing reached the network layer
+    status = status_of(error)
+    return status in (0, 408) or (isinstance(status, int) and status >= 500)
 
 
 def status_of(error):
@@ -179,6 +212,55 @@ class GroupClient:
     def history_of(self, gid):
         return self.record.setdefault("history", {}).setdefault(gid, [])
 
+    def _find(self, gid, seq):
+        if seq is None:
+            return None
+        for x in self.history_of(gid):
+            if x.get("kind") == "message" and x.get("seq") == seq:
+                return x
+        return None
+
+    def _root_of(self, gid, item):
+        """The original of an edit chain on this device (following verified edit links only)."""
+        seen = set()
+        while item and item.get("edit_of") and (item.get("edit_verified") or item.get("edit_link") == "server") and item.get("seq") not in seen:
+            seen.add(item.get("seq"))
+            parent = self._find(gid, _int(item["edit_of"]))
+            if not parent:
+                break
+            item = parent
+        return item
+
+    def _chain(self, gid, item):
+        """Every version of `item`'s chain this device holds, oldest first."""
+        root = self._root_of(gid, item)
+        if not root:
+            return []
+        chain, current, seen = [root], root, {root.get("seq")}
+        while current.get("replaced_by") is not None:
+            nxt = self._find(gid, current["replaced_by"])
+            if not nxt or nxt.get("seq") in seen or nxt.get("sender") != root.get("sender"):
+                break
+            chain.append(nxt)
+            seen.add(nxt.get("seq"))
+            current = nxt
+        return chain
+
+    def _link_missing(self, gid, placeholder):
+        """A verified edit replaced a version this device never received. That version's own
+        envelope names the one before it; follow such links only within the same sender, only to
+        earlier versions not replaced by anything else, and mark the history as incomplete."""
+        seen = set()
+        while placeholder and placeholder.get("missing") and placeholder.get("seq") not in seen:
+            seen.add(placeholder.get("seq"))
+            earlier = self._find(gid, placeholder.get("server_edit_of"))
+            if (not earlier or earlier.get("sender") != placeholder.get("sender") or earlier.get("seq") >= placeholder.get("seq")
+                    or earlier.get("deleted") or (earlier.get("replaced_by") not in (None, placeholder.get("seq")))):
+                return
+            earlier["replaced_by"] = placeholder["seq"]
+            placeholder.update(edit_of=str(earlier["seq"]), edit_link="server")
+            placeholder = earlier
+
     def remember(self, gid, item):
         items = self.history_of(gid)
         if item.get("seq") is not None:
@@ -214,6 +296,8 @@ class GroupClient:
                 self.record = None
             if not self.record or not self.device:
                 self.enrol()
+            elif self.record.get("outbox"):
+                self.recover_outbox()
             return {"device_id": self.record["device_id"], "persistent": getattr(self.storage, "persistent", True)}
 
     def enrol(self):
@@ -425,16 +509,30 @@ class GroupClient:
                 return "commit"
             return "skipped"
         if kind == "application":
-            if item.get("deleted_at") or item.get("ciphertext") is None:
+            if item.get("deleted_at"):
+                self._erase_chain(gid, item["seq"])
                 self.remember(gid, {"kind": "message", "seq": item["seq"], "sender": item.get("sender"), "deleted": True,
-                                    "created_at": item.get("created_at"), "expires_at": item.get("expires_at"),
-                                    "replaced_by": item.get("replaced_by")})
+                                    "created_at": item.get("created_at"), "expires_at": item.get("expires_at")})
+                return "message"
+            if item.get("ciphertext") is None:
+                # An earlier version this device never received (the postbox cleared it when it was
+                # edited). The server's replaced_by is only a hint: it hides nothing until a verified
+                # edit from the same sender folds it.
+                self.remember(gid, {"kind": "message", "seq": item["seq"], "sender": item.get("sender"), "missing": True,
+                                    "server_replaced_by": item.get("replaced_by"), "server_edit_of": _int(item.get("edit_of")),
+                                    "created_at": item.get("created_at"), "expires_at": item.get("expires_at")})
                 return "message"
             if self.is_own(item):
                 # Recorded when it was sent; the server copy only confirms its seq.
                 for mine in self.history_of(gid):
                     if mine.get("kind") == "message" and mine.get("cmid") == item.get("client_message_id"):
-                        mine.update(seq=item["seq"], created_at=item.get("created_at"), expires_at=item.get("expires_at"), pending=False)
+                        mine.update(seq=item["seq"], created_at=item.get("created_at"), expires_at=item.get("expires_at"),
+                                    pending=False, uncertain=False)
+                        self._outbox_drop(item.get("client_message_id"))
+                        if mine.get("edit_of") is not None:
+                            target = self._find(gid, _int(mine["edit_of"]))
+                            if target and target.get("sender") == self.mailbox:
+                                target["replaced_by"] = item["seq"]
                         self.history_of(gid).sort(key=sort_key)
                         break
                 return "skipped"
@@ -455,14 +553,39 @@ class GroupClient:
             doc = decode_body(message.body)
             refs = list(message.attachments or [])
             files = [{**f, "ref": ref_json(refs[i]) if i < len(refs) else None} for i, f in enumerate(doc["files"])]
-            edit_of = doc["edit_of"] or (str(item["edit_of"]) if item.get("edit_of") is not None else None)
-            self.remember(gid, {"kind": "message", "seq": item["seq"], "sender": item.get("sender"), "sender_device": item.get("sender_device"),
-                                "cmid": item.get("client_message_id"), "text": doc["text"], "files": files, "reply_to": doc["reply_to"],
-                                "edit_of": edit_of, "created_at": item.get("created_at"), "expires_at": item.get("expires_at")})
-            if item.get("edit_of") is not None:
-                for target in self.history_of(gid):
-                    if target.get("kind") == "message" and target.get("seq") == int(item["edit_of"]):
-                        target["replaced_by"] = item["seq"]
+            sender = item.get("sender")
+            entry = {"kind": "message", "seq": item["seq"], "sender": sender, "sender_device": item.get("sender_device"),
+                     "cmid": item.get("client_message_id"), "text": doc["text"], "files": files, "reply_to": None,
+                     "edit_of": None, "created_at": item.get("created_at"), "expires_at": item.get("expires_at")}
+            # A reply is shown only when the reference inside the encrypted body and the sequenced
+            # envelope agree, and only to an earlier message.
+            body_reply, wire_reply = _int(doc["reply_to"]), _int(item.get("reply_to"))
+            if body_reply is not None and body_reply == wire_reply and body_reply < item["seq"]:
+                entry["reply_to"] = str(body_reply)
+            # An edit folds only a verified, earlier version from the same sender: the encrypted
+            # reference must equal the envelope's, and the target must be that sender's current
+            # version. Anything else stays an ordinary message with a warning; server-only hints
+            # never replace text.
+            body_edit, wire_edit = _int(doc["edit_of"]), _int(item.get("edit_of"))
+            warning = None
+            if body_edit is not None or wire_edit is not None:
+                target = self._find(gid, body_edit) if body_edit is not None and body_edit == wire_edit and body_edit < item["seq"] else None
+                if body_edit is None or body_edit != wire_edit:
+                    warning = "edit_unverified"
+                elif target is None:
+                    # The earlier version never reached this device: an edit with missing history.
+                    entry.update(edit_of=str(body_edit), edit_verified=True, history_missing=True)
+                elif (target.get("sender") != sender or target.get("deleted") or target.get("undecryptable")
+                      or (target.get("replaced_by") is not None and target.get("replaced_by") != item["seq"])):
+                    warning = "edit_unverified"
+                else:
+                    entry.update(edit_of=str(body_edit), edit_verified=True,
+                                 history_missing=bool(target.get("missing") or target.get("history_missing")))
+                    target["replaced_by"] = item["seq"]
+                    self._link_missing(gid, target)
+            self.remember(gid, entry)
+            if warning:
+                self.remember(gid, {"kind": "warning", "seq": item["seq"] + 0.25, "warning": warning, "created_at": item.get("created_at")})
             return "message"
         return "skipped"
 
@@ -639,64 +762,363 @@ class GroupClient:
             refs.append(sealed.reference)
         return out, refs
 
-    def send(self, gid, doc):
-        cmid = new_client_message_id()
+    def send(self, gid, doc, cmid=None):
+        """Encrypt and post one message. `doc`: text, files (new uploads with bytes), retained
+        (already uploaded files of the edited version, with their keys), reply_to, edit_of.
+
+        The exact request is kept in the sealed record before it is posted. An ambiguous failure
+        keeps it there and raises UncertainSend: only retry_outbox() posts it again, with the same
+        bytes. Only an explicit epoch/key-activation refusal re-encrypts, under the same id."""
+        cmid = cmid or new_client_message_id()
         files, refs = self.upload_files(gid, doc.get("files"))
-        body = encode_body({**doc, "files": files})
+        for kept in doc.get("retained") or []:
+            ref = kept.get("ref") or {}
+            files.append({"id": str(kept["id"]), "name": kept.get("name") or "file", "mime": kept.get("mime") or "application/octet-stream",
+                          "size": int(kept.get("size") or 0)})
+            refs.append(self.gc.AttachmentRef(key=unb64(ref.get("key")), sealed_sha256=unb64(ref.get("sha")),
+                                              plaintext_len=int(ref.get("len") or 0)))
+        plain = {"text": doc.get("text") or "", "files": files,
+                 "reply_to": str(doc["reply_to"]) if doc.get("reply_to") is not None else None,
+                 "edit_of": str(doc["edit_of"]) if doc.get("edit_of") is not None else None}
         local_files = [{**f, "ref": ref_json(refs[i])} for i, f in enumerate(files)]
         with self.lock:
-            local = {"kind": "message", "seq": None, "pending": True, "sender": self.mailbox, "sender_device": self.record["device_id"],
-                     "cmid": cmid, "text": doc.get("text") or "", "files": local_files, "reply_to": doc.get("reply_to"),
-                     "edit_of": str(doc["edit_of"]) if doc.get("edit_of") is not None else None, "created_at": self.now(), "mine": True}
-            remembered = False
-            try:
-                for attempt in range(MAX_RETRIES):
-                    self._sync(gid)
-                    if not self.group_rec(gid).get("in_group"):
-                        raise GroupError(403, "not_member")
-                    out = self.device.encrypt_message(gid, cmid, body, refs)
-                    if not remembered:
-                        self.history_of(gid).append(local)
-                        remembered = True
-                    self.persist()  # the sending ratchet moved: never reuse its key after a crash
-                    payload = {"request_key": "rk_" + cmid, "client_message_id": cmid, "epoch": out.epoch, "enc_scheme": ENC_SCHEME,
-                               "ciphertext": b64(out.ciphertext), "envelope_signature": b64(out.envelope_signature),
-                               "attachments": [f["id"] for f in files]}
-                    if doc.get("reply_to") is not None:
-                        payload["reply_to"] = int(doc["reply_to"])
-                    if doc.get("edit_of") is not None:
-                        payload["edit_of"] = int(doc["edit_of"])
-                    if doc.get("mentions"):
-                        payload["mentions"] = list(doc["mentions"])
-                    try:
-                        res = self.api("POST", f"/v1/groups/{quote(gid)}/messages", payload, device=True)
-                    except Exception as exc:
-                        if status_of(exc) == 409 and code_of(exc) == "epoch_conflict":
-                            self.sleep(0.05 * (attempt + 1))
-                            continue
-                        if status_of(exc) == 409 and code_of(exc) == "key_activation_pending":
-                            # A removal is waiting for a commit. Any member device may make it; this one does.
-                            self._commit_pending_removals(gid)
-                            continue
-                        raise
-                    local.update(seq=res["seq"], pending=False, expires_at=res.get("expires_at"))
-                    self.history_of(gid).sort(key=sort_key)
-                    if doc.get("edit_of") is not None:
-                        for target in self.history_of(gid):
-                            if target.get("kind") == "message" and target.get("seq") == int(doc["edit_of"]):
-                                target["replaced_by"] = res["seq"]
+            self._outbox_room(cmid)
+            local = self._local_pending(gid, cmid)
+            remembered = local is not None
+            if not remembered:
+                local = {"kind": "message", "seq": None, "pending": True, "sender": self.mailbox, "sender_device": self.record["device_id"],
+                         "cmid": cmid, "text": plain["text"], "files": local_files, "reply_to": plain["reply_to"],
+                         "edit_of": plain["edit_of"], "edit_verified": plain["edit_of"] is not None,
+                         "created_at": self.now(), "mine": True}
+            return self._post_loop(gid, cmid, plain, local, remembered, refs, doc.get("mentions"))
+
+    def _local_pending(self, gid, cmid):
+        return next((x for x in self.history_of(gid) if x.get("kind") == "message" and x.get("cmid") == cmid and x.get("pending")), None)
+
+    def _post_loop(self, gid, cmid, plain, local, remembered, refs, mentions=None, retry=False):
+        body = encode_body(plain)
+        try:
+            for attempt in range(MAX_RETRIES):
+                self._sync(gid)
+                if not self.group_rec(gid).get("in_group"):
+                    raise GroupError(403, "not_member")
+                out = self.device.encrypt_message(gid, cmid, body, refs)
+                if not remembered:
+                    self.history_of(gid).append(local)
+                    remembered = True
+                payload = {"request_key": "rk_" + cmid, "client_message_id": cmid, "epoch": out.epoch, "enc_scheme": ENC_SCHEME,
+                           "ciphertext": b64(out.ciphertext), "envelope_signature": b64(out.envelope_signature),
+                           "attachments": [f["id"] for f in plain["files"]]}
+                if plain.get("reply_to") is not None:
+                    payload["reply_to"] = int(plain["reply_to"])
+                if plain.get("edit_of") is not None:
+                    payload["edit_of"] = int(plain["edit_of"])
+                if mentions:
+                    payload["mentions"] = list(mentions)
+                # The sending ratchet moved and the exact request is kept, in one sealed write,
+                # before the postbox hears of it.
+                self._outbox_put({"cmid": cmid, "gid": gid, "payload": payload, "doc": plain,
+                                  "refs": [ref_json(r) for r in refs], "state": "posting",
+                                  "created_at": (self._outbox_get(cmid) or {}).get("created_at") or self.now()})
+                self.persist()
+                try:
+                    res = self.api("POST", f"/v1/groups/{quote(gid)}/messages", payload, device=True)
+                except Exception as exc:
+                    if status_of(exc) == 409 and code_of(exc) == "epoch_conflict":
+                        self.sleep(0.05 * (attempt + 1))
+                        continue
+                    if status_of(exc) == 409 and code_of(exc) == "key_activation_pending":
+                        # A removal is waiting for a commit. Any member device may make it; this one does.
+                        self._commit_pending_removals(gid)
+                        continue
+                    raise
+                self._confirmed(gid, cmid, local, res)
+                return res
+            raise GroupError(409, "epoch_conflict")
+        except Exception as exc:
+            if ambiguous(exc) and self._outbox_get(cmid):
+                entry = self._outbox_get(cmid)
+                entry["state"] = "uncertain"
+                local.update(pending=True, uncertain=True)
+                try:
                     self.persist()
-                    self.emit({"type": "history", "group_id": gid})
-                    return res
-                raise GroupError(409, "epoch_conflict")
-            except Exception:
-                if remembered and local in self.history_of(gid) and local.get("pending"):
-                    self.history_of(gid).remove(local)
-                    try:
-                        self.persist()
-                    except Exception:
-                        pass
+                except Exception:
+                    pass
+                self.emit({"type": "history", "group_id": gid})
+                raise UncertainSend(cmid) from None
+            entry = self._outbox_get(cmid)
+            if retry and entry:
+                # A retried send refused for good stays listed (dismiss only); it is never
+                # silently turned into something else.
+                entry["state"], entry["refused"] = "refused", code_of(exc) or "refused"
+                try:
+                    self.persist()
+                except Exception:
+                    pass
                 raise
+            # A definite refusal: nothing was accepted; the draft goes back to the person.
+            self._outbox_drop(cmid)
+            if remembered and local in self.history_of(gid) and local.get("pending"):
+                self.history_of(gid).remove(local)
+            try:
+                self.persist()
+            except Exception:
+                pass
+            raise
+
+    def _confirmed(self, gid, cmid, local, res):
+        local.update(seq=res["seq"], pending=False, uncertain=False, expires_at=res.get("expires_at"))
+        self.history_of(gid).sort(key=sort_key)
+        if local.get("edit_of") is not None:
+            target = self._find(gid, _int(local["edit_of"]))
+            if target and target.get("sender") == self.mailbox:
+                target["replaced_by"] = res["seq"]
+        self._outbox_drop(cmid)
+        self.persist()
+        self.emit({"type": "history", "group_id": gid})
+
+    # -- the protected outbox --------------------------------------------------------------------
+
+    def _outbox(self):
+        return self.record.setdefault("outbox", [])
+
+    def _outbox_get(self, cmid):
+        return next((e for e in self._outbox() if e.get("cmid") == cmid), None)
+
+    def _outbox_put(self, entry):
+        box = self._outbox()
+        for i, e in enumerate(box):
+            if e.get("cmid") == entry["cmid"]:
+                box[i] = entry
+                return
+        box.append(entry)
+
+    def _outbox_drop(self, cmid):
+        if self.record is not None:
+            self.record["outbox"] = [e for e in self._outbox() if e.get("cmid") != cmid]
+
+    def _outbox_room(self, cmid):
+        others = [e for e in self._outbox() if e.get("cmid") != cmid]
+        size = sum(len(json.dumps(e, separators=(",", ":"))) for e in others)
+        if len(others) >= OUTBOX_LIMIT or size >= OUTBOX_BYTES:
+            raise GroupError(0, "outbox_full")
+
+    def outbox(self, gid=None):
+        """Unconfirmed sends kept for review: [{cmid, gid, text, created_at, state, retryable, edit_of}]."""
+        with self.lock:
+            if not self.record:
+                return []
+            out = []
+            for e in self._outbox():
+                if gid is not None and e.get("gid") != gid:
+                    continue
+                out.append({"cmid": e["cmid"], "gid": e.get("gid"), "text": (e.get("doc") or {}).get("text") or "",
+                            "created_at": e.get("created_at"), "state": e.get("state"), "edit_of": (e.get("doc") or {}).get("edit_of"),
+                            "refused": e.get("refused"),
+                            "retryable": e.get("state") != "refused" and self.now() - (e.get("created_at") or 0) <= OUTBOX_RETRY_SECONDS})
+            return out
+
+    def recover_outbox(self):
+        """After a restart, a send that was being posted is unconfirmed: shown, never replayed."""
+        with self.lock:
+            changed = False
+            for e in self._outbox():
+                if e.get("state") != "uncertain":
+                    e["state"] = "uncertain"
+                    changed = True
+                local = self._local_pending(e.get("gid"), e.get("cmid"))
+                if local is not None and not local.get("uncertain"):
+                    local["uncertain"] = True
+                    changed = True
+            if changed:
+                self.persist()
+
+    def retry_outbox(self, cmid):
+        """Explicit retry of an unconfirmed send: first the exact saved bytes (the postbox answers a
+        duplicate with the original), and only after an explicit epoch/key-activation refusal a
+        re-encryption under the same client message id."""
+        with self.lock:
+            entry = self._outbox_get(cmid)
+            if not entry:
+                raise GroupError(404, "not_found")
+            if self.now() - (entry.get("created_at") or 0) > OUTBOX_RETRY_SECONDS:
+                raise GroupError(0, "outbox_expired")
+            gid = entry["gid"]
+            local = self._local_pending(gid, cmid)
+            remembered = local is not None
+            if not remembered:
+                doc = entry.get("doc") or {}
+                local = {"kind": "message", "seq": None, "pending": True, "uncertain": True, "sender": self.mailbox,
+                         "sender_device": self.record["device_id"], "cmid": cmid, "text": doc.get("text") or "",
+                         "files": [{**f, "ref": r} for f, r in zip(doc.get("files") or [], entry.get("refs") or [])],
+                         "reply_to": doc.get("reply_to"), "edit_of": doc.get("edit_of"), "edit_verified": doc.get("edit_of") is not None,
+                         "created_at": entry.get("created_at"), "mine": True}
+            try:
+                res = self.api("POST", f"/v1/groups/{quote(gid)}/messages", entry["payload"], device=True)
+            except Exception as exc:
+                if status_of(exc) == 409 and code_of(exc) in ("epoch_conflict", "key_activation_pending"):
+                    if code_of(exc) == "key_activation_pending":
+                        self._commit_pending_removals(gid)
+                    refs = [self.gc.AttachmentRef(key=unb64(r.get("key")), sealed_sha256=unb64(r.get("sha")),
+                                                  plaintext_len=int(r.get("len") or 0)) for r in entry.get("refs") or []]
+                    return self._post_loop(gid, cmid, entry["doc"], local, remembered, refs, entry["payload"].get("mentions"), retry=True)
+                if ambiguous(exc):
+                    raise UncertainSend(cmid) from None
+                # Refused for good (not a member any more, edit window closed…): keep it listed so
+                # the person decides; they can only dismiss it now.
+                entry["state"] = "refused"
+                entry["refused"] = code_of(exc) or "refused"
+                self.persist()
+                raise
+            if not remembered:
+                self.history_of(gid).append(local)
+            self._confirmed(gid, cmid, local, res)
+            return res
+
+    def dismiss_outbox(self, cmid):
+        """Forget an unconfirmed send on this device. A copy the postbox did accept stays there."""
+        with self.lock:
+            entry = self._outbox_get(cmid)
+            if not entry:
+                return False
+            self._outbox_drop(cmid)
+            local = self._local_pending(entry.get("gid"), cmid)
+            if local is not None:
+                self.history_of(entry["gid"]).remove(local)
+            self.persist()
+            return True
+
+    # -- edits, deletion and versions ------------------------------------------------------------
+
+    def editable(self, gid, seq):
+        """This mailbox's current version of a live chain, within 24 h of its original."""
+        with self.lock:
+            item = self._find(gid, seq)
+            if (not item or item.get("sender") != self.mailbox or item.get("pending") or item.get("deleted")
+                    or item.get("missing") or item.get("replaced_by") is not None or not isinstance(item.get("seq"), int)):
+                return False
+            chain = self._chain(gid, item)
+            if not chain or chain[-1] is not item:
+                return False
+            root = chain[0]
+            now = self.now()
+            if root.get("missing") or not root.get("created_at") or now - root["created_at"] > EDIT_WINDOW:
+                return False
+            if any(v.get("expires_at") and v["expires_at"] <= now for v in chain):
+                return False
+            return not any(e.get("doc", {}).get("edit_of") == str(seq) for e in self._outbox())
+
+    def edit(self, gid, seq, text):
+        """Replace own message `seq` (its current version) with `text`; its files are kept."""
+        if not (text or "").strip():
+            raise GroupError(400, "empty_edit")
+        with self.lock:
+            if not self.editable(gid, seq):
+                raise GroupError(403, "not_editable")
+            target = self._find(gid, seq)
+            retained = [f for f in target.get("files") or [] if f.get("id") and f.get("ref")]
+            doc = {"text": text, "retained": retained, "edit_of": seq, "reply_to": target.get("reply_to")}
+        return self.send(gid, doc)
+
+    def _erase_chain(self, gid, seq):
+        """Erase every local version of `seq`'s chain and any queued edit of them."""
+        item = self._find(gid, seq)
+        seqs = {seq}
+        if item:
+            seqs |= {v.get("seq") for v in self._chain(gid, item)}
+        self._drop_local(gid, seqs)
+        return seqs
+
+    def _drop_local(self, gid, seqs):
+        wanted = {int(s) for s in seqs if s is not None}
+        self.record.setdefault("history", {})[gid] = [x for x in self.history_of(gid)
+                                                      if not (x.get("kind") == "message" and x.get("seq") in wanted)]
+        for e in list(self._outbox()):
+            if e.get("gid") == gid and _int((e.get("doc") or {}).get("edit_of")) in wanted:
+                self.dismiss_outbox_locked(e)
+
+    def dismiss_outbox_locked(self, entry):
+        self._outbox_drop(entry["cmid"])
+        local = self._local_pending(entry.get("gid"), entry["cmid"])
+        if local is not None:
+            self.history_of(entry["gid"]).remove(local)
+
+    def delete_message(self, gid, seq):
+        """Delete a version for everyone: the postbox erases the whole chain and answers with its
+        seqs; every local version, cached file and queued edit of them goes too."""
+        res = self.api("DELETE", f"/v1/groups/{quote(gid)}/messages/{int(seq)}")
+        with self.lock:
+            seqs = set(_int(s) for s in (res or {}).get("seqs") or [] if _int(s) is not None) | {int(seq)}
+            for s in list(seqs):
+                seqs |= self._erase_chain(gid, s)
+            self.persist()
+        self.emit({"type": "history", "group_id": gid})
+        return sorted(s for s in seqs if s is not None)
+
+    def apply_deleted(self, gid, seqs):
+        """A `group.message {deleted, seqs}` event (or reconciliation): erase those chains."""
+        with self.lock:
+            for s in seqs or []:
+                if _int(s) is not None:
+                    self._erase_chain(gid, _int(s))
+            self.persist()
+
+    def reconcile(self, gid):
+        """Metadata-only pages over the retained range: versions deleted elsewhere (or gone) are
+        erased here. Never used for decryption, and never advances delivered receipts."""
+        with self.lock:
+            held = sorted(x["seq"] for x in self.history_of(gid) if x.get("kind") == "message" and isinstance(x.get("seq"), int))
+            if not held or not self.group_rec(gid).get("in_group"):
+                return 0
+            after, top = held[0] - 1, held[-1]
+        listed, deleted = set(), set()
+        for _ in range(RECONCILE_PAGES):
+            res = self.api("GET", f"/v1/groups/{quote(gid)}/messages?after_seq={after}&limit=100&metadata_only=true", device=True)
+            items = sorted(res.get("items") or [], key=lambda i: i.get("seq", 0))
+            for i in items:
+                if i.get("type") == "application":
+                    listed.add(i["seq"])
+                    if i.get("deleted_at"):
+                        deleted.add(i["seq"])
+            if not items or not res.get("more") or items[-1]["seq"] >= top:
+                break
+            after = items[-1]["seq"]
+        else:
+            return 0  # did not reach the end: decide nothing on a partial view
+        with self.lock:
+            gone = {s for s in held if s in deleted or (s <= top and s not in listed)}
+            before = len(self.history_of(gid))
+            for s in gone:
+                self._erase_chain(gid, s)
+            erased = before - len(self.history_of(gid))
+            if erased:
+                self.persist()
+        if erased:
+            self.emit({"type": "history", "group_id": gid})
+        return erased
+
+    def versions(self, gid, seq):
+        """Message info: the versions this device received, oldest first, and whether earlier
+        history is missing here."""
+        with self.lock:
+            item = self._find(gid, seq)
+            if not item:
+                return {"versions": [], "missing": True}
+            chain = self._chain(gid, item)
+            missing = any(v.get("missing") or v.get("history_missing") for v in chain)
+            return {"versions": [{"seq": v.get("seq"), "text": v.get("text"), "created_at": v.get("created_at")}
+                                 for v in chain if not v.get("missing")], "missing": missing}
+
+    def current(self, gid, seq):
+        """The visible (latest) version of `seq`'s chain."""
+        with self.lock:
+            item = self._find(gid, seq)
+            chain = self._chain(gid, item) if item else []
+            return dict(chain[-1]) if chain else (dict(item) if item else None)
+
+    def receipts(self, gid):
+        """GET /v1/groups/{id}/receipts (feature `receipts`)."""
+        return self.api("GET", f"/v1/groups/{quote(gid)}/receipts")
 
     def _commit_pending_removals(self, gid):
         def plan():
@@ -724,18 +1146,21 @@ class GroupClient:
             t = self.now()
             dropped = 0
             for gid, items in list((self.record.get("history") or {}).items()):
-                kept = [x for x in items if not (x.get("expires_at") and x["expires_at"] <= t)]
-                dropped += len(items) - len(kept)
+                expired = [x.get("seq") for x in items if x.get("expires_at") and x["expires_at"] <= t and x.get("kind") == "message"]
+                before = len(self.history_of(gid))
+                for seq in expired:
+                    if seq is not None:
+                        self._erase_chain(gid, seq)
+                kept = [x for x in self.history_of(gid) if not (x.get("expires_at") and x["expires_at"] <= t)]
                 self.record["history"][gid] = kept
+                dropped += before - len(kept)
             if dropped:
                 self.persist()
             return dropped
 
     def drop_seqs(self, gid, seqs):
-        wanted = {int(s) for s in seqs or []}
         with self.lock:
-            self.record.setdefault("history", {})[gid] = [x for x in self.history_of(gid)
-                                                          if not (x.get("kind") == "message" and x.get("seq") in wanted)]
+            self._drop_local(gid, seqs or [])
             self.persist()
 
     def forget(self, gid):
@@ -746,6 +1171,7 @@ class GroupClient:
                 pass
             (self.record.get("groups") or {}).pop(gid, None)
             (self.record.get("history") or {}).pop(gid, None)
+            self.record["outbox"] = [e for e in self.record.get("outbox") or [] if e.get("gid") != gid]
             self.persist()
 
     def verify_devices(self, mailbox, fingerprints):

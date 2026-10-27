@@ -10,6 +10,7 @@ from urllib.parse import urlencode
 from gi.repository import Adw, Gdk, GdkPixbuf, GLib, Gtk
 
 from .api import APIError
+from .actions import RECEIPTS
 from .features import (AVATAR_VISIBILITY, BLOCK_BODY, CALL_ADMISSION, CALL_HISTORY, MESSAGE_FILTERING, avatar_error,
                        policy_rows, policy_value, square_crop, wildcard_for)
 from .model import display_name, valid_peer
@@ -124,7 +125,7 @@ class PrivacyMixin:
     # ---- Settings → Privacy & filtering ------------------------------------------------------
 
     def privacy_available(self):
-        return bool({CALL_ADMISSION, MESSAGE_FILTERING, CALL_HISTORY} & self.features)
+        return bool({CALL_ADMISSION, MESSAGE_FILTERING, CALL_HISTORY, RECEIPTS} & self.features)
 
     def privacy_settings(self, navigation):
         content = navigation.push("Privacy & filtering")
@@ -138,6 +139,8 @@ class PrivacyMixin:
 
         def render():
             clear(rows)
+            if RECEIPTS in self.features:
+                rows.append(self.receipts_switch(state, save))
             for row in policy_rows(self.features):
                 section = box(6)
                 section.append(label(row["title"], "heading", wrap=True))

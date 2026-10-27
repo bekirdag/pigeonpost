@@ -92,6 +92,9 @@ class FakePostbox:
         self.welcomes, self.blobs, self.calls, self.errors = [], {}, [], []
         self.before_handle = None
         self.ids = itertools.count(1)
+        # Receipt cursors: (gid, address) -> seq; addresses that turned read receipts off.
+        self.delivered, self.seen, self.receipts_off = {}, {}, set()
+        self.claimed = set()
 
     def new_id(self, prefix):
         return f"{prefix}_{next(self.ids)}"
@@ -147,6 +150,20 @@ class FakePostbox:
         item["created_at"] = int(time.time())
         g["items"].append(item)
         return item
+
+    def versions(self, g, seq):
+        """The same-sender chain containing `seq`, oldest first (the server's view)."""
+        by_seq = {i["seq"]: i for i in g["items"] if i["type"] == "application"}
+        item = by_seq.get(seq)
+        if not item:
+            return []
+        while item.get("edit_of") is not None and by_seq.get(item["edit_of"], {}).get("sender") == item["sender"]:
+            item = by_seq[item["edit_of"]]
+        chain = [item]
+        while item.get("replaced_by") is not None and item["replaced_by"] in by_seq:
+            item = by_seq[item["replaced_by"]]
+            chain.append(item)
+        return chain
 
     # -- what tests do on the server side --
 
@@ -329,13 +346,60 @@ class FakePostbox:
         if rest == "/resync":
             g["stale"].add(self.key(me, device))
             return {"ok": True}
-        if rest.startswith("/messages") and method == "GET":
+        if rest == "/messages" and method == "GET":
             self.dev_of(me, device)
             if not mem or mem["state"] != "active":
                 raise GroupError(403, "not_member")
             after, limit = int(q.get("after_seq") or 0), min(100, int(q.get("limit") or 100))
-            visible = [i for i in g["items"] if i["seq"] > after and i["seq"] >= (mem["first_seq"] or 0) - 1]
-            return {"items": copy.deepcopy(visible[:limit]), "last_seq": g["last_seq"], "epoch": g["epoch"], "more": len(visible) > limit}
+            now = int(time.time())
+            visible = [i for i in g["items"] if i["seq"] > after and i["seq"] >= (mem["first_seq"] or 0) - 1
+                       and not (i.get("expires_at") and i["expires_at"] <= now)]
+            page = copy.deepcopy(visible[:limit])
+            if q.get("metadata_only") == "true":
+                for i in page:
+                    if i["type"] == "application":
+                        i["ciphertext"] = None
+                    elif i["type"] == "commit":
+                        i["commit"] = None
+            elif page:
+                key = (g["id"], me)
+                self.delivered[key] = max(self.delivered.get(key, 0), page[-1]["seq"])
+            return {"items": page, "last_seq": g["last_seq"], "epoch": g["epoch"], "more": len(visible) > limit}
+        m = re.fullmatch(r"/messages/(\d+)", rest)
+        if m and method == "DELETE":
+            if not mem or mem["state"] != "active":
+                raise GroupError(403, "not_member")
+            chain = self.versions(g, int(m.group(1)))
+            if not chain:
+                raise GroupError(404, "not_found")
+            seqs = [i["seq"] for i in chain]
+            if all(i.get("deleted_at") for i in chain):
+                return {"deleted": True, "seqs": seqs}
+            root = chain[0]
+            if not (root["sender"] == me and time.time() - root["created_at"] <= 24 * 3600) and mem["role"] not in ("owner", "admin"):
+                raise GroupError(403, "not_admin")
+            for i in chain:
+                i["deleted_at"], i["ciphertext"] = int(time.time()), None
+                for a in i.get("attachments") or []:
+                    self.blobs.pop(a["id"], None)
+            return {"deleted": True, "seqs": seqs}
+        if rest == "/read" and method == "POST":
+            key = (g["id"], me)
+            self.seen[key] = max(self.seen.get(key, 0), int(body.get("seq") or 0))
+            return {"ok": True}
+        if rest == "/receipts" and method == "GET":
+            if not mem or mem["state"] != "active":
+                raise GroupError(403, "not_member")
+            mine = me not in self.receipts_off
+            members = []
+            for address, other in g["members"].items():
+                if address == me or other["state"] != "active":
+                    continue
+                read = self.seen.get((g["id"], address), 0)
+                members.append({"address": address, "handle": None,
+                                "delivered_seq": max(self.delivered.get((g["id"], address), 0), read),
+                                "seen_seq": read if mine and address not in self.receipts_off else None})
+            return {"members": members, "read_receipts": mine}
         if rest == "/messages" and method == "POST":
             d = self.dev_of(me, device)
             if not mem or mem["state"] != "active":
@@ -358,11 +422,30 @@ class FakePostbox:
             if (env.kind != "application" or env.group_id != g["id"] or env.sender_mailbox != me or env.sender_device != device
                     or env.client_message_id != body["client_message_id"]):
                 raise GroupError(400, "invalid_envelope")
+            expires = int(time.time()) + g["ephemeral"] if g["ephemeral"] else None
+            target = None
+            if body.get("edit_of") is not None:
+                chain = self.versions(g, int(body["edit_of"]))
+                target = chain[-1] if chain else None
+                if (not chain or target["seq"] != int(body["edit_of"]) or chain[0]["sender"] != me or chain[0].get("edit_of") is not None
+                        or time.time() - chain[0]["created_at"] > 24 * 3600
+                        or any(v.get("deleted_at") or (v.get("expires_at") and v["expires_at"] <= time.time()) for v in chain)):
+                    raise GroupError(403, "not_editable")
+                expiries = [v["expires_at"] for v in chain if v.get("expires_at")]
+                expires = min(expiries) if expiries else None
+            kept = {a["id"] for a in (target or {}).get("attachments") or []}
+            for a in body.get("attachments") or []:
+                if a not in self.blobs or (a in self.claimed and a not in kept):
+                    raise GroupError(400, "bad_attachment")
             item = self.push(g, {"type": "application", "id": self.new_id("gm"), "epoch": g["epoch"], "sender": me, "sender_device": device,
                                  "client_message_id": body["client_message_id"], "ciphertext": body["ciphertext"],
                                  "attachments": [{"id": a, "bytes": len(self.blobs.get(a, b""))} for a in body.get("attachments") or []],
-                                 "edit_of": body.get("edit_of"),
-                                 "expires_at": int(time.time()) + g["ephemeral"] if g["ephemeral"] else None})
+                                 "edit_of": body.get("edit_of"), "reply_to": body.get("reply_to"), "replaced_by": None,
+                                 "expires_at": expires})
+            self.claimed.update(body.get("attachments") or [])
+            if target is not None:
+                target["replaced_by"], target["ciphertext"] = item["seq"], None
+                target["attachments"] = []
             return {"seq": item["seq"], "id": item["id"], "expires_at": item["expires_at"]}
         if rest == "/attachments" and method == "POST":
             self.dev_of(me, device)
