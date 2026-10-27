@@ -99,8 +99,14 @@ internal sealed partial class CalendarPage : UserControl, IDisposable
     private void Render()
     {
         if (disposed) return;
-        var offset = scroll.VerticalOffset; var state = model.State; var next = model.CaptureView(); rendered?.Retire(); rendered = next;
-        if (context != state.ContextId || !state.Enabled) dialog?.Hide(); context = state.ContextId;
+        var offset = scroll.VerticalOffset; var state = model.State;
+        if (context != state.ContextId || !state.Enabled)
+        {
+            rendered?.Retire(); rendered = null; dialog?.Hide(); context = state.ContextId;
+        }
+        // Background loading/rendering does not change the inbox authority. A gesture queued
+        // from the same inbox still checks fresh access; only leaving that context retires it.
+        var next = rendered ??= model.CaptureView();
         contents.Children.Clear();
         if (!state.Enabled || next is null) { contents.Children.Add(Text(state.Error ?? "The calendar is unavailable for this inbox.")); return; }
         var view = next;
