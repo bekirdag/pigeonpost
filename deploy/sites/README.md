@@ -11,6 +11,9 @@ the first two and no application server for any of them: `site-developers/` is g
 | `site-developers/` | raijin (wodomini proxies TLS) | `/var/www/pigeonpost-developers` | `developers.pigeonpost.dev` |
 | `site-enterprise/` | raijin (wodomini proxies TLS) | `/var/www/pigeonpost-enterprise` | `enterprise.pigeonpost.dev` |
 
+Server blocks recorded here: `enterprise.conf` and `developers.conf` (whose CSP allows
+`script-src 'self'` for `/docs.js` since Phase 5).
+
 All roots are owned by `www-data`; installation requires the authorized operator's sudo access on
 **raijin**. The public TLS proxy remains on wodomini. Do not deploy to its obsolete static copy.
 The active webapps master uses `/etc/nginx-raijin-webapps/nginx.conf`; do not restart an unrelated
