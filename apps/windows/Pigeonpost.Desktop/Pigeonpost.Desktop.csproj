@@ -35,6 +35,7 @@
     <Content Include="Assets\Fonts\Geist-Variable.ttf" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Assets\Fonts\GeistMono-Variable.ttf" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Assets\Fonts\OFL.txt" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Assets\Notices\NodaTime.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
   <!-- Group end-to-end encryption: the Rust library for this architecture ships beside
        Pigeonpost.exe (and so inside the MSIX). build.ps1 builds it; a Release build without it

@@ -1,5 +1,5 @@
 using System.Globalization;
-using System.Runtime.CompilerServices;
+using NodaTime;
 
 namespace Pigeonpost.Core.Calendar;
 
@@ -27,51 +27,33 @@ public sealed record CalendarInterval
 
 public static class CalendarTime
 {
-    private static readonly ConditionalWeakTable<TimeZoneInfo, TimeSpan[]> offsets = new();
-    public static TimeZoneInfo Zone(string id)
+    public static DateTimeZone Zone(string id)
     {
-        if (id.Length is < 1 or > 128 || id != "UTC" && !id.Contains('/')
+        if (id.Length is < 1 or > 128
             || id.Any(c => !char.IsAsciiLetterOrDigit(c) && c is not '/' and not '_' and not '-' and not '+'))
             throw new CalendarTimeException("zone_unknown");
-        try { return TimeZoneInfo.FindSystemTimeZoneById(id); }
-        catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneException) { throw new CalendarTimeException("zone_unknown"); }
+        return DateTimeZoneProviders.Tzdb.GetZoneOrNull(id) ?? throw new CalendarTimeException("zone_unknown");
     }
-    internal static long Resolve(DateTime local, TimeZoneInfo zone, CalendarFold? fold)
+    internal static long Resolve(DateTime local, DateTimeZone zone, CalendarFold? fold)
     {
-        // Round-trip all distinct rule offsets. IsInvalidTime alone can miss an entire
-        // skipped date caused by a base-offset change (for example Apia, 2011-12-30).
-        var possible = offsets.GetValue(zone, value => value.GetAdjustmentRules()
-            .SelectMany(rule => new[] { value.BaseUtcOffset + rule.BaseUtcOffsetDelta,
-                value.BaseUtcOffset + rule.BaseUtcOffsetDelta + rule.DaylightDelta })
-            .Append(value.BaseUtcOffset).Distinct().ToArray());
-        var valid = new HashSet<long>();
-        foreach (var offset in possible)
+        var mapping = zone.MapLocal(LocalDateTime.FromDateTime(local));
+        if (mapping.Count == 0) throw new CalendarTimeException("nonexistent");
+        var earlier = mapping.First().ToInstant().ToUnixTimeSeconds();
+        if (mapping.Count > 1)
         {
-            try
-            {
-                var candidate = new DateTimeOffset(local, offset);
-                if (TimeZoneInfo.ConvertTime(candidate, zone).DateTime == local) valid.Add(candidate.ToUnixTimeSeconds());
-            }
-            catch (ArgumentException) { } // A rule offset may fall outside DateTimeOffset's UTC range.
+            var later = mapping.Last().ToInstant().ToUnixTimeSeconds();
+            return fold switch { CalendarFold.Earlier => earlier, CalendarFold.Later => later,
+                _ => throw new CalendarTimeException("ambiguous", earlier, later) };
         }
-        var candidates = valid.Order().ToArray();
-        if (candidates.Length == 0) throw new CalendarTimeException("nonexistent");
-        if (candidates.Length > 1)
-        {
-            return fold switch { CalendarFold.Earlier => candidates[0], CalendarFold.Later => candidates[^1],
-                _ => throw new CalendarTimeException("ambiguous", candidates[0], candidates[^1]) };
-        }
-        return candidates[0];
+        return earlier;
     }
-    internal static long DayBoundary(DateOnly day, TimeZoneInfo zone, bool rejectSkipped)
+    internal static long DayBoundary(DateOnly day, DateTimeZone zone, bool rejectSkipped)
     {
-        var local = day.ToDateTime(TimeOnly.MinValue, DateTimeKind.Unspecified);
-        for (var minutes = 0; minutes <= 2880; minutes++)
+        var date = new LocalDate(day.Year, day.Month, day.Day);
+        for (var skipped = 0; skipped <= 2; skipped++)
         {
-            if (rejectSkipped && DateOnly.FromDateTime(local) != day) throw new CalendarTimeException("nonexistent");
-            try { return Resolve(local, zone, CalendarFold.Earlier); }
-            catch (CalendarTimeException ex) when (ex.Code == "nonexistent") { }
-            local = local.AddMinutes(1);
+            try { return zone.AtStartOfDay(date).ToInstant().ToUnixTimeSeconds(); }
+            catch (SkippedTimeException) { if (rejectSkipped) throw new CalendarTimeException("nonexistent"); date = date.PlusDays(1); }
         }
         throw new CalendarTimeException("nonexistent");
     }
@@ -84,8 +66,8 @@ public sealed record CalendarDay(DateOnly Date)
         && DateOnly.TryParseExact(text, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var date)
         ? new(date) : throw new CalendarTimeException("invalid_format");
     public CalendarDay PlusDays(int days) => new(Date.AddDays(days));
-    public long Start(TimeZoneInfo zone) => CalendarTime.DayBoundary(Date, zone, rejectSkipped: true);
-    public CalendarInterval Interval(TimeZoneInfo zone) => new(Start(zone), CalendarTime.DayBoundary(Date.AddDays(1), zone, rejectSkipped: false));
+    public long Start(DateTimeZone zone) => CalendarTime.DayBoundary(Date, zone, rejectSkipped: true);
+    public CalendarInterval Interval(DateTimeZone zone) => new(Start(zone), CalendarTime.DayBoundary(Date.AddDays(1), zone, rejectSkipped: false));
     public override string ToString() => Text;
 }
 public sealed class CalendarWallTime
@@ -93,7 +75,7 @@ public sealed class CalendarWallTime
     public string Text { get; }
     public string Tzid { get; }
     public DateTime Local { get; }
-    public TimeZoneInfo Zone { get; }
+    public DateTimeZone Zone { get; }
     public CalendarWallTime(string text, string tzid)
     {
         if (text.Length is not (16 or 19) || !DateTime.TryParseExact(text, ["yyyy-MM-dd'T'HH:mm", "yyyy-MM-dd'T'HH:mm:ss"],
@@ -115,5 +97,5 @@ public sealed class CalendarMonthWindow
         var offset = ((int)first.DayOfWeek - weekStart + 7) % 7;
         Days = Enumerable.Range(0, 42).Select(i => new CalendarDay(first.AddDays(i - offset))).ToArray();
     }
-    public CalendarInterval Interval(TimeZoneInfo zone) => new(Days[0].Start(zone), Days[^1].PlusDays(1).Start(zone));
+    public CalendarInterval Interval(DateTimeZone zone) => new(Days[0].Start(zone), Days[^1].PlusDays(1).Start(zone));
 }

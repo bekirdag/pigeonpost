@@ -1,3 +1,5 @@
+using NodaTime;
+
 namespace Pigeonpost.Core.Calendar;
 
 // Server projections are data. Unknown/absent roles and optional fields grant no action.
@@ -16,7 +18,7 @@ public sealed record CalendarOccurrence(string OccurrenceId, string EventId, str
     string? Role = null, string? MyRsvp = null, bool? Invited = null, ScheduledMeeting? Meeting = null)
 {
     public CalendarEventKey Key => new(EventId, OccurrenceId);
-    public bool OccursOn(CalendarDay day, TimeZoneInfo zone)
+    public bool OccursOn(CalendarDay day, DateTimeZone zone)
     {
         try
         {

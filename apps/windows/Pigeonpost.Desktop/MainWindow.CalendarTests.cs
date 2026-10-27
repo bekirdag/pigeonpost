@@ -5,7 +5,7 @@ namespace Pigeonpost.Desktop;
 
 public sealed partial class MainWindow
 {
-    // Exercise Windows' actual IANA/ICU data as well as the cross-platform Core fixtures.
+    // Exercise bundled IANA data in the actual Windows binary as well as the Core fixtures.
     private static void RunCalendarRuntimeChecks(Action<bool, string> check)
     {
         var istanbul = new CalendarWallTime("2026-10-27T09:00", "Europe/Istanbul");
@@ -25,7 +25,7 @@ public sealed partial class MainWindow
         var skippedRefused = false;
         try { CalendarDay.Parse("2011-12-30").Start(CalendarTime.Zone("Pacific/Apia")); }
         catch (CalendarTimeException ex) when (ex.Code == "nonexistent") { skippedRefused = true; }
-        check(skippedRefused, "Windows refuses a whole skipped date using validated UTC round trips");
+        check(skippedRefused, "Windows refuses a whole skipped date from the bundled IANA database");
     }
 }
 #endif

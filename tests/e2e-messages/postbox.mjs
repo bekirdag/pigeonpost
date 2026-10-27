@@ -156,9 +156,10 @@ const lossPort = await listen(http.createServer(async (req, res) => {
     if (req.url === "/__test/attempts" && req.method === "GET") {
       res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify({ attempts })); return;
     }
-    const targeted = req.method === "POST" && (req.url === "/v1/send" || /^\/v1\/groups\/[^/]+\/messages$/.test(req.url) ||
-      mode === "calendar" && (req.url === "/v1/calendars" || req.url === "/v1/calendar/events" || /^\/v1\/calendar\/import\/[^/]+\/confirm$/.test(req.url)) ||
-      mode === "orgs" && req.url.split("?")[0] === "/v1/groups");
+    const requestPath = req.url.split("?")[0];
+    const targeted = req.method === "POST" && (requestPath === "/v1/send" || /^\/v1\/groups\/[^/]+\/messages$/.test(requestPath) ||
+      mode === "calendar" && (requestPath === "/v1/calendars" || requestPath === "/v1/calendar/events" || /^\/v1\/calendar\/import\/[^/]+\/confirm$/.test(requestPath)) ||
+      mode === "orgs" && requestPath === "/v1/groups");
     let evidence;
     if (targeted) {
       evidence = { sha: crypto.createHash("sha256").update(bytes).digest("hex"),
