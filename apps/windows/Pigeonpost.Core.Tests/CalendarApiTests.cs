@@ -109,6 +109,74 @@ internal static class CalendarApiTests
             foreach (var key in new[] { "", "a b", new string('a', 65), "ğ" })
                 await Error<ArgumentException>(() => { _ = CalendarWritePayload.From(new { request_key = key }).RequestKey(); return Task.CompletedTask; });
         });
+        yield return ("Calendar edits carry the reviewed revision and opaque occurrence without changing their route", async () =>
+        {
+            using var f = new Fixture(); var key = new CalendarEventKey("evt_fixture", "occ_original_key");
+            var response = await f.Api.UpdateCalendarEventAsync(Own, key, 3, CalendarEventScope.This, CalendarWritePayload.From(new { title = "Reviewed edit ğ" }));
+            var call = f.Handler.Routes.Single(); using var body = JsonDocument.Parse(call.Body);
+            Require(response.Event.Id == key.EventId && call.Method == "PATCH" && call.Identity == Own && call.Path == "/v1/calendar/events/evt_fixture"
+                && body.RootElement.GetProperty("expected_revision").GetInt64() == 3 && body.RootElement.GetProperty("scope").GetString() == "this"
+                && body.RootElement.GetProperty("occurrence_id").GetString() == key.OccurrenceId && body.RootElement.GetProperty("title").GetString() == "Reviewed edit ğ");
+        });
+        yield return ("A following-series edit accepts only a split explicitly linked to the reviewed original event", async () =>
+        {
+            using var f = new Fixture(); f.Handler.Detail = "{\"event\":{\"id\":\"evt_new\"},\"split_from\":{\"event_id\":\"evt_other\"}}";
+            var key = new CalendarEventKey("evt_fixture", "occ_original_key"); var changes = CalendarWritePayload.From(new { title = "Split fixture" });
+            await Error<PostboxException>(() => f.Api.UpdateCalendarEventAsync(Own, key, 3, CalendarEventScope.Following, changes));
+            f.Handler.Detail = "{\"event\":{\"id\":\"evt_new\"},\"split_from\":{\"event_id\":\"evt_fixture\"}}";
+            Require((await f.Api.UpdateCalendarEventAsync(Own, key, 3, CalendarEventScope.Following, changes)).Event.Id == "evt_new");
+        });
+        yield return ("Calendar mutation inputs cannot override their reviewed scope or send invalid responses", async () =>
+        {
+            using var f = new Fixture(); var key = new CalendarEventKey("evt_fixture"); var empty = CalendarWritePayload.From(new { });
+            await Error<ArgumentException>(() => f.Api.UpdateCalendarEventAsync(Own, key, -1, CalendarEventScope.All, empty));
+            await Error<ArgumentException>(() => f.Api.UpdateCalendarEventAsync(Own, key, 1, CalendarEventScope.This, empty));
+            await Error<ArgumentException>(() => f.Api.UpdateCalendarEventAsync(Own, key, 1, CalendarEventScope.All, CalendarWritePayload.From(new { expected_revision = 100 })));
+            await Error<ArgumentException>(() => f.Api.AnswerCalendarInvitationAsync(Own, key, (CalendarAnswer)999, CalendarAnswerScope.All));
+            await Error<ArgumentException>(() => f.Api.AnswerCalendarInvitationAsync(Own, key, CalendarAnswer.Accepted, CalendarAnswerScope.All, new string('a', 301)));
+            await Error<ArgumentException>(() => f.Api.SaveCalendarRemindersAsync(Own, key.EventId, [new(-1)]));
+            Require(f.Handler.Calls.Count == 0);
+        });
+        yield return ("Invitation replies and cancellation use distinct scoped endpoints and never create a contact", async () =>
+        {
+            using var f = new Fixture(); var key = new CalendarEventKey("evt_fixture", "occ_original_key");
+            await f.Api.AnswerCalendarInvitationAsync(Own, key, CalendarAnswer.Tentative, CalendarAnswerScope.This, "Reviewed response");
+            await f.Api.CancelCalendarEventAsync(Own, key, 4, CalendarEventScope.Following, "Reviewed cancellation");
+            Require(f.Handler.Routes.Count == 2 && f.Handler.Routes.All(c => c.Method == "POST" && c.Identity == Own)
+                && f.Handler.Routes[0].Path.EndsWith("/rsvp", StringComparison.Ordinal) && f.Handler.Routes[1].Path.EndsWith("/cancel", StringComparison.Ordinal));
+            using var reply = JsonDocument.Parse(f.Handler.Routes[0].Body); using var cancel = JsonDocument.Parse(f.Handler.Routes[1].Body);
+            Require(reply.RootElement.GetProperty("status").GetString() == "tentative" && reply.RootElement.GetProperty("scope").GetString() == "this"
+                && cancel.RootElement.GetProperty("expected_revision").GetInt64() == 4 && cancel.RootElement.GetProperty("scope").GetString() == "following");
+        });
+        yield return ("A calendar mutation retains every original caller before its delayed POST", async () =>
+        {
+            using var f = new Fixture(); var caller = f.Tokens.Root.Child(); f.Tokens.BlockAt = 2; Task answer;
+            using (new AuthorizationContext(caller)) answer = f.Api.AnswerCalendarInvitationAsync(Own, new("evt_fixture"), CalendarAnswer.Accepted, CalendarAnswerScope.All);
+            await f.Tokens.Waiting.Task.WaitAsync(TimeSpan.FromSeconds(3)); caller.Retire(); f.Tokens.Release.TrySetResult();
+            await Error<AuthorizationRetiredException>(async () => await answer); Require(f.Handler.Routes.Count == 0 && f.Tokens.Root.IsActive);
+        });
+        yield return ("Ordinary renewal repeats only the exact reviewed calendar mutation body", async () =>
+        {
+            using var f = new Fixture(); f.Handler.UnauthorizedOnce = true;
+            await f.Api.UpdateCalendarEventAsync(Own, new("evt_fixture"), 4, CalendarEventScope.All, CalendarWritePayload.From(new { title = "Same reviewed update" }));
+            Require(f.Handler.Routes.Count == 2 && f.Handler.Routes.All(c => c.Method == "PATCH" && c.Identity == Own)
+                && f.Handler.Routes[0].Body == f.Handler.Routes[1].Body && f.Tokens.Refreshes == 1);
+        });
+        yield return ("Calendar settings reject unknown zones and malformed values before making a request", async () =>
+        {
+            using var f = new Fixture();
+            foreach (var fields in new[] { CalendarWritePayload.From(new { timezone = "Turkey Standard Time" }), CalendarWritePayload.From(new { week_start = "Monday" }),
+                CalendarWritePayload.From(new { previews = "on" }), CalendarWritePayload.From(new { unknown_setting = true }) })
+                await Error<ArgumentException>(() => f.Api.SaveCalendarSettingsAsync(Own, fields));
+            Require(f.Handler.Calls.Count == 0);
+        });
+        yield return ("Calendar private reminders and export keep the acting inbox and safe fixed event path", async () =>
+        {
+            using var f = new Fixture(); await f.Api.SaveCalendarRemindersAsync(Own, "evt_fixture", [new(10)]);
+            var bytes = await f.Api.ExportCalendarEventAsync(Own, "evt_fixture");
+            Require(f.Handler.Routes.Count == 2 && f.Handler.Routes.All(c => c.Identity == Own)
+                && f.Handler.Routes[0].Method == "PUT" && f.Handler.Routes[1].Method == "GET" && Encoding.UTF8.GetString(bytes).Contains("BEGIN:VCALENDAR", StringComparison.Ordinal));
+        });
     }
     private static async Task<T> Error<T>(Func<Task> work) where T : Exception
     { try { await work(); } catch (T error) { return error; } throw new Exception("Expected " + typeof(T).Name); }
@@ -121,7 +189,7 @@ internal static class CalendarApiTests
         public async Task<string> GetTokenAsync(CancellationToken ct) { if (++Calls == BlockAt) { Waiting.TrySetResult(); await Release.Task.WaitAsync(ct); } return "synthetic-calendar-fixture"; }
         public Task<string> RefreshTokenAsync(CancellationToken ct) { ct.ThrowIfCancellationRequested(); Refreshes++; return Task.FromResult("synthetic-calendar-renewal"); }
     }
-    private sealed record Call(string Method, string Path, string Query, string? Identity);
+    private sealed record Call(string Method, string Path, string Query, string? Identity, string Body);
     private sealed class Handler : HttpMessageHandler
     {
         internal bool Enabled = true, Older, UnauthorizedOnce, BlockRoute;
@@ -132,7 +200,8 @@ internal static class CalendarApiTests
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var uri = request.RequestUri!; Calls.Add(new(request.Method.Method, uri.AbsolutePath, uri.Query,
-                request.Headers.TryGetValues("x-pigeonpost-identity", out var identity) ? identity.Single() : null));
+                request.Headers.TryGetValues("x-pigeonpost-identity", out var identity) ? identity.Single() : null,
+                request.Content is null ? "" : await request.Content.ReadAsStringAsync(ct)));
             var status = HttpStatusCode.OK; string body;
             if (uri.AbsolutePath == "/v1/capabilities")
             { status = Older ? HttpStatusCode.NotFound : HttpStatusCode.OK; body = Enabled ? "{\"features\":[\"calendar\"]}" : "{\"features\":[]}"; }
@@ -142,7 +211,8 @@ internal static class CalendarApiTests
                 if (UnauthorizedOnce) { UnauthorizedOnce = false; status = HttpStatusCode.Unauthorized; }
                 body = uri.AbsolutePath switch { "/v1/calendars" => Folders, "/v1/calendar/events" => Occurrences,
                     "/v1/calendar/events/evt_fixture" => Detail, "/v1/calendar/invitations" => "{\"invitations\":[]}",
-                    "/v1/calendar/settings" => "{\"timezone\":\"Europe/Istanbul\"}", _ => throw new Exception("Unexpected fixture path.") };
+                    "/v1/calendar/settings" => "{\"timezone\":\"Europe/Istanbul\"}", "/v1/calendar/events/evt_fixture/rsvp" or "/v1/calendar/events/evt_fixture/cancel" or "/v1/calendar/events/evt_fixture/reminders" => "{}",
+                    "/v1/calendar/events/evt_fixture.ics" => "BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n", _ => throw new Exception("Unexpected fixture path.") };
             }
             return new(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
         }

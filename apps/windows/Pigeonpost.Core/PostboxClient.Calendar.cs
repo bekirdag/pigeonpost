@@ -1,4 +1,5 @@
 using Pigeonpost.Core.Calendar;
+using System.Text.Json;
 
 namespace Pigeonpost.Core;
 
@@ -71,11 +72,24 @@ public sealed partial class PostboxClient : ICalendarService
     {
         var path = CalendarEventPath(key);
         using var binding = BindCalendar(identity, cancellationToken);
+        var owner = new RequestAuthorization(tokens);
         await RequireCalendarAsync(cancellationToken).ConfigureAwait(false);
-        var response = await GetJsonAsync<CalendarEventResponse>(path, identity, cancellationToken).ConfigureAwait(false);
+        var raw = await GetJsonAsync<JsonElement>(path, identity, cancellationToken).ConfigureAwait(false);
+        var response = ParseCalendarEvent(raw); owner.Check(cancellationToken);
         if (response.Event?.Id != key.EventId || key.OccurrenceId is { } selected && response.Occurrence?.OccurrenceId != selected)
             throw new PostboxException(502, "bad_response");
         return response;
+    }
+    private static CalendarEventResponse ParseCalendarEvent(JsonElement raw)
+    {
+        try
+        {
+            if (raw.ValueKind != JsonValueKind.Object || !raw.TryGetProperty("event", out var original) || original.ValueKind != JsonValueKind.Object)
+                throw new PostboxException(502, "bad_response");
+            var response = raw.Deserialize<CalendarEventResponse>(PostboxJson.Options) ?? throw new PostboxException(502, "bad_response");
+            return response with { Original = original.Clone() };
+        }
+        catch (JsonException) { throw new PostboxException(502, "bad_response"); }
     }
     public async Task<IReadOnlyList<CalendarInvitation>> GetCalendarInvitationsAsync(string identity, bool filtered = false, CancellationToken cancellationToken = default)
     {

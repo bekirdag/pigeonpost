@@ -138,7 +138,13 @@ public sealed partial class CalendarStore : ObservableObject, IDisposable
     public bool SelectDay(CalendarActionTarget target, CalendarDay day)
     {
         using var operation = Begin(target); if (operation is null) return false;
-        operation.Local(() => { loadVersion++; detailVersion++; state = state with { SelectedDay = day, OpenEvent = null, Detail = null }; }); Publish(); return true;
+        operation.Local(() => { loadVersion++; detailVersion++; state = state with { SelectedDay = day, FollowingToday = false, OpenEvent = null, Detail = null }; }); Publish(); return true;
+    }
+    public bool Today(CalendarActionTarget target)
+    {
+        using var operation = Begin(target); if (operation is null) return false;
+        var day = new CalendarDay(DateOnly.FromDateTime(Instant.FromDateTimeOffset(clock.GetUtcNow()).InZone(CalendarTime.Zone(state.DisplayZone)).LocalDateTime.ToDateTimeUnspecified()));
+        operation.Local(() => { loadVersion++; detailVersion++; state = state with { SelectedDay = day, FollowingToday = true, OpenEvent = null, Detail = null }; }); Publish(); return true;
     }
     public bool SelectCalendars(CalendarActionTarget target, IEnumerable<string>? selected)
     {
@@ -150,7 +156,7 @@ public sealed partial class CalendarStore : ObservableObject, IDisposable
     public async Task ReloadAsync(CalendarActionTarget target, CancellationToken ct = default)
     {
         using var operation = Begin(target); if (operation is null) return;
-        var request = ++loadVersion; var day = state.SelectedDay; var selected = state.SelectedCalendars?.ToHashSet(StringComparer.Ordinal);
+        var request = ++loadVersion; var day = state.SelectedDay; var followingToday = state.FollowingToday; var selected = state.SelectedCalendars?.ToHashSet(StringComparer.Ordinal);
         var detailKey = state.OpenEvent; var detailRequest = detailKey is null ? detailVersion : ++detailVersion;
         operation.Local(() => state = state with { Loading = true, Error = null }); Publish();
         try
@@ -166,6 +172,7 @@ public sealed partial class CalendarStore : ObservableObject, IDisposable
             string zone; string? warning = null;
             try { zone = CalendarTime.Zone(settings.Timezone ?? "UTC").Id; }
             catch (CalendarTimeException) { zone = "UTC"; warning = "The saved time zone is unavailable. Times are shown in UTC."; }
+            if (followingToday) day = new CalendarDay(DateOnly.FromDateTime(Instant.FromDateTimeOffset(clock.GetUtcNow()).InZone(CalendarTime.Zone(zone)).LocalDateTime.ToDateTimeUnspecified()));
             selected?.IntersectWith(foldersTask.Result.Select(f => f.Id));
             var range = new CalendarMonthWindow(day, settings.WeekStart is >= 0 and <= 6 ? settings.WeekStart.Value : 1).Interval(CalendarTime.Zone(zone));
             // An explicit empty filter is none. The wire API's empty selection means all.
@@ -184,7 +191,7 @@ public sealed partial class CalendarStore : ObservableObject, IDisposable
             operation.Check(); if (request != loadVersion) return;
             var stillSelected = detailRequest == detailVersion && state.OpenEvent == detailKey;
             if (removed && stillSelected) rows = rows.Where(o => o.EventId != detailKey!.EventId).ToArray();
-            operation.Local(() => state = state with { Folders = foldersTask.Result.ToArray(), Settings = settings, DisplayZone = zone, SelectedCalendars = selected,
+            operation.Local(() => state = state with { SelectedDay = day, Folders = foldersTask.Result.ToArray(), Settings = settings, DisplayZone = zone, SelectedCalendars = selected,
                 Occurrences = rows.ToArray(), Invitations = invitationsTask.Result.Where(i => !removed || !stillSelected || i.EventId != detailKey!.EventId).ToArray(),
                 FilteredInvitations = filteredTask.Result.Where(i => !removed || !stillSelected || i.EventId != detailKey!.EventId).ToArray(),
                 OpenEvent = removed && stillSelected ? null : state.OpenEvent, Detail = stillSelected ? detail : state.Detail, Error = warning }); Publish();

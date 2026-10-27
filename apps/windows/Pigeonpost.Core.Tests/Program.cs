@@ -1059,6 +1059,8 @@ tests.AddRange(CalendarTimeTests.All());
 tests.AddRange(CalendarApiTests.All());
 tests.AddRange(CalendarDeliveryTests.All());
 tests.AddRange(CalendarStoreTests.All());
+tests.AddRange(CalendarStoreTests.Actions());
+tests.AddRange(CalendarDraftTests.All());
 tests.AddRange(CallRingTests.All());
 tests.AddRange(PrivacyTests.All());
 tests.AddRange(GroupTests.All());

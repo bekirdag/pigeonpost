@@ -1,4 +1,6 @@
 using NodaTime;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Pigeonpost.Core.Calendar;
 
@@ -55,7 +57,10 @@ public sealed record CalendarSplit(string EventId, long? Revision = null);
 public sealed record CalendarEventResponse(ScheduledEvent Event, CalendarOccurrenceDetail? Occurrence = null,
     string? DeliveryStatus = null, CalendarSplit? SplitFrom = null, IReadOnlyDictionary<string, int>? Carried = null,
     IReadOnlyDictionary<string, int>? Dropped = null)
-{ public override string ToString() => "CalendarEventResponse(redacted)"; }
+{
+    [JsonIgnore] public JsonElement Original { get; init; }
+    public override string ToString() => "CalendarEventResponse(redacted)";
+}
 public sealed record CalendarInvitation(string EventId, string? OccurrenceId = null, string? Title = null,
     long? StartsAt = null, long? EndsAt = null, bool? AllDay = null, string? StartDate = null, string? EndDate = null,
     string? Tzid = null, CalendarPerson? Organizer = null, bool? Recurring = null, bool? Meeting = null, long? InvitedAt = null)

@@ -57,6 +57,27 @@ internal static class CalendarPostbox
             var invitations = await other.GetCalendarInvitationsAsync(peer);
             Check(invitations.Count == 1 && invitations.Single().EventId == detail.Event.Id && (await other.GetCalendarInvitationsAsync(peer, true)).Count == 0);
             _ = await api.GetCalendarSettingsAsync(own);
+            stage = "revisioned edit and stale edit refusal";
+            var updated = await api.UpdateCalendarEventAsync(own, rows.Single().Key, detail.Event.Revision!.Value, CalendarEventScope.All,
+                CalendarWritePayload.From(new { title = "Windows revised calendar fixture" }));
+            Check(updated.Event.Title == "Windows revised calendar fixture" && updated.Event.Revision > detail.Event.Revision);
+            try
+            {
+                await api.UpdateCalendarEventAsync(own, rows.Single().Key, detail.Event.Revision.Value, CalendarEventScope.All, CalendarWritePayload.From(new { title = "Must not replace latest" }));
+                throw new InvalidOperationException();
+            }
+            catch (PostboxException error) when (error.Code == "revision_conflict") { }
+            stage = "native invitation RSVP and personal reminders";
+            await other.AnswerCalendarInvitationAsync(peer, new(detail.Event.Id), CalendarAnswer.Accepted, CalendarAnswerScope.All);
+            var accepted = await other.GetCalendarEventAsync(peer, rows.Single().Key);
+            Check(accepted.Event.My?.Rsvp == "accepted" && (await other.GetCalendarInvitationsAsync(peer)).Count == 0);
+            await other.SaveCalendarRemindersAsync(peer, detail.Event.Id, [new(10, "push"), new(30, "push")]);
+            Check((await other.GetCalendarEventAsync(peer, rows.Single().Key)).Event.Reminders?.Select(r => r.MinutesBefore).Order().SequenceEqual([10, 30]) == true);
+            stage = "calendar settings and read-only ICS export";
+            var savedSettings = await api.SaveCalendarSettingsAsync(own, CalendarWritePayload.From(new { previews = false, timezone = "Europe/Istanbul", week_start = 1 }));
+            Check(savedSettings.Previews == false && savedSettings.Timezone == "Europe/Istanbul" && (await api.GetCalendarSettingsAsync(own)).WeekStart == 1);
+            var ics = System.Text.Encoding.UTF8.GetString(await api.ExportCalendarEventAsync(own, detail.Event.Id));
+            Check(ics.Contains("BEGIN:VCALENDAR", StringComparison.Ordinal) && ics.Contains("Windows revised calendar fixture", StringComparison.Ordinal));
             stage = "calendar controller committed-loss recovery";
             using var model = new CalendarStore(loss, loss, restarted);
             await model.ActivateAsync(own, await loss.GetCapabilitiesAsync(default));
@@ -70,7 +91,29 @@ internal static class CalendarPostbox
             Check(await model.RetryAsync(action, reviewed) is not null && model.State.Pending.Count == 0 && !model.State.Busy);
             await Attempts(http, proxy, reviewed.Id);
             Check((await api.GetCalendarOccurrencesAsync(own, range.Start, range.End)).Count(o => o.Title == "Windows controller real postbox fixture") == 1);
-            Console.WriteLine("PASS Windows calendar postbox interoperability: empty reads, protected folder/event creation, exact committed-loss replay, one occurrence, owned details, invitation separation, settings and controller recovery.");
+            stage = "controller revisioned edit and cancellation";
+            var controllerRow = (await api.GetCalendarOccurrencesAsync(own, range.Start, range.End)).Single(o => o.Title == "Windows controller real postbox fixture");
+            var edit = await model.ReviewEditAsync(action, controllerRow.Key, CalendarEventScope.All) ?? throw new InvalidOperationException();
+            var changed = await model.UpdateEventAsync(action, CalendarEventDraft.From(edit, "UTC") with { Title = "Windows controller revised fixture" });
+            Check(changed?.Event.Title == "Windows controller revised fixture" && !model.State.Busy);
+            var cancellation = await model.ReviewEditAsync(action, controllerRow.Key, CalendarEventScope.All) ?? throw new InvalidOperationException();
+            Check(await model.CancelEventAsync(action, cancellation) && (await api.GetCalendarEventAsync(own, controllerRow.Key)).Event.Status == "cancelled");
+            stage = "recurring occurrence edit and following-series split";
+            var recurring = await restarted.PrepareAsync(scope, CalendarAttemptKind.Event, CalendarWritePayload.From(new {
+                request_key = "recurring_" + Guid.NewGuid().ToString("N"), title = "Windows recurring fixture", all_day = false,
+                start = day + "T14:00", end = day + "T15:00", tzid = "Europe/Istanbul", rrule = "FREQ=DAILY;COUNT=3" }));
+            var recurringReceipt = await restarted.SendAsync(scope, recurring); var recurringId = recurringReceipt.Receipt.Event!.Event.Id;
+            var seriesRange = CalendarWallTime.Range(day + "T00:00", CalendarDay.Parse(day).PlusDays(4).Text + "T00:00", "Europe/Istanbul");
+            var series = (await api.GetCalendarOccurrencesAsync(own, seriesRange.Start, seriesRange.End)).Where(o => o.EventId == recurringId).OrderBy(o => o.StartsAt).ToArray();
+            Check(series.Length == 3); var seriesDetail = await api.GetCalendarEventAsync(own, series[0].Key);
+            var occurrence = await api.UpdateCalendarEventAsync(own, series[0].Key, seriesDetail.Event.Revision!.Value, CalendarEventScope.This, CalendarWritePayload.From(new { title = "One occurrence override" }));
+            Check(occurrence.Event.Id == recurringId && (await api.GetCalendarOccurrencesAsync(own, seriesRange.Start, seriesRange.End)).Single(o => o.OccurrenceId == series[0].OccurrenceId).Title == "One occurrence override");
+            var splitDetail = await api.GetCalendarEventAsync(own, series[1].Key);
+            var split = await api.UpdateCalendarEventAsync(own, series[1].Key, splitDetail.Event.Revision!.Value, CalendarEventScope.Following, CalendarWritePayload.From(new { title = "Following occurrences fixture" }));
+            Check(split.Event.Id != recurringId && split.SplitFrom?.EventId == recurringId && split.Event.Title == "Following occurrences fixture");
+            await api.CancelCalendarEventAsync(own, new(split.Event.Id), split.Event.Revision!.Value, CalendarEventScope.All);
+            Check((await api.GetCalendarEventAsync(own, new(split.Event.Id))).Event.Status == "cancelled");
+            Console.WriteLine("PASS Windows calendar postbox interoperability: protected create/controller recovery, exact committed-loss replay, revisioned edit/conflict, RSVP, reminders, settings, ICS, cancellation, occurrence override and following-series split.");
             return 0;
         }
         catch (Exception error)

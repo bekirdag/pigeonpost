@@ -12,6 +12,7 @@ public sealed record CalendarState(CalendarDay SelectedDay)
     public IReadOnlyList<CalendarInvitation> FilteredInvitations { get; init; } = [];
     public CalendarSettings Settings { get; init; } = new();
     public string DisplayZone { get; init; } = "UTC";
+    public bool FollowingToday { get; init; } = true;
     // null = all, empty = none. Never encode an explicit empty filter as the wire default.
     public IReadOnlySet<string>? SelectedCalendars { get; init; }
     public CalendarEventKey? OpenEvent { get; init; }
@@ -19,6 +20,7 @@ public sealed record CalendarState(CalendarDay SelectedDay)
     public bool Loading { get; init; }
     public bool Busy { get; init; }
     public string? Error { get; init; }
+    public bool RevisionConflict { get; init; }
     public IReadOnlyList<PreparedCalendarAttempt> Pending { get; init; } = [];
     public bool AttemptsLoaded { get; init; }
     public bool AttemptsUnreadable { get; init; }
