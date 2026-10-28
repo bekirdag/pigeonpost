@@ -27,6 +27,13 @@ sha256sum target/release/pigeonpost-tunnel
    `systemctl enable --now pigeonpost-tunnel`.
 5. Add the server block to `/etc/nginx-raijin-webapps/nginx.conf`, `nginx -t`, reload.
 
+Since Phase 9 the broker listens on `unix:/run/pigeonpost-tunnel/broker.sock` (0660, group
+`www-data`), and only there does it trust `X-Real-IP`: any local process can connect from
+loopback, but only nginx's workers can open the socket. Over TCP the header is ignored (and
+`TUNNEL_TRUST_PROXY` logs a warning). Switching an existing install is three coordinated edits —
+the env (`TUNNEL_BIND`, `TUNNEL_SOCKET_GID`), the unit (`RuntimeDirectory`, `SupplementaryGroups`)
+and this block's two `proxy_pass` lines — then restart the broker before reloading nginx.
+
 wodomini: install `nginx-wodomini-tunnel.conf` with the port-80 block first, issue the certificate
 (`certbot certonly --webroot -w /var/www/certbot -d tunnel.pigeonpost.dev`), then the TLS block,
 `nginx -t`, reload.

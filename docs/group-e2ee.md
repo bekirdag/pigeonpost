@@ -610,10 +610,12 @@ Reviewed by the implementer against §12 and SDS §4.6. Code: `crates/pigeonpost
 
 **Residual risks and follow-ups.**
 
-1. *Hosted mailboxes remain an authentication-service risk.* Production has no step-up `acr` configured
-   (`POSTBOX_STEP_UP_ACR_VALUES` empty), so a second device needs a person's session but not a fresh strong
-   sign-in. Detection (notices, fingerprints, safety numbers) is the defence, as §12 states. Configure step-up when
-   the Keycloak flow is verified.
+1. *Hosted mailboxes remain an authentication-service risk.* Production requires step-up for a second device:
+   `POSTBOX_STEP_UP_ACR_VALUES=mfa` (since Phase 5, 2026-10-27; verified 2026-10-28), so it needs a person's
+   session with `acr=mfa` from a sign-in within the last 10 minutes. The identity provider and the postbox are
+   still one trust domain: an operator or a compromise of either can enrol a device. Detection (notices,
+   fingerprints, safety numbers) remains the defence, as §12 states. (Updated in Phase 9; this item originally
+   said step-up was not configured.)
 2. *First device by automation.* Any credential for a mailbox may register its first device (agents need this).
    A leaked API key can therefore enrol a device for a mailbox that has none yet; it is visible to co-members.
 3. *Server-enforced roles* (unchanged from §13.3): a compromised server could accept a member's unauthorized

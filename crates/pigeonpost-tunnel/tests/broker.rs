@@ -128,7 +128,7 @@ async fn rig(idle: u64, fail_closed: u64) -> Rig {
     let url = format!("ws://{}", l.local_addr().unwrap());
     let app = broker
         .router()
-        .into_make_service_with_connect_info::<std::net::SocketAddr>();
+        .into_make_service_with_connect_info::<pigeonpost_tunnel::Peer>();
     tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
     Rig { fake, broker, url }
 }

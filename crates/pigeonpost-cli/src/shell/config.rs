@@ -11,7 +11,7 @@
 //! [mailbox.shell]
 //! enabled = true
 //! mode = "container"                       # container | allowlist | unconfined
-//! image = "docker.io/library/debian:13"    # container
+//! image = "docker.io/library/debian:13@sha256:…"  # container; pin by digest
 //! network = "none"                         # container: none | outbound
 //! read_only = false                        # container: mount the workspace read-only
 //! max_sessions = 2
@@ -22,7 +22,10 @@
 
 use std::path::{Path, PathBuf};
 
-pub const DEFAULT_IMAGE: &str = "docker.io/library/debian:13";
+/// Pinned by digest (the multi-arch index of `debian:13`, 2026-10-28), so a moved tag or a
+/// compromised registry tag cannot change what sessions run. Update deliberately.
+pub const DEFAULT_IMAGE: &str =
+    "docker.io/library/debian:13@sha256:8c4733a92aacd0bcff3779eadc35a4a5147f36cb20a5fcb56504cbc740212259";
 const MAX_COMMANDS: usize = 64;
 const MAX_PATH_ARGS: u8 = 8;
 
@@ -57,6 +60,11 @@ pub struct ShellConfig {
     /// this machine's user, with everything that user can reach.
     #[serde(default)]
     pub unconfined_acknowledged: bool,
+    /// `container` with Docker: required when the daemon is rootful without user-namespace
+    /// remapping (container root would be host root after an escape). Rootless Podman, rootless
+    /// Docker, userns-remap and Docker Desktop's VM need no acknowledgement.
+    #[serde(default)]
+    pub docker_rootful_acknowledged: bool,
     /// `allowlist`: the only commands a session may run.
     #[serde(default, rename = "command", skip_serializing_if = "Vec::is_empty")]
     pub commands: Vec<AllowedCommand>,
@@ -111,6 +119,8 @@ pub struct Shell {
     pub max_sessions: u8,
     pub idle_secs: u64,
     pub commands: Vec<AllowedCommand>,
+    /// The owner accepted a rootful Docker daemon (see `ShellConfig::docker_rootful_acknowledged`).
+    pub docker_rootful_ok: bool,
 }
 
 /// Characters an argument, an image name or a container path may contain. No whitespace, quotes,
@@ -165,6 +175,7 @@ impl ShellConfig {
             max_sessions: self.max_sessions,
             idle_secs: self.idle_secs,
             commands: Vec::new(),
+            docker_rootful_ok: self.docker_rootful_acknowledged,
         };
         match mode {
             Mode::Container => {
@@ -209,6 +220,9 @@ impl ShellConfig {
                     );
                 }
             }
+        }
+        if mode != Mode::Container && self.docker_rootful_acknowledged {
+            return Err("docker_rootful_acknowledged applies to container mode only".into());
         }
         if mode != Mode::Container && (self.image.is_some() || self.runtime.is_some()) {
             return Err("image and runtime apply to container mode only".into());
@@ -305,6 +319,7 @@ mod tests {
             idle_secs: 900,
             record: false,
             unconfined_acknowledged: false,
+            docker_rootful_acknowledged: false,
             commands: vec![],
         }
     }

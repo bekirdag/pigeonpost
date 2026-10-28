@@ -126,10 +126,39 @@ pub fn host_key(machine_home: &Path) -> Result<PrivateKey, Error> {
     }
 }
 
-/// The CA public key this machine trusts: pinned on first contact, never silently replaced.
-fn pin_ca(machine_home: &Path, offered: &str) -> Result<russh::keys::PublicKey, Error> {
+/// The production postbox's SSH CA, pinned in this build (Phase 9): a machine talking to
+/// `postbox.pigeonpost.dev` trusts exactly this key, whatever the postbox sends, a pin file says or
+/// `PIGEONPOST_SSH_CA` is set to. Fingerprint `SHA256:JYtla5q8tBzb4vFjJgeUNBiHblmEdsBvlKy2G+FbfGg`.
+/// A CA rotation ships in an agentd release.
+pub const RELEASE_CA: &str =
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMTPGs+6N5j3BGBcmG9CzYN4mCHrpY25/SI8x8If1lvh";
+const RELEASE_POSTBOX_HOST: &str = "postbox.pigeonpost.dev";
+
+fn is_release_postbox(base: &str) -> bool {
+    reqwest::Url::parse(base)
+        .ok()
+        .is_some_and(|u| u.scheme() == "https" && u.host_str() == Some(RELEASE_POSTBOX_HOST))
+}
+
+/// The CA public key this machine trusts. For the production postbox: the key pinned in this
+/// build. For any other postbox: a key the owner supplied out of band — `PIGEONPOST_SSH_CA`, or the
+/// pin file — and never one learned from the postbox on first contact.
+fn pin_ca(machine_home: &Path, base: &str, offered: &str) -> Result<russh::keys::PublicKey, Error> {
     let offered_key = russh::keys::PublicKey::from_openssh(offered.trim())
         .map_err(|_| "the postbox sent an invalid SSH CA key")?;
+    if is_release_postbox(base) {
+        let release = russh::keys::PublicKey::from_openssh(RELEASE_CA).expect("valid release CA");
+        if release.key_data() != offered_key.key_data() {
+            return Err(format!(
+                "the postbox's SSH CA ({}) is not the one this agentd release pins ({}); refusing all \
+                 sessions. A CA rotation ships in an agentd release.",
+                super::fingerprint(&offered_key),
+                super::fingerprint(&release)
+            )
+            .into());
+        }
+        return Ok(release);
+    }
     let path = machine_home.join(CA_PIN_FILE);
     let override_key = std::env::var("PIGEONPOST_SSH_CA").ok();
     let pinned = match override_key {
@@ -152,10 +181,14 @@ fn pin_ca(machine_home: &Path, offered: &str) -> Result<russh::keys::PublicKey, 
             }
             Ok(pinned)
         }
-        None => {
-            std::fs::write(&path, format!("{}\n", offered.trim()))?;
-            Ok(offered_key)
-        }
+        None => Err(format!(
+            "this postbox offers SSH CA {}; confirm it with the postbox's operator out of band, then \
+             put that public key in {} (or PIGEONPOST_SSH_CA) and restart agentd. Sessions stay \
+             refused until then.",
+            super::fingerprint(&offered_key),
+            path.display()
+        )
+        .into()),
     }
 }
 
@@ -359,6 +392,7 @@ async fn control_once(
                 "shell.hello" => {
                     ca = Some(pin_ca(
                         machine,
+                        &base,
                         data["ca_public_key"].as_str().unwrap_or(""),
                     )?);
                 }
@@ -1111,8 +1145,9 @@ mod tests {
     }
 
     #[test]
-    fn the_ca_is_pinned_on_first_contact_and_never_swapped() {
+    fn another_postboxs_ca_needs_an_out_of_band_pin_and_is_never_swapped() {
         let t = tempfile::tempdir().unwrap();
+        let base = "https://postbox.example.test";
         let one = super::super::new_ed25519()
             .public_key()
             .to_openssh()
@@ -1121,10 +1156,39 @@ mod tests {
             .public_key()
             .to_openssh()
             .unwrap();
-        assert!(pin_ca(t.path(), &one).is_ok());
-        assert!(pin_ca(t.path(), &one).is_ok());
-        let e = pin_ca(t.path(), &two).unwrap_err().to_string();
+        // No trust on first use: nothing is pinned, so the offer is refused and nothing written.
+        let e = pin_ca(t.path(), base, &one).unwrap_err().to_string();
+        assert!(e.contains("confirm it with the postbox's operator"), "{e}");
+        assert!(!t.path().join(CA_PIN_FILE).exists());
+        // The owner pins it out of band.
+        std::fs::write(t.path().join(CA_PIN_FILE), format!("{one}\n")).unwrap();
+        assert!(pin_ca(t.path(), base, &one).is_ok());
+        let e = pin_ca(t.path(), base, &two).unwrap_err().to_string();
         assert!(e.contains("not the one this machine pinned"), "{e}");
+    }
+
+    #[test]
+    fn the_production_postbox_is_held_to_the_ca_in_this_build() {
+        let t = tempfile::tempdir().unwrap();
+        let release = russh::keys::PublicKey::from_openssh(RELEASE_CA).unwrap();
+        assert_eq!(
+            super::super::fingerprint(&release),
+            "SHA256:JYtla5q8tBzb4vFjJgeUNBiHblmEdsBvlKy2G+FbfGg"
+        );
+        let base = "https://postbox.pigeonpost.dev";
+        assert!(pin_ca(t.path(), base, RELEASE_CA).is_ok());
+        let other = super::super::new_ed25519()
+            .public_key()
+            .to_openssh()
+            .unwrap();
+        // A pin file cannot widen it either.
+        std::fs::write(t.path().join(CA_PIN_FILE), format!("{other}\n")).unwrap();
+        let e = pin_ca(t.path(), base, &other).unwrap_err().to_string();
+        assert!(e.contains("this agentd release pins"), "{e}");
+        assert!(!is_release_postbox("http://postbox.pigeonpost.dev"));
+        assert!(!is_release_postbox(
+            "https://postbox.pigeonpost.dev.evil.test"
+        ));
     }
 }
 
@@ -1189,6 +1253,7 @@ mod ssh_tests {
             mode,
             workspace: std::fs::canonicalize(ws).unwrap(),
             image: "x".into(),
+            docker_rootful_ok: false,
             runtime: None,
             outbound: false,
             read_only: false,

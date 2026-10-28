@@ -9,8 +9,8 @@
 //   const gc = await loadGroupCrypto();
 //   const device = gc.GroupDevice.newWithIdentitySeed(seed, 'web-1');
 
-import init, * as bindings from './pigeonpost_groupcrypto.js?v=f185d0bd6f783430db1edd81aba0a90570a0b93c9bac486a81f9bc90c816de16';
-import { WASM_SHA256 } from './integrity.js?v=f185d0bd6f783430db1edd81aba0a90570a0b93c9bac486a81f9bc90c816de16';
+import init, * as bindings from './pigeonpost_groupcrypto.js?v=5209113c6b17f23137fbac8ea2c90ee62f7b6d156e7827f3d95c9e70bea0578f';
+import { WASM_SHA256 } from './integrity.js?v=5209113c6b17f23137fbac8ea2c90ee62f7b6d156e7827f3d95c9e70bea0578f';
 
 let ready = null;
 

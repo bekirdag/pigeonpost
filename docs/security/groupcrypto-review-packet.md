@@ -92,7 +92,10 @@ groups. Nothing prevents this; it is only detectable:
 - clients remember verified fingerprints and flag changes.
 
 A second device for a hosted mailbox requires a person's session. Since Phase 5 production also
-requires step-up (`acr` allowlist `mfa`); `docs/group-e2ee.md` §16 item 1 predates that change.
+requires step-up (`acr` allowlist `mfa`); `docs/group-e2ee.md` §16 item 1 now says so (updated in the
+Phase 9 follow-up). `device_fingerprint` no longer truncates lengths over `u16::MAX` into an ambiguous
+prefix: such inputs hash under a separate domain with `u64` lengths (valid inputs and the vectors are
+unchanged).
 Any credential may enrol a mailbox's *first* device (agents need this). Co-members can see that
 device.
 
