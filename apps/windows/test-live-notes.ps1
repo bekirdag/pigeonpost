@@ -32,7 +32,15 @@ function Wait-Like([string]$Pattern) {
     for ($n = 0; $n -lt 75; $n++) { $element = Like $Pattern; if ($element -and $element.Current.IsEnabled) { return $element }; Start-Sleep -Milliseconds 200 }
     throw "Live/notes UI control unavailable: $Pattern"
 }
-function Invoke-Like([string]$Pattern) { (Wait-Like $Pattern).GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke(); Start-Sleep -Milliseconds 300 }
+function Invoke-Like([string]$Pattern) {
+    # A button and the text inside it share a name; act on the one that can be invoked.
+    for ($n = 0; $n -lt 75; $n++) {
+        $target = All | Where-Object { $_.Current.Name -like $Pattern -and $_.Current.IsEnabled -and [bool]$_.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::IsInvokePatternAvailableProperty) } | Select-Object -First 1
+        if ($target) { $target.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke(); Start-Sleep -Milliseconds 300; return }
+        Start-Sleep -Milliseconds 200
+    }
+    throw "Live/notes UI button unavailable: $Pattern"
+}
 function Set-Text([string]$Name, [string]$Value) { (Wait-Like $Name).GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($Value) }
 function Wait-Check([scriptblock]$Predicate, [string]$Detail) {
     for ($n = 0; $n -lt 75; $n++) { if (& $Predicate) { $checks.Add($Detail); return }; Start-Sleep -Milliseconds 200 }; throw $Detail
