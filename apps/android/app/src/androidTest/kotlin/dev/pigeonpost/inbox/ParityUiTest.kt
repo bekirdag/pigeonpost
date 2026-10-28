@@ -72,7 +72,8 @@ class ParityUiTest {
             shown("Inbox")
             ui.onNodeWithText("Demo Builder").performClick()
             shown("The Android build is ready for review.")
-            ui.onNodeWithText("The Android build is ready for review.").performTouchInput { longClick(centerLeft + androidx.compose.ui.geometry.Offset(40f, 0f)) }
+            // The bubble in the history, not a tablet's preview of the same message in the conversations column.
+            ui.onNode(hasText("The Android build is ready for review.") and hasAnyAncestor(hasTestTag("conversation-history"))).performTouchInput { longClick(centerLeft + androidx.compose.ui.geometry.Offset(40f, 0f)) }
             ui.waitForIdle()
             ui.onNodeWithText("Original message").assertDoesNotExist()
             ui.onAllNodesWithContentDescription("Message actions").onLast().performClick()

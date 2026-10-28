@@ -34,6 +34,11 @@ class GroupsUiTest {
     private fun hasTestTagPrefix(prefix: String) = SemanticsMatcher("tag starts with $prefix") { node ->
         node.config.getOrElseNullable(androidx.compose.ui.semantics.SemanticsProperties.TestTag) { null }?.startsWith(prefix) == true
     }
+    /** A phone offers New group from the New conversation menu; a tablet has its own button in the conversations column. */
+    private fun newGroup() {
+        if (wideLayout()) ui.onNodeWithContentDescription("New group").performClick()
+        else { ui.onNodeWithContentDescription("New conversation").performClick(); ui.onNodeWithTag("menu:newGroup").performClick() }
+    }
     private fun send(message: String) {
         tag("groupComposer", 60_000)
         ui.onNodeWithTag("groupComposer").performClick().performTextInput(message)
@@ -52,7 +57,11 @@ class GroupsUiTest {
             // Bob's device adds this one; until then the composer waits and the status says why.
             send("Hello garden")
             text("Got it: Hello garden", 60_000)
-            text("You joined this group. Earlier messages are not available on this device.")
+            // The notice is older than the two messages: on a short window (a landscape tablet with the
+            // keyboard up) it is scrolled out of the lazy history, so scroll the history to it.
+            val joined = hasText("You joined this group. Earlier messages are not available on this device.")
+            dumped { ui.waitUntil(30_000) { runCatching { ui.onNodeWithTag("groupHistory").performScrollToNode(joined) }.isSuccess } }
+            ui.onNode(joined).assertIsDisplayed()
             // Messages from before this device joined are not readable here, by design.
             ui.onAllNodesWithText("Tomatoes are in!").assertCountEquals(0)
         }
@@ -88,8 +97,7 @@ class GroupsUiTest {
     @Test fun aNewGroupIsCreatedHereWithTheMemberAddedByThisDevice() {
         launch().use {
             text("Garden club")
-            ui.onNodeWithContentDescription("New conversation").performClick()
-            ui.onNodeWithTag("menu:newGroup").performClick()
+            newGroup()
             ui.onNodeWithTag("groupWho").performTextInput("/bob/main")
             ui.onNodeWithText("Add").performClick()
             ui.onNodeWithTag("groupName").performTextInput("Release crew")
@@ -124,8 +132,7 @@ class GroupsUiTest {
     @Test fun theOwnerSetsTheDisappearingTimerAndTheNoticeShows() {
         launch().use {
             text("Garden club")
-            ui.onNodeWithContentDescription("New conversation").performClick()
-            ui.onNodeWithTag("menu:newGroup").performClick()
+            newGroup()
             ui.onNodeWithTag("groupName").performTextInput("Timers")
             ui.onNodeWithTag("createGroup").performScrollTo().performClick()
             tag("groupPane")
