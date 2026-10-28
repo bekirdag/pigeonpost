@@ -16,14 +16,16 @@ import { publicCatalog, isUuid } from "./catalog.js";
 import { State } from "./state.js";
 import { createBilling } from "./billing.js";
 import { createSales, sourceOf } from "./sales.js";
+import { createLimiter } from "./limits.js";
 
 const state = new State(config.stateDir);
 const billing = createBilling(state);
 const sales = createSales(config.stateDir);
+const publicLimiter = createLimiter({ perMinute: config.publicRequestsPerMinute });
 const MAX_BODY = 64 * 1024;
 
-function send(res, status, body, origin) {
-  const headers = { "content-type": "application/json", "cache-control": "no-store", "x-content-type-options": "nosniff" };
+function send(res, status, body, origin, extra = {}) {
+  const headers = { "content-type": "application/json", "cache-control": "no-store", "x-content-type-options": "nosniff", ...extra };
   if (origin && [...config.allowedOrigins, config.enterpriseOrigin].includes(origin)) {
     headers["access-control-allow-origin"] = origin;
     headers["access-control-allow-headers"] = "authorization, content-type";
@@ -52,6 +54,10 @@ async function readJson(req) {
   catch { throw Object.assign(new Error("Request body must be JSON."), { status: 400 }); }
 }
 
+const decodePart = (part) => {
+  try { return decodeURIComponent(part); }
+  catch { throw Object.assign(new Error("Malformed path."), { status: 400 }); }
+};
 const statusFrom = (e) => (Number.isInteger(e?.status) && e.status >= 400 && e.status <= 599 ? e.status : 502);
 const list = (payload) => (Array.isArray(payload) ? payload : Array.isArray(payload?.data) ? payload.data : []);
 const profileKey = (token, body) => `pp-profile-${createHash("sha256").update(token).update(JSON.stringify(body)).digest("hex").slice(0, 40)}`;
@@ -71,6 +77,14 @@ const server = http.createServer(async (req, res) => {
 
     // Public: the approved price list.
     if (method === "GET" && path === "/v1/catalog") return send(res, 200, publicCatalog(), origin);
+
+    // Unauthenticated routes that make this service call Keycloak or the postbox share one budget
+    // per source address. (Talk to sales has its own, stricter, hourly limit.)
+    if ((method === "POST" && (path === "/v1/auth/exchange" || path === "/v1/auth/refresh"))
+        || (method === "GET" && /^\/v1\/handles\/[^/]+\/availability$/.test(path))) {
+      const wait = publicLimiter.take(sourceOf(req));
+      if (wait) return send(res, 429, { error: "Too many requests. Try again shortly.", code: "rate_limited" }, origin, { "retry-after": String(wait) });
+    }
 
     // OIDC login return: code -> member session. Any client secret stays server-side.
     if (method === "POST" && path === "/v1/auth/exchange") {
@@ -92,7 +106,7 @@ const server = http.createServer(async (req, res) => {
 
     // Handle availability, from the postbox. `known: false` means "could not tell", never "free".
     if (method === "GET" && (match = /^\/v1\/handles\/([^/]+)\/availability$/.exec(path))) {
-      const name = decodeURIComponent(match[1]).toLowerCase();
+      const name = decodePart(match[1]).toLowerCase();
       const available = await account.handleAvailable(name, bearer(req));
       return send(res, 200, { name, available: available === true, known: available !== null }, origin);
     }
@@ -127,7 +141,7 @@ const server = http.createServer(async (req, res) => {
       return send(res, 201, await saas.createBillingProfile(token, profile, profileKey(token, profile)), origin);
     }
     if (method === "PATCH" && (match = /^\/v1\/billing\/profiles\/([^/]+)$/.exec(path))) {
-      const id = decodeURIComponent(match[1]);
+      const id = decodePart(match[1]);
       if (!isUuid(id) && !/^[A-Za-z0-9_-]{1,64}$/.test(id)) return send(res, 404, { error: "not found" }, origin);
       const profile = await readJson(req);
       return send(res, 200, await saas.updateBillingProfile(token, id, profile, `pp-profile-edit-${randomUUID()}`), origin);

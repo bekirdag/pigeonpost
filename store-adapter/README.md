@@ -91,6 +91,7 @@ marked expired once that passes. Nothing here ever extends a paid period.
 | `PIGEONPOST_POSTBOX_URL` | Public postbox, default `https://postbox.pigeonpost.dev` |
 | `POSTBOX_INTERNAL_URL`, `POSTBOX_SERVICE_TOKEN` | Postbox internal API (private link) and this service's `svc_` token |
 | `STORE_ALLOWED_ORIGINS` | Exact https origins. The first is the individual-checkout return origin. |
+| `STORE_PUBLIC_REQUESTS_PER_MINUTE` | Per-address budget for the unauthenticated sign-in exchange/refresh and handle-availability routes (default 60). |
 | `ENTERPRISE_ORIGIN` | Enterprise return origin, default `https://enterprise.pigeonpost.dev` |
 | `STORE_STATE_DIR` | Durable state, default `/var/lib/pigeonpost-store-adapter` (systemd `StateDirectory=`) |
 | `CHECKOUTS_PER_HOUR`, `RECONCILE_INTERVAL_MS` | 5 and 60000 |

@@ -129,6 +129,12 @@ export const LIMITS = {
   e2eeUpdatesPerMinute: 120,
   authCacheEntries: 10_000,
   authCacheMs: 60_000,
+  // A token the postbox refused is remembered briefly, so a client retrying one expired token costs
+  // nothing; each *different* refused token counts against the caller's address, which bounds how
+  // many lookups one address can make the postbox do with guessed or stolen-and-revoked tokens.
+  rejectedTokenMs: 60_000,
+  rejectedTokenEntries: 10_000,
+  authFailuresPerIp10Min: 30,
   heartbeatMs: 20_000,
   resumeGraceMs: 20_000,
   maxRoomMs: 8 * 3600_000,
@@ -183,6 +189,7 @@ export function createCallsService(cfgIn, deps = {}) {
   });
 
   const authCache = new Map(); // sha256(token) -> member auth
+  const rejectedTokens = new Map(); // sha256(token) -> expiry of the postbox's refusal
   const guests = new Map(); // sha256(guest token) -> guest auth
   const sessions = new Map(); // session id -> session
   const sessionsByName = new Map(); // normalized address/handle -> Set<session>
@@ -237,6 +244,13 @@ export function createCallsService(cfgIn, deps = {}) {
     return false;
   }
 
+  // Like `limited`, but only looks: true when `key` already has `max` entries inside the window.
+  function overLimit(key, max, windowMs) {
+    const t = now();
+    const recent = (buckets.get(key) || []).filter((x) => t - x < windowMs);
+    return recent.length >= max;
+  }
+
   function clientIp(req) {
     if (cfg.trustProxy) {
       const cf = req.headers["cf-connecting-ip"];
@@ -272,8 +286,25 @@ export function createCallsService(cfgIn, deps = {}) {
     const key = sha256(token);
     const hit = authCache.get(key);
     if (hit && hit.expires > now()) return hit;
+    const refused = rejectedTokens.get(key);
+    if (refused !== undefined) {
+      if (refused > now()) throw new HttpError(401, "unauthorized");
+      rejectedTokens.delete(key);
+    }
+    const failKey = "authfail:" + clientIp(req);
+    if (overLimit(failKey, LIMITS.authFailuresPerIp10Min, 600_000)) throw new HttpError(429, "rate_limited");
 
-    const { identities } = await postboxJson("/v1/identities", token);
+    let identities;
+    try {
+      ({ identities } = await postboxJson("/v1/identities", token));
+    } catch (err) {
+      if (err instanceof HttpError && err.status === 401) {
+        if (rejectedTokens.size >= LIMITS.rejectedTokenEntries) rejectedTokens.delete(rejectedTokens.keys().next().value);
+        rejectedTokens.set(key, now() + LIMITS.rejectedTokenMs);
+        limited(failKey, Number.MAX_SAFE_INTEGER, 600_000); // record one failure
+      }
+      throw err;
+    }
     const list = Array.isArray(identities) ? identities.slice(0, 200) : [];
     const mailboxes = await Promise.all(list.map(async (identity) => {
       const address = String(identity.address || "");

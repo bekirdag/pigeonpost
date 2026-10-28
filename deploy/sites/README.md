@@ -56,6 +56,31 @@ key; a mismatched response blocks HTML publication. The HTML group entry key is 
 final groups.js bytes, so a UI-only change also invalidates that module; its crypto imports remain
 coupled to the WASM digest. Confirm actual same-origin WASM initialization in the shared browser.
 
+## Edge security headers
+
+Content-Security-Policy, `X-Content-Type-Options` and `Referrer-Policy` come from each site's raijin
+server block (shared webapps nginx: edit only Pigeonpost blocks, line-addressed, back up and `diff`
+before `nginx -t` and reload). Two headers belong at the TLS edge instead, because only the edge
+knows the connection was HTTPS and who the client was:
+
+- **wodomini**, each Pigeonpost file in `/etc/nginx/sites-enabled/pigeonpost-*.conf` (these files
+  hold only Pigeonpost blocks), inside the `listen 443 ssl` server:
+  `add_header Strict-Transport-Security "max-age=31536000" always;` (no `includeSubDomains` or
+  `preload`: not every name under pigeonpost.dev is ours to promise HTTPS for). The tunnel block
+  also gets `add_header X-Content-Type-Options "nosniff" always;`. None of these files uses
+  `add_header` inside a location, so the server-level header reaches every response; keep it so.
+- **wodomini**, every proxied location of those servers:
+  `proxy_set_header CF-Connecting-IP $remote_addr;`. After `conf.d/cloudflare-real-ip.conf`,
+  `$remote_addr` is the visitor for Cloudflare traffic and the real peer for anything else, so a
+  client that reaches wodomini without Cloudflare cannot choose the address raijin (which trusts
+  `CF-Connecting-IP` from wodomini) and the calls service, billing bridge and broker rate-limit by.
+- **postbox host** (45.132.181.100), `/etc/nginx/sites-enabled/pigeonpost-postbox`, TLS server:
+  `server_tokens off;`, `add_header Strict-Transport-Security "max-age=31536000" always;` and
+  `add_header X-Content-Type-Options "nosniff" always;`.
+
+After any nginx or site deployment run `python3 deploy/sites/check-security-headers.py`; it fails
+on a missing HSTS, `nosniff`, CSP directive or referrer policy.
+
 ## Checking
 
 ```bash
