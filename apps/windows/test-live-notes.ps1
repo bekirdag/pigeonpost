@@ -126,9 +126,9 @@ try {
     # ---- Groups: a live stream with a stage invitation ----
     Create-Group 'Live rehearsal'
     $banner = Wait-Like 'Watch the live stream'
-    Check ($null -ne (Like 'Preview Design is live: Launch rehearsal')) 'The LIVE banner names the streamer and the title'
+    Check ($null -ne (Like 'Design is live: Launch rehearsal')) 'The LIVE banner names the streamer and the title'
     Check ($null -eq (Like 'Go live')) 'Go live is not offered while the group is live'
-    Check ($null -ne (Like 'Preview Design invited you onto the stage.*')) 'A stage invitation for this inbox is shown'
+    Check ($null -ne (Like 'Design invited you onto the stage.*')) 'A stage invitation for this inbox is shown'
     Capture 'group-live-banner.png'
     Invoke-Like 'Watch the live stream'
     $null = Wait-Like 'Watching needs the call view, which this preview doesn''t load.'

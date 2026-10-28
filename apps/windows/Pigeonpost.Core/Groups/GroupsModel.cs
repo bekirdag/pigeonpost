@@ -116,6 +116,7 @@ public sealed class GroupsModel(PostboxClient postbox, Func<string, IGroupStateS
     public bool ShowsLiveBanner => LiveStream is not null;
     public bool LiveIsMine => LiveStream is { } s && s.By == mailbox?.Address;
     public string LiveBannerText => LiveStream is { } s ? (LiveIsMine ? "You are" : StreamerName(s) + " is") + " live: " + GroupStreams.Title(s.Title) : "";
+    private string InviterName(GroupStream s) => s.Stage!.First(e => e.Address == mailbox!.Address).By is { } by && by != s.By ? NameOf(by) : StreamerName(s);
     // The streamer by the name this inbox knows; the stream's own handle when the member list
     // has not been read yet.
     private string StreamerName(GroupStream s)
@@ -129,7 +130,7 @@ public sealed class GroupsModel(PostboxClient postbox, Func<string, IGroupStateS
     public bool CanChooseWhoGoesLive => Streaming && Info is { IsActive: true, IsAdmin: true };
     // A stage invitation for this mailbox on the selected group's stream.
     public string? StageInviteText => LiveStream is { } s && GroupStreams.StageOf(s, mailbox?.Address) == "invited"
-        ? NameOf(s.Stage!.First(e => e.Address == mailbox!.Address).By ?? s.By) + " invited you onto the stage. Your microphone and camera turn on only if you join."
+        ? InviterName(s) + " invited you onto the stage. Your microphone and camera turn on only if you join."
         : null;
     public string EmptyText => Groups.Count == 0 ? "No groups yet. Use New group to start one." : "";
     public event EventHandler? LinesChanged;
