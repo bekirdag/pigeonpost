@@ -93,6 +93,10 @@
       "description": "Live streams in groups (Phase 6; end-to-end encrypted media, key directory; docs/streaming.md)."
     },
     {
+      "name": "shell",
+      "description": "SSH to agent workspaces through the tunnel broker (Phase 8; end-to-end SSH, short-lived certificates; docs/agent-ssh.md)."
+    },
+    {
       "name": "mls",
       "description": "MLS delivery service for groups (devices, key packages, commits, Welcomes; docs/group-e2ee.md)."
     },
@@ -10995,6 +10999,724 @@
         }
       }
     },
+    "/v1/shell/ca": {
+      "get": {
+        "tags": [
+          "shell"
+        ],
+        "operationId": "getShellCa",
+        "summary": "The SSH CA public key",
+        "description": "Public, for pinning and independent checks. 503 shell_unavailable when this server has no CA.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "`{public_key, fingerprint}`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "503": {
+            "$ref": "#/components/responses/ShellError"
+          }
+        }
+      }
+    },
+    "/v1/shell/agent": {
+      "put": {
+        "tags": [
+          "shell"
+        ],
+        "operationId": "putShellAgent",
+        "summary": "The agent machine reports its local SSH opt-in and host key",
+        "description": "The agent mailbox's own credential only (capability token or device credential). The first host key is pinned; a different one waits as pending until a supervisor approves it (status host_key_pending). Disabling, or changing mode, ends open sessions.",
+        "security": [
+          {
+            "capToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "enabled",
+                  "mode",
+                  "max_sessions",
+                  "host_key"
+                ],
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "mode": {
+                    "type": "string"
+                  },
+                  "max_sessions": {
+                    "type": "integer"
+                  },
+                  "host_key": {
+                    "type": "string"
+                  },
+                  "version": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "`{status, host_key_fp, pending_host_key_fp, enabled, mode, ca_public_key, ca_fp}`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ShellError"
+          },
+          "401": {
+            "$ref": "#/components/responses/ShellError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ShellError"
+          },
+          "404": {
+            "$ref": "#/components/responses/ShellError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ShellError"
+          }
+        }
+      }
+    },
+    "/v1/shell/agent/events": {
+      "get": {
+        "tags": [
+          "shell"
+        ],
+        "operationId": "shellAgentEvents",
+        "summary": "The agent machine's shell control stream (Server-Sent Events)",
+        "description": "The agent mailbox's own credential only. Events: shell.hello {ca_public_key, ca_fp, broker_url}, shell.request {session_id, leg_token, broker_url, requester, via, mode, client_key_fp, cert_serial, ca_fp, principal, connect_by, ends_by, idle_secs}, shell.revoke {session_id, reason}. Holding it is what connected means.",
+        "security": [
+          {
+            "capToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "text/event-stream",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/ShellError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ShellError"
+          },
+          "404": {
+            "$ref": "#/components/responses/ShellError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ShellError"
+          }
+        }
+      }
+    },
+    "/v1/shell/sessions": {
+      "get": {
+        "tags": [
+          "shell"
+        ],
+        "operationId": "listShellSessions",
+        "summary": "Sessions I requested, and sessions on agents I supervise",
+        "description": "A person. Metadata only.",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`{sessions:[session]}`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/ShellError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ShellError"
+          },
+          "404": {
+            "$ref": "#/components/responses/ShellError"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "shell"
+        ],
+        "operationId": "openShellSession",
+        "summary": "Request an SSH session to an agent's workspace (SDS §11.6)",
+        "description": "A person with a recent strong sign-in (step_up_required otherwise) who owns the agent, is its org's owner, or holds a live ssh delegation for it; the org must allow SSH and the agent admin must have enabled it; the agent's machine must be connected with SSH enabled. API keys, org keys, connectors and agents get human_required. 201 returns the credentials; 202 when the org requires approval.",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "agent",
+                  "client_public_key"
+                ],
+                "properties": {
+                  "agent": {
+                    "type": "string"
+                  },
+                  "client_public_key": {
+                    "type": "string"
+                  },
+                  "cols": {
+                    "type": "integer"
+                  },
+                  "rows": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "`{session_id, state: issued, broker_url, leg_token, host_key, host_key_fp, user_cert, ssh_user, principal, ca_fp, connect_by, idle_secs, ends_by, session}`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "`{session_id, state: awaiting_approval, session}` — waiting for a supervisor's approval",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ShellError"
+          },
+          "401": {
+            "$ref": "#/components/responses/ShellError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ShellError"
+          },
+          "404": {
+            "$ref": "#/components/responses/ShellError"
+          },
+          "409": {
+            "$ref": "#/components/responses/ShellError"
+          },
+          "429": {
+            "$ref": "#/components/responses/ShellError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ShellError"
+          }
+        }
+      }
+    },
+    "/v1/shell/sessions/{id}": {
+      "get": {
+        "tags": [
+          "shell"
+        ],
+        "operationId": "getShellSession",
+        "summary": "One session (requester or supervisor)",
+        "description": "Metadata only.",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`{session}`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/ShellError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ShellError"
+          },
+          "404": {
+            "$ref": "#/components/responses/ShellError"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "shell"
+        ],
+        "operationId": "closeShellSession",
+        "summary": "End a session",
+        "description": "The requester, or a supervisor of the agent (owner; org owner, admin or agent admin). The agent's machine and the broker end it at once.",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`{session}`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/ShellError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ShellError"
+          },
+          "404": {
+            "$ref": "#/components/responses/ShellError"
+          }
+        }
+      }
+    },
+    "/v1/shell/sessions/{id}/approve": {
+      "post": {
+        "tags": [
+          "shell"
+        ],
+        "operationId": "approveShellSession",
+        "summary": "Approve a pending session",
+        "description": "A supervisor of the agent other than the requester, with step-up.",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`{session}`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/ShellError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ShellError"
+          },
+          "404": {
+            "$ref": "#/components/responses/ShellError"
+          },
+          "409": {
+            "$ref": "#/components/responses/ShellError"
+          }
+        }
+      }
+    },
+    "/v1/shell/sessions/{id}/deny": {
+      "post": {
+        "tags": [
+          "shell"
+        ],
+        "operationId": "denyShellSession",
+        "summary": "Deny a pending session",
+        "description": "A supervisor of the agent other than the requester, with step-up.",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`{session}`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/ShellError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ShellError"
+          },
+          "404": {
+            "$ref": "#/components/responses/ShellError"
+          },
+          "409": {
+            "$ref": "#/components/responses/ShellError"
+          }
+        }
+      }
+    },
+    "/v1/shell/sessions/{id}/connect": {
+      "post": {
+        "tags": [
+          "shell"
+        ],
+        "operationId": "connectShellSession",
+        "summary": "Collect credentials for an approved session",
+        "description": "The requester, with a fresh step-up; the grant is decided again.",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Same as a 201 from POST /v1/shell/sessions.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/ShellError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ShellError"
+          },
+          "404": {
+            "$ref": "#/components/responses/ShellError"
+          },
+          "409": {
+            "$ref": "#/components/responses/ShellError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ShellError"
+          }
+        }
+      }
+    },
+    "/v1/agents/{address}/shell": {
+      "get": {
+        "tags": [
+          "shell"
+        ],
+        "operationId": "agentShellStatus",
+        "summary": "An agent's SSH status",
+        "description": "A person related to the agent (owner, supervisor or ssh delegate); others get 404.",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "address",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`{agent, handle, enabled, connected, mode, max_sessions, host_key, host_key_fp, pending_host_key_fp, org, requires_approval, live_sessions, can_open, via, refusal, can_supervise}`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/ShellError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ShellError"
+          },
+          "404": {
+            "$ref": "#/components/responses/ShellError"
+          }
+        }
+      }
+    },
+    "/v1/agents/{address}/shell/host-key": {
+      "post": {
+        "tags": [
+          "shell"
+        ],
+        "operationId": "approveAgentHostKey",
+        "summary": "Approve the agent's pending host key (explicit rotation)",
+        "description": "A supervisor of the agent, with step-up; the fingerprint must equal the pending one. Ends the agent's open sessions.",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "address",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "fingerprint"
+                ],
+                "properties": {
+                  "fingerprint": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "`{host_key_fp, host_key}`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ShellError"
+          },
+          "401": {
+            "$ref": "#/components/responses/ShellError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ShellError"
+          },
+          "404": {
+            "$ref": "#/components/responses/ShellError"
+          },
+          "409": {
+            "$ref": "#/components/responses/ShellError"
+          }
+        }
+      }
+    },
+    "/v1/orgs/{id}/agents/{address}/shell": {
+      "put": {
+        "tags": [
+          "shell"
+        ],
+        "operationId": "orgAgentShellSwitch",
+        "summary": "The agent admin's per-agent SSH switch (SDS §6.5)",
+        "description": "Owner, admin or agent admin; turning it on needs step-up; turning it off ends the agent's sessions.",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "address",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "enabled"
+                ],
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "`{agent, ssh_enabled}`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ShellError"
+          },
+          "401": {
+            "$ref": "#/components/responses/ShellError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ShellError"
+          },
+          "404": {
+            "$ref": "#/components/responses/ShellError"
+          },
+          "409": {
+            "$ref": "#/components/responses/ShellError"
+          }
+        }
+      }
+    },
     "/v1/rooms": {
       "get": {
         "tags": [
@@ -16943,6 +17665,193 @@
           }
         }
       }
+    },
+    "/internal/v1/shell/legs": {
+      "post": {
+        "tags": [
+          "internal"
+        ],
+        "x-internal": true,
+        "operationId": "internalShellLeg",
+        "summary": "Spend a leg token (tunnel broker)",
+        "description": "Returns which side the leg is and the session limits; one use, before connect_by.",
+        "security": [
+          {
+            "serviceToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "session_id",
+                  "leg_token"
+                ],
+                "properties": {
+                  "session_id": {
+                    "type": "string"
+                  },
+                  "leg_token": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "`{session_id, side, ends_by, connect_by, idle_secs}`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request."
+          },
+          "401": {
+            "description": "Missing or invalid service token."
+          },
+          "403": {
+            "description": "This service may not call this endpoint, or the leg token is invalid."
+          }
+        }
+      }
+    },
+    "/internal/v1/shell/check": {
+      "post": {
+        "tags": [
+          "internal"
+        ],
+        "x-internal": true,
+        "operationId": "internalShellCheck",
+        "summary": "Broker heartbeat (byte counts in, sessions to end out)",
+        "security": [
+          {
+            "serviceToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "sessions"
+                ],
+                "properties": {
+                  "sessions": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "`{end:[{session_id, reason}], server_time}`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request."
+          },
+          "401": {
+            "description": "Missing or invalid service token."
+          },
+          "403": {
+            "description": "This service may not call this endpoint, or the leg token is invalid."
+          }
+        }
+      }
+    },
+    "/internal/v1/shell/closed": {
+      "post": {
+        "tags": [
+          "internal"
+        ],
+        "x-internal": true,
+        "operationId": "internalShellClosed",
+        "summary": "The broker saw a session end",
+        "security": [
+          {
+            "serviceToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "session_id",
+                  "reason"
+                ],
+                "properties": {
+                  "session_id": {
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": "string"
+                  },
+                  "bytes_client": {
+                    "type": "integer"
+                  },
+                  "bytes_agent": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "`{closed: true}`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request."
+          },
+          "401": {
+            "description": "Missing or invalid service token."
+          },
+          "403": {
+            "description": "This service may not call this endpoint, or the leg token is invalid."
+          },
+          "404": {
+            "description": "No such session."
+          }
+        }
+      }
     }
   },
   "components": {
@@ -18533,6 +19442,16 @@
     "responses": {
       "CalendarError": {
         "description": "A calendar refusal: `{error, message, …}` with codes from docs/calendar.md §0 (`feature_disabled`, `not_found`, `forbidden`, `human_required`, `revision_conflict`, `time_invalid`, `recurrence_invalid`, `expansion_limit`, `attendee_limit`, `invite_limit`, `meeting_capacity`, `guest_token_invalid`, `window_closed`, …).",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "ShellError": {
+        "description": "An agent SSH refusal: `{error, detail, message}` with codes from docs/agent-ssh.md (human_required, step_up_required, step_up_unavailable, delegation_required, ssh_not_allowed, ssh_not_enabled, not_org_member, no_agent, agent_offline, shell_not_offered, host_key_pending, agent_busy, not_approved, leg_invalid, shell_unavailable, feature_disabled).",
         "content": {
           "application/json": {
             "schema": {

@@ -1,0 +1,23 @@
+meta {
+  name: Collect credentials for an approved session
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/v1/shell/sessions/:id/connect
+  body: none
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  The requester, with a fresh step-up; the grant is decided again.
+}

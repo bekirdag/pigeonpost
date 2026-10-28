@@ -1,0 +1,28 @@
+meta {
+  name: Request an SSH session to an agent's workspace (SDS §11.6)
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/v1/shell/sessions
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "agent": "string",
+    "client_public_key": "string",
+    "cols": 0,
+    "rows": 0
+  }
+}
+
+docs {
+  A person with a recent strong sign-in (step_up_required otherwise) who owns the agent, is its org's owner, or holds a live ssh delegation for it; the org must allow SSH and the agent admin must have enabled it; the agent's machine must be connected with SSH enabled. API keys, org keys, connectors and agents get human_required. 201 returns the credentials; 202 when the org requires approval.
+}

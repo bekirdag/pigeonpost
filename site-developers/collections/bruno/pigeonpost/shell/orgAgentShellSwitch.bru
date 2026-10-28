@@ -1,0 +1,30 @@
+meta {
+  name: The agent admin's per-agent SSH switch (SDS §6.5)
+  type: http
+  seq: 13
+}
+
+put {
+  url: {{baseUrl}}/v1/orgs/:id/agents/:address/shell
+  body: json
+  auth: bearer
+}
+
+params:path {
+  id: 
+  address: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "enabled": false
+  }
+}
+
+docs {
+  Owner, admin or agent admin; turning it on needs step-up; turning it off ends the agent's sessions.
+}

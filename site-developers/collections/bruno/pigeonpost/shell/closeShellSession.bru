@@ -1,0 +1,23 @@
+meta {
+  name: End a session
+  type: http
+  seq: 7
+}
+
+delete {
+  url: {{baseUrl}}/v1/shell/sessions/:id
+  body: none
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  The requester, or a supervisor of the agent (owner; org owner, admin or agent admin). The agent's machine and the broker end it at once.
+}

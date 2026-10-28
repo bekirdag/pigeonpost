@@ -5206,6 +5206,402 @@
       ]
     },
     {
+      "name": "shell",
+      "description": "SSH to agent workspaces through the tunnel broker (Phase 8; end-to-end SSH, short-lived certificates; docs/agent-ssh.md).",
+      "item": [
+        {
+          "name": "The SSH CA public key",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/shell/ca",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "shell",
+                "ca"
+              ]
+            },
+            "description": "Public, for pinning and independent checks. 503 shell_unavailable when this server has no CA.",
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "The agent machine reports its local SSH opt-in and host key",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/shell/agent",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "shell",
+                "agent"
+              ]
+            },
+            "description": "The agent mailbox's own credential only (capability token or device credential). The first host key is pinned; a different one waits as pending until a supervisor approves it (status host_key_pending). Disabling, or changing mode, ends open sessions.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"enabled\": false,\n  \"mode\": \"string\",\n  \"max_sessions\": 0,\n  \"host_key\": \"string\",\n  \"version\": \"string\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "The agent machine's shell control stream (Server-Sent Events)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/shell/agent/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "shell",
+                "agent",
+                "events"
+              ]
+            },
+            "description": "The agent mailbox's own credential only. Events: shell.hello {ca_public_key, ca_fp, broker_url}, shell.request {session_id, leg_token, broker_url, requester, via, mode, client_key_fp, cert_serial, ca_fp, principal, connect_by, ends_by, idle_secs}, shell.revoke {session_id, reason}. Holding it is what connected means."
+          }
+        },
+        {
+          "name": "Sessions I requested, and sessions on agents I supervise",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/shell/sessions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "shell",
+                "sessions"
+              ],
+              "query": [
+                {
+                  "key": "state",
+                  "value": "",
+                  "disabled": true,
+                  "description": ""
+                }
+              ]
+            },
+            "description": "A person. Metadata only."
+          }
+        },
+        {
+          "name": "Request an SSH session to an agent's workspace (SDS §11.6)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/shell/sessions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "shell",
+                "sessions"
+              ]
+            },
+            "description": "A person with a recent strong sign-in (step_up_required otherwise) who owns the agent, is its org's owner, or holds a live ssh delegation for it; the org must allow SSH and the agent admin must have enabled it; the agent's machine must be connected with SSH enabled. API keys, org keys, connectors and agents get human_required. 201 returns the credentials; 202 when the org requires approval.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"agent\": \"string\",\n  \"client_public_key\": \"string\",\n  \"cols\": 0,\n  \"rows\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "One session (requester or supervisor)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/shell/sessions/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "shell",
+                "sessions",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Metadata only."
+          }
+        },
+        {
+          "name": "End a session",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/shell/sessions/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "shell",
+                "sessions",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "The requester, or a supervisor of the agent (owner; org owner, admin or agent admin). The agent's machine and the broker end it at once."
+          }
+        },
+        {
+          "name": "Approve a pending session",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/shell/sessions/:id/approve",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "shell",
+                "sessions",
+                ":id",
+                "approve"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "A supervisor of the agent other than the requester, with step-up."
+          }
+        },
+        {
+          "name": "Deny a pending session",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/shell/sessions/:id/deny",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "shell",
+                "sessions",
+                ":id",
+                "deny"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "A supervisor of the agent other than the requester, with step-up."
+          }
+        },
+        {
+          "name": "Collect credentials for an approved session",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/shell/sessions/:id/connect",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "shell",
+                "sessions",
+                ":id",
+                "connect"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "The requester, with a fresh step-up; the grant is decided again."
+          }
+        },
+        {
+          "name": "An agent's SSH status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/agents/:address/shell",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "agents",
+                ":address",
+                "shell"
+              ],
+              "variable": [
+                {
+                  "key": "address",
+                  "value": "",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "A person related to the agent (owner, supervisor or ssh delegate); others get 404."
+          }
+        },
+        {
+          "name": "Approve the agent's pending host key (explicit rotation)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/agents/:address/shell/host-key",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "agents",
+                ":address",
+                "shell",
+                "host-key"
+              ],
+              "variable": [
+                {
+                  "key": "address",
+                  "value": "",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "A supervisor of the agent, with step-up; the fingerprint must equal the pending one. Ends the agent's open sessions.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fingerprint\": \"string\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "The agent admin's per-agent SSH switch (SDS §6.5)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/orgs/:id/agents/:address/shell",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "orgs",
+                ":id",
+                "agents",
+                ":address",
+                "shell"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": ""
+                },
+                {
+                  "key": "address",
+                  "value": "",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Owner, admin or agent admin; turning it on needs step-up; turning it off ends the agent's sessions.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"enabled\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "mls",
       "description": "MLS delivery service for groups (devices, key packages, commits, Welcomes; docs/group-e2ee.md).",
       "item": [

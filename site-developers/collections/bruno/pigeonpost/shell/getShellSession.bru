@@ -1,0 +1,23 @@
+meta {
+  name: One session (requester or supervisor)
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/v1/shell/sessions/:id
+  body: none
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  Metadata only.
+}
