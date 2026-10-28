@@ -1,0 +1,80 @@
+{
+  "comment": "Made by meeting-intel/src/crypto.js sealBrief (tests only; this key is not used anywhere).",
+  "key_id": "nkVectorKey0001",
+  "private_pkcs8": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgmfbLRwX2Jnf5sUEbdQ0zTYbbrxS0cfYZKz8PkLx97X2hRANCAATjqcGiwqKAxDfaULt7IpGAQI9/ngsIbJbXetRVMzVf9uxHctEJSfjTRPV5KYuA1qlduSMSbWZ2KlF5M1MbeAOI",
+  "public_key": "BOOpwaLCooDEN9pQu3sikYBAj3+eCwhsltd61FUzNV/27Edy0QlJ+NNE9Xkpi4DWqV25IxJtZnYqUXkzUxt4A4g=",
+  "meeting": {
+    "id": "mtg_k3v9q2x7m4p8r1t6w0y5z2b7c4",
+    "kind": "call",
+    "state": "ready",
+    "created_at": 1793113200,
+    "ended_at": 1793113954,
+    "ready_at": 1793113980,
+    "expires_at": 1800889980,
+    "host": "/alice",
+    "failure": null,
+    "alg": "A256GCM",
+    "iv": "DgABiKaUz+jvnYgR",
+    "ciphertext": "+kTf5dFzbSJi1f9r/XhpqHf5w25a/oI2rk/bH1RuKJNMEqfTkhZ9m2Dd2I20kR6jCzmngfjGJjActwzLbjWe/1fLkSwN8VcR0zXFGveHtP9Ve7TBM2fHfJvU2hSW5TLc0Vqew9zji++FnyGoJyjVXfuCPz5xzYSj96Qt8JgsPANYX5nCm0cGCqAPZZbjS9eUfXRpw694K6GOTqCxd7l+zW1bRrK/veXgNfgGb3Vpo+GLttDyu43mlJuwU7uJcL3T9jc5sGoGHC3bs5G+BSW2gue2707jVvLROP6k6h0CV35hfh2JZKhOe4rmVBqeNykJgDaNn33BMyEj6bgdO5vWI+ZHjWGsoQFTbwPhtQbqVk/uYHiyxa8RlNXyaLUK0PxDBpJYKExZuCG/QvHrqrt4yvF/UgNxUZlWxiIh6XoESgZEL0Hs73jmLL8Dg5CeHnB93z68qlK3lawCRbTZoyoLXA4ralTOSnHDKgDnV1NongEIIr1Q6HX1Rp9g5Xxpbhf8brpl+n1rCvAUfc/EpElbRxrSA1fI/0FOHP1lZ7vXEnoh92r9F66zZI+l6bTd/ocnrwcFk6q6cs8Tj1rEEQtgLgvnN8DtXg9Jl+v/xufz/YAgmMUklI7WN2qH+J2EOcDuwUkDAOacVeSLNiZgrn3ImrhFcB5KRiq6XKXCrTG8r6XNrZXkRYPiF2jgw00HxDZjpF2/FL13eQFAREOrISwVUrToYf9TeWGU5QL7aS1HXYdhTFqTM0p63RYCo+1iRLcjcjDpHtksY0hEJZjgg5w/Hy6qtQ8c+DpfMbYuQ8ek6y772qkwysVFg+6Ev/rfi/y3tzmXXWf+ltBNhBNLvJ5n++TGeISDfckzaaDlD7n+MHwuiijny0I6u50t0X2dqfUHx9YgTQq1ebLndsweQGf1LPpXdnMzi3gyFVjgQ8YAVWb13U1f1eQQbFGf60Q3L6Jz8CaBaifP11nk1KhDWMrBPPRXh1N/e/R9etSr0sMZWkBdiBWx0XE=",
+    "keys": [
+      {
+        "key_id": "nkOtherDevice01",
+        "epk": "BEbvDt7yJVjMnR2FaefnP2NM6B9HY/OFe+B8gjkLzF+EKEzZZFRRmcUXZwxyHRGfaELF85pEyGJMlX2Dw4GidII=",
+        "iv": "XDwMD4OaAOb0/Szd",
+        "wrapped": "jg+4r2+U7HbmquLe4ywcqQygsoa38XfKnWQAj+w0PT1D7ZyJ7Wz3DEF1WrxJ7Lqr"
+      },
+      {
+        "key_id": "nkVectorKey0001",
+        "epk": "BM07LO13geXyJ8EzVL714xEO0fvOuA4gP9tqjQnoZ4HzqHZ1F1RB0ypLbcPImR3uGYDrZJ02XOKaMMWGHnB3MTE=",
+        "iv": "WOz9ZVFVvkXQNRAK",
+        "wrapped": "Vu7XPIp2eiEg/wB8SAh/mDqE2SZcAUzjE1r4mVQ0F1pjUZjF+ky+5bKN9V39qaEt"
+      }
+    ]
+  },
+  "brief": {
+    "v": 1,
+    "meeting_id": "mtg_k3v9q2x7m4p8r1t6w0y5z2b7c4",
+    "title": "Sprint planning",
+    "language": "en",
+    "started_at": "2026-10-27T15:00:00.000Z",
+    "duration_s": 754,
+    "participants": [
+      "/alice",
+      "/bob"
+    ],
+    "summary": "Agreed the release scope; Bob owns the store listing.",
+    "decisions": [
+      "Ship 0.4.1 to internal testing"
+    ],
+    "action_items": [
+      {
+        "owner": "/bob",
+        "task": "Update the Play data safety form",
+        "due": "Friday",
+        "quote_ts": "02:10"
+      }
+    ],
+    "open_questions": [
+      "Do we need a new screenshot?"
+    ],
+    "draft": false,
+    "transcript": [
+      {
+        "at": "00:04",
+        "speaker": "/alice",
+        "text": "Let's plan the release.",
+        "lang": "en"
+      },
+      {
+        "at": "02:10",
+        "speaker": "/bob",
+        "text": "I'll update the data safety form by Friday.",
+        "lang": "en"
+      }
+    ],
+    "generated_by": {
+      "stt": "whisper.cpp ggml-small",
+      "llm": "qwen-latest-flash-next"
+    }
+  }
+}

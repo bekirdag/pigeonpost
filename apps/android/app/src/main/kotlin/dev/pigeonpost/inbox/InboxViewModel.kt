@@ -55,6 +55,16 @@ import dev.pigeonpost.inbox.calendar.KeystoreCalendarAttempts
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
+import dev.pigeonpost.core.groups.GroupStream
+import dev.pigeonpost.core.groups.GroupStreams
+import dev.pigeonpost.core.groups.StreamCheck
+import dev.pigeonpost.core.meetings.MeetingNotesApi
+import dev.pigeonpost.core.meetings.MeetingNotesStore
+import dev.pigeonpost.core.meetings.TransportMeetingNotesApi
+import dev.pigeonpost.inbox.calls.LiveMedia
+import dev.pigeonpost.inbox.meetings.KeystoreNotesKeys
 
 data class AppGraph(
     val session: UserSession,
@@ -74,6 +84,8 @@ data class AppGraph(
     val meetingApi: CalendarMeetingApi? = api as? CalendarMeetingApi,
     val pairingApi: DevicePairingApi? = api as? DevicePairingApi,
     val organizationRoomApi: OrganizationRoomApi? = groupTransport?.let(::OrganizationRoomClient),
+    /** How often a live stream on screen is reread for stage invitations and its end (Phase 6). */
+    val streamPollMillis: Long = 4000,
 ) {
     companion object {
         fun live(app: Application): AppGraph {
@@ -129,6 +141,18 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
     val pictures = AvatarPictures(app, avatars)
     /** End-to-end encrypted groups (Phase 3b), once the postbox says `groups` is on. */
     val groups = graph.groupTransport?.let { GroupStore(it, graph.groupCrypto, graph.groupStorage(app), storeScope, pollSeconds = graph.groupPollSeconds, openPollSeconds = minOf(3, graph.groupPollSeconds), onSessionExpired = { signOut() }) }
+    /** Phase 6: audio focus and the foreground service while a live stream is on screen. */
+    private val liveMedia = calls?.let { LiveMedia(app, it, viewModelScope) }
+    /** Phase 7: this device's meeting-notes key, kept by the Android Keystore. */
+    val notesKeys = KeystoreNotesKeys(app, if (graph.fixtures) "fixture-meeting-notes" else "meeting-notes")
+    val meetingNotes = graph.groupTransport?.let { transport ->
+        MeetingNotesStore(TransportMeetingNotesApi(transport) { inbox.state.value.acting?.address }, { notesKeys.current() }, storeScope,
+            onSessionExpired = { signOut() })
+    }
+    private val notesPage = MutableStateFlow(false)
+    val meetingNotesOpen = notesPage.asStateFlow()
+    fun openMeetingNotes() { val notes = meetingNotes ?: return; if (!notes.state.value.enabled) return; notes.back(); notes.load(); notesPage.value = true }
+    fun closeMeetingNotes() { notesPage.value = false; meetingNotes?.back() }
     val calendar = graph.calendarTransport?.let { CalendarStore(it, graph.calendarStorage(app), storeScope, allowVolatileStorage = graph.fixtures, onSessionExpired = { signOut() }) }
     val meetingLookup = graph.meetingApi?.let { CalendarMeetingLookup(it, storeScope, onSessionExpired = { signOut() }) }
     val deviceApproval = graph.pairingApi?.let { api -> DeviceApprovalStore(api, viewModelScope, identity = {
@@ -179,6 +203,8 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
                 avatars.enable(target != null && Features.AVATARS in target.features)
                 groups?.onMailbox(target?.address, target?.handle, target?.features.orEmpty())
                 calendar?.onMailbox(target?.address, target?.features.orEmpty())
+                meetingNotes?.onMailbox(target?.address, target?.features.orEmpty())
+                if (meetingNotes?.state?.value?.enabled != true) notesPage.value = false
                 meetingLookup?.onMailbox(target?.address)
                 organizationRooms?.synchronize()
                 if (roomPage.value && organizationRooms?.isCurrent() == true && organizationRooms.state.value.catalog == null)
@@ -189,6 +215,23 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
             inbox.state.map { it.leftView == LeftView.CALENDAR }.distinctUntilChanged().collect { calendar?.setOpen(it) }
         }
         calls?.let { host ->
+            // A live stream on screen: tell the page what only the postbox knows (a stage invitation,
+            // being taken off the stage, the end), as the web inbox does from `group.stream` events.
+            viewModelScope.launch {
+                host.live.map { it?.streamId }.distinctUntilChanged().collectLatest { streamId ->
+                    if (streamId == null) return@collectLatest
+                    var before: GroupStream? = null
+                    while (true) {
+                        val store = groups ?: break
+                        val me = inbox.state.value.acting?.address ?: break
+                        val check = store.checkStream(streamId)
+                        host.forwardStream(GroupStreams.pageEvents(before, check, me, streamId))
+                        if (check is StreamCheck.Live) before = check.stream
+                        if (check is StreamCheck.Ended) break
+                        delay(graph.streamPollMillis)
+                    }
+                }
+            }
             viewModelScope.launch {
                 combine(session.state, inbox.state, activation) { session, state, active ->
                     if (active != null && active.authorizationId == session.authorizationId && !session.loading && session.signedIn && session.termsAccepted && state.acting != null)
@@ -226,6 +269,8 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
         roomPage.value = false; cancelRoomPreparation(); organizationRooms?.reset()
         closeDeviceApproval()
         closeMeetingLink()
+        calls?.stopStream()
+        viewModelScope.launch(Dispatchers.IO) { runCatching { notesKeys.destroy() } }
         val authorization = session.authorizationLease
         val token = push?.clear()
         resetStores()
@@ -239,7 +284,7 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
         roomPage.value = false; cancelRoomPreparation(); organizationRooms?.reset()
         storeScope.retire()
         activation.value = null
-        inbox.reset(); handles.reset(); paidHandles?.reset(); accountHandles?.reset(); avatars.reset(); groups?.reset(); calendar?.reset(); meetingLookup?.reset(); profile.reset(); pictures.clear()
+        inbox.reset(); handles.reset(); paidHandles?.reset(); accountHandles?.reset(); avatars.reset(); groups?.reset(); calendar?.reset(); meetingLookup?.reset(); meetingNotes?.reset(); notesPage.value = false; profile.reset(); pictures.clear()
         if (meetingIntentRoot?.isValid == false) closeMeetingLink()
         stagedForGroups.value.values.flatten().forEach { it.file.delete() }
         stagedForGroups.value = emptyMap(); attachmentTarget = null; groupAttachTarget = null; pendingSave = null

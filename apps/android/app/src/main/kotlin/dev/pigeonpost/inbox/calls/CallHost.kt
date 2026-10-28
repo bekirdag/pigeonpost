@@ -41,6 +41,8 @@ import dev.pigeonpost.core.AuthorizationContext
 import dev.pigeonpost.core.AuthorizationLease
 import dev.pigeonpost.core.ScopedTokenProvider
 import dev.pigeonpost.core.calendar.CalendarScheduledJoin
+import dev.pigeonpost.core.groups.GroupStreams
+import dev.pigeonpost.core.groups.LiveSession
 import dev.pigeonpost.inbox.auth.UserSession
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -102,6 +104,14 @@ class CallHost(private val app: Application, private val session: UserSession, p
     private var scheduled: ScheduledOperation? = null
     private val mutablePreparing = MutableStateFlow(false)
     val preparingScheduled = mutablePreparing.asStateFlow()
+
+    // ---- Phase 6: live streams in groups (docs/streaming.md) ------------------------------------
+    private val mutableLive = MutableStateFlow<LiveSession?>(null)
+    /** The live stream the page is showing (`PigeonpostLive.current()`), or null. */
+    val live: StateFlow<LiveSession?> = mutableLive.asStateFlow()
+    private var liveOperation: UUID? = null
+    private var liveTicker: Job? = null
+    private var streamMuted = false
 
     private fun capture(pageBound: Boolean = ready): CallContext? {
         val me = mailbox ?: return null
@@ -166,6 +176,7 @@ class CallHost(private val app: Application, private val session: UserSession, p
         bindingId = UUID.randomUUID(); configureId = UUID.randomUUID(); boundGrant = null; boundActor = null
         cancelScheduledJoin(hangUp = false)
         mailbox = null; known = emptyMap(); pending = null; pendingAnswer = null; configured = false
+        liveOperation = null; mutableLive.value = null
         if (ready) stopPage()
         mutableMode.value = Mode.HIDDEN
     }
@@ -227,6 +238,102 @@ class CallHost(private val app: Application, private val session: UserSession, p
         permissions(context, video, "Allow the microphone in Android settings to make calls.") {
             runOrQueue(context, script)
         }
+    }
+
+    /**
+     * Watch a group's live stream in the call page (`PigeonpostNative.watchStream`). Watching opens no
+     * microphone or camera; joining the stage later asks for them (the page's own permission request).
+     */
+    fun watchStream(groupId: String, name: String, streamId: String) {
+        if (scheduled != null) { window?.toast("Finish joining the meeting first."); return }
+        if (!GroupStreams.GROUP_ID.matches(groupId) || !GroupStreams.STREAM_ID.matches(streamId)) return
+        val context = capture() ?: return
+        val group = JSONObject().put("id", groupId).put("name", name.take(80))
+        liveCall(context, "watchStream", "$group, ${quote(streamId)}")
+    }
+
+    /** Go live with the camera and microphone (Android's web view cannot share its screen). */
+    fun goLive(groupId: String, name: String, title: String) {
+        if (scheduled != null) { window?.toast("Finish joining the meeting first."); return }
+        if (!GroupStreams.GROUP_ID.matches(groupId)) return
+        val clean = GroupStreams.title(title) ?: return
+        val context = capture() ?: return
+        val group = JSONObject().put("id", groupId).put("name", name.take(80))
+        val options = JSONObject().put("title", clean).put("camera", true).put("screen", false)
+        val denied = GroupStreams.explain("permission")!!
+        permissions(context, video = true, denied) {
+            if (!held(Manifest.permission.CAMERA)) { window?.toast(denied); return@permissions }
+            liveCall(context, "goLive", "$group, $options")
+        }
+    }
+
+    /** End our stream, or leave the one we watch. */
+    fun stopStream() {
+        if (ready) evaluate("window.PigeonpostNative && PigeonpostNative.stopStream && PigeonpostNative.stopStream()")
+    }
+
+    /** Bring the stream back on screen after the person left it for the group's chat. */
+    fun showStream() {
+        if (ready) evaluate("window.PigeonpostLive && PigeonpostLive.show && PigeonpostLive.show()")
+    }
+
+    /** What only the postbox knows, for the page (live.js `onGroupStream`): a stage invitation, the end. */
+    fun forwardStream(events: List<kotlinx.serialization.json.JsonObject>) {
+        if (!ready) return
+        // The page knows itself by the address it was configured with (the same mailbox, except in a
+        // debug harness that names the page's mailbox separately).
+        val pageAddress = override?.mailbox ?: mailbox?.address ?: return
+        for (event in events) {
+            val stage = (event["stage"] as? kotlinx.serialization.json.JsonObject)?.let {
+                kotlinx.serialization.json.JsonObject(it + ("address" to kotlinx.serialization.json.JsonPrimitive(pageAddress)))
+            }
+            val shown = if (stage == null) event else kotlinx.serialization.json.JsonObject(event + ("stage" to stage))
+            evaluate("window.PigeonpostLive && PigeonpostLive.onGroupStream && PigeonpostLive.onGroupStream($shown)")
+        }
+    }
+
+    /**
+     * Audio focus (LiveMedia): another app took the speaker, so the stream goes quiet until it is given
+     * back. Live media cannot be paused; muting the page's players is the equivalent.
+     */
+    fun setStreamMuted(muted: Boolean) {
+        streamMuted = muted
+        if (!ready) return
+        evaluate("""(function(m){window.__ppStreamMuted=m;const ui=document.getElementById('live-ui');if(!ui)return;const apply=()=>ui.querySelectorAll('audio,video').forEach(n=>{if(n.id!=='live-video'&&n.id!=='live-pip')n.muted=window.__ppStreamMuted;});apply();if(!window.__ppMuteWatch){window.__ppMuteWatch=new MutationObserver(apply);window.__ppMuteWatch.observe(ui,{subtree:true,childList:true});}})($muted)""")
+    }
+
+    private fun liveCall(context: CallContext, function: String, arguments: String) {
+        val operation = UUID.randomUUID(); liveOperation = operation
+        val id = quote(operation.toString())
+        val script = """(function(){const send=r=>PigeonpostAndroid.postMessage(JSON.stringify({type:'live_result',operation:$id,result:r||{ok:false}}));if(!window.PigeonpostNative||typeof PigeonpostNative.$function!=='function'){send({ok:false,code:'bridge_unavailable'});return;}Promise.resolve(PigeonpostNative.$function($arguments)).then(send,()=>send({ok:false,code:'error'}));})()"""
+        runOrQueue(context, script)
+        tickLive()
+    }
+
+    /** Ask the page what it shows, now and every two seconds while a stream is (or may be) on screen. */
+    private fun tickLive() {
+        if (liveTicker?.isActive == true) return
+        liveTicker = scope.launch {
+            var idle = 0
+            while (idle < 3) {
+                probeLive()
+                delay(2000)
+                idle = if (mutableLive.value == null && liveOperation == null) idle + 1 else 0
+            }
+        }
+    }
+    private fun probeLive() {
+        if (!ready) { mutableLive.value = null; return }
+        evaluate("""PigeonpostAndroid.postMessage(JSON.stringify({type:'live_state',current:(window.PigeonpostLive&&PigeonpostLive.current)?PigeonpostLive.current():null}))""")
+    }
+    private fun liveState(current: JSONObject?) {
+        val groupId = current?.optString("groupId").orEmpty()
+        val streamId = current?.optString("id")?.takeIf { GroupStreams.STREAM_ID.matches(it) }
+        val role = current?.optString("role").orEmpty()
+        val next = if (current == null || !GroupStreams.GROUP_ID.matches(groupId) || role !in setOf("host", "speaker", "invited", "viewer")) null
+            else LiveSession(streamId, groupId, role)
+        if (next != mutableLive.value) mutableLive.value = next
+        if (next != null && streamMuted) setStreamMuted(true)
     }
 
     /** Explicit member join; a code is only a locator and the server decides window/lobby/roles. */
@@ -360,7 +467,18 @@ class CallHost(private val app: Application, private val session: UserSession, p
                     })
                 }
             }
-            "mode" -> mutableMode.value = when (message.optString("mode")) { "full" -> Mode.FULL; "mini" -> Mode.MINI; else -> Mode.HIDDEN }
+            "mode" -> {
+                mutableMode.value = when (message.optString("mode")) { "full" -> Mode.FULL; "mini" -> Mode.MINI; else -> Mode.HIDDEN }
+                tickLive()
+            }
+            "live_result" -> {
+                if (message.optString("operation") != liveOperation?.toString()) return
+                liveOperation = null
+                val result = message.optJSONObject("result")
+                if (result?.optBoolean("ok") != true) GroupStreams.explain(result?.optString("code"))?.let { window?.toast(it) }
+                tickLive()
+            }
+            "live_state" -> liveState(message.optJSONObject("current"))
             "renew" -> renew()
             "toast" -> message.optString("text").takeIf { it.isNotBlank() }?.let { window?.toast(it) }
             "ring" -> {
@@ -421,6 +539,7 @@ class CallHost(private val app: Application, private val session: UserSession, p
             }
             override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
                 pageId = UUID.randomUUID(); configureId = UUID.randomUUID(); ready = false; configured = false
+                liveOperation = null; mutableLive.value = null
                 if (scheduled?.page != null) cancelScheduledJoin(hangUp = false)
             }
             override fun onPageFinished(view: WebView, url: String?) {
@@ -439,6 +558,7 @@ class CallHost(private val app: Application, private val session: UserSession, p
                 // Start again from a page that knows nothing; the activity re-adds the new view.
                 bindingId = UUID.randomUUID(); pageId = UUID.randomUUID(); ready = false; configured = false; pending = null; pendingAnswer = null
                 cancelScheduledJoin(hangUp = false); mutableMode.value = Mode.HIDDEN
+                liveOperation = null; mutableLive.value = null
                 (view.parent as? android.view.ViewGroup)?.removeView(view)
                 view.destroy()
                 if (this@CallHost.view === view) this@CallHost.view = null

@@ -19,6 +19,10 @@ object Features {
     const val MESSAGE_REPLY = "message_reply"
     const val RECEIPTS = "receipts"
     const val AGENT_STATUS = "agent_status"
+    /** Phase 6: live streams in groups (docs/streaming.md). */
+    const val STREAMING = "streaming"
+    /** Phase 7: consented meeting notes (docs/meeting-summaries.md). */
+    const val MEETING_SUMMARIES = "meeting_summaries"
     val MESSAGE_ACTIONS = setOf(MESSAGE_EDIT, MESSAGE_REPLY, RECEIPTS, AGENT_STATUS)
 }
 

@@ -9,6 +9,12 @@
     <!-- Incoming calls over the lock screen (Phase 1c): the call notification's full-screen intent. -->
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- Group live streams (Phase 6): keep playing, and keep a streamer's camera and microphone on, while
+         the person is in another app. Started only from a tap on Watch or Go live (calls/LiveMedia.kt). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.camera.front" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
@@ -57,6 +63,8 @@
             android:taskAffinity="dev.pigeonpost.inbox.incoming" android:excludeFromRecents="true" android:showWhenLocked="true"
             android:turnScreenOn="true" android:theme="@style/Theme.Pigeonpost.Call" />
         <receiver android:name=".calls.CallActionReceiver" android:exported="false" />
+        <service android:name=".calls.LiveStreamService" android:exported="false"
+            android:foregroundServiceType="mediaPlayback|camera|microphone" />
         <activity android:name="net.openid.appauth.RedirectUriReceiverActivity" android:exported="true" tools:node="replace">
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
