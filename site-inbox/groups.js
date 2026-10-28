@@ -136,7 +136,7 @@
     if (!G.loading) {
       G.loading = (async () => {
         if (window.PigeonpostGroupCryptoLoader) return window.PigeonpostGroupCryptoLoader();
-        const url = new URL("vendor/groupcrypto/loader.js?v=f185d0bd6f783430db1edd81aba0a90570a0b93c9bac486a81f9bc90c816de16", document.baseURI).href;
+        const url = new URL("vendor/groupcrypto/loader.js?v=5209113c6b17f23137fbac8ea2c90ee62f7b6d156e7827f3d95c9e70bea0578f", document.baseURI).href;
         const mod = await import(url);
         return mod.loadGroupCrypto();
       })();
