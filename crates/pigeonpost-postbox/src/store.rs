@@ -9,6 +9,7 @@
 //! runtime; a single connection behind a mutex is ample at P0 volume.
 
 use crate::vault::Wrapped;
+pub use listing::ListRequest;
 use rusqlite::{params, Connection, OptionalExtension};
 use std::sync::{Arc, Mutex};
 
@@ -27,6 +28,7 @@ mod googleplay;
 mod groups;
 mod lifecycle;
 mod limits;
+mod listing;
 pub(crate) mod meetings;
 mod msgactions;
 mod org_api;
@@ -988,6 +990,7 @@ impl Store {
             .chain(filtering::MIGRATIONS)
             .chain(avatars::MIGRATIONS)
             .chain(ephemeral::MIGRATIONS)
+            .chain(listing::MIGRATIONS)
         {
             if let Err(e) = conn.execute(stmt, []) {
                 // "duplicate column name" means the migration already applied (fresh DB) — benign.
@@ -3375,6 +3378,8 @@ impl Store {
         .map_err(|_| StoreError::Join)?
     }
 
+    /// Every row of a mailbox. Tests only: listings read a page (`store::listing`).
+    #[cfg(test)]
     pub async fn list_for(&self, owner: String) -> Result<Vec<Message>, StoreError> {
         let conn = self.conn.clone();
         tokio::task::spawn_blocking(move || -> Result<Vec<Message>, StoreError> {

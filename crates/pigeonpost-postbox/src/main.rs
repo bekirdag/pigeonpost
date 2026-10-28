@@ -80,6 +80,8 @@ mod googleplay_routes;
 mod groups;
 #[cfg(test)]
 mod groups_tests;
+#[cfg(test)]
+mod inbox_paging_tests;
 mod internal_api;
 mod limits;
 mod mcp;
@@ -103,6 +105,7 @@ mod org_routes;
 mod org_rules;
 #[cfg(test)]
 mod org_tests;
+mod overload;
 #[cfg(test)]
 mod p1b_tests;
 mod policy;
@@ -664,7 +667,12 @@ fn build_router(state: AppState) -> Router {
             get(review_access::page).post(review_access::generate),
         )
         .route("/metrics", get(metrics))
-        .route("/mcp", post(mcp_handler))
+        .route(
+            "/mcp",
+            post(mcp_handler).layer(axum::extract::DefaultBodyLimit::max(
+                overload::MESSAGE_BODY_MAX,
+            )),
+        )
         .route(
             "/chatgpt",
             post(chatgpt::handle).layer(axum::extract::DefaultBodyLimit::max(128 * 1024)),
@@ -691,7 +699,12 @@ fn build_router(state: AppState) -> Router {
                 .get(list_identities)
                 .delete(delete_identity),
         )
-        .route("/v1/send", post(send))
+        .route(
+            "/v1/send",
+            post(send).layer(axum::extract::DefaultBodyLimit::max(
+                overload::MESSAGE_BODY_MAX,
+            )),
+        )
         .route("/v1/recipients/resolve", post(recipients::resolve))
         .route("/v1/inbox", get(inbox))
         .route("/v1/ack", post(ack))
@@ -787,7 +800,11 @@ fn build_router(state: AppState) -> Router {
         .route("/v1/groups/{id}/link", post(groups::link))
         .route(
             "/v1/groups/{id}/messages",
-            get(groups::messages).post(groups::post),
+            get(groups::messages)
+                .post(groups::post)
+                .layer(axum::extract::DefaultBodyLimit::max(
+                    overload::MESSAGE_BODY_MAX,
+                )),
         )
         .route(
             "/v1/groups/{id}/messages/{seq}",
@@ -815,7 +832,12 @@ fn build_router(state: AppState) -> Router {
         )
         .route("/v1/groups/{id}/epoch-ack", post(mls::epoch_ack))
         .route("/v1/groups/{id}/crypto", get(mls::crypto_state))
-        .route("/v1/groups/{id}/resync", post(mls::resync))
+        .route(
+            "/v1/groups/{id}/resync",
+            post(mls::resync).layer(axum::extract::DefaultBodyLimit::max(
+                overload::MESSAGE_BODY_MAX,
+            )),
+        )
         .route("/v1/rooms", get(groups::rooms))
         .route(
             "/v1/groups/{id}/streams",
@@ -961,6 +983,16 @@ fn build_router(state: AppState) -> Router {
         )
         .route("/v1/{*rest}", any(v1_stub))
         .fallback(not_found)
+        // Every other JSON body (Phase 9b). Route-level limits above are inner, so they win.
+        .layer(axum::extract::DefaultBodyLimit::max(
+            overload::CONTROL_BODY_MAX,
+        ))
+        // Load shedding, time limits, stream lifetimes (Phase 9b). Inside `cors`, so a 503 still
+        // carries the CORS headers a browser needs to read it.
+        .layer(middleware::from_fn_with_state(
+            overload::limits(),
+            overload::admission,
+        ))
         .layer(middleware::from_fn(cors))
         // Outermost of the two, so every handler (and `cors`) sees a resolved `ClientIp`.
         .layer(middleware::from_fn_with_state(
@@ -1086,6 +1118,22 @@ async fn metrics(State(state): State<AppState>, headers: HeaderMap) -> Response 
                 "# HELP pigeonpost_{name} {help}\n# TYPE pigeonpost_{name} {kind}\npigeonpost_{name} {value}\n"
             ));
         }
+    }
+    for (name, help, value) in [
+        (
+            "requests_shed_total",
+            "requests refused 503 because the server was at its concurrency limit",
+            overload::SHED.load(std::sync::atomic::Ordering::Relaxed),
+        ),
+        (
+            "requests_timed_out_total",
+            "requests cut off at their time limit",
+            overload::TIMED_OUT.load(std::sync::atomic::Ordering::Relaxed),
+        ),
+    ] {
+        out.push_str(&format!(
+            "# HELP pigeonpost_{name} {help}\n# TYPE pigeonpost_{name} counter\npigeonpost_{name} {value}\n"
+        ));
     }
     out.push_str(&format!(
         "# HELP pigeonpost_attachments_enabled whether this postbox accepts files at all\n\
@@ -3637,6 +3685,9 @@ pub(crate) async fn do_send_with(
     // Release anyone long-polling. Only after the enqueue commits, so a woken waiter that
     // immediately re-reads the store is guaranteed to see this message.
     state.inbox_signal.notify_waiters();
+    // Both mailboxes' listings changed: the recipient's has the message, the sender's its copy.
+    state.event_hub.mail.touch(&recipient.address);
+    state.event_hub.mail.touch(&sender.address);
     if let Some(account) = recipient.account_id.as_deref() {
         state.event_hub.wake(account);
     }
@@ -3784,14 +3835,93 @@ pub(crate) async fn do_inbox_view_with(
     filtered_only: bool,
     view: msgactions::View,
 ) -> Result<serde_json::Value, ApiError> {
-    let messages = state
+    do_inbox_page(
+        state,
+        me,
+        include_sent,
+        include_read,
+        thread_id,
+        filtered_only,
+        view,
+        InboxPage::default(),
+    )
+    .await
+}
+
+/// Which slice of a listing a request wants (Phase 9b, `docs/inbox-paging.md`). All optional:
+/// without them a listing is what it always was, up to [`inbox_max_rows`] rows.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct InboxPage {
+    /// Only rows stored after this `seq` (a previous page's `newest_seq`), oldest first.
+    pub after: Option<i64>,
+    /// Only rows older than this `seq` (a previous page's `oldest_seq`), newest first.
+    pub before: Option<i64>,
+    /// Most rows on the page, at most [`inbox_max_rows`].
+    pub limit: Option<usize>,
+    /// Tests: list the old way (the whole history), as an oracle.
+    #[cfg(test)]
+    pub legacy: bool,
+}
+
+/// The most rows one listing returns, `POSTBOX_INBOX_MAX_ROWS` (default 5,000).
+///
+/// Every shipped app lists the whole history and adopts it whole, so this is a ceiling on a
+/// single response — memory per request — not a page size: a mailbox under it lists exactly as it
+/// always did. Above it a listing is the newest rows (an unread listing the oldest: a queue to
+/// drain) and says `page.has_more`.
+pub(crate) fn inbox_max_rows() -> usize {
+    static MAX: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *MAX.get_or_init(|| {
+        std::env::var("POSTBOX_INBOX_MAX_ROWS")
+            .ok()
+            .and_then(|v| v.trim().parse::<usize>().ok())
+            .filter(|n| *n > 0)
+            .unwrap_or(5_000)
+    })
+}
+
+/// [`do_inbox_view_with`] for one page of the listing.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn do_inbox_page(
+    state: &AppState,
+    me: &store::StoredIdentity,
+    include_sent: bool,
+    include_read: bool,
+    thread_id: Option<&str>,
+    filtered_only: bool,
+    view: msgactions::View,
+    page: InboxPage,
+) -> Result<serde_json::Value, ApiError> {
+    let max_rows = inbox_max_rows();
+    let limit = page.limit.unwrap_or(max_rows).clamp(1, max_rows);
+    // Listings hold their rows in memory; only so many at once (Phase 9b, `overload`).
+    let _slot = overload::listing_slot().await;
+    let listing = state
         .store
-        .list_for(me.address.clone())
+        .list_page(store::ListRequest {
+            owner: me.address.clone(),
+            include_read,
+            include_sent,
+            filtered_only,
+            thread_id: if include_read {
+                thread_id.map(str::to_string)
+            } else {
+                // Unread sets are small; the thread is narrowed below, as it always was, so an
+                // edit filed under another thread still folds into its original.
+                None
+            },
+            after: page.after,
+            before: page.before,
+            limit,
+            #[cfg(test)]
+            legacy: page.legacy,
+        })
         .await
         .map_err(|e| {
             tracing::error!(error = %e, "inbox list failed");
             ApiError::server("store_error")
         })?;
+    let messages = &listing.rows;
     let me_identity = open_identity(state, me)?;
     let contacts = state
         .store
@@ -3876,6 +4006,16 @@ pub(crate) async fn do_inbox_view_with(
             .unwrap_or(&[]);
         // Folded, an edit is shown as its original's latest text, and not as a row of its own.
         if view.fold && edit_root.is_some_and(|root| originals.contains_key(root)) {
+            continue;
+        }
+        // Only the page is listed; the rest was loaded for what the page refers to. The one
+        // exception is the old listing's own: an original shown folded because its edit is new.
+        let on_page = listing.page.contains(&m.id)
+            || (view.fold
+                && own_edits
+                    .iter()
+                    .any(|&e| listing.page.contains(&messages[e].id)));
+        if !on_page {
             continue;
         }
         let folded_read = !view.fold || own_edits.iter().all(|&e| messages[e].read);
@@ -4156,12 +4296,7 @@ pub(crate) async fn do_inbox_view_with(
     }
     // A client fetching the mailbox has received what is in it (SDS §14C.6): every copy, whatever
     // this view showed — the Filtered list included, so delivery says nothing about filing.
-    let delivered_now: Vec<String> = messages
-        .iter()
-        .filter(|m| !m.outgoing)
-        .filter(|m| metas.get(&m.id).is_some_and(|x| x.delivered_at.is_none()))
-        .map(|m| m.id.clone())
-        .collect();
+    let delivered_now: Vec<String> = listing.undelivered.clone();
     if !delivered_now.is_empty() {
         msgactions::receipt_for_rows(state, me, delivered_now, store::ReceiptKind::Delivered).await;
     }
@@ -4214,7 +4349,25 @@ pub(crate) async fn do_inbox_view_with(
         .map_err(|_| ApiError::server("store_error"))?;
     let mut policy = filtering::full_policy_json(policy, &filters);
     policy["read_receipts"] = json!(receipt_view.read_receipts);
-    Ok(json!({ "messages": out, "policy": policy }))
+    // Storage order, never reused: what `after`/`before` page by (Phase 9b).
+    for message in out.iter_mut() {
+        if let Some(seq) = message["message_id"]
+            .as_str()
+            .and_then(|id| listing.seq.get(id))
+        {
+            message["seq"] = json!(seq);
+        }
+    }
+    Ok(json!({
+        "messages": out,
+        "policy": policy,
+        "page": {
+            "limit": limit,
+            "has_more": listing.has_more,
+            "oldest_seq": listing.oldest_seq(),
+            "newest_seq": listing.newest_seq(),
+        },
+    }))
 }
 
 /// Mark one of `me`'s messages read (scoped to the recipient).
@@ -4239,6 +4392,8 @@ pub(crate) async fn do_ack_with(
         .await
     {
         Ok(true) => {
+            // The other devices' listings show this as read now.
+            state.event_hub.mail.touch(&me.address);
             let mut seen = vec![message_id.clone()];
             if with_edits {
                 if let Ok(Some((msg_ref, None))) =
@@ -4393,6 +4548,19 @@ struct InboxQuery {
     /// Narrow the listing to one thread. Absent behaves exactly as it did before threads existed.
     #[serde(default)]
     thread_id: Option<String>,
+    /// Paging (Phase 9b): rows stored after this `seq`, oldest first.
+    #[serde(default)]
+    after: Option<i64>,
+    /// Paging (Phase 9b): rows older than this `seq`, newest first.
+    #[serde(default)]
+    before: Option<i64>,
+    /// Paging (Phase 9b): most rows on the page, at most `POSTBOX_INBOX_MAX_ROWS`.
+    #[serde(default)]
+    limit: Option<usize>,
+    /// The `version` of the listing the client holds. With `wait`, the request is held until the
+    /// listing changes from it (Phase 9b).
+    #[serde(default)]
+    since: Option<String>,
     /// `1` lists only the mail filed in Filtered; absent lists everything else.
     #[serde(default)]
     filtered: Option<String>,
@@ -4566,14 +4734,42 @@ pub(crate) async fn do_read_thread(
         })?
         .ok_or_else(|| ApiError::bad("unknown_thread", "no such thread in this mailbox"))?;
 
-    let listing = do_inbox(state, me, true, true, Some(thread_id)).await?;
+    // Only the newest `limit` rows are read (Phase 9b); the trim below stays as a guard.
+    let listing = do_inbox_page(
+        state,
+        me,
+        true,
+        true,
+        Some(thread_id),
+        false,
+        msgactions::View {
+            actions: true,
+            fold: false,
+        },
+        InboxPage {
+            limit: Some(limit.max(1)),
+            ..InboxPage::default()
+        },
+    )
+    .await?;
     let mut messages = listing["messages"].as_array().cloned().unwrap_or_default();
     // Newest `limit`, still in order. Trimming the front rather than the back keeps a long thread
     // useful: the recent exchange is what a follow-up refers to.
-    let total = messages.len();
-    if total > limit {
-        messages.drain(..total - limit);
+    let listed = messages.len();
+    if listed > limit {
+        messages.drain(..listed - limit);
     }
+    // The whole thread's size, not the page's: callers show "N more" from it.
+    let total = if listing["page"]["has_more"] == true {
+        state
+            .store
+            .thread_message_count(me.address.clone(), thread_id.to_string())
+            .await
+            .unwrap_or(listed)
+            .max(listed)
+    } else {
+        listed
+    };
     Ok(json!({
         "thread_id": thread.id,
         "peer": thread.peer,
@@ -4715,6 +4911,7 @@ async fn delete_thread(
     };
     match state.store.delete_thread(me.address.clone(), id).await {
         Ok(Some(orphaned)) => {
+            state.event_hub.mail.touch(&me.address);
             // The bytes go only when the last row pointing at them has gone.
             if let Some(blobs) = state.blobs.as_ref() {
                 for sha in orphaned {
@@ -5084,13 +5281,55 @@ async fn inbox(
         Ok(m) => m,
         Err(e) => return e.into_response(),
     };
+    if q.after.is_some() && q.before.is_some() {
+        return ApiError::bad("bad_page", "use after or before, not both").into_response();
+    }
+    if q.after.is_some_and(|s| s < 0) || q.before.is_some_and(|s| s < 0) {
+        return ApiError::bad("bad_page", "after and before are message seq numbers")
+            .into_response();
+    }
+    let filtered_only = matches!(q.filtered.as_deref(), Some("1" | "true"));
+    // Which listing this client holds, for the change wait below. A digest of the credential
+    // separates a person's devices without keeping the credential.
+    let served_key: account_events::ServedKey = {
+        use sha2::Digest;
+        let credential = headers
+            .get(header::AUTHORIZATION)
+            .map(|v| v.as_bytes())
+            .unwrap_or_default();
+        let digest = sha2::Sha256::digest(credential);
+        let mut short = [0u8; 16];
+        short.copy_from_slice(&digest[..16]);
+        (
+            me.address.clone(),
+            short,
+            filtered_only,
+            q.thread_id.clone(),
+        )
+    };
+    let clock = &state.event_hub.mail;
+    // A history listing (or any request naming `since`) waits for a *change*; an unread poll
+    // waits for unread mail, as it always has.
+    let waits_for_change = q.include_read || q.since.is_some();
     // Clamp rather than reject: an over-eager `wait=600` is a client that wants to be told when
     // mail arrives, and answering it in 60s serves that better than an error does.
     if let Some(wait) = q.wait.filter(|w| *w > 0) {
-        await_mail(&state, &me.address, wait.min(MAX_INBOX_WAIT_SECS)).await;
+        let wait = wait.min(MAX_INBOX_WAIT_SECS);
+        if waits_for_change {
+            let baseline = match q.since.as_deref() {
+                Some(token) => clock.parse(token),
+                None => clock.served(&served_key),
+            };
+            await_change(&state, &me, baseline, wait).await;
+        } else {
+            await_mail(&state, &me.address, wait).await;
+        }
     }
-    let filtered_only = matches!(q.filtered.as_deref(), Some("1" | "true"));
-    match do_inbox_view_with(
+    let mut page = InboxPage::default();
+    (page.after, page.before, page.limit) = (q.after, q.before, q.limit);
+    // Read before listing: a change landing during the listing makes the next wait return.
+    let version = clock.version(&me.address, me.account_id.as_deref());
+    match do_inbox_page(
         &state,
         &me,
         q.include_sent,
@@ -5098,11 +5337,49 @@ async fn inbox(
         q.thread_id.as_deref(),
         filtered_only,
         msgactions::View::from_query(q.actions.as_deref(), q.fold.as_deref()),
+        page,
     )
     .await
     {
-        Ok(v) => Json(v).into_response(),
+        Ok(mut v) => {
+            if waits_for_change {
+                clock.record_served(served_key, version);
+            }
+            v["version"] = json!(clock.token(version));
+            Json(v).into_response()
+        }
         Err(e) => e.into_response(),
+    }
+}
+
+/// Hold a history long poll until this mailbox's listing changes from `baseline` (the version
+/// the client holds), or `wait` elapses. No baseline — a client this process has not answered,
+/// or a `since` from before a restart — answers at once.
+///
+/// This replaces "return while anything is unread" for history listings. The apps poll
+/// `include_read=true&wait=25` back to back, and a mailbox with one unread message made every one
+/// of those polls return at once with the whole history (Phase 9b; `docs/ops/2026-10-28-load-tests.md`).
+async fn await_change(
+    state: &AppState,
+    me: &store::StoredIdentity,
+    baseline: Option<u64>,
+    wait: u64,
+) {
+    let Some(baseline) = baseline else { return };
+    let clock = &state.event_hub.mail;
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(wait);
+    loop {
+        // Register before looking, for the same lost-wakeup reason as `await_mail`.
+        let notified = clock.changed().notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        if clock.version(&me.address, me.account_id.as_deref()) != baseline {
+            return;
+        }
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() || tokio::time::timeout(remaining, notified).await.is_err() {
+            return;
+        }
     }
 }
 
@@ -6455,6 +6732,9 @@ async fn delete_message(
                     }
                     Err(e) => tracing::error!(error = %e, "releasing attachments failed"),
                 }
+            }
+            if deleted {
+                state.event_hub.mail.touch(&me.address);
             }
             Json(json!({ "deleted": deleted })).into_response()
         }

@@ -2117,7 +2117,31 @@
                   "key": "wait",
                   "value": "",
                   "disabled": true,
-                  "description": "Seconds to hold the request open while the inbox is empty; clamped to 60."
+                  "description": "Seconds to hold the request open, clamped to 60. An unread listing waits while there is no unread mail. A listing with `include_read` (or any request with `since`) waits until the listing changes from the one this client was last given (or from `since`); a client the server has not answered yet gets an answer at once."
+                },
+                {
+                  "key": "since",
+                  "value": "",
+                  "disabled": true,
+                  "description": "The `version` of the listing the client holds; with `wait`, hold the request until the listing changes from it."
+                },
+                {
+                  "key": "limit",
+                  "value": "",
+                  "disabled": true,
+                  "description": "Most rows on this page, at most the server's ceiling (`POSTBOX_INBOX_MAX_ROWS`, default 5,000), which also applies when `limit` is absent. Without a cursor an unread listing returns the oldest unread rows and a history listing the newest rows."
+                },
+                {
+                  "key": "after",
+                  "value": "",
+                  "disabled": true,
+                  "description": "Only rows stored after this `seq` (a previous page's `page.newest_seq`), oldest first."
+                },
+                {
+                  "key": "before",
+                  "value": "",
+                  "disabled": true,
+                  "description": "Only rows older than this `seq` (a previous page's `page.oldest_seq`), newest first. Not with `after`."
                 },
                 {
                   "key": "thread_id",

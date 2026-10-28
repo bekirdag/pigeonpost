@@ -416,7 +416,7 @@ pub(crate) async fn record_copies(
             .await
             .is_ok()
         {
-            state.event_hub.wake(account);
+            state.event_hub.wake_mail(account);
         }
     }
     Ok(result)
@@ -608,7 +608,7 @@ async fn announce(
         .await
         .is_ok()
     {
-        state.event_hub.wake(account);
+        state.event_hub.wake_mail(account);
     }
 }
 
@@ -644,6 +644,11 @@ pub(crate) async fn receipt_for_rows(
             return 0;
         }
     };
+    if !changed.is_empty() && kind == ReceiptKind::Seen {
+        // Seen rows may be read now. Delivered is not shown on received rows, and every listing
+        // delivers: touching for it would end the next long poll for nothing.
+        state.event_hub.mail.touch(&me.address);
+    }
     let mut cache = HashMap::new();
     let count = changed.len();
     for (_, msg_ref, sender, filtered) in changed {
