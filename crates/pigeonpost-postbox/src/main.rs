@@ -1958,8 +1958,49 @@ async fn client_ip_layer(State(state): State<AppState>, mut req: Request, next: 
         .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
         .map(|c| c.0.ip().to_string());
     let ip = resolve_client_ip(req.headers(), peer.as_deref(), state.trusted_proxy_hops);
+    // Phase 9: an address that keeps presenting credentials the postbox refuses is slowed down.
+    // Tokens are long random values, so this is about load and noise, not guessing. Addresses of
+    // our own services that relay members' tokens (the calls service, the billing bridge) are
+    // exempt via POSTBOX_AUTH_FAIL_EXEMPT_IPS; they limit refused tokens per real client themselves.
+    let presents_token = req.headers().contains_key(header::AUTHORIZATION);
+    let throttled = presents_token && !auth_fail_exempt(&ip);
+    let key = format!("authfail:{ip}");
+    if throttled && groups::rate_limit_peek(&key, AUTH_FAILS_PER_WINDOW, AUTH_FAIL_WINDOW) {
+        return ApiError::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            "rate_limited",
+            "too many refused credentials from this address; try again later",
+        )
+        .with_retry_after(AUTH_FAIL_WINDOW)
+        .into_response();
+    }
     req.extensions_mut().insert(ClientIp(ip));
-    next.run(req).await
+    let resp = next.run(req).await;
+    if throttled && resp.status() == StatusCode::UNAUTHORIZED {
+        let _ = groups::rate_limit(&key, usize::MAX, AUTH_FAIL_WINDOW);
+    }
+    resp
+}
+
+/// Refused credentials one address may present per window before `429` (Phase 9).
+/// (The test binary shares one limiter across parallel tests on 127.0.0.1, so it is effectively
+/// off there; `auth_failures_throttle_an_address` exercises the logic with its own address.)
+const AUTH_FAILS_PER_WINDOW: usize = if cfg!(test) { 1_000_000 } else { 100 };
+const AUTH_FAIL_WINDOW: u64 = 600;
+
+fn auth_fail_exempt(ip: &str) -> bool {
+    static EXEMPT: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    EXEMPT
+        .get_or_init(|| {
+            std::env::var("POSTBOX_AUTH_FAIL_EXEMPT_IPS")
+                .unwrap_or_default()
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .iter()
+        .any(|e| e == ip)
 }
 
 /// The socket peer, or — when `hops` trusted reverse proxies sit in front — the hop that many

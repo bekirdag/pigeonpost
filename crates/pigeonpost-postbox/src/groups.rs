@@ -328,6 +328,14 @@ pub(crate) fn rate_limit_restore(rows: HashMap<String, Vec<u64>>, now: u64) {
     }
 }
 
+/// Whether `key` already has `max` hits in the last `window` seconds, without counting one.
+pub(crate) fn rate_limit_peek(key: &str, max: usize, window: u64) -> bool {
+    let now = now_unix();
+    let hits = limiter().hits.lock().expect("limiter lock");
+    hits.get(key)
+        .is_some_and(|v| v.iter().filter(|t| **t + window > now).count() >= max)
+}
+
 /// `Err(rate_limited)` when `key` has already been hit `max` times in the last `window` seconds.
 pub(crate) fn rate_limit(key: &str, max: usize, window: u64) -> GResult<()> {
     let now = now_unix();

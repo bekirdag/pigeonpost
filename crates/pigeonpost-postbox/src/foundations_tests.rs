@@ -871,3 +871,15 @@ async fn ops_can_purge_an_empty_account_and_nothing_else() {
     // The busy account is untouched.
     assert!(state.store.get(c.address.clone()).await.unwrap().is_some());
 }
+
+/// Phase 9: the refused-credential throttle counts per address and only refusals.
+#[test]
+fn auth_failures_throttle_an_address() {
+    let key = format!("authfail:198.51.100.{}", rand_hex(2));
+    for _ in 0..5 {
+        assert!(!groups::rate_limit_peek(&key, 5, 600));
+        let _ = groups::rate_limit(&key, usize::MAX, 600);
+    }
+    assert!(groups::rate_limit_peek(&key, 5, 600));
+    assert!(!groups::rate_limit_peek("authfail:203.0.113.9", 5, 600));
+}
