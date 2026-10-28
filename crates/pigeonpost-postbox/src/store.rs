@@ -6009,6 +6009,46 @@ mod event_cursor_tests {
         }
     }
 
+    /// Phase 9: a deleted newest message's rowid is never handed to the next message, so a cursor
+    /// that already passed it still sees the new one.
+    #[tokio::test]
+    async fn a_deleted_newest_rowid_is_never_reused() {
+        let store = Store::open(":memory:").unwrap();
+        for id in ["r1", "r2"] {
+            store
+                .enqueue(msg(id, "/k/bob", "/k/alice", false))
+                .await
+                .unwrap();
+        }
+        let before = store
+            .scalar_raw("SELECT MAX(rowid) FROM messages".into())
+            .await
+            .unwrap();
+        store
+            .exec_raw("DELETE FROM messages WHERE id = 'r2'")
+            .await
+            .unwrap();
+        store
+            .enqueue(msg("r3", "/k/bob", "/k/alice", false))
+            .await
+            .unwrap();
+        let after = store
+            .scalar_raw("SELECT rowid FROM messages WHERE id = 'r3'".into())
+            .await
+            .unwrap();
+        assert!(after > before, "r3 got rowid {after}, reusing {before}");
+        // A typed event after another deletion still sorts after every rowid ever handed out.
+        store
+            .exec_raw("DELETE FROM messages WHERE id = 'r3'")
+            .await
+            .unwrap();
+        let seq = store
+            .scalar_raw("SELECT v FROM account_event_meta WHERE k = 'mail_seq'".into())
+            .await
+            .unwrap();
+        assert_eq!(seq, after);
+    }
+
     /// The cursor is the resumption contract: everything after it, nothing twice.
     #[tokio::test]
     async fn the_cursor_returns_each_message_exactly_once() {
