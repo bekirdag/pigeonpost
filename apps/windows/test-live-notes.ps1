@@ -81,7 +81,7 @@ try {
     try {
         Wait-Check {
             $script:copied = ("$(Get-Clipboard -Raw)" -replace "`r", '')
-            $script:copied.StartsWith('Launch review') -and $script:copied.Contains("Decisions:`n- Release Windows and Linux together") -and $script:copied.Contains("Transcript:`n- [00:21] Preview Design: Screenshots are ready.")
+            $script:copied.StartsWith('Launch review') -and $script:copied.Contains("Decisions:`n- Release Windows and Linux together") -and $script:copied.Contains("Transcript:`n- [00:04] Preview Main: Let's go through the checklist.`n- [00:21] Preview Design: Screenshots are ready.")
         } 'Copy as text puts the plain brief on the clipboard'
     } finally { Set-Content (Join-Path $directory 'live-notes-clipboard.txt') $script:copied }
     Invoke-Like 'All meeting notes'
