@@ -24,8 +24,12 @@ const check = (name, ok, detail) => { result.checks.push({ name, ok: Boolean(ok)
 const note = (name, detail) => { result.notes.push({ name, detail }); console.log(`NOTE ${name} ${JSON.stringify(detail)}`); };
 const procs = [];
 
+// Media candidates on the runner's own network address: WebView2 does not reach a media server
+// that offers only loopback candidates (signalling still uses 127.0.0.1).
+const lan = Object.values(os.networkInterfaces()).flat().find((a) => a && a.family === "IPv4" && !a.internal)?.address || "127.0.0.1";
 const lkYaml = path.join(os.tmpdir(), "pp-win-streams-livekit.yaml");
-writeFileSync(lkYaml, `port: ${P.lk}\nbind_addresses: ["127.0.0.1"]\nrtc:\n  tcp_port: 7981\n  port_range_start: 50100\n  port_range_end: 50400\n  use_external_ip: false\n  node_ip: 127.0.0.1\nkeys:\n  APIlocal: ${SECRET}\nlogging:\n  level: warn\n`);
+writeFileSync(lkYaml, `port: ${P.lk}\nbind_addresses: ["127.0.0.1", "${lan}"]\nrtc:\n  tcp_port: 7981\n  port_range_start: 50100\n  port_range_end: 50400\n  use_external_ip: false\n  node_ip: ${lan}\nkeys:\n  APIlocal: ${SECRET}\nlogging:\n  level: warn\n`);
+note("media address", lan);
 procs.push(spawn(process.env.LIVEKIT_SERVER || "livekit-server", ["--config", lkYaml], { stdio: "ignore" }));
 const { createMockPostbox } = await import(pathToFileURL(path.join(repo, "tests/e2e-streams/mock-postbox.mjs")).href);
 const { createStatic } = await import(pathToFileURL(path.join(repo, "tests/e2e-streams/serve.mjs")).href);
