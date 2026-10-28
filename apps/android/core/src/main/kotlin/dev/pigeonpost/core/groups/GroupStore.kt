@@ -61,6 +61,8 @@ data class GroupsState(
     val composers: Map<String, GroupComposerAction> = emptyMap(),
     val pendingIds: Map<String, Set<String>> = emptyMap(),
     val receipts: Map<String, GroupReceipts> = emptyMap(),
+    /** Phase 6: the live stream in each group looked at (absent: none), while `streaming` is on. */
+    val streams: Map<String, GroupStream> = emptyMap(),
 ) {
     val invitations get() = groups.filter { it.invited }
     val joined get() = groups.filter { !it.invited && it.deletedAt == null }
@@ -141,7 +143,8 @@ class GroupStore(
         val current = state.value
         if (enabled && current.mailbox == mailbox && (current.enabled || current.unavailable)) {
             mutable.update { it.copy(disappearing = "disappearing" in features, features = features,
-                receipts = if (Features.RECEIPTS in features) it.receipts else emptyMap()) }
+                receipts = if (Features.RECEIPTS in features) it.receipts else emptyMap(),
+                streams = if (Features.STREAMING in features) it.streams else emptyMap()) }
             return
         }
         teardown()
@@ -186,7 +189,7 @@ class GroupStore(
         pollJob?.cancel(); openJob?.cancel()
         client = null
         mutable.update { it.copy(enabled = false, unavailable = false, open = null, groups = emptyList(), history = emptyMap(),
-            call = null, sending = false, drafts = emptyMap(), composers = emptyMap(), pendingIds = emptyMap(), receipts = emptyMap()) }
+            call = null, sending = false, drafts = emptyMap(), composers = emptyMap(), pendingIds = emptyMap(), receipts = emptyMap(), streams = emptyMap()) }
     }
 
     fun setActive(value: Boolean) {
@@ -328,6 +331,7 @@ class GroupStore(
                         quietly { c.processPending(gid, noJitter = tick == 0) }
                         val call = quietly { c.transport.groupCall(gid, c.mailbox) }
                         if (run == generation && state.value.open == gid) mutable.update { it.copy(call = call) }
+                        loadStream(gid)
                     }
                     markRead(gid)
                     if (run != generation || state.value.open != gid) return@launch
@@ -349,6 +353,49 @@ class GroupStore(
         if (last <= mine.readCursor) return
         mutable.update { old -> old.copy(groups = old.groups.map { if (it.id == gid) it.copy(my = mine.copy(readCursor = last, unread = 0)) else it }) }
         quietly { c.transport.groupJson(c.mailbox, "POST", gpath(gid, "/read"), buildJsonObject { put("seq", last) }) }
+    }
+
+    // ---- Phase 6: live streams (docs/streaming.md) ---------------------------------------------
+
+    /** Reread the group's live stream (`GET /v1/groups/{id}/streams`); a failed read changes nothing. */
+    suspend fun loadStream(gid: String) {
+        val c = client ?: return
+        if (Features.STREAMING !in state.value.features) return
+        val run = generation
+        val body = quietly { WireJson.decodeFromString<GroupStreamsResponse>(c.transport.groupJson(c.mailbox, "GET", gpath(gid, "/streams"))) } ?: return
+        if (run != generation) return
+        val live = body.streams.orEmpty().firstOrNull { it.live && GroupStreams.STREAM_ID.matches(it.id) }
+        mutable.update { it.copy(streams = if (live == null) it.streams - gid else it.streams + (gid to live.copy(groupId = gid))) }
+    }
+    fun refreshStream(gid: String) { launch { loadStream(gid) } }
+
+    /**
+     * One stream as the postbox sees it now (`GET /v1/streams/{id}`), for a stream this device is
+     * showing: whether it still runs and who is on its stage. Also keeps the group's banner current.
+     */
+    suspend fun checkStream(streamId: String): StreamCheck {
+        val c = client ?: return StreamCheck.Unknown
+        if (!GroupStreams.STREAM_ID.matches(streamId)) return StreamCheck.Unknown
+        val run = generation
+        val result = try {
+            val body = WireJson.decodeFromString<GroupStreamResponse>(c.transport.groupJson(c.mailbox, "GET", "/v1/streams/" + enc(streamId)))
+            body.stream?.takeIf { it.id == streamId }?.let { if (it.live) StreamCheck.Live(it) else StreamCheck.Ended } ?: StreamCheck.Unknown
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (expired: SessionExpired) { onSessionExpired(); StreamCheck.Unknown }
+        catch (failure: ApiException) { if (failure.status == 404 || failure.status == 410) StreamCheck.Ended else StreamCheck.Unknown }
+        catch (_: Exception) { StreamCheck.Unknown }
+        if (run != generation) return StreamCheck.Unknown
+        when (result) {
+            is StreamCheck.Live -> if (GroupStreams.GROUP_ID.matches(result.stream.groupId)) mutable.update { it.copy(streams = it.streams + (result.stream.groupId to result.stream)) }
+            StreamCheck.Ended -> mutable.update { it.copy(streams = it.streams.filterValues { s -> s.id != streamId }) }
+            StreamCheck.Unknown -> {}
+        }
+        return result
+    }
+
+    fun setStreamPolicy(gid: String, policy: String) {
+        require(policy == "admins" || policy == "everyone")
+        patch(gid, mapOf("stream_policy" to JsonPrimitive(policy)))
     }
 
     suspend fun loadMembers(gid: String): List<GroupMember> {
@@ -659,6 +706,7 @@ class GroupStore(
                     if (gid != null && state.value.groups.none { it.id == gid }) refresh()
                 }
                 "group.crypto_pending" -> if (gid != null) quietly { c.processPending(gid) }
+                "group.stream" -> if (gid != null) loadStream(gid)
                 "group.member", "group.settings", "group.deleted" -> { if (gid != null) mutable.update { it.copy(members = it.members - gid) }; refresh() }
                 "group.device" -> (data["mailbox"] as? JsonPrimitive)?.content?.let { m -> mutable.update { it.copy(devices = it.devices - m) } }
                 "mls.welcome" -> { if (!quietly { c.processWelcomes() }.isNullOrEmpty()) refresh() }
@@ -718,6 +766,11 @@ fun groupNoticeText(item: HistoryItem, name: (String?) -> String): String? {
         "ownership_transferred" -> "$actor made $who the owner"
         "call_started" -> "$actor started a ${if (s("kind") == "video") "video" else "voice"} call"
         "call_ended" -> s("duration")?.toLongOrNull()?.takeIf { it > 0 }?.let { "Call ended · ${(it + 30) / 60} min" } ?: "Call ended"
+        "stream" -> { // Phase 6: the words come from the notice's metadata, never from group content
+            val minutes = maxOf(1L, ((s("duration")?.toDoubleOrNull() ?: 0.0) / 60).let { Math.round(it) })
+            val viewers = s("viewers")?.toDoubleOrNull()?.toLong() ?: 0
+            "$actor streamed for $minutes min · $viewers ${if (viewers == 1L) "viewer" else "viewers"}"
+        }
         "link_reset" -> "$actor reset the invite link"
         "you_joined" -> "You joined this group. Earlier messages are not available on this device."
         "device_removed" -> "$who’s device was removed"

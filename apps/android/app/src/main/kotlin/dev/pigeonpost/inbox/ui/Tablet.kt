@@ -130,6 +130,12 @@ private fun Sidebar(state: InboxState, store: InboxStore, model: InboxViewModel,
             Icon(Icons.Outlined.Business, null, Modifier.size(18.dp), tint = p.secondary)
             Text("Organization rooms", style = geist(13.sp), color = p.secondary)
         }
+        if (model.meetingNotes != null && Features.MEETING_SUMMARIES in state.features) Row(Modifier.padding(horizontal = 8.dp).fillMaxWidth().clip(RoundedCornerShape(9.dp))
+            .clickable(onClickLabel = "Open meeting notes", onClick = model::openMeetingNotes).padding(horizontal = 10.dp, vertical = 12.dp).testTag("sidebar:meetingNotes"),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Icon(Icons.Outlined.Description, null, Modifier.size(18.dp), tint = p.secondary)
+            Text("Meeting notes", style = geist(14.sp, FontWeight.Medium), color = p.ink)
+        }
         if (model.calendar != null && "calendar" in state.features) Row(Modifier.padding(horizontal = 8.dp).fillMaxWidth().clip(RoundedCornerShape(9.dp))
             .clickable(onClickLabel = "Open calendar", onClick = model::openCalendar).padding(horizontal = 10.dp, vertical = 12.dp).testTag("sidebar:calendar"),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {

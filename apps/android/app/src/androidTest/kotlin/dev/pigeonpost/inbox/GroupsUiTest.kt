@@ -58,6 +58,20 @@ class GroupsUiTest {
         }
     }
 
+    /** The composer keeps focus after a send (as in direct conversations), so the next message is typed at once. */
+    @Test fun theGroupComposerKeepsFocusAfterSend() {
+        launch().use {
+            text("Garden club")
+            groupRow("Garden club").performClick()
+            tag("groupPane")
+            send("First of two")
+            text("Got it: First of two", 60_000)
+            ui.onNodeWithTag("groupComposer").assertIsFocused()
+            ui.onNodeWithTag("groupComposer").performTextInput("Second without tapping")
+            ui.onNodeWithText("Second without tapping").assertExists()
+        }
+    }
+
     @Test fun anInvitationIsAcceptedAndAnnouncementModeReplacesTheComposer() {
         launch().use {
             tag("groupInvitations")

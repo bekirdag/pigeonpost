@@ -43,6 +43,8 @@ data class Group(
     @SerialName("has_link") val hasLink: Boolean = false,
     val my: GroupMine? = null,
     @SerialName("org_id") val orgId: String? = null,
+    /** Phase 6: who may go live, `admins` (the default) or `everyone`. */
+    @SerialName("stream_policy") val streamPolicy: String = "admins",
 ) {
     val state get() = my?.state
     val active get() = my?.state == "active" && deletedAt == null

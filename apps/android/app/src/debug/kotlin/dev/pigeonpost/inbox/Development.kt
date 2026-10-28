@@ -22,7 +22,7 @@ object Development {
     @Suppress("UNUSED_PARAMETER")
     fun graph(application: Application, intent: Intent): AppGraph? {
         val mode = intent.getStringExtra("pigeonpost.fixtures") ?: return null
-        if (mode !in setOf("inbox", "empty", "offline", "signin", "long", "long-tall", "handles", "policy", "store", "safety", "groups", "actions", "actions-lost", "actions-off", "group-actions", "group-actions-lost", "group-actions-off", "calendar", "calendar-lost", "calendar-conflict", "calendar-zone-delay",
+        if (mode !in setOf("inbox", "empty", "offline", "signin", "long", "long-tall", "handles", "policy", "store", "safety", "groups", "actions", "actions-lost", "actions-off", "group-actions", "group-actions-lost", "group-actions-off", "live", "calendar", "calendar-lost", "calendar-conflict", "calendar-zone-delay",
             "enterprise", "enterprise-ready", "enterprise-deny-race", "enterprise-no-permission", "enterprise-unconfirmed", "enterprise-new-agent", "enterprise-off", "enterprise-signedout",
             "org-rooms", "org-rooms-lost", "org-rooms-readonly", "org-rooms-off", "org-rooms-no-membership", "org-rooms-revoked")) return null
         if (mode.startsWith("org-rooms")) {
@@ -48,6 +48,18 @@ object Development {
             val actions = GroupActionFixture(mode, base, base, world)
             return AppGraph(session, actions, fixtures = true, groupTransport = actions.transport,
                 groupCrypto = { world.crypto }, groupStorage = { dev.pigeonpost.core.groups.MemoryGroupStorage() }, start = world::run, groupPollSeconds = 1)
+        }
+        if (mode == "live") {
+            // Phase 6/7: streams and meeting notes over the real-MLS groups world (LiveFixture).
+            val world = FixtureGroups(answers = false)
+            val base = FixturePostbox("groups", world.me)
+            val live = LiveFixture(base, base, world)
+            intent.getStringExtra("pigeonpost.fixture.stream")?.let { LiveFixtureControl.STREAM = it }
+            val proxy = intent.getStringExtra("pigeonpost.fixture.streams")
+            if (proxy != null && proxy.startsWith("http://127.0.0.1:")) LiveFixtureControl.proxy =
+                Triple(proxy, intent.getStringExtra("pigeonpost.fixture.streams.token") ?: "tok-v1", intent.getStringExtra("pigeonpost.fixture.streams.group") ?: "")
+            return AppGraph(session, live, fixtures = true, groupTransport = live.transport,
+                groupCrypto = { world.crypto }, groupStorage = { dev.pigeonpost.core.groups.MemoryGroupStorage() }, start = world::run, groupPollSeconds = 1, streamPollMillis = 1000)
         }
         if (mode == "groups") {
             // Real group encryption (the AAR) against the in-memory groups postbox, with two other people.

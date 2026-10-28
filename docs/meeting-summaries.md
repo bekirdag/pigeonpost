@@ -138,5 +138,6 @@ Verified with synthetic media only: headless Chrome (inbox, native-call and join
 `tests/e2e-meeting-summaries/run.mjs`), the iOS app's WKWebView on the iOS 18.3 simulator (AAC/MP4
 chunks) and the Android app's WebView on an Android 14 emulator (WebView 113, Opus/WebM chunks)
 (`tests/e2e-meeting-summaries/native.mjs`).
-Native apps read notes in the inbox web app for now; a native reader is a follow-up. Guests on the join
+Android (0.4.1) has a native Meeting notes reader with an Android Keystore-held notes key
+(`apps/android/README.md`); the other native apps read notes in the inbox web app for now. Guests on the join
 page see the disclosure and can agree or decline. Linux opens calls in the browser.

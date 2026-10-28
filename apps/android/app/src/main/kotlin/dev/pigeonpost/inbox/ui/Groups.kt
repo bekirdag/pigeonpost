@@ -260,6 +260,11 @@ fun GroupPane(model: InboxViewModel, groups: GroupsState, inbox: InboxState, sto
     val active = g.active
     val inGroup = g.id in groups.inGroup
     val blocked = remember(inbox.contacts) { inbox.contacts.filter { it.admission == "block" } }
+    // Phase 6: the group's live stream, and the one this device is showing.
+    val streaming = Features.STREAMING in groups.features
+    val live = if (streaming && active) groups.streams[g.id] else null
+    val showing = model.calls?.live?.collectAsState()?.value
+    var goLive by remember(groups.contextId, g.id) { mutableStateOf(false) }
     Column(modifier.fillMaxHeight().background(p.wash).testTag("groupPane")) {
         Row(Modifier.fillMaxWidth().heightIn(min = 60.dp).padding(start = if (wide && showSidebar == null) 14.dp else 2.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             if (!wide) ActionIcon("Back to conversations", Icons.AutoMirrored.Outlined.ArrowBack, tint = p.accent) { store.close() }
@@ -276,6 +281,8 @@ fun GroupPane(model: InboxViewModel, groups: GroupsState, inbox: InboxState, sto
             if (active && model.calls != null) {
                 ActionIcon("Group voice call", Icons.Outlined.Call, enabled = !calling, tint = p.accent) { model.calls.callGroup(g.id, g.name, video = false, join = false) }
                 ActionIcon("Group video call", Icons.Outlined.Videocam, enabled = !calling, tint = p.accent) { model.calls.callGroup(g.id, g.name, video = true, join = false) }
+                if (streaming && live == null && GroupStreams.canGoLive(g))
+                    ActionIcon("Go live", Icons.Outlined.Sensors, enabled = !calling && showing == null, tint = p.accent) { goLive = true }
             }
             ActionIcon("Group info", Icons.Outlined.Info, action = info)
         }
@@ -286,6 +293,28 @@ fun GroupPane(model: InboxViewModel, groups: GroupsState, inbox: InboxState, sto
                 Icon(Icons.Outlined.Call, null, Modifier.size(18.dp), tint = p.autoText)
                 Text("Call in progress — Join", Modifier.padding(start = 10.dp), style = geist(14.sp, FontWeight.SemiBold), color = p.autoText)
             }
+        }
+        if (live != null) {
+            val mine = groups.mailbox
+            val busy = calling && showing?.streamId != live.id
+            Column(Modifier.fillMaxWidth().background(Color(0xFFB3261E)).clickable(enabled = !busy, onClickLabel = GroupStreams.actionLabel(live, mine, showing)) {
+                if (showing?.streamId == live.id) model.calls?.showStream() else model.calls?.watchStream(g.id, g.name, live.id)
+            }.padding(horizontal = 16.dp, vertical = 10.dp).testTag("groupLiveBanner")) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("LIVE", Modifier.background(Color.White, RoundedCornerShape(4.dp)).padding(horizontal = 6.dp, vertical = 1.dp),
+                        style = geist(11.sp, FontWeight.Bold), color = Color(0xFFB3261E))
+                    Text(GroupStreams.bannerText(live, mine, name), Modifier.weight(1f), style = geist(14.sp, FontWeight.SemiBold), color = Color.White,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(GroupStreams.actionLabel(live, mine, showing), style = geist(14.sp, FontWeight.Bold), color = Color.White, modifier = Modifier.testTag("groupLiveAction"))
+                }
+                GroupStreams.stageNote(live, mine, showing, name)?.let {
+                    Text(it, Modifier.padding(top = 4.dp).testTag("groupLiveStage"), style = geist(12.5.sp), color = Color.White)
+                }
+            }
+        }
+        if (goLive && model.calls != null) GoLiveDialog(g.name, dismiss = { goLive = false }) { title ->
+            goLive = false
+            model.calls.goLive(g.id, g.name, title)
         }
         val status = when {
             g.state == "keying" -> "You have joined. Waiting for a member’s device to add you to the encryption — this happens automatically when one is online."
@@ -545,6 +574,10 @@ fun GroupInfoDialog(groups: GroupsState, inbox: InboxState, store: GroupStore, d
             Choice(listOf("everyone" to "Everyone", "admins" to "Only admins"), g.postPolicy) { store.patch(g.id, mapOf("post_policy" to JsonPrimitive(it))) }
             SwitchRow("Members can add people", g.membersCanInvite) { store.patch(g.id, mapOf("members_can_invite" to JsonPrimitive(it))) }
             if (groups.disappearing) SwitchRow("Members can change the timer", g.membersCanChangeTimer) { store.patch(g.id, mapOf("members_can_change_timer" to JsonPrimitive(it))) }
+            if (Features.STREAMING in groups.features) {
+                Text("Who can go live", style = geist(13.5.sp, FontWeight.Medium), color = p.ink)
+                Choice(listOf("admins" to "Only admins", "everyone" to "Everyone"), g.streamPolicy) { store.setStreamPolicy(g.id, it) }
+            }
         }
         if (groups.disappearing) Section("Disappearing messages") {
             TimerPicker("New messages disappear after", g.ephemeralSecs, enabled = g.mayChangeTimer && !groups.busy) { store.setTimer(g.id, it) }
@@ -674,4 +707,22 @@ fun JoinGroupDialog(groups: GroupsState, store: GroupStore, inbox: InboxState) {
             else if (preview?.myState == "active") TextButton({ store.dismissJoin(); store.open(preview.id) }) { Text("Open") }
         },
         dismissButton = { TextButton(store::dismissJoin) { Text("Not now") } })
+}
+
+/** The Go live sheet (the web's): a title, then the camera and microphone. Screens cannot be shared from Android's web view. */
+@Composable
+fun GoLiveDialog(groupName: String, dismiss: () -> Unit, start: (String) -> Unit) {
+    var title by rememberSaveable { mutableStateOf("") }
+    val clean = GroupStreams.title(title)
+    AlertDialog(onDismissRequest = dismiss, title = { Text("Go live") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(title, { title = it.take(GroupStreams.TITLE_MAX) }, Modifier.fillMaxWidth().testTag("goLiveTitle"), singleLine = true,
+                    label = { Text("Title") }, placeholder = { Text("What’s this stream about?") })
+                Text("Everyone in $groupName can watch, with your camera and microphone. The stream is end-to-end encrypted and isn’t recorded; it can run for up to 4 hours.",
+                    style = geist(13.sp), color = Pp.colors.secondary)
+            }
+        },
+        confirmButton = { TextButton({ clean?.let(start) }, enabled = clean != null, modifier = Modifier.testTag("goLiveStart")) { Text("Go live") } },
+        dismissButton = { TextButton(dismiss) { Text("Cancel") } })
 }

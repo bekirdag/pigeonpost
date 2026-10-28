@@ -69,6 +69,7 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
     val calendar by (calendarStore?.state ?: remember { kotlinx.coroutines.flow.MutableStateFlow(dev.pigeonpost.core.calendar.CalendarState()) }).collectAsStateWithLifecycle()
     val meetingCode by model.memberMeetingCode.collectAsStateWithLifecycle()
     val deviceOpen by model.deviceApprovalOpen.collectAsStateWithLifecycle()
+    val notesOpen by model.meetingNotesOpen.collectAsStateWithLifecycle()
     val organizationRoomsOpen by model.organizationRoomsOpen.collectAsStateWithLifecycle()
     val organizationRoomPreparing by model.organizationRoomPreparing.collectAsStateWithLifecycle()
     val organizationRooms by (model.organizationRooms?.state ?: remember { kotlinx.coroutines.flow.MutableStateFlow(dev.pigeonpost.core.enterprise.OrganizationRoomsState()) }).collectAsStateWithLifecycle()
@@ -200,6 +201,7 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
             text = { Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) { CircularProgressIndicator(Modifier.size(24.dp)); Text("Preparing your call…") } },
             confirmButton = {}, dismissButton = { TextButton({ model.calls?.cancelScheduledJoin() }) { Text("Cancel") } })
         meetingCode?.let { code -> if (session.signedIn && session.termsAccepted && state.acting != null) MeetingLinkDialog(model, state, code, meetingLookup, calendar.zone.id) }
+        if (notesOpen && !session.loading && session.signedIn && session.termsAccepted) MeetingNotesDialog(model)
         if (deviceOpen && !session.loading && session.signedIn && session.termsAccepted) DeviceApprovalDialog(model, deviceApproval)
         if (organizationRoomsOpen && !session.loading && session.signedIn && session.termsAccepted)
             OrganizationRoomsDialog(model, state, organizationRooms, groups, organizationRoomPreparing, session.authorizationId) { openLink("https://enterprise.pigeonpost.dev/app") }

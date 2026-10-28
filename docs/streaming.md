@@ -180,7 +180,8 @@ What this sets:
 ## 6. Clients
 
 Web (`site-inbox/live.js`, the call client's stream mode; `groups.js` for the banner, the Go live
-sheet, the `stream` notice and the "Who can go live" setting). Native apps reuse the same page in
+sheet, the `stream` notice and the "Who can go live" setting). Android (0.4.1) has the native banner,
+Watch, Go live, the policy setting and stage forwarding (`apps/android/README.md`). Native apps reuse the same page in
 their call web view: `PigeonpostNative.watchStream({id, name}, streamId)` and
 `PigeonpostNative.goLive({id, name}, {title, camera, screen})` return `{ok, code?}`; the page asks for
 full screen while the stream is shown. The native group screens still need a LIVE banner and Watch /
