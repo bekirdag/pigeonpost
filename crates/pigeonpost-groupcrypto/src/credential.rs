@@ -199,18 +199,63 @@ impl DeviceCredential {
 }
 
 /// Stable 32-byte fingerprint of one device: mailbox, device id and its MLS signature key.
+///
+/// Each part is length-prefixed with a `u16`. A part longer than `u16::MAX` (never produced by
+/// valid credentials, whose encoding has the same limit) is not truncated into an ambiguous prefix:
+/// the whole input is hashed under a separate domain with `u64` lengths instead, so it can never
+/// collide with a fingerprint of valid inputs. Valid inputs hash exactly as before.
 pub fn device_fingerprint(mailbox: &str, device_id: &str, device_signature_key: &[u8]) -> [u8; 32] {
-    let mut h = Sha256::new();
-    h.update(FINGERPRINT_DOMAIN);
-    for part in [
+    let parts = [
         mailbox.as_bytes(),
         device_id.as_bytes(),
         device_signature_key,
-    ] {
-        h.update((part.len() as u16).to_be_bytes());
-        h.update(part);
+    ];
+    let mut h = Sha256::new();
+    if parts.iter().all(|p| p.len() <= u16::MAX as usize) {
+        h.update(FINGERPRINT_DOMAIN);
+        for part in parts {
+            h.update((part.len() as u16).to_be_bytes());
+            h.update(part);
+        }
+    } else {
+        h.update(FINGERPRINT_DOMAIN_OVERSIZE);
+        for part in parts {
+            h.update((part.len() as u64).to_be_bytes());
+            h.update(part);
+        }
     }
     h.finalize().into()
+}
+
+/// Domain for [`device_fingerprint`] inputs that do not fit the `u16` length prefix.
+const FINGERPRINT_DOMAIN_OVERSIZE: &[u8] =
+    b"pigeonpost/groupcrypto/device-fingerprint-oversize/v1\0";
+
+#[cfg(test)]
+mod fingerprint_length_tests {
+    use super::*;
+
+    #[test]
+    fn an_oversized_part_cannot_alias_a_truncated_one() {
+        let key = [7u8; 32];
+        let long = "a".repeat(u16::MAX as usize + 1);
+        // With a truncating cast, the length prefix of `long` would read 0, as for "".
+        assert_ne!(
+            device_fingerprint(&long, "d", &key),
+            device_fingerprint("", "d", &key)
+        );
+        let over = vec![1u8; u16::MAX as usize + 1];
+        assert_ne!(
+            device_fingerprint("/k/a", "d", &over),
+            device_fingerprint("/k/a", "d", &over[..u16::MAX as usize])
+        );
+        // At the limit the original encoding still applies.
+        let max = "b".repeat(u16::MAX as usize);
+        assert_eq!(
+            device_fingerprint(&max, "d", &key),
+            device_fingerprint(&max, "d", &key)
+        );
+    }
 }
 
 fn digits(bytes: &[u8], groups: usize) -> String {

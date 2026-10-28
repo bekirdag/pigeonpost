@@ -63,6 +63,61 @@ pub fn find_program(name: &str) -> Option<PathBuf> {
     dirs.into_iter().map(|d| d.join(name)).find(|p| p.is_file())
 }
 
+/// How a Docker daemon isolates container root from the host (from `docker info`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DockerIsolation {
+    /// Rootless Docker: the daemon itself runs as an unprivileged user.
+    Rootless,
+    /// `userns-remap`: container root maps to an unprivileged host range.
+    UsernsRemap,
+    /// Docker Desktop: containers run inside its Linux VM, not on this machine's kernel.
+    DesktopVm,
+    /// A rootful daemon without remapping: container root is host root after an escape.
+    Rootful,
+}
+
+/// Classify `docker info --format '{{json .SecurityOptions}}|{{.OperatingSystem}}'` output.
+pub fn classify_docker(info: &str) -> DockerIsolation {
+    let (options, os) = info.split_once('|').unwrap_or((info, ""));
+    if options.contains("name=rootless") {
+        DockerIsolation::Rootless
+    } else if options.contains("name=userns") {
+        DockerIsolation::UsernsRemap
+    } else if os.contains("Docker Desktop") {
+        DockerIsolation::DesktopVm
+    } else {
+        DockerIsolation::Rootful
+    }
+}
+
+/// Refuse a rootful Docker daemon unless the owner acknowledged it. Podman is not checked here:
+/// agentd runs it as this machine's user, so it is rootless unless agentd itself runs as root.
+fn check_docker(shell: &Shell, rt: &Path) -> Result<(), String> {
+    let out = std::process::Command::new(rt)
+        .args([
+            "info",
+            "--format",
+            "{{json .SecurityOptions}}|{{.OperatingSystem}}",
+        ])
+        .env_clear()
+        .envs(runtime_env())
+        .output()
+        .map_err(|_| "cannot ask Docker how it isolates containers".to_string())?;
+    if !out.status.success() {
+        return Err("cannot ask Docker how it isolates containers (is the daemon running?)".into());
+    }
+    let isolation = classify_docker(&String::from_utf8_lossy(&out.stdout));
+    if isolation == DockerIsolation::Rootful && !shell.docker_rootful_ok {
+        return Err(
+            "refused: this Docker daemon runs containers as host root (rootful, no user-namespace \
+             remapping). Use rootless Podman (preferred), rootless Docker or userns-remap, or set \
+             docker_rootful_acknowledged = true to accept that a container escape is a root escape"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
 /// The container runtime to use: the configured one, else podman, else docker.
 pub fn runtime(shell: &Shell) -> Result<(PathBuf, bool), String> {
     let pick = |n: &str| find_program(n).map(|p| (p, n == "podman"));
@@ -106,6 +161,9 @@ pub fn launch(
         }
         Mode::Container => {
             let (rt, podman) = runtime(shell)?;
+            if !podman {
+                check_docker(shell, &rt)?;
+            }
             let name = container_name(sid);
             let mut args = vec!["run".to_string(), "--rm".into(), "-i".into()];
             if pty {
@@ -344,7 +402,8 @@ mod tests {
         Shell {
             mode,
             workspace: std::fs::canonicalize(ws).unwrap(),
-            image: "docker.io/library/debian:13".into(),
+            image: crate::shell::config::DEFAULT_IMAGE.into(),
+            docker_rootful_ok: false,
             runtime: None,
             outbound: false,
             read_only: false,
@@ -513,5 +572,45 @@ mod tests {
             container_name("ssh_abcdefghijklmnopqrstuvwxyz"),
             "pp-ssh-abcdefghijklmnopqrstuvwxyz"
         );
+    }
+
+    #[test]
+    fn docker_isolation_is_read_from_docker_info() {
+        assert_eq!(
+            classify_docker(
+                r#"["name=seccomp,profile=builtin","name=rootless","name=cgroupns"]|Ubuntu 24.04"#
+            ),
+            DockerIsolation::Rootless
+        );
+        assert_eq!(
+            classify_docker(r#"["name=seccomp,profile=builtin","name=userns"]|Ubuntu 24.04"#),
+            DockerIsolation::UsernsRemap
+        );
+        assert_eq!(
+            classify_docker(
+                r#"["name=seccomp,profile=unconfined","name=cgroupns"]|Docker Desktop"#
+            ),
+            DockerIsolation::DesktopVm
+        );
+        assert_eq!(
+            classify_docker(
+                r#"["name=apparmor","name=seccomp,profile=builtin","name=cgroupns"]|Ubuntu 24.04.1 LTS"#
+            ),
+            DockerIsolation::Rootful
+        );
+        assert_eq!(
+            classify_docker(""),
+            DockerIsolation::Rootful,
+            "unknown is treated as rootful"
+        );
+    }
+
+    #[test]
+    fn the_default_image_is_pinned_by_digest() {
+        let d = crate::shell::config::DEFAULT_IMAGE;
+        let (_, digest) = d.split_once("@sha256:").expect("digest-pinned");
+        assert_eq!(digest.len(), 64);
+        assert!(digest.bytes().all(|b| b.is_ascii_hexdigit()));
+        assert!(crate::shell::config::plain_token(d));
     }
 }
