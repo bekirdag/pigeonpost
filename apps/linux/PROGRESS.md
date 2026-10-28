@@ -52,3 +52,7 @@
 ## 2026-10-27 — 1.0.10: round two (message actions, calendar, organizations, machine approval)
 
 - Login-bound work, protected drafts and deliveries, message actions and receipts, group edits/receipts with a protected outbox, calendar, organization rooms and machine approval (browser hand-off until the Linux sign-in client supports strong sign-in). Details, test counts and gated items: `docs/linux-round2-2026-10-27-progress.md`.
+
+## 2026-10-28 — 1.0.11: round three (live stream banners, meeting notes)
+
+- LIVE banner with Watch / Go live in browser and stage invitations, "Who can go live", the stream notice; a native Meeting notes reader with a per-account notes key; group composer focus. Details, tests and the meeting-audio privacy checklist: `docs/linux-round3-2026-10-27-progress.md`.

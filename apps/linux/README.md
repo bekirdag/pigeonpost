@@ -23,10 +23,10 @@ POSTBOX_BIN=../../target/debug/pigeonpost-postbox node tests/live_interop.mjs   
 python3 package-deb.py       # needs pigeonpost/native/x86_64 and aarch64 (CI builds both)
 flatpak remote-add --if-not-exists --user flathub https://dl.flathub.org/repo/flathub.flatpakrepo
 flatpak-builder --user --install-deps-from=flathub --force-clean --repo=repo build-dir dev.pigeonpost.Desktop.json
-flatpak build-bundle repo dist/Pigeonpost-Desktop-1.0.10-x86_64.flatpak dev.pigeonpost.Desktop --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo
+flatpak build-bundle repo dist/Pigeonpost-Desktop-1.0.11-x86_64.flatpak dev.pigeonpost.Desktop --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo
 ```
 
-Install the Debian package with `sudo apt install ./pigeonpost-desktop_1.0.10_all.deb` so native dependencies are resolved. Install the Flatpak with `flatpak install --user ./Pigeonpost-Desktop-1.0.10-x86_64.flatpak`, then launch Pigeonpost from the application menu or `flatpak run dev.pigeonpost.Desktop`. The first Flatpak installation also downloads the GNOME runtime. This is a direct release bundle, not a Flathub listing; install a newer bundle to update.
+Install the Debian package with `sudo apt install ./pigeonpost-desktop_1.0.11_all.deb` so native dependencies are resolved. Install the Flatpak with `flatpak install --user ./Pigeonpost-Desktop-1.0.11-x86_64.flatpak`, then launch Pigeonpost from the application menu or `flatpak run dev.pigeonpost.Desktop`. The first Flatpak installation also downloads the GNOME runtime. This is a direct release bundle, not a Flathub listing; install a newer bundle to update.
 
 ## Authentication and payments
 
@@ -82,3 +82,10 @@ Each feature appears only when `GET /v1/capabilities` lists its flag. Ledger: `d
 - **Approve a machine** (`orgs`): paste a pairing code or link; the confirmation screen shows the organization, agent, machine label, requested access, the network hint and its limits, the expiry and the confirmation number, with hold-to-approve and Deny. Approval needs a strong sign-in: the app verifies it in the system browser (Authorization Code + PKCE S256, loopback return on `127.0.0.1`), reads the request again and asks for another explicit approval; it never approves by itself.
 
 Live protocol tests against a disposable loopback postbox: `tests/e2e-messages/linux.sh /absolute/pigeonpost-postbox [calendar|orgs|groups]`.
+
+## Round three (1.0.11): live streams and meeting notes
+
+- **Live streams in groups** (`streams.py`, `window_groups.py`): while a group is open the app asks `GET /v1/groups/{id}/streams` every 10 s (Linux has no group event stream) and shows a LIVE banner ("Jane is live: Sprint demo") with **Watch in browser**, a stage invitation line for the invited member, and **Go live in browser** for people the group's `stream_policy` allows (admins, or everyone; never restricted members). Both open `https://inbox.pigeonpost.dev/#group=<id>`, which opens that group in the web inbox; WebKitGTK cannot play encrypted media. Admins set "Who can go live" in Group info. The `stream` notice reads "Jane streamed for 34 min · 18 viewers".
+- **Meeting notes** (`meeting_notes.py`, `window_notes.py`): a sidebar page listing the account's notes. This computer keeps one P-256 notes key per account, sealed in the protected store (key in the desktop keyring) and removed at sign-out (its registration is deleted from the account too). The public half is registered as "Linux app" while `meeting_summaries` is on. Briefs are decrypted locally (ECDH, HKDF-SHA-256, AES-256-GCM, per `docs/meeting-summaries.md` §3) and shown as plain text, with Copy as text and Delete my copy. All requests and results are bound to the login that made them. Needs `python3-cryptography` (a Debian dependency; bundled in the Flatpak).
+- The group message box keeps focus after Send or Enter, including after a failed or unconfirmed send.
+- Tests: `tests/test_streams_notes.py`, `tests/test_ui_streams_notes.py`, and `tests/live_notes.py` (`tests/e2e-messages/linux.sh <postbox> notes`: real postbox, the brief sealed by meeting-intel's own code). Privacy checklist: `docs/linux-round3-2026-10-27-progress.md`.

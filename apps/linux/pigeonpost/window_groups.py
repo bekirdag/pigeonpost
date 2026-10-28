@@ -23,6 +23,8 @@ from .groups_core import GroupClient, UncertainSend, quote
 from .message_ui import action_row, highlight, mode_bar, quote_block, tick_widget
 from .model import contact_for, display_name, safe_filename, valid_peer
 from .previews import viewer_kind
+from .streams import POLICY_CHOICES, POLL_SECONDS as STREAM_POLL_SECONDS, STREAMING, banner as stream_banner, can_go_live, group_link, live_stream
+from .theme import add_css
 from .viewer import AttachmentViewer
 from .widgets import action_row as settings_action_row, box, button, clear, label, scroll, plain_row
 
@@ -46,6 +48,11 @@ ACTION_ERRORS = {
 def group_explain(error):
     return ACTION_ERRORS.get(getattr(error, "code", None)) or explain(error)
 
+
+add_css("""
+.pp-live { background-color: alpha(@error_color, 0.08); border: 1px solid alpha(@error_color, 0.4); border-radius: 10px; margin: 0 16px 6px 16px; padding: 6px 6px 6px 10px; }
+.pp-live-badge { font-size: 11px; font-weight: 700; color: #FFFFFF; background-color: @error_color; border-radius: 5px; padding: 1px 6px; }
+""")
 
 GROUP_WARNINGS = {**WARNINGS,
                   "edit_unverified": "Security warning: a message claimed to change another one but could not be verified. Both are shown as sent."}
@@ -79,6 +86,8 @@ class GroupsMixin:
         self.group_receipts_at = {}
         self.group_reconciled = {}
         self.group_bubbles = {}          # seq → bubble widget of the open group (jump to a reply's parent)
+        self.group_stream = None         # Phase 6: the open group's live stream (streams.live_stream), or None
+        self.group_stream_polled = 0
 
     def groups_on(self):
         return GROUPS in self.features and self.group_state == "ready"
@@ -157,6 +166,8 @@ class GroupsMixin:
             self.groups_cycle()
         if self.group_open and now - self.group_call_polled >= CALL_POLL_SECONDS:
             self.poll_group_call()
+        if self.group_open and now - self.group_stream_polled >= STREAM_POLL_SECONDS:
+            self.poll_group_stream()
 
     def groups_cycle(self, force=False):
         """One pass of the client loop: key packages, Welcomes, the group list, catch-up,
@@ -407,8 +418,29 @@ class GroupsMixin:
         self.group_video = button("Group video call", lambda: self.group_call_open(True), "camera-video-symbolic", "flat")
         head.append(self.group_voice)
         head.append(self.group_video)
+        # Phase 6: live streams play in the web inbox (WebKitGTK has no WebRTC).
+        self.group_go_live = button("Go live in browser", self.group_go_live_open, style="flat")
+        self.group_go_live.set_visible(False)
+        head.append(self.group_go_live)
         head.append(button("Group info", self.group_info, "help-about-symbolic", "flat"))
         page.append(head)
+        live = box(8, horizontal=True)
+        live.add_css_class("pp-live")
+        live.append(label("LIVE", "pp-live-badge"))
+        texts = box(2)
+        texts.set_hexpand(True)
+        texts.set_valign(Gtk.Align.CENTER)
+        self.group_live_text = label("", wrap=True)
+        self.group_live_stage = label("", "pp-status", wrap=True)
+        texts.append(self.group_live_text)
+        texts.append(self.group_live_stage)
+        live.append(texts)
+        self.group_live_watch = button("Watch in browser", self.group_watch_open, style="suggested-action")
+        self.group_live_watch.set_valign(Gtk.Align.CENTER)
+        live.append(self.group_live_watch)
+        live.set_visible(False)
+        self.group_live_banner = live
+        page.append(live)
         self.group_status = label("", "pp-status", wrap=True)
         self.group_status.set_margin_start(16)
         self.group_status.set_margin_end(16)
@@ -457,6 +489,8 @@ class GroupsMixin:
         self.peer = self.subject = None
         self.group_call = None
         self.group_call_polled = 0
+        self.group_stream = None
+        self.group_stream_polled = 0
         self.show_page("group")
         self.render_group_view()
         self.restore_group_draft()
@@ -469,6 +503,7 @@ class GroupsMixin:
             self._work(lambda: self.load_group_members(mailbox, gid), lambda _: self.render_group_view(), lambda _: None)
             self.load_group_receipts(gid, force=True)
             self.groups_cycle()
+            self.poll_group_stream()
 
     def load_group_members(self, mailbox, gid):
         members = self.api.scoped("GET", f"/v1/groups/{quote(gid)}/members", mailbox).get("members") or []
@@ -505,6 +540,7 @@ class GroupsMixin:
         self.group_voice.set_visible(active)
         self.group_video.set_visible(active)
         self.group_join_call.set_visible(bool(active and self.group_call and self.group_call.get("active")))
+        self.render_group_live(g, active)
         status = ""
         if g.get("deleted_at"):
             status = "This group was deleted."
@@ -1014,7 +1050,7 @@ class GroupsMixin:
             self.update_group_send()
             if gid == self.group_open:
                 self.render_group_view()
-                self.group_composer.grab_focus()
+            self.keep_group_composer_focus(gid)
             self.render_peers()
 
         def failed(error):
@@ -1024,6 +1060,7 @@ class GroupsMixin:
                 self.update_group_send()
                 if gid == self.group_open:
                     self.render_group_view()
+                self.keep_group_composer_focus(gid)
                 self.toast("Not confirmed. Check the conversation, then retry or dismiss it.")
                 return
             self.group_drafts[gid] = text
@@ -1034,6 +1071,7 @@ class GroupsMixin:
             if gid == self.group_open:
                 self.restore_group_draft()
                 self.render_group_view()
+            self.keep_group_composer_focus(gid)
             self.toast("Not sent: " + group_explain(error))
         self._work(lambda: client.send(gid, doc), sent, failed)
         self.render_group_view()
@@ -1052,6 +1090,7 @@ class GroupsMixin:
                 self.cancel_group_mode()
             if gid == self.group_open:
                 self.render_group_view()
+            self.keep_group_composer_focus(gid)
             self.render_peers()
 
         def failed(error):
@@ -1061,11 +1100,20 @@ class GroupsMixin:
                     self.cancel_group_mode()
                 if gid == self.group_open:
                     self.render_group_view()
+                self.keep_group_composer_focus(gid)
                 self.toast("Edit not confirmed. Check the conversation, then retry or dismiss it.")
                 return
             self.update_group_send()
+            self.keep_group_composer_focus(gid)
             self.toast("Not saved: " + group_explain(error))
         self._work(lambda: client.edit(gid, mode["seq"], text), done, failed)
+
+    def keep_group_composer_focus(self, gid):
+        """Back to the group's message box after Send or Enter (sending disables it, which drops
+        focus), unless the person has since opened another conversation or a dialog."""
+        if (gid == self.group_open and self.page() == "group" and self.group_composer.get_sensitive()
+                and self.group_composer_box.get_visible() and not any(d.get_visible() for d in self.dialogs)):
+            self.group_composer.grab_focus()
 
     def group_retry(self, gid, cmid):
         client = self.group_client()
@@ -1148,6 +1196,65 @@ class GroupsMixin:
                 self.group_call = state if isinstance(state, dict) else None
                 self.render_group_view()
         self._work(fetch, done, lambda _: None)
+
+    # ---- Phase 6: live streams --------------------------------------------------------------------
+
+    def poll_group_stream(self):
+        """The open group's live stream, every few seconds while the group is open. Linux has no
+        group event stream; the answer is kept only for the group and mailbox that asked."""
+        gid, mailbox = self.group_open, self.identity
+        self.group_stream_polled = time.monotonic()
+        if not gid or not mailbox or STREAMING not in self.features or not self.groups_on():
+            if self.group_stream is not None:
+                self.group_stream = None
+                self.render_group_view()
+            return
+
+        def fetch():
+            return live_stream(self.api.scoped("GET", f"/v1/groups/{quote(gid)}/streams", mailbox), gid)
+
+        def done(live):
+            if gid != self.group_open or mailbox != self.identity:
+                return  # another group or mailbox is on screen now
+            changed = live != self.group_stream
+            self.group_stream = live
+            if changed:
+                self.render_group_view()
+
+        def failed(error):
+            if gid == self.group_open and mailbox == self.identity and getattr(error, "code", None) in ("feature_disabled", "not_member", "no_stream"):
+                self.group_stream = None
+                self.render_group_view()
+        self._work(fetch, done, failed)
+
+    def render_group_live(self, g, active):
+        on = STREAMING in self.features
+        live = self.group_stream if on and active and self.group_stream and self.group_stream.get("group_id") == g.get("id") else None
+        self.group_go_live.set_visible(bool(on and active and not live and can_go_live(g)))
+        shown = stream_banner(live, self.identity, self.name_of)
+        self.group_live_banner.set_visible(bool(shown))
+        if shown:
+            self.group_live_text.set_text(shown["text"])
+            self.group_live_stage.set_text(shown["stage"] or "")
+            self.group_live_stage.set_visible(bool(shown["stage"]))
+            self.group_live_watch.set_label(shown["watch"])
+            self.group_live_watch.set_tooltip_text(shown["watch"])
+
+    def group_watch_open(self):
+        g = self.group_by_id(self.group_open)
+        if not g or not self.group_stream:
+            return
+        self.open_url(group_link(g["id"]))
+        self.toast(f"Opening {g.get('name') or 'the group'} in your browser. Live streams play there: this app can’t play "
+                   "encrypted video on Linux. If the group isn’t open, choose it in the list.")
+
+    def group_go_live_open(self):
+        g = self.group_by_id(self.group_open)
+        if not g:
+            return
+        self.open_url(group_link(g["id"]))
+        self.toast(f"Opening {g.get('name') or 'the group'} in your browser. Choose Go live there; your camera and screen "
+                   "are shared from the browser.")
 
     # ---- New group ------------------------------------------------------------------------------
 
@@ -1396,6 +1503,14 @@ class GroupsMixin:
             content.append(invite)
             if DISAPPEARING in self.features:
                 content.append(change_timer)
+            streaming = STREAMING in self.features
+            if streaming:
+                go_live = Gtk.DropDown(model=Gtk.StringList.new([text for _, text in POLICY_CHOICES]))
+                go_live.set_selected(1 if g.get("stream_policy") == "everyone" else 0)
+                go_live.update_property([Gtk.AccessibleProperty.LABEL], ["Who can go live"])
+                content.append(label("Who can go live", "dim-label"))
+                content.append(go_live)
+                window.group_go_live_policy = go_live
 
             def save_settings():
                 fields = {"join_policy": "public" if join.get_selected() == 1 else "private",
@@ -1403,6 +1518,8 @@ class GroupsMixin:
                           "members_can_invite": invite.get_active()}
                 if DISAPPEARING in self.features:
                     fields["members_can_change_timer"] = change_timer.get_active()
+                if streaming:
+                    fields["stream_policy"] = POLICY_CHOICES[go_live.get_selected()][0]
                 self.patch_group(g, fields)
             content.append(button("Save settings", save_settings))
 

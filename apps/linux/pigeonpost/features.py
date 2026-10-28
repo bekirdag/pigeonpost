@@ -318,6 +318,9 @@ def notice_text(item, name_of):
         return f"{actor} started a {'video' if meta.get('kind') == 'video' else 'voice'} call"
     if kind == "call_ended":
         return f"Call ended · {round(meta['duration'] / 60)} min" if meta.get("duration") else "Call ended"
+    if kind == "stream":  # Phase 6: worded here from the notice's metadata (it carries no title)
+        from .streams import stream_notice
+        return stream_notice(meta, actor)
     if kind == "link_reset":
         return f"{actor} reset the invite link"
     if kind == "you_joined":

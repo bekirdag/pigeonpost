@@ -9,8 +9,8 @@ import path from "node:path";
 
 process.umask(0o077);
 const [bin, out, mode] = process.argv.slice(2);
-if (!bin || !out || !path.isAbsolute(bin) || !path.isAbsolute(out) || (mode && !["groups", "calendar", "orgs"].includes(mode))) {
-  console.error("usage: postbox.mjs /absolute/postbox-binary /private/setup.json [groups|calendar|orgs]");
+if (!bin || !out || !path.isAbsolute(bin) || !path.isAbsolute(out) || (mode && !["groups", "calendar", "orgs", "notes"].includes(mode))) {
+  console.error("usage: postbox.mjs /absolute/postbox-binary /private/setup.json [groups|calendar|orgs|notes]");
   process.exit(2);
 }
 const work = mkdtempSync(path.join(tmpdir(), "pp-message-actions-"));
@@ -55,6 +55,9 @@ await Promise.all([reservation, internalReservation].map((server) => new Promise
 const postbox = `http://127.0.0.1:${port}`, internal = `http://127.0.0.1:${internalPort}`;
 const ops = `svc_ops_${crypto.randomBytes(20).toString("hex")}`;
 const billing = `svc_billing_${crypto.randomBytes(20).toString("hex")}`;
+// notes mode: the calls service's and meeting-intel's internal roles, played by the test itself.
+const callsToken = `svc_calls_${crypto.randomBytes(20).toString("hex")}`;
+const intelToken = `svc_intel_${crypto.randomBytes(20).toString("hex")}`;
 writeFileSync(path.join(work, "kms"), crypto.randomBytes(32), { mode: 0o600 });
 if (mode === "orgs") writeFileSync(path.join(work, "reserved-names"), "admin\nsupport\n", { mode: 0o600 });
 child = spawn(bin, [], {
@@ -67,7 +70,8 @@ child = spawn(bin, [], {
     PIGEONPOST_BLOB_DIR: path.join(work, "blobs"), PIGEONPOST_BLOB_MIN_FREE_MB: "1",
     REGISTRY_URL: `http://127.0.0.1:${issuerPort}`, OIDC_ISSUER: issuer, POSTBOX_SVC_TOKEN_OPS: ops,
     ...(mode === "orgs" ? { POSTBOX_SVC_TOKEN_BILLING: billing, POSTBOX_STEP_UP_ACR_VALUES: "fixture-mfa",
-      PIGEONPOST_RESERVED_NAMES: path.join(work, "reserved-names") } : {}) },
+      PIGEONPOST_RESERVED_NAMES: path.join(work, "reserved-names") } : {}),
+    ...(mode === "notes" ? { POSTBOX_SVC_TOKEN_CALLS: callsToken, POSTBOX_SVC_TOKEN_MEETING_INTEL: intelToken } : {}) },
   stdio: ["ignore", "ignore", "inherit"],
 });
 child.once("error", () => { console.error("Could not start the fixture binary."); process.exit(1); });
@@ -77,7 +81,7 @@ for (let attempt = 0; ; attempt++) {
   if (attempt >= 120) throw new Error("Fixture postbox did not start.");
   await sleep(250);
 }
-for (const feature of ["message_edit", "message_reply", "receipts", "agent_status", "recipient_lookup", "message_filtering", "account_events", ...(["groups", "orgs"].includes(mode) ? ["groups", "disappearing"] : []), ...(mode === "calendar" ? ["calendar"] : []), ...(mode === "orgs" ? ["orgs"] : [])]) {
+for (const feature of ["message_edit", "message_reply", "receipts", "agent_status", "recipient_lookup", "message_filtering", "account_events", ...(["groups", "orgs", "notes"].includes(mode) ? ["groups", "disappearing"] : []), ...(mode === "notes" ? ["streaming", "meeting_summaries"] : []), ...(mode === "calendar" ? ["calendar"] : []), ...(mode === "orgs" ? ["orgs"] : [])]) {
   const response = await fetch(`${internal}/internal/v1/features/${feature}`, { method: "PUT",
     headers: { authorization: `Bearer ${ops}`, "content-type": "application/json" },
     body: JSON.stringify({ scope: "global", enabled: true }) });
@@ -178,7 +182,8 @@ const lossPort = await listen(http.createServer(async (req, res) => {
     res.end(body);
   } catch { if (!res.destroyed) { res.writeHead(502); res.end(); } }
 }));
-writeFileSync(out, JSON.stringify({ postbox, lossProxy: `http://127.0.0.1:${lossPort}`, people, ...(organizationId ? { organizationId } : {}) }), { mode: 0o600, flag: "wx" });
+writeFileSync(out, JSON.stringify({ postbox, lossProxy: `http://127.0.0.1:${lossPort}`, people, ...(organizationId ? { organizationId } : {}),
+  ...(mode === "notes" ? { internal, callsToken, intelToken } : {}) }), { mode: 0o600, flag: "wx" });
 setupWritten = true;
 chmodSync(out, 0o600);
 console.log("Message action fixture ready (loopback only).");
