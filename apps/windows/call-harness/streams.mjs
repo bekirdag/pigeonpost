@@ -143,7 +143,9 @@ try {
 } catch (e) {
   result.error = String(e.stack || e);
   result.appConsole = A?.logs?.slice(-20);
-  result.hostConsole = H?.logs?.slice(-30);
+  result.appErrors = A?.logs?.filter((l) => /"type":"(error|warning|assert)"|exceptionDetails|"exception"/.test(l)).slice(-20);
+  try { result.appLive = await A?.evaluate("JSON.stringify(PigeonpostLive.inspect())"); } catch (x) { result.appLive = String(x); }
+  result.hostConsole = H?.logs?.filter((l) => /"type":"(error|warning)"|exceptionDetails|native /.test(l)).slice(-20);
   result.viewerConsole = V?.logs?.slice(-20);
   try { result.mockPostbox = pb.log.slice(-30); } catch {}
   console.error(result.error);

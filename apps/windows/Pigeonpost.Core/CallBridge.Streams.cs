@@ -62,7 +62,7 @@ public static partial class CallBridge
           const native = window.PigeonpostNative;
           if (!native || typeof native.{{method}} !== "function") { send({ ok: false, code: "bridge_unavailable" }); return; }
           Promise.resolve().then(() => {{call}})
-            .then(r => send({ ok: Boolean(r && r.ok), code: r && typeof r.code === "string" ? r.code : null, stream: r && typeof r.stream === "string" ? r.stream : null }),
+            .then(r => send({ ok: Boolean(r && r.ok), code: r && typeof r.code === "string" ? r.code : r && typeof r.code === "number" ? "dom_" + r.code : null, stream: r && typeof r.stream === "string" ? r.stream : null }),
                   () => send({ ok: false, code: "network" }));
         })();
         """;
