@@ -280,7 +280,7 @@ enum Command {
         /// The agent: its handle (`/acme/agent1`) or address.
         agent: String,
         /// Trust a changed host key with exactly this fingerprint (`SHA256:…`), after checking it
-        /// on the agent machine with `pigeonpost agentd shell status`.
+        /// on the agent machine with `pigeonpost agentd shell`.
         #[arg(long)]
         accept_host_key: Option<String>,
         /// Postbox to ask.

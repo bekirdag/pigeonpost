@@ -903,6 +903,15 @@ pub(crate) async fn sweep(state: &AppState) {
                 "DELETE FROM ssh_sessions WHERE state = 'closed' AND closed_at < ?1",
                 [now as i64 - RETAIN_CLOSED_SECS as i64],
             )?;
+            // A deleted mailbox takes its host key and the org's switch with it.
+            tx.execute(
+                "DELETE FROM agent_shell_hosts WHERE identity NOT IN (SELECT address FROM identities)",
+                [],
+            )?;
+            tx.execute(
+                "DELETE FROM agent_shell_policy WHERE identity NOT IN (SELECT address FROM identities)",
+                [],
+            )?;
             Ok(ended)
         })
         .await;
@@ -1946,6 +1955,16 @@ pub(crate) async fn broker_leg(
                     &format!("UPDATE ssh_sessions SET {column} = ?2 WHERE id = ?1"),
                     params![s.id, now as i64],
                 )?;
+                // Both legs are at the broker now: the session is connected from here (the
+                // heartbeat would only learn it up to a check interval later, and a short session
+                // would be recorded as never connected).
+                let other = if side == "client" { s.agent_leg_at } else { s.client_leg_at };
+                if other.is_some() {
+                    tx.execute(
+                        "UPDATE ssh_sessions SET state = 'connected', connected_at = ?2 WHERE id = ?1 AND state = 'issued'",
+                        params![s.id, now as i64],
+                    )?;
+                }
                 Ok(Outcome::ok(json!({
                     "session_id": s.id, "side": side, "ends_by": s.ends_by,
                     "connect_by": s.connect_by, "idle_secs": IDLE_SECS,

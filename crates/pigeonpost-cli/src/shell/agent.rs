@@ -1033,7 +1033,7 @@ impl Handler for Conn {
     }
 }
 
-/// `pigeonpost agentd shell status|fingerprint`.
+/// `pigeonpost agentd shell`.
 pub fn status(home: &Path, json_out: bool) -> Result<(), Box<dyn std::error::Error>> {
     let machine = crate::agentd_cmd::machine_home(home);
     let key = host_key(&machine).map_err(|e| e.to_string())?;
