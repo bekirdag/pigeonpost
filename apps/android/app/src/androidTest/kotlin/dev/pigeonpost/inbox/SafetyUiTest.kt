@@ -21,7 +21,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 
-/** Phase 1b on the phone: Calls tab, missed-call lines, Filtered, blocking, privacy settings, pictures and timers. */
+/** Phase 1b on a phone or a tablet: Calls tab or sidebar entry, missed-call lines, Filtered, blocking, privacy settings, pictures and timers. */
 @RunWith(AndroidJUnit4::class)
 class SafetyUiTest {
     @get:Rule val ui = createEmptyComposeRule()
@@ -32,16 +32,25 @@ class SafetyUiTest {
     }
     private fun dumped(work: () -> Unit) = try { work() } catch (e: Throwable) { ui.onAllNodes(isRoot()).fetchSemanticsNodes().indices.forEach { ui.onAllNodes(isRoot())[it].printToLog("PPDUMP", Int.MAX_VALUE) }; throw e }
     private fun tag(tag: String) = dumped { ui.waitUntil(30_000) { ui.onAllNodesWithTag(tag, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() } }
+    private fun calls() = dumped { ui.waitUntil(30_000) { ui.onAllNodes(callsEntry).fetchSemanticsNodes().isNotEmpty() } }
     private fun text(text: String) = dumped { ui.waitUntil(30_000) { ui.onAllNodesWithText(text, substring = true).fetchSemanticsNodes().isNotEmpty() } }
 
     @Test fun callsTabShowsTheMissedBadgeFiltersAndClearsItWhenViewed() {
         launch().use {
-            tag("tab:calls")
+            calls()
             ui.waitUntil(15_000) { ui.onAllNodesWithContentDescription("Calls, 1 missed").fetchSemanticsNodes().isNotEmpty() }
-            ui.onNodeWithTag("tab:calls").performClick()
+            ui.onNode(callsEntry).performClick()
             tag("callsPane")
             tag("call:call_missed"); tag("call:call_out")
             ui.waitUntil(15_000) { ui.onAllNodesWithContentDescription("Calls, 1 missed").fetchSemanticsNodes().isEmpty() }
+            if (wideLayout()) {
+                // On a tablet the Calls list replaces its sidebar entry; go back and check the badge really cleared.
+                ui.onNodeWithContentDescription("Back to conversations").performClick()
+                calls()
+                ui.onNode(callsEntry).assertContentDescriptionEquals("Calls")
+                ui.onNode(callsEntry).performClick()
+                tag("call:call_out")
+            }
             ui.onNodeWithText("Missed").performClick()
             ui.waitUntil(15_000) { ui.onAllNodesWithTag("call:call_out").fetchSemanticsNodes().isEmpty() }
             tag("call:call_missed")
@@ -56,7 +65,7 @@ class SafetyUiTest {
 
     @Test fun blockingFromACallRowAsksFirstAndReportsTheCall() {
         launch().use {
-            tag("tab:calls"); ui.onNodeWithTag("tab:calls").performClick()
+            calls(); ui.onNode(callsEntry).performClick()
             tag("call:call_missed")
             ui.onAllNodesWithContentDescription("More actions for this call")[0].performClick()
             ui.onNodeWithText("Block").performClick()
@@ -112,7 +121,7 @@ class SafetyUiTest {
 
     @Test fun privacySettingsSaveAndTheBlockedListUnblocks() {
         launch().use {
-            tag("tab:calls")
+            calls()
             ui.onNodeWithContentDescription("Settings").performClick()
             ui.onNodeWithText("Privacy & filtering").performScrollTo().performClick()
             text("Calls from people you don’t know")
@@ -131,7 +140,7 @@ class SafetyUiTest {
 
     @Test fun profilePicturePageChoosesWhoMaySeeIt() {
         launch().use {
-            tag("tab:calls")
+            calls()
             ui.onNodeWithContentDescription("Settings").performClick()
             ui.onNodeWithText("Profile picture").performScrollTo().performClick()
             text("No picture yet. People see your initials.")

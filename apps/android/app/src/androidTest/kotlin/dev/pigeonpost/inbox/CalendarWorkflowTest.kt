@@ -98,7 +98,9 @@ class CalendarWorkflowTest {
     }
     @Test fun attendeesReceiveNoContactDetailsAndRsvpDoesNotAddContacts() {
         launch().use {
-            ui.onNodeWithTag("calendar:event:evt_invited").performScrollTo().performClick()
+            // A lazy agenda row below the fold is not composed yet (a landscape tablet is short), so scroll the agenda to it.
+            ui.onNodeWithTag("calendar:agenda").performScrollToNode(hasTestTag("calendar:event:evt_invited"))
+            ui.onNodeWithTag("calendar:event:evt_invited").performClick()
             shown("Your answer: pending")
             ui.onAllNodesWithText("candidate@example.invalid", substring = true).assertCountEquals(0)
             ui.onAllNodesWithText("Get personal invitation link").assertCountEquals(0)

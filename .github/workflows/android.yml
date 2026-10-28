@@ -20,6 +20,19 @@ concurrency:
 # never select the self-hosted pool, whatever the variable says.
 jobs:
   build-and-test:
+    name: build-and-test (${{ matrix.device }})
+    # The phone leg builds and checks everything; the tablet leg runs the same native workflow suite in
+    # the tablet layout (Tablet.kt: conversations column, inbox switcher, sidebar Calls), in parallel.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - device: phone
+            profile: pixel_7
+            tasks: :core:test :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest :app:assembleRelease :app:bundleRelease
+          - device: tablet
+            profile: pixel_tablet
+            tasks: :app:assembleDebug :app:assembleDebugAndroidTest
     runs-on: ${{ vars.PIGEONPOST_SELF_HOSTED_CI == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-latest' }}
     timeout-minutes: 50
     env:
@@ -58,8 +71,8 @@ jobs:
           eval "$kotlin_tools_env"
           ANDROID_NDK_HOME="${ANDROID_SDK_ROOT:-$ANDROID_HOME}/ndk/27.2.12479018" scripts/build-android.sh
           cargo build --release --locked -p pigeonpost-groupcrypto-ffi
-      - name: Unit tests, lint, APK and release bundle
-        run: ./gradlew :core:test :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest :app:assembleRelease :app:bundleRelease --no-daemon --console=plain
+      - name: Build (phone leg also runs unit tests, lint and the release bundle)
+        run: ./gradlew ${{ matrix.tasks }} --no-daemon --console=plain
       - name: Enable the emulator accelerator
         run: sudo chmod 666 /dev/kvm
       - name: Native Android workflow tests
@@ -68,7 +81,7 @@ jobs:
           api-level: 34
           target: google_apis
           arch: x86_64
-          profile: pixel_7
+          profile: ${{ matrix.profile }}
           disable-animations: true
           working-directory: apps/android
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
@@ -87,7 +100,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: pigeonpost-android-development
+          name: pigeonpost-android-development-${{ matrix.device }}
           retention-days: 14
           if-no-files-found: warn
           path: |

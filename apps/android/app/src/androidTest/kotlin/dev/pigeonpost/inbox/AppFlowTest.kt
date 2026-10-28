@@ -74,8 +74,10 @@ class AppFlowTest {
             ui.onNodeWithText("A separate subject draft").assertExists()
             ui.onNodeWithContentDescription("Find in conversation").performClick()
             ui.onNodeWithText("Find in this subject").performTextInput("checklist")
-            scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
-            shown("Inbox")
+            // A phone returns from the conversation to the list. A tablet already shows the list beside
+            // the conversation, so Back leaves the app as other list-detail layouts do; check the list instead.
+            if (wideLayout()) ui.onNodeWithText("Inbox").assertIsDisplayed()
+            else { scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }; shown("Inbox") }
         }
     }
     @Test fun settingsContactsArchiveAndSignOut() {
@@ -117,14 +119,16 @@ class AppFlowTest {
             ui.onNodeWithText("Message").performTextInput("A reply after searching history")
             ui.onNodeWithContentDescription("Send message").performClick()
             shown("A reply after searching history")
-            ui.waitUntil(10_000) { ui.onAllNodesWithText("A reply after searching history").fetchSemanticsNodes().size == 1 }
-            ui.onNodeWithText("A reply after searching history").assertIsDisplayed()
+            // Only the history counts: a tablet also previews the newest message in the conversations column.
+            val reply = hasText("A reply after searching history") and hasAnyAncestor(hasTestTag("conversation-history"))
+            ui.waitUntil(10_000) { ui.onAllNodes(reply).fetchSemanticsNodes().size == 1 }
+            ui.onNode(reply).assertIsDisplayed()
             ui.onNodeWithTag("conversation-history").assert(SemanticsMatcher.expectValue(dev.pigeonpost.inbox.ui.LoadedMessageCount, 10))
             ui.onNodeWithText("Design").performScrollTo().performClick()
             shown("The inbox layout follows iOS, with native Android navigation.")
             ui.onNodeWithText("The inbox layout follows iOS, with native Android navigation.").assertIsDisplayed()
             ui.onNodeWithText("Android build").performScrollTo().performClick()
-            ui.onNodeWithText("A reply after searching history").assertIsDisplayed()
+            ui.onNode(reply).assertIsDisplayed()
         }
     }
     @Test fun accountHandlesShowAppleAndGoogleOwnershipWithExpiredStatus() {
@@ -149,7 +153,8 @@ class AppFlowTest {
         }
         launch("offline").use {
             shown("Offline")
-            ui.onNodeWithText("Refresh").assertExists()
+            // A labelled button on a phone, an icon in the conversations column's footer on a tablet.
+            ui.onNode(hasText("Refresh") or hasContentDescription("Refresh")).assertExists()
             ui.onNodeWithContentDescription("Settings").performClick()
             shown("Settings")
         }
@@ -165,9 +170,9 @@ class AppFlowTest {
             ui.onNodeWithText("run tests").assertExists()
             ui.onNodeWithContentDescription("Close Edit contact").performClick()
             ui.onNodeWithContentDescription("Close Contacts and permissions").performClick()
-            ui.onNodeWithContentDescription("Back to conversations").performClick()
-            ui.onNodeWithText("Inbox").performClick()
-            ui.onNodeWithText("/demo/builder").performClick()
+            if (!wideLayout()) ui.onNodeWithContentDescription("Back to conversations").performClick()
+            ui.openMailboxes()
+            if (wideLayout()) ui.onNode(mailboxRow("Demo Builder")).performClick() else ui.onNodeWithText("/demo/builder").performClick()
             shown("No conversations yet")
         }
     }
@@ -180,10 +185,19 @@ class AppFlowTest {
             }
             shown("Inbox")
             ui.onNodeWithContentDescription("Copy address /demo/main").assertDoesNotExist()
-            ui.onNodeWithText("Inbox").performClick()
-            copy("/demo/builder", inDialog = true)
-            ui.onNodeWithText("Your inboxes").assertIsDisplayed()
-            ui.onNodeWithContentDescription("Close Your inboxes").performClick()
+            ui.openMailboxes()
+            if (wideLayout()) {
+                // The tablet's list opens inside the conversations column; copying must not switch inboxes.
+                copy("/demo/builder")
+                ui.onNode(mailboxRow("Demo")).assertIsSelected()
+                ui.onNode(mailboxRow("Demo Builder")).assertIsNotSelected()
+                ui.openMailboxes()
+                ui.onNode(mailboxRow("Demo Builder")).assertDoesNotExist()
+            } else {
+                copy("/demo/builder", inDialog = true)
+                ui.onNodeWithText("Your inboxes").assertIsDisplayed()
+                ui.onNodeWithContentDescription("Close Your inboxes").performClick()
+            }
             ui.onNodeWithText("Inbox").assertIsDisplayed()
             ui.onNodeWithContentDescription("Settings").performClick()
             ui.onNodeWithText("Account").performClick()
@@ -211,8 +225,9 @@ class AppFlowTest {
             shown("Free preview handle. No payment or automatic renewal.")
             ui.onNodeWithText("Open this inbox").performScrollTo().performClick()
             shown("No conversations yet")
-            ui.onNodeWithText("Inbox").performClick()
-            shown("/alex/main")
+            ui.openMailboxes()
+            // The phone's picker lists addresses; the tablet's switcher marks the inbox being read.
+            if (wideLayout()) ui.onNode(mailboxRow("Alex")).assertIsSelected() else shown("/alex/main")
         }
     }
     @Test fun unapprovedAccountCannotStartRegistration() {
