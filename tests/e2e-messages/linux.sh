@@ -1,9 +1,9 @@
 #!/bin/sh
 # Opt-in Linux desktop protocol tests against a disposable loopback Rust postbox.
-#   tests/e2e-messages/linux.sh /absolute/pigeonpost-postbox [groups|calendar|orgs]
+#   tests/e2e-messages/linux.sh /absolute/pigeonpost-postbox [groups|calendar|orgs|notes]
 # Runs apps/linux/tests/live_<messages|groups|calendar|orgs>.py with the app's own Python code.
 set -eu
-if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then printf '%s\n' 'usage: linux.sh /absolute/pigeonpost-postbox [groups|calendar|orgs]' >&2; exit 2; fi
+if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then printf '%s\n' 'usage: linux.sh /absolute/pigeonpost-postbox [groups|calendar|orgs|notes]' >&2; exit 2; fi
 case "$1" in /*) ;; *) printf '%s\n' 'Use an absolute binary path.' >&2; exit 2 ;; esac
 test -x "$1"
 task_root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
@@ -21,7 +21,7 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 task_mode=${2:-}
-case "$task_mode" in ""|groups|calendar|orgs) ;; *) printf '%s\n' 'Unknown fixture mode.' >&2; exit 2 ;; esac
+case "$task_mode" in ""|groups|calendar|orgs|notes) ;; *) printf '%s\n' 'Unknown fixture mode.' >&2; exit 2 ;; esac
 node "$task_root/tests/e2e-messages/postbox.mjs" "$1" "$task_work/setup.json" $task_mode &
 task_fixture_pid=$!
 task_attempt=0

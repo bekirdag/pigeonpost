@@ -212,6 +212,7 @@
     await client().processWelcomes().catch(() => {});
     await refresh();
     pickUpJoinLink();
+    pickUpGroupLink();
     clearInterval(G.poll);
     G.poll = setInterval(() => { if (G.enabled) { refresh(); client()?.processWelcomes().catch(() => {}); client()?.pruneExpired().then((n) => { if (n) renderAll(); }); } }, 20000);
   }
@@ -1568,6 +1569,22 @@
     $("gq-ok").textContent = ok;
     showSheet("group-confirm-sheet", "gq-ok");
     return new Promise((resolve) => { confirmResolve = resolve; });
+  }
+
+  // ---- a link to one group ---------------------------------------------------------------------------
+  // `#group=<id>` (the Linux app opens live streams here, since WebKitGTK cannot play them): the group
+  // opens once a mailbox that is a member of it is on screen. Nothing else is read from the link.
+  let wantedGroup = (() => {
+    const m = /^#group=(grp_[a-z2-7]{26})$/.exec(window.location.hash || "");
+    if (!m) return null;
+    history.replaceState(history.state, "", window.location.pathname + window.location.search);
+    return { id: m[1], at: Date.now(), told: false };
+  })();
+  function pickUpGroupLink() {
+    const wanted = wantedGroup;
+    if (!wanted || Date.now() - wanted.at > 10 * 60 * 1000) { wantedGroup = null; return; }
+    if (groupById(wanted.id)) { wantedGroup = null; openGroup(wanted.id); return; }
+    if (!wanted.told) { wanted.told = true; host().toast("Switch to the mailbox that is in this group to open it."); }
   }
 
   // ---- joining by link -----------------------------------------------------------------------------

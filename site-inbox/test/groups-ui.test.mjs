@@ -57,7 +57,7 @@ function fakeClient(server) {
   };
 }
 
-async function app(t, { features = ["groups", "disappearing"], groups = [group()], histories = {}, members = null, crypto = true, configure = () => {}, live = null } = {}) {
+async function app(t, { features = ["groups", "disappearing"], groups = [group()], histories = {}, members = null, crypto = true, configure = () => {}, live = null, url = "https://inbox.pigeonpost.dev/" } = {}) {
   const server = fixtureServer();
   Object.assign(server, { features, groups, histories, syncs: [], pendings: [], sent: [], dropped: [], gcalls: [] });
   server.members = members || [
@@ -100,7 +100,7 @@ async function app(t, { features = ["groups", "disappearing"], groups = [group()
   configure(server);
   const errors = [], console = new VirtualConsole();
   console.on("jsdomError", (e) => errors.push(e.message));
-  const dom = new JSDOM(read("index.html"), { url: "https://inbox.pigeonpost.dev/", runScripts: "outside-only", pretendToBeVisual: true, virtualConsole: console });
+  const dom = new JSDOM(read("index.html"), { url, runScripts: "outside-only", pretendToBeVisual: true, virtualConsole: console });
   const w = dom.window, $ = (id) => w.document.getElementById(id);
   Object.defineProperty(w, "crypto", { value: webcrypto });
   w.matchMedia = (query) => ({ matches: query.includes("min-width"), addEventListener() {} });
@@ -434,4 +434,20 @@ test("without the streaming flag there is no banner and no Go live", async (t) =
   await tick(80);
   assert.ok(a.$("group-live-btn").hidden && a.$("group-live-banner").hidden);
   assert.ok(!a.server.gcalls.some((c) => c.path.endsWith("/streams")), "never asks for streams");
+});
+
+test("a #group= link opens that group once its mailbox is on screen, and is then forgotten", async (t) => {
+  const a = await app(t, { url: "https://inbox.pigeonpost.dev/#group=grp_aaaaaaaaaaaaaaaaaaaaaaaaaa" });
+  await until(() => a.$("group-view") && !a.$("group-view").hidden, "the linked group opens");
+  assert.equal(a.w.location.hash, "", "the link is cleared from the address bar");
+  assert.equal(a.$("group-head-name").textContent, "Garden club");
+
+  const other = await app(t, { url: "https://inbox.pigeonpost.dev/#group=grp_bbbbbbbbbbbbbbbbbbbbbbbbbb" });
+  await tick(120);
+  assert.ok(!other.$("group-view") || other.$("group-view").hidden, "a group this mailbox is not in stays closed");
+  assert.equal(other.w.location.hash, "");
+
+  const junk = await app(t, { url: "https://inbox.pigeonpost.dev/#group=grp_aaaaaaaaaaaaaaaaaaaaaaaaaa&x=1" });
+  await tick(120);
+  assert.ok(!junk.$("group-view") || junk.$("group-view").hidden, "anything but an exact group id is ignored");
 });

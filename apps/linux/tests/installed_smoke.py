@@ -18,6 +18,13 @@ group_probe = ("import sys; sys.path.insert(0, '/app/share/pigeonpost-desktop');
                "d = gc.GroupDevice.new_with_identity_seed(bytes(32), 'flatpak-probe'); d.create_group('grp_probe'); "
                "print('Sandbox group encryption passed:', groupcrypto.arch(), d.safety_number('grp_probe')[:11])")
 subprocess.run(["flatpak", "run", "--command=python3", "dev.pigeonpost.Desktop", "-c", group_probe], check=True, timeout=30)
+# Meeting notes: the bundled cryptography opens a brief sealed by meeting-intel's own code.
+vector = pathlib.Path("tests/notes_vector.json").read_text()
+notes_probe = ("import sys, json; sys.path.insert(0, '/app/share/pigeonpost-desktop'); from pigeonpost import meeting_notes as mn; "
+               "v = json.loads(sys.stdin.read()); k = mn.NotesKey.generate(); assert mn.NotesKey.from_record(k.record()).key_id == k.key_id; "
+               "b = mn.open_brief(v['meeting'], mn.NotesKey.from_record(v['key'])); assert b['title'] == 'Release review'; "
+               "print('Sandbox meeting notes passed:', b['title'])")
+subprocess.run(["flatpak", "run", "--command=python3", "dev.pigeonpost.Desktop", "-c", notes_probe], input=vector, text=True, check=True, timeout=30)
 # Exercise the installed runtime's decoders with the same passive fixtures as the native tests.
 preview_probe = "import sys; from pathlib import Path; sys.path.insert(0, '/app/share/pigeonpost-desktop'); from pigeonpost.previews import render; result=render(Path(sys.argv[1]).read_bytes(), sys.argv[1], sys.argv[2]); assert result is not None and result.get_width()>0; print('Sandbox preview passed:', sys.argv[2])"
 for name, mime in [("preview.png", "image/png"), ("preview.mp4", "video/mp4"), ("preview.pdf", "application/pdf")]:

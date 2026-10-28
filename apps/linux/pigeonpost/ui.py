@@ -31,6 +31,7 @@ from .window_calendar import CalendarMixin
 from .window_calls import CallsMixin
 from .window_groups import GroupsMixin
 from .window_messages import MessagesMixin
+from .window_notes import NotesMixin
 from .window_orgs import OrgsMixin
 from .window_pairing import PairingMixin
 from .window_privacy import PrivacyMixin
@@ -67,7 +68,7 @@ def main_later(seconds, fn):
     GLib.timeout_add_seconds(seconds, lambda: (fn(), False)[1])
 
 
-class Window(MessagesMixin, PairingMixin, OrgsMixin, CalendarMixin, PrivacyMixin, CallsMixin, GroupsMixin, Adw.ApplicationWindow):
+class Window(MessagesMixin, NotesMixin, PairingMixin, OrgsMixin, CalendarMixin, PrivacyMixin, CallsMixin, GroupsMixin, Adw.ApplicationWindow):
     def __init__(self, app, session=None, api=None, restore=True, preferences=None, calls=None, protected=None):
         super().__init__(application=app, title="Pigeonpost", default_width=1180, default_height=780)
         self.set_size_request(800, 540)
@@ -102,6 +103,7 @@ class Window(MessagesMixin, PairingMixin, OrgsMixin, CalendarMixin, PrivacyMixin
         self.reset_orgs()
         self.reset_pairing()
         self.reset_messages()
+        self.reset_notes(keep_login=False)
         self.drafts, self.files = {}, {}
         self.previews = ThumbnailCache()
         self.polling = self.sending = self.rendering = self.acking = False
@@ -332,6 +334,7 @@ class Window(MessagesMixin, PairingMixin, OrgsMixin, CalendarMixin, PrivacyMixin
         self.load_filtered()
         self.calendar_features_changed()
         self.orgs_features_changed()
+        self.notes_features_changed()
         if changed:
             self.render_all()
 
@@ -385,6 +388,8 @@ class Window(MessagesMixin, PairingMixin, OrgsMixin, CalendarMixin, PrivacyMixin
         sidebar.append(self.calendar_button)
         self.orgs_button = self.side_button("Organizations", "system-users-symbolic", "Organization rooms", lambda: self.show_page("orgs"))
         sidebar.append(self.orgs_button)
+        self.notes_button = self.side_button("Meeting notes", "x-office-document-symbolic", "Meeting notes", lambda: self.show_page("notes"))
+        sidebar.append(self.notes_button)
         self.peer_search = Gtk.SearchEntry(placeholder_text="Search conversations")
         self.peer_search.connect("search-changed", lambda _: self.render_peers())
         sidebar.append(self.peer_search)
@@ -541,6 +546,7 @@ class Window(MessagesMixin, PairingMixin, OrgsMixin, CalendarMixin, PrivacyMixin
         self.main_stack.add_named(self.build_group_page(), "group")
         self.main_stack.add_named(self.build_calendar_page(), "calendar")
         self.main_stack.add_named(self.build_orgs_page(), "orgs")
+        self.main_stack.add_named(self.build_notes_page(), "notes")
         self.main_stack.set_visible_child_name("conversation")
         panes = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL, position=270)
         panes.set_start_child(sidebar_ground)
@@ -591,6 +597,7 @@ class Window(MessagesMixin, PairingMixin, OrgsMixin, CalendarMixin, PrivacyMixin
         self.reset_groups()
         self.reset_calendar()
         self.reset_orgs()
+        self.reset_notes()
         self.avatars.reset(AVATARS in self.features)
         if self.page() != "conversation":
             self.main_stack.set_visible_child_name("conversation")
@@ -1735,8 +1742,10 @@ class Window(MessagesMixin, PairingMixin, OrgsMixin, CalendarMixin, PrivacyMixin
         self.reset_calendar()
         self.reset_orgs()
         self.reset_pairing()
+        self.reset_notes(keep_login=False)
         self.calendar_button.set_visible(False)
         self.orgs_button.set_visible(False)
+        self.notes_button.set_visible(False)
         self.sync_side_nav()
         self.identity = self.peer = self.subject = None
         self.messages, self.contacts, self.threads, self.archived, self.mailboxes = [], [], [], [], []
@@ -1762,6 +1771,7 @@ class Window(MessagesMixin, PairingMixin, OrgsMixin, CalendarMixin, PrivacyMixin
             mailboxes = [row["address"] for row in self.mailboxes] if GROUPS in self.features else []
             clients = dict(self.group_clients)
             owner = self.lease.owner if self.lease is not None else None
+            notes_key = self.notes_state.get("key_id")
             self.generation += 1
             self.clear_account()
             self.show_signin("Signing out…")
@@ -1775,8 +1785,13 @@ class Window(MessagesMixin, PairingMixin, OrgsMixin, CalendarMixin, PrivacyMixin
                     self.retire_group_devices(mailboxes)
                 finally:
                     self.group_clients = {}
+                if notes_key:
+                    try:  # notes made from now on skip this computer's key, which is deleted below
+                        self.api.call("DELETE", "/v1/meetings/keys/" + notes_key)
+                    except Exception:
+                        pass
                 try:
-                    self.protected.forget_owner(owner)  # this account's drafts and unconfirmed work here
+                    self.protected.forget_owner(owner)  # this account's drafts, unconfirmed work and notes key here
                 except Exception:
                     pass
                 self.session.sign_out()

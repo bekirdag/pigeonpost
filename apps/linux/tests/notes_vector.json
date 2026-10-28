@@ -1,0 +1,68 @@
+{
+ "key": {
+  "key_id": "nkVectorKey01",
+  "private_pkcs8": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgAI/MPbbabFPXPXTcXYF5eZUhKKydguR8+8aqfo5Y/nmhRANCAARlSl8AT5K2MXRVd5TyN1SFbjB0lL6raWg3brpi+Vv05vSDK4bjTo4eX+TPWnmUkh6o8xPiwJo+KWduLQqPS1Ve",
+  "public_key": "BGVKXwBPkrYxdFV3lPI3VIVuMHSUvqtpaDduumL5W/Tm9IMrhuNOjh5f5M9aeZSSHqjzE+LAmj4pZ24tCo9LVV4="
+ },
+ "meeting": {
+  "id": "mtg_a1b2c3d4e5f6g7h8i9j0k1l2m3",
+  "state": "ready",
+  "alg": "A256GCM",
+  "iv": "ygUKGK1GItQCQMMo",
+  "ciphertext": "B7qwHojQ6uTzJXr+1V/D2ob9oOTldDJcH34I5JbHt/XOfazGANr8dKqhofkTWngmGfToFr38J65UcjopDh1JctTaqPg30/8/v+sXsMvJAp748ekWlOVRSSToDy9B7Ijw7i8LTyqh2A0RwcySXYVCny2rcbIFoJQWl1pm4+EMn8DZuRC2NE7c1R8r3nbv/PIViVWtBr7CT1Yn4B1zrm5U0W4X96OExyY4IJsgVKNCEhDBUIR8cQk6ZkVb64OYInqoFswFyM97INmuFroOYOQfhJgvqTx60ps7CYZC+2s4iKxaUryithCJKDQloV4HNacX4pDvSOqSvafCIVSEZBXWk5VMOMt/9kFjrtG8M8DkVNsYWwUi77l6te3sCWjMFZFfNhEg+RShP4ja5G5O9IPQMaiL+Go00kWghJPhr67VdBcUfAkz2vI42kw+zwWz5uL7lZozzDem4kT8vF6Fi4m1B7q1cgHi9PGLM6YouiZa86IMaN/TqzV3ypovLmw8UWzkus9LeeG+kxdhsfqTc9Z5MMXz6ll4LBYWy+o+AFF65ttV47qHDgMa9qy8RhlbwuT3rCPaLw13mGwtHYfgJUvB9JuiluwiyKg9Lwj/3/mJ+BqMVcCnNeqccif+5vSMJINlTU6rmgpYQdwCTOuMWm3SbCCgzsoxt505cGkMdBQI63eHadKynzoNq7NZKgmcTK3/LWq7/L/JN+pMxZCJQhrngrA2T4kGGOeQAcPGkdbEbBqbQUhELjNqYEwEeH2wC1yOefuH5ESe",
+  "keys": [
+   {
+    "key_id": "nkVectorKey01",
+    "epk": "BMRqY3D0LnGcteORIKuMM32l+MiVhTKMnaIRvkEarsVvW9auapFjuTIGIBH+gd/KX5/C8m8HhBsT8fWb7tHXNV0=",
+    "iv": "3k6XvMQ2rq8dpiYH",
+    "wrapped": "QRvjTaEKrtmgTbrPLPfIoZuybv/3Wxa1KifkQKzvDI+NxFnO2CwuftrmP7sCa4/N"
+   },
+   {
+    "key_id": "nkOtherDevice1",
+    "epk": "BBjS9bjJ+/H7rAhPgGGikBSyh04t9X/g+MacRC9F0c9zQoTzq7ukrdZh8J5iMa5y/pzjePVv21YNTNtktp4aLKs=",
+    "iv": "5HX0YDOptVwA386R",
+    "wrapped": "ipkTe15qaV+qF8Bid2kxv/4ywl9X1aB8W24H9AZ7wuWdEuOpK8RK/VqweOOJASkW"
+   }
+  ]
+ },
+ "brief": {
+  "title": "Release review",
+  "summary": "The team agreed to ship the Linux build on Thursday.",
+  "decisions": [
+   "Ship 1.0.11 on Thursday"
+  ],
+  "action_items": [
+   {
+    "owner": "Alex",
+    "task": "Write the release notes",
+    "due": "Wednesday"
+   }
+  ],
+  "open_questions": [
+   "Do we need a Flathub listing?"
+  ],
+  "participants": [
+   "Alex",
+   "Sam"
+  ],
+  "started_at": "2026-10-27T10:00:00Z",
+  "duration_s": 1260,
+  "transcript": [
+   {
+    "at": "00:00:04",
+    "speaker": "Alex",
+    "text": "Let's ship on Thursday."
+   },
+   {
+    "at": "00:00:09",
+    "speaker": "Sam",
+    "text": "<b>Agreed</b>"
+   }
+  ],
+  "generated_by": {
+   "stt": "whisper.cpp ggml-small",
+   "llm": "qwen"
+  },
+  "draft": false
+ }
+}
