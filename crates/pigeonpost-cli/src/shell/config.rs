@@ -286,7 +286,7 @@ pub fn check_workspace(workspace: &Path, home: &Path) -> Result<PathBuf, String>
     Ok(ws)
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 

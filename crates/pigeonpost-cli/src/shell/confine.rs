@@ -124,15 +124,9 @@ pub fn launch(
             Ok(Launch {
                 program: rt.clone(),
                 args,
-                // The runtime client itself needs very little; nothing of the person's.
-                env: vec![
-                    ("PATH".into(), runtime_path()),
-                    (
-                        "HOME".into(),
-                        std::env::var("HOME").unwrap_or_else(|_| "/".into()),
-                    ),
-                    ("LANG".into(), "C.UTF-8".into()),
-                ],
+                // The runtime client itself needs very little, and nothing of the person's: where
+                // this machine's runtime listens, from agentd's own environment, never the request.
+                env: runtime_env(),
                 cwd: shell.workspace.clone(),
                 pty,
                 container: Some((rt, name)),
@@ -172,6 +166,31 @@ pub fn launch(
             })
         }
     }
+}
+
+/// The container runtime client's environment: PATH, HOME, and the variables that say where this
+/// machine's runtime listens (rootless podman, a Docker context). Never passed into the container.
+fn runtime_env() -> Vec<(String, String)> {
+    let mut env = vec![
+        ("PATH".to_string(), runtime_path()),
+        (
+            "HOME".into(),
+            std::env::var("HOME").unwrap_or_else(|_| "/".into()),
+        ),
+        ("LANG".into(), "C.UTF-8".into()),
+    ];
+    for k in [
+        "DOCKER_HOST",
+        "DOCKER_CONTEXT",
+        "DOCKER_CONFIG",
+        "CONTAINER_HOST",
+        "XDG_RUNTIME_DIR",
+    ] {
+        if let Ok(v) = std::env::var(k) {
+            env.push((k.to_string(), v));
+        }
+    }
+    env
 }
 
 fn runtime_path() -> String {

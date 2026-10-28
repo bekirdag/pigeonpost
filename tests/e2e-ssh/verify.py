@@ -303,6 +303,12 @@ def main():
                      "PIGEONPOST_HOME": machine, "PIGEONPOST_POSTBOX": base, "PIGEONPOST_TUNNEL_URL": tunnel_url,
                      "PIGEONPOST_AGENTD_NOTIFY": "never", "PP_AGENTD_SECRET": "agentd-env-must-not-leak",
                      "SHELL": "/bin/sh"}
+        if use_container:
+            # Where this machine's Docker listens (Docker Desktop keeps it in a context).
+            host = subprocess.run(["docker", "context", "inspect", "--format", "{{.Endpoints.docker.Host}}"],
+                                  capture_output=True, text=True).stdout.strip()
+            if host:
+                agent_env["DOCKER_HOST"] = host
 
         def start_agentd():
             p = subprocess.Popen([args.cli, "agentd", "run"], env=agent_env, stdout=subprocess.DEVNULL,
@@ -376,7 +382,7 @@ def main():
                     "ls /sys/class/net; touch /etc/x 2>&1; ls " + machine + " 2>&1", timeout=300)
             lines = r.stdout
             c.ok(r.returncode in (0, 1, 2) and "pigeonpost-shell" in lines and "workspace notes" in lines,
-                 "container: the workspace is mounted at /workspace")
+                 f"container: the workspace is mounted at /workspace [{r.returncode}] {lines[-400:]} {r.stderr[-600:]}")
             c.ok(lines.splitlines()[0].strip() != "0", "container: not root")
             c.ok("eth0" not in lines, "container: no network")
             c.ok("Read-only" in lines or "read-only" in lines.lower(), "container: read-only root filesystem")

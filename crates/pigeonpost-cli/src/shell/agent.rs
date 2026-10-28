@@ -1195,8 +1195,14 @@ mod ssh_tests {
             max_sessions: 2,
             idle_secs: 900,
             commands: vec![
-                AllowedCommand { argv: vec!["/bin/echo".into(), "hello".into()], paths: 0 },
-                AllowedCommand { argv: vec!["/bin/cat".into()], paths: 1 },
+                AllowedCommand {
+                    argv: vec!["/bin/echo".into(), "hello".into()],
+                    paths: 0,
+                },
+                AllowedCommand {
+                    argv: vec!["/bin/cat".into()],
+                    paths: 1,
+                },
             ],
         }
     }
@@ -1273,10 +1279,15 @@ mod ssh_tests {
         )
     }
 
-    async fn collect(ch: &mut russh::Channel<russh::client::Msg>) -> (String, String, Option<u32>, bool) {
+    async fn collect(
+        ch: &mut russh::Channel<russh::client::Msg>,
+    ) -> (String, String, Option<u32>, bool) {
         let (mut out, mut err, mut status, mut failed) = (Vec::new(), Vec::new(), None, false);
         loop {
-            match tokio::time::timeout(Duration::from_secs(10), ch.wait()).await.expect("channel stalled") {
+            match tokio::time::timeout(Duration::from_secs(10), ch.wait())
+                .await
+                .expect("channel stalled")
+            {
                 Some(russh::ChannelMsg::Data { data }) => out.extend_from_slice(&data),
                 Some(russh::ChannelMsg::ExtendedData { data, .. }) => err.extend_from_slice(&data),
                 Some(russh::ChannelMsg::ExitStatus { exit_status }) => status = Some(exit_status),
@@ -1296,17 +1307,60 @@ mod ssh_tests {
     #[tokio::test]
     async fn a_certificate_must_bind_this_session_key_serial_agent_and_ca() {
         let (ca, client, other) = (key(1), key(3), key(4));
-        let (_, ok) = rig(Mode::Allowlist, &client, cert(good(&ca, &client, "allowlist"))).await;
+        let (_, ok) = rig(
+            Mode::Allowlist,
+            &client,
+            cert(good(&ca, &client, "allowlist")),
+        )
+        .await;
         assert!(ok, "the session's own certificate");
         let rogue_ca = key(9);
         let cases: Vec<(&str, CertSpec)> = vec![
-            ("expired", CertSpec { before: now() - 5, after: now() - 400, ..good(&ca, &client, "allowlist") }),
-            ("not yet valid", CertSpec { after: now() + 600, before: now() + 900, ..good(&ca, &client, "allowlist") }),
+            (
+                "expired",
+                CertSpec {
+                    before: now() - 5,
+                    after: now() - 400,
+                    ..good(&ca, &client, "allowlist")
+                },
+            ),
+            (
+                "not yet valid",
+                CertSpec {
+                    after: now() + 600,
+                    before: now() + 900,
+                    ..good(&ca, &client, "allowlist")
+                },
+            ),
             ("another CA", good(&rogue_ca, &client, "allowlist")),
-            ("another session", CertSpec { principal: "pp-ssh-ssh_bbbbbbbbbbbbbbbbbbbbbbbbbb".into(), ..good(&ca, &client, "allowlist") }),
-            ("a handle as principal", CertSpec { principal: "/acme/agent1".into(), ..good(&ca, &client, "allowlist") }),
-            ("another serial", CertSpec { serial: 7, ..good(&ca, &client, "allowlist") }),
-            ("another agent", CertSpec { agent: "/k/other", ..good(&ca, &client, "allowlist") }),
+            (
+                "another session",
+                CertSpec {
+                    principal: "pp-ssh-ssh_bbbbbbbbbbbbbbbbbbbbbbbbbb".into(),
+                    ..good(&ca, &client, "allowlist")
+                },
+            ),
+            (
+                "a handle as principal",
+                CertSpec {
+                    principal: "/acme/agent1".into(),
+                    ..good(&ca, &client, "allowlist")
+                },
+            ),
+            (
+                "another serial",
+                CertSpec {
+                    serial: 7,
+                    ..good(&ca, &client, "allowlist")
+                },
+            ),
+            (
+                "another agent",
+                CertSpec {
+                    agent: "/k/other",
+                    ..good(&ca, &client, "allowlist")
+                },
+            ),
             ("another mode", good(&ca, &client, "unconfined")),
         ];
         for (why, spec) in cases {
@@ -1314,7 +1368,12 @@ mod ssh_tests {
             assert!(!ok, "{why}");
         }
         // A valid certificate for someone else's key is no use without that key.
-        let (_, ok) = rig(Mode::Allowlist, &client, cert(good(&ca, &other, "allowlist"))).await;
+        let (_, ok) = rig(
+            Mode::Allowlist,
+            &client,
+            cert(good(&ca, &other, "allowlist")),
+        )
+        .await;
         assert!(!ok, "another key's certificate");
     }
 
@@ -1322,25 +1381,58 @@ mod ssh_tests {
     async fn one_session_channel_and_nothing_else() {
         let (ca, client) = (key(1), key(3));
         std::env::set_var("PP_AGENTD_SECRET", "must-not-leak");
-        let (r, ok) = rig(Mode::Allowlist, &client, cert(good(&ca, &client, "allowlist"))).await;
+        let (r, ok) = rig(
+            Mode::Allowlist,
+            &client,
+            cert(good(&ca, &client, "allowlist")),
+        )
+        .await;
         assert!(ok);
         let mut ch = r.client.channel_open_session().await.unwrap();
         // Environment injection, X11, agent forwarding, subsystems (sftp): all refused.
-        ch.set_env(true, "LD_PRELOAD", "/tmp/evil.so").await.unwrap();
-        assert!(matches!(ch.wait().await, Some(russh::ChannelMsg::Failure)), "env");
+        ch.set_env(true, "LD_PRELOAD", "/tmp/evil.so")
+            .await
+            .unwrap();
+        assert!(
+            matches!(ch.wait().await, Some(russh::ChannelMsg::Failure)),
+            "env"
+        );
         ch.request_subsystem(true, "sftp").await.unwrap();
-        assert!(matches!(ch.wait().await, Some(russh::ChannelMsg::Failure)), "sftp");
-        ch.request_x11(true, false, "MIT-MAGIC-COOKIE-1", "00", 0).await.unwrap();
-        assert!(matches!(ch.wait().await, Some(russh::ChannelMsg::Failure)), "x11");
+        assert!(
+            matches!(ch.wait().await, Some(russh::ChannelMsg::Failure)),
+            "sftp"
+        );
+        ch.request_x11(true, false, "MIT-MAGIC-COOKIE-1", "00", 0)
+            .await
+            .unwrap();
+        assert!(
+            matches!(ch.wait().await, Some(russh::ChannelMsg::Failure)),
+            "x11"
+        );
         ch.agent_forward(true).await.unwrap();
-        assert!(matches!(ch.wait().await, Some(russh::ChannelMsg::Failure)), "agent forwarding");
+        assert!(
+            matches!(ch.wait().await, Some(russh::ChannelMsg::Failure)),
+            "agent forwarding"
+        );
         // No pty in allowlist mode.
-        ch.request_pty(true, "xterm", 80, 24, 0, 0, &[]).await.unwrap();
-        assert!(matches!(ch.wait().await, Some(russh::ChannelMsg::Failure)), "pty");
+        ch.request_pty(true, "xterm", 80, 24, 0, 0, &[])
+            .await
+            .unwrap();
+        assert!(
+            matches!(ch.wait().await, Some(russh::ChannelMsg::Failure)),
+            "pty"
+        );
         // A second channel, port forwarding of either kind: refused.
         assert!(r.client.channel_open_session().await.is_err());
-        assert!(r.client.channel_open_direct_tcpip("127.0.0.1", 22, "127.0.0.1", 5000).await.is_err());
-        assert!(r.client.tcpip_forward("127.0.0.1", 0).await.is_err(), "remote forwarding");
+        assert!(r
+            .client
+            .channel_open_direct_tcpip("127.0.0.1", 22, "127.0.0.1", 5000)
+            .await
+            .is_err());
+        assert!(
+            r.client.tcpip_forward("127.0.0.1", 0).await.is_err(),
+            "remote forwarding"
+        );
         // The allowed command runs, without the environment of agentd or of the request.
         ch.exec(true, "echo hello").await.unwrap();
         let (out, _, status, _) = collect(&mut ch).await;
@@ -1350,8 +1442,19 @@ mod ssh_tests {
     #[tokio::test]
     async fn allowlist_refusals_over_ssh() {
         let (ca, client) = (key(1), key(3));
-        for attempt in ["cat ../../etc/passwd", "echo hi; id", "echo $(id)", "sh -c id", "cat /etc/passwd"] {
-            let (r, ok) = rig(Mode::Allowlist, &client, cert(good(&ca, &client, "allowlist"))).await;
+        for attempt in [
+            "cat ../../etc/passwd",
+            "echo hi; id",
+            "echo $(id)",
+            "sh -c id",
+            "cat /etc/passwd",
+        ] {
+            let (r, ok) = rig(
+                Mode::Allowlist,
+                &client,
+                cert(good(&ca, &client, "allowlist")),
+            )
+            .await;
             assert!(ok);
             let mut ch = r.client.channel_open_session().await.unwrap();
             ch.exec(true, attempt).await.unwrap();
@@ -1361,7 +1464,12 @@ mod ssh_tests {
             assert!(!out.contains("root:"), "{attempt}");
         }
         // A shell is refused with the list of what is allowed.
-        let (r, _) = rig(Mode::Allowlist, &client, cert(good(&ca, &client, "allowlist"))).await;
+        let (r, _) = rig(
+            Mode::Allowlist,
+            &client,
+            cert(good(&ca, &client, "allowlist")),
+        )
+        .await;
         let mut ch = r.client.channel_open_session().await.unwrap();
         ch.request_shell(true).await.unwrap();
         let (_, err, status, _) = collect(&mut ch).await;
@@ -1373,7 +1481,12 @@ mod ssh_tests {
     async fn unconfined_sessions_get_a_clean_environment_and_teardown_kills_the_group() {
         let (ca, client) = (key(1), key(3));
         std::env::set_var("PP_AGENTD_SECRET", "must-not-leak");
-        let (r, ok) = rig(Mode::Unconfined, &client, cert(good(&ca, &client, "unconfined"))).await;
+        let (r, ok) = rig(
+            Mode::Unconfined,
+            &client,
+            cert(good(&ca, &client, "unconfined")),
+        )
+        .await;
         assert!(ok);
         let mut ch = r.client.channel_open_session().await.unwrap();
         ch.set_env(true, "BASH_ENV", "/tmp/x").await.unwrap();
@@ -1381,10 +1494,20 @@ mod ssh_tests {
         ch.exec(true, "env; pwd").await.unwrap();
         let (out, _, status, _) = collect(&mut ch).await;
         assert_eq!(status, Some(0));
-        assert!(!out.contains("must-not-leak") && !out.contains("BASH_ENV") && !out.contains("LD_PRELOAD"), "{out}");
+        assert!(
+            !out.contains("must-not-leak")
+                && !out.contains("BASH_ENV")
+                && !out.contains("LD_PRELOAD"),
+            "{out}"
+        );
         assert!(out.contains("PATH="), "{out}");
         // Teardown: a session with a child that would outlive its shell.
-        let (r, _) = rig(Mode::Unconfined, &client, cert(good(&ca, &client, "unconfined"))).await;
+        let (r, _) = rig(
+            Mode::Unconfined,
+            &client,
+            cert(good(&ca, &client, "unconfined")),
+        )
+        .await;
         let mut ch = r.client.channel_open_session().await.unwrap();
         ch.exec(true, "sleep 1000 & sleep 1000").await.unwrap();
         tokio::time::sleep(Duration::from_millis(500)).await;
@@ -1392,7 +1515,9 @@ mod ssh_tests {
         teardown(&r.proc_info).await;
         let (_, _, status, _) = collect(&mut ch).await;
         assert_ne!(status, Some(0));
-        let gone = rustix::process::test_kill_process_group(rustix::process::Pid::from_raw(pid as i32).unwrap());
+        let gone = rustix::process::test_kill_process_group(
+            rustix::process::Pid::from_raw(pid as i32).unwrap(),
+        );
         assert!(gone.is_err(), "the whole process group is gone");
     }
 }
