@@ -10,6 +10,10 @@ const trimSlash = (s) => String(s || "").replace(/\/+$/, "");
 export const config = {
   port: Number(process.env.PORT || 8787),
 
+  // Requests per minute one source address may make to the unauthenticated sign-in and handle
+  // availability routes.
+  publicRequestsPerMinute: Math.max(1, Number(process.env.STORE_PUBLIC_REQUESTS_PER_MINUTE || 60)),
+
   // Allowed browser origins. The first is pigeonpost.dev, which is also the only origin an
   // individual checkout returns to. Everything is reverse-proxied at https://pigeonpost.dev/api.
   allowedOrigins: (process.env.STORE_ALLOWED_ORIGINS || "https://pigeonpost.dev")

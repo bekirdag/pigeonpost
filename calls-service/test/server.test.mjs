@@ -664,3 +664,26 @@ test("a large call can start on the media server; answering it needs an encrypti
     assert.equal((await t2.req("tok-alice", "POST", "/calls/v1/calls", { session: alice.id, from: "/alice", to: "/bob", kind: "video", large: true, e2ee: true })).body.error, "room_full");
   } finally { await t2.stop(); }
 });
+
+test("refused tokens are remembered, and each address may present only so many different ones", async () => {
+  const t = await start();
+  try {
+    const lookups = () => t.postbox.calls.filter((u) => u.endsWith("/v1/identities")).length;
+    const ip = { "cf-connecting-ip": "203.0.113.7" };
+    // One expired token retried in a loop reaches the postbox once.
+    for (let i = 0; i < 5; i++) assert.equal((await t.req("tok-expired", "GET", "/calls/v1/turn", null, ip)).status, 401);
+    assert.equal(lookups(), 1);
+    // Different refused tokens count against the address; past the limit the postbox is not asked.
+    for (let i = 1; i < LIMITS.authFailuresPerIp10Min; i++) {
+      assert.equal((await t.req("tok-guess-" + i, "GET", "/calls/v1/turn", null, ip)).status, 401);
+    }
+    const before = lookups();
+    assert.equal(before, LIMITS.authFailuresPerIp10Min);
+    assert.equal((await t.req("tok-guess-last", "GET", "/calls/v1/turn", null, ip)).status, 429);
+    assert.equal(lookups(), before);
+    // Another address is unaffected, and so is a valid token cached before the limit (no lookup needed).
+    const other = await t.req("tok-bob", "GET", "/calls/v1/turn", null, { "cf-connecting-ip": "203.0.113.8" });
+    assert.notEqual(other.status, 401);
+    assert.notEqual(other.status, 429);
+  } finally { await t.stop(); }
+});

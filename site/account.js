@@ -836,7 +836,7 @@
     const sub = cloud.subscriptions?.[0] || null;
     const lines = [];
     if (plan.capacity > 0) {
-      lines.push(`<p><strong>${plan.capacity} name${plan.capacity === 1 ? "" : "s"}</strong> · ${plan.used} registered
+      lines.push(`<p><strong>${Number(plan.capacity)} name${plan.capacity === 1 ? "" : "s"}</strong> · ${Number(plan.used)} registered
         ${plan.paid_through ? ` · paid through ${esc(fmtDate(plan.paid_through))}` : ""}</p>`);
     } else {
       lines.push(`<p class="muted">No Pigeonpost Cloud plan yet. Names bought in the App Store or Google Play are managed there.</p>`);
@@ -1120,7 +1120,7 @@
     if (!invoices.length) { el.innerHTML = `<p class="muted">No invoices yet.</p>`; return; }
     el.innerHTML = invoices.map((i) => `
       <div class="ac-row"><span class="muted">${esc(String(i.issued_at || i.created_at || "").slice(0, 10))} · ${esc(i.number || "")} · ${esc(i.status || "")}</span>
-      <span>${i.total != null ? money(i.total, i.currency || "USD") : i.amount != null ? money(i.amount, i.currency || "USD") : ""}</span>
+      <span>${esc(i.total != null ? money(i.total, i.currency || "USD") : i.amount != null ? money(i.amount, i.currency || "USD") : "")}</span>
       ${i.id ? `<button class="btn btn-small" data-invoice="${esc(i.id)}">PDF</button>` : ""}</div>`).join("");
     el.querySelectorAll("[data-invoice]").forEach((b) => b.onclick = async () => {
       try {
