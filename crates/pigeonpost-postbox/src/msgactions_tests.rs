@@ -672,6 +672,24 @@ async fn a_reply_resolves_on_both_sides_of_the_conversation() {
         .await;
     assert_eq!(status, StatusCode::CREATED, "{answer}");
 
+    // Only a send that carries a quote stores a sealed metadata envelope, on both copies.
+    let meta_blob = |owner: &Person, id: &Value| {
+        let (state, owner, id) = (
+            state.clone(),
+            owner.me.address.clone(),
+            id.as_str().unwrap().to_string(),
+        );
+        async move {
+            let metas = state.store.meta_for(owner, vec![id.clone()]).await.unwrap();
+            metas[&id].meta_blob.clone()
+        }
+    };
+    assert!(meta_blob(&b, &question["message_id"]).await.is_none());
+    assert!(meta_blob(&a, &question["sent_copy_id"]).await.is_none());
+    let sealed = meta_blob(&a, &answer["message_id"]).await.unwrap();
+    assert!(pigeonpost_core::envelope::Wrap::is_storage_format(&sealed));
+    assert!(meta_blob(&b, &answer["sent_copy_id"]).await.is_some());
+
     let at_a = srv.listing(&a, "&actions=1").await;
     let reply = at_a
         .iter()

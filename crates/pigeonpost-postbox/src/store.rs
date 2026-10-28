@@ -37,6 +37,7 @@ mod orgs;
 mod purge;
 mod shell;
 mod streams;
+pub(crate) mod wraps;
 pub use audit::AuditRow;
 pub use avatars::{AvatarRow, NewAvatar, SetAvatar, Visibility};
 pub use calllog::{CallEvent, CallEventKind, LogFilter};
@@ -53,6 +54,7 @@ pub(crate) use groups::append_event;
 use lifecycle::AppleRefresh;
 pub use msgactions::{DeliveryWrite, MessageMeta, ReceiptKind, RefRow};
 pub use orgs::{ActivateOutcome, DraftOutcome, Org, OrgDraft};
+pub use wraps::{decode_wrap, encode_wrap, WrapStorage};
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS identities (
@@ -587,8 +589,9 @@ pub struct BlobSweep {
     pub blobs: Vec<String>,
 }
 
-/// A stored, sealed message awaiting delivery to `recipient`. `wrap_blob` is a JSON-serialized
-/// `pigeonpost_core::envelope::Wrap`.
+/// A stored, sealed message awaiting delivery to `recipient`. `wrap_blob` is a stored
+/// `pigeonpost_core::envelope::Wrap`, compact or legacy JSON: always go through [`encode_wrap`] and
+/// [`decode_wrap`].
 pub struct Message {
     pub id: String,
     pub recipient: String,

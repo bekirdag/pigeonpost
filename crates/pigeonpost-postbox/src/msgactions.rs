@@ -113,13 +113,14 @@ pub(crate) fn legacy_reply_body(body: &str, quote: &str) -> String {
 
 /// Open a sealed blob addressed to `me`.
 pub(crate) fn open_text(me: &Identity, blob: &[u8]) -> Option<String> {
-    let wrap: envelope::Wrap = serde_json::from_slice(blob).ok()?;
+    let wrap = store::decode_wrap(blob).ok()?;
     envelope::open(me, &wrap)
         .ok()
         .map(|(_, b)| b.as_str().to_string())
 }
 
-/// The client quote sealed in a copy's metadata envelope.
+/// The client quote sealed in a copy's metadata envelope. Copies sent without a quote have no
+/// envelope (`meta_blob` is NULL); older rows may carry one whose `quote` is null.
 pub(crate) fn sealed_quote(me: &Identity, meta: &MessageMeta) -> Option<String> {
     let text = open_text(me, meta.meta_blob.as_deref()?)?;
     let v: Value = serde_json::from_str(&text).ok()?;
@@ -359,7 +360,7 @@ pub(crate) async fn record_copies(
     let seal = |vk: &VerifyingKey| -> Result<Vec<u8>, ApiError> {
         let wrap = envelope::wrap(sender_identity, vk, &sealed, now)
             .map_err(|_| ApiError::server("seal_error"))?;
-        serde_json::to_vec(&wrap).map_err(|_| ApiError::server("encode_error"))
+        store::encode_wrap(&wrap).map_err(|_| ApiError::server("encode_error"))
     };
     let row = |id: &str, owner: &str, blob: Option<Vec<u8>>| MessageMeta {
         id: id.to_string(),
@@ -371,9 +372,21 @@ pub(crate) async fn record_copies(
         ..Default::default()
     };
     let message_id = received.id.clone();
+    // The envelope exists only to keep the client's quote private: `msg_ref`, `reply_to` and
+    // `edit_of` are plain columns already, and `sealed_quote` is its one reader. Without a quote it
+    // would cost a whole second wrap per copy to say nothing, so none is stored.
+    let has_quote = prepared.quote.is_some();
     let rows = [
-        row(&received.id, &recipient.address, Some(seal(recipient_vk)?)),
-        row(&sent.id, &sender.address, Some(seal(sender_vk)?)),
+        row(
+            &received.id,
+            &recipient.address,
+            has_quote.then(|| seal(recipient_vk)).transpose()?,
+        ),
+        row(
+            &sent.id,
+            &sender.address,
+            has_quote.then(|| seal(sender_vk)).transpose()?,
+        ),
     ];
     let result = state
         .store

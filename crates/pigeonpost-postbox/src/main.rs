@@ -35,6 +35,9 @@
 //! - `pigeonpost-postbox`               — run the HTTP server (default).
 //! - `pigeonpost-postbox --reaper`      — run the ephemeral-retention sweep loop.
 //! - `pigeonpost-postbox --healthcheck` — TCP-probe the bind port; exit 0/1 (Docker HEALTHCHECK).
+//! - `pigeonpost-postbox --rewrite-wraps compact|json [--apply]` — convert stored message wraps
+//!   between the compact and legacy JSON at-rest formats (dry run unless `--apply`). Run it with
+//!   `json` before rolling back to an image older than the compact format.
 
 use axum::{
     extract::{Extension, Path, Query, Request, State},
@@ -365,6 +368,10 @@ async fn main() {
     init_tracing();
     let cfg = Config::from_env();
 
+    if let Some(i) = args.iter().position(|a| a == "--rewrite-wraps") {
+        std::process::exit(rewrite_wraps(&cfg, &args[i + 1..]).await);
+    }
+
     if args.iter().any(|a| a == "--reaper") {
         reaper(cfg).await;
         return;
@@ -391,7 +398,71 @@ fn run_healthcheck() -> i32 {
     }
 }
 
+/// `--rewrite-wraps compact|json [--apply]`: convert stored wraps, or report what would change.
+async fn rewrite_wraps(cfg: &Config, rest: &[String]) -> i32 {
+    let Some(target) = rest.first().and_then(|t| store::WrapStorage::parse(t)) else {
+        eprintln!("usage: pigeonpost-postbox --rewrite-wraps compact|json [--apply]");
+        return 2;
+    };
+    if let Some(other) = rest[1..].iter().find(|a| *a != "--apply") {
+        eprintln!("unexpected argument `{other}`");
+        eprintln!("usage: pigeonpost-postbox --rewrite-wraps compact|json [--apply]");
+        return 2;
+    }
+    let apply = rest[1..].iter().any(|a| a == "--apply");
+    let store = match store::Store::open(&cfg.db_path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("cannot open {}: {e}", cfg.db_path);
+            return 1;
+        }
+    };
+    match store
+        .rewrite_wraps(target, apply, store::wraps::REWRITE_BATCH)
+        .await
+    {
+        Ok(report) => {
+            println!(
+                "{} to {} in {}",
+                if report.applied {
+                    "rewrote"
+                } else {
+                    "dry run, would rewrite"
+                },
+                report.target.name(),
+                cfg.db_path
+            );
+            for (name, t) in [
+                ("messages.wrap_blob", &report.messages),
+                ("message_meta.meta_blob", &report.meta),
+            ] {
+                println!(
+                    "{name}: scanned {} already {} converted {} undecodable {} bytes {} -> {}",
+                    t.scanned, t.already, t.converted, t.undecodable, t.bytes_before, t.bytes_after
+                );
+            }
+            if !report.applied {
+                println!("nothing written; pass --apply to convert");
+            }
+            0
+        }
+        Err(e) => {
+            eprintln!("rewrite failed: {e}");
+            1
+        }
+    }
+}
+
 async fn serve(cfg: Config) {
+    // Fail closed on a misspelt writer format rather than silently writing something else: the
+    // value matters for a staged rollout and for rollback.
+    match store::WrapStorage::from_env() {
+        Ok(mode) => tracing::info!(format = mode.name(), "message wrap storage format"),
+        Err(e) => {
+            tracing::error!(error = %e, "invalid wrap storage format");
+            std::process::exit(1);
+        }
+    }
     let listener = match tokio::net::TcpListener::bind(&cfg.bind).await {
         Ok(l) => l,
         Err(e) => {
@@ -3597,7 +3668,7 @@ pub(crate) async fn do_send_with(
         ApiError::server("seal_error")
     })?;
     let message_id = hex_str(&wrap.id());
-    let blob = serde_json::to_vec(&wrap).map_err(|_| ApiError::server("encode_error"))?;
+    let blob = store::encode_wrap(&wrap).map_err(|_| ApiError::server("encode_error"))?;
 
     // Seal both copies before committing. Delivery, action metadata and expiry
     // are one transaction: a reader cannot observe an edit without its hold/fold
@@ -3605,7 +3676,7 @@ pub(crate) async fn do_send_with(
     let copy = envelope::wrap(&sender_identity, &sender_vk, body, now)
         .map_err(|_| ApiError::server("seal_error"))?;
     let sent_copy_id = hex_str(&copy.id());
-    let copy_blob = serde_json::to_vec(&copy).map_err(|_| ApiError::server("encode_error"))?;
+    let copy_blob = store::encode_wrap(&copy).map_err(|_| ApiError::server("encode_error"))?;
     let received = store::Message {
         id: message_id.clone(),
         recipient: recipient.address.clone(),
@@ -4054,7 +4125,7 @@ pub(crate) async fn do_inbox_page(
         if !m.outgoing && m_read && !include_read {
             continue;
         }
-        let wrap: envelope::Wrap = match serde_json::from_slice(&m.wrap_blob) {
+        let wrap = match store::decode_wrap(&m.wrap_blob) {
             Ok(w) => w,
             Err(_) => continue,
         };
@@ -8173,6 +8244,139 @@ mod tests {
         assert_eq!(msgs.len(), 1, "only that subject");
         assert_eq!(msgs[0]["body"], "about the deploy");
         assert_eq!(msgs[0]["thread_id"], deploy.id);
+    }
+
+    /// New copies are stored compact, rows an older server wrote as JSON are still read, and the
+    /// two sit in one mailbox and one listing.
+    #[tokio::test]
+    async fn compact_and_legacy_json_wraps_are_listed_together() {
+        let state = test_state();
+        let alice = mint(&state).await;
+        let bob = mint(&state).await;
+        do_send(
+            &state,
+            &alice,
+            &bob.address,
+            "compact",
+            ThreadRequest::Default,
+        )
+        .await
+        .unwrap();
+        let held = state.store.list_for(bob.address.clone()).await.unwrap();
+        assert_eq!(held.len(), 1);
+        assert!(envelope::Wrap::is_storage_format(&held[0].wrap_blob));
+
+        let sender = open_identity(&state, &alice).unwrap();
+        let bob_vk = keys::verifying_key_from_bytes(&bob.ed25519_pub).unwrap();
+        let legacy = envelope::wrap(&sender, &bob_vk, "legacy json", now_unix()).unwrap();
+        state
+            .store
+            .enqueue(store::Message {
+                id: hex_str(&legacy.id()),
+                recipient: bob.address.clone(),
+                sender: alice.address.clone(),
+                wrap_blob: serde_json::to_vec(&legacy).unwrap(),
+                created_at: now_unix(),
+                read: false,
+                owner: bob.address.clone(),
+                outgoing: false,
+                thread_id: held[0].thread_id.clone(),
+                filtered: false,
+            })
+            .await
+            .unwrap();
+
+        let listing = do_inbox(&state, &bob, false, true, None).await.unwrap();
+        let mut bodies: Vec<&str> = listing["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["body"].as_str().unwrap())
+            .collect();
+        bodies.sort();
+        assert_eq!(bodies, ["compact", "legacy json"]);
+    }
+
+    /// Stored bytes per copy and per send, legacy JSON against compact. Run with
+    /// `cargo test -p pigeonpost-postbox stored_bytes_per_message -- --ignored --nocapture`.
+    #[tokio::test]
+    #[ignore = "measurement, prints a table"]
+    async fn stored_bytes_per_message() {
+        let state = test_state();
+        let alice = mint(&state).await;
+        let bob = mint(&state).await;
+        let sender = open_identity(&state, &alice).unwrap();
+        println!(
+            "body | json copy | json meta | json send | compact copy | compact send | quoted send"
+        );
+        for len in [20usize, 300, 2000] {
+            let body = "m".repeat(len);
+            let sent = do_send(&state, &alice, &bob.address, &body, ThreadRequest::Default)
+                .await
+                .unwrap();
+            let id = sent["message_id"].as_str().unwrap().to_string();
+            let copy_id = sent["sent_copy_id"].as_str().unwrap().to_string();
+            let row = state
+                .store
+                .list_for(bob.address.clone())
+                .await
+                .unwrap()
+                .into_iter()
+                .find(|m| m.id == id)
+                .unwrap();
+            let own = state
+                .store
+                .list_for(alice.address.clone())
+                .await
+                .unwrap()
+                .into_iter()
+                .find(|m| m.id == copy_id)
+                .unwrap();
+            let meta = state
+                .store
+                .meta_for(bob.address.clone(), vec![id.clone()])
+                .await
+                .unwrap()[&id]
+                .clone();
+            assert!(meta.meta_blob.is_none());
+            let compact_copy = row.wrap_blob.len();
+            let compact_send = compact_copy + own.wrap_blob.len();
+            let json = |blob: &[u8]| {
+                store::WrapStorage::Json
+                    .encode(&store::decode_wrap(blob).unwrap())
+                    .unwrap()
+                    .len()
+            };
+            // What the previous writer sealed for every copy: the metadata envelope, quote or not.
+            let old_meta = json!({
+                "v": 1, "msg_ref": meta.msg_ref, "reply_to": null, "edit_of": null, "quote": null,
+            })
+            .to_string();
+            let bob_vk = keys::verifying_key_from_bytes(&bob.ed25519_pub).unwrap();
+            let meta_json = serde_json::to_vec(
+                &envelope::wrap(&sender, &bob_vk, &old_meta, now_unix()).unwrap(),
+            )
+            .unwrap()
+            .len();
+            let json_copy = json(&row.wrap_blob);
+            let json_send = json_copy + json(&own.wrap_blob) + 2 * meta_json;
+            // A quoted reply still seals metadata on both copies, now compact. Replies are behind
+            // a feature flag, so the envelope is sealed here the way `record_copies` seals it.
+            let quoted_meta = json!({
+                "v": 1, "msg_ref": meta.msg_ref, "reply_to": meta.msg_ref, "edit_of": null,
+                "quote": body.chars().take(80).collect::<String>(),
+            })
+            .to_string();
+            let quoted_meta = store::encode_wrap(
+                &envelope::wrap(&sender, &bob_vk, &quoted_meta, now_unix()).unwrap(),
+            )
+            .unwrap()
+            .len();
+            let quoted_send = compact_send + 2 * quoted_meta;
+            println!(
+                "{len} | {json_copy} | {meta_json} | {json_send} | {compact_copy} | {compact_send} | {quoted_send}"
+            );
+        }
     }
 
     /// Every message says which conversation it belongs to, so a session start can tell an agent

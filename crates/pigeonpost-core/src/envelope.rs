@@ -1434,6 +1434,172 @@ fn jitter(now: u64) -> u64 {
     now.saturating_sub(offset)
 }
 
+// ---- at-rest storage encoding ------------------------------------------------------------------
+
+/// First byte of a [`Wrap::to_storage_bytes`] record, format 1.
+///
+/// `0xB1` is a UTF-8 continuation byte, so it can never begin a JSON text (which starts with `{`,
+/// whitespace or another ASCII token). That single byte is how a reader tells the two formats apart.
+pub const WRAP_STORAGE_MAGIC_V1: u8 = 0xB1;
+
+/// Upper bound on the serialized attribution block inside a storage record. A v3 block is a few
+/// hundred bytes of JSON; the bound only exists so a corrupt length cannot drive a large read.
+const MAX_STORAGE_ATTRIBUTION: usize = 16 * 1024;
+
+/// Fixed part of a storage record: magic, version, ephemeral key, recipient, nonce, created_at,
+/// pow_nonce, signature, flags.
+const STORAGE_FIXED_LEN: usize = 1 + 1 + 32 + 32 + 24 + 8 + 8 + 64 + 1;
+
+const STORAGE_FLAG_ATTRIBUTION: u8 = 0x01;
+
+impl Wrap {
+    /// Compact, versioned at-rest encoding of this wrap.
+    ///
+    /// **Storage only, never a wire format.** Lofts, clients and compliance tooling exchange the
+    /// JSON form; this exists so a server keeping many wraps in its own database does not pay for
+    /// hex and decimal-array expansion. Layout (integers little-endian):
+    ///
+    /// ```text
+    /// magic 0xB1 | version u8 | ephemeral_pubkey [32] | recipient [32] | nonce [24]
+    /// | created_at u64 | pow_nonce u64 | signature [64] | flags u8
+    /// | (flags & 1: attribution_len u32 | attribution JSON)
+    /// | ciphertext_len u32 | ciphertext
+    /// ```
+    ///
+    /// Every field is carried, so [`Wrap::from_storage_bytes`] returns a wrap equal to this one and
+    /// its id, signature and proof of work are unchanged. The attribution block, rare and already
+    /// bounded, keeps its JSON form so its own versioned shape is preserved exactly.
+    pub fn to_storage_bytes(&self) -> Result<Vec<u8>> {
+        if self.ciphertext.len() > MAX_ENVELOPE_CIPHERTEXT {
+            return Err(Error::MalformedEnvelope("ciphertext too large for storage"));
+        }
+        let attribution = match &self.attribution {
+            Some(block) => {
+                let json = serde_json::to_vec(block)
+                    .map_err(|_| Error::MalformedEnvelope("attribution"))?;
+                if json.len() > MAX_STORAGE_ATTRIBUTION {
+                    return Err(Error::MalformedEnvelope(
+                        "attribution too large for storage",
+                    ));
+                }
+                Some(json)
+            }
+            None => None,
+        };
+        let mut out = Vec::with_capacity(
+            STORAGE_FIXED_LEN
+                + attribution.as_ref().map_or(0, |a| 4 + a.len())
+                + 4
+                + self.ciphertext.len(),
+        );
+        out.push(WRAP_STORAGE_MAGIC_V1);
+        out.push(self.version);
+        out.extend_from_slice(&self.ephemeral_pubkey);
+        out.extend_from_slice(&self.recipient);
+        out.extend_from_slice(&self.nonce);
+        out.extend_from_slice(&self.created_at.to_le_bytes());
+        out.extend_from_slice(&self.pow_nonce.to_le_bytes());
+        out.extend_from_slice(&self.signature);
+        match &attribution {
+            Some(json) => {
+                out.push(STORAGE_FLAG_ATTRIBUTION);
+                // Both lengths are bounded above, far below u32::MAX.
+                out.extend_from_slice(&(json.len() as u32).to_le_bytes());
+                out.extend_from_slice(json);
+            }
+            None => out.push(0),
+        }
+        out.extend_from_slice(&(self.ciphertext.len() as u32).to_le_bytes());
+        out.extend_from_slice(&self.ciphertext);
+        Ok(out)
+    }
+
+    /// Decode a stored wrap: the [`Wrap::to_storage_bytes`] format, or the legacy JSON form that
+    /// earlier servers wrote. Truncated input, trailing bytes, unknown flags and out-of-bounds
+    /// lengths are rejected; nothing here panics on hostile input.
+    pub fn from_storage_bytes(bytes: &[u8]) -> Result<Self> {
+        match bytes.first() {
+            None => Err(Error::MalformedEnvelope("empty stored wrap")),
+            Some(&WRAP_STORAGE_MAGIC_V1) => Self::decode_storage_v1(&bytes[1..]),
+            Some(_) => {
+                serde_json::from_slice(bytes).map_err(|_| Error::MalformedEnvelope("stored wrap"))
+            }
+        }
+    }
+
+    /// Whether `bytes` is in the compact storage format rather than legacy JSON. Says nothing
+    /// about whether it decodes.
+    pub fn is_storage_format(bytes: &[u8]) -> bool {
+        bytes.first() == Some(&WRAP_STORAGE_MAGIC_V1)
+    }
+
+    fn decode_storage_v1(bytes: &[u8]) -> Result<Self> {
+        let mut r = StorageReader(bytes);
+        let version = r.take::<1>()?[0];
+        let ephemeral_pubkey = r.take::<32>()?;
+        let recipient = r.take::<32>()?;
+        let nonce = r.take::<24>()?;
+        let created_at = u64::from_le_bytes(r.take::<8>()?);
+        let pow_nonce = u64::from_le_bytes(r.take::<8>()?);
+        let signature = r.take::<64>()?;
+        let flags = r.take::<1>()?[0];
+        if flags & !STORAGE_FLAG_ATTRIBUTION != 0 {
+            return Err(Error::MalformedEnvelope("unknown stored wrap flags"));
+        }
+        let attribution = if flags & STORAGE_FLAG_ATTRIBUTION != 0 {
+            let json = r.take_len_prefixed(MAX_STORAGE_ATTRIBUTION)?;
+            Some(
+                serde_json::from_slice::<AttributionBlock>(json)
+                    .map_err(|_| Error::MalformedEnvelope("stored attribution"))?,
+            )
+        } else {
+            None
+        };
+        let ciphertext = r.take_len_prefixed(MAX_ENVELOPE_CIPHERTEXT)?.to_vec();
+        if !r.0.is_empty() {
+            return Err(Error::MalformedEnvelope("trailing bytes in stored wrap"));
+        }
+        Ok(Self {
+            version,
+            ephemeral_pubkey,
+            recipient,
+            nonce,
+            ciphertext,
+            created_at,
+            signature,
+            pow_nonce,
+            attribution,
+        })
+    }
+}
+
+/// Bounds-checked cursor over a storage record.
+struct StorageReader<'a>(&'a [u8]);
+
+impl<'a> StorageReader<'a> {
+    fn take<const N: usize>(&mut self) -> Result<[u8; N]> {
+        let (head, rest) = self
+            .0
+            .split_first_chunk::<N>()
+            .ok_or(Error::MalformedEnvelope("truncated stored wrap"))?;
+        self.0 = rest;
+        Ok(*head)
+    }
+
+    fn take_len_prefixed(&mut self, max: usize) -> Result<&'a [u8]> {
+        let len = u32::from_le_bytes(self.take::<4>()?) as usize;
+        if len > max {
+            return Err(Error::MalformedEnvelope("stored wrap field too large"));
+        }
+        if self.0.len() < len {
+            return Err(Error::MalformedEnvelope("truncated stored wrap"));
+        }
+        let (field, rest) = self.0.split_at(len);
+        self.0 = rest;
+        Ok(field)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2526,5 +2692,152 @@ mod tests {
         wrapped.recipient = carol.verifying_key().to_bytes();
         assert!(open(&bob, &wrapped).is_err());
         assert!(open(&carol, &wrapped).is_err());
+    }
+
+    // ---- storage codec ------------------------------------------------------------------------
+
+    fn storage_round_trip(wrapped: &Wrap) -> Vec<u8> {
+        let stored = wrapped.to_storage_bytes().unwrap();
+        assert_eq!(stored[0], WRAP_STORAGE_MAGIC_V1);
+        assert!(Wrap::is_storage_format(&stored));
+        let back = Wrap::from_storage_bytes(&stored).unwrap();
+        assert_eq!(&back, wrapped);
+        assert_eq!(back.id(), wrapped.id());
+        assert_eq!(back.signature, wrapped.signature);
+        assert_eq!(back.pow_nonce, wrapped.pow_nonce);
+        // Converting back to JSON gives the same wrap the wire form would.
+        let json = serde_json::to_vec(&back).unwrap();
+        assert_eq!(json, serde_json::to_vec(wrapped).unwrap());
+        stored
+    }
+
+    #[test]
+    fn storage_codec_round_trips_every_field() {
+        let (alice, bob) = pair();
+        let (_, p_c) = compliance(0xC1);
+
+        let mut plain = wrap(&alice, &bob.verifying_key(), "hello", NOW).unwrap();
+        plain.pow_nonce = 0x0102_0304_0506_0708;
+        let stored = storage_round_trip(&plain);
+        let (sender, body) = open(&bob, &Wrap::from_storage_bytes(&stored).unwrap()).unwrap();
+        assert_eq!(sender, alice.verifying_key());
+        assert_eq!(body.as_str(), "hello");
+        assert!(Wrap::from_storage_bytes(&stored)
+            .unwrap()
+            .verify_public()
+            .is_ok());
+
+        let attributed = attributed(&alice, &bob, &p_c);
+        assert!(attributed.attribution.is_some());
+        storage_round_trip(&attributed);
+
+        storage_round_trip(&legacy_v2_wrap(&alice, &bob, false));
+        storage_round_trip(&legacy_v2_wrap(&alice, &bob, true));
+
+        let mut empty = plain.clone();
+        empty.ciphertext.clear();
+        storage_round_trip(&empty);
+    }
+
+    #[test]
+    fn storage_codec_reads_legacy_json_and_is_smaller() {
+        let (alice, bob) = pair();
+        let wrapped = wrap(&alice, &bob.verifying_key(), &"x".repeat(2000), NOW).unwrap();
+        let json = serde_json::to_vec(&wrapped).unwrap();
+        assert!(!Wrap::is_storage_format(&json));
+        assert_eq!(Wrap::from_storage_bytes(&json).unwrap(), wrapped);
+        // Pretty-printed and whitespace-led JSON still parse as JSON.
+        let pretty = serde_json::to_vec_pretty(&wrapped).unwrap();
+        assert_eq!(Wrap::from_storage_bytes(&pretty).unwrap(), wrapped);
+        let mut spaced = b" \n".to_vec();
+        spaced.extend_from_slice(&json);
+        assert_eq!(Wrap::from_storage_bytes(&spaced).unwrap(), wrapped);
+
+        let stored = wrapped.to_storage_bytes().unwrap();
+        assert_eq!(
+            stored.len(),
+            STORAGE_FIXED_LEN + 4 + wrapped.ciphertext.len()
+        );
+        assert!(stored.len() * 2 < json.len());
+    }
+
+    #[test]
+    fn storage_codec_rejects_malformed_input_without_panicking() {
+        let (alice, bob) = pair();
+        let (_, p_c) = compliance(0xC1);
+        let plain = wrap(&alice, &bob.verifying_key(), "hello", NOW)
+            .unwrap()
+            .to_storage_bytes()
+            .unwrap();
+        let attributed = attributed(&alice, &bob, &p_c).to_storage_bytes().unwrap();
+
+        assert!(Wrap::from_storage_bytes(&[]).is_err());
+        assert!(Wrap::from_storage_bytes(&[WRAP_STORAGE_MAGIC_V1]).is_err());
+        assert!(Wrap::from_storage_bytes(b"not json").is_err());
+
+        for stored in [&plain, &attributed] {
+            // Every truncation fails.
+            for cut in 0..stored.len() {
+                assert!(
+                    Wrap::from_storage_bytes(&stored[..cut]).is_err(),
+                    "cut {cut}"
+                );
+            }
+            // Trailing garbage fails.
+            let mut longer = stored.clone();
+            longer.push(0);
+            assert!(Wrap::from_storage_bytes(&longer).is_err());
+        }
+
+        // Unknown flags fail.
+        let mut flagged = plain.clone();
+        flagged[STORAGE_FIXED_LEN - 1] = 0x02;
+        assert!(Wrap::from_storage_bytes(&flagged).is_err());
+
+        // A ciphertext length beyond the protocol bound fails before any allocation.
+        let mut huge = plain[..STORAGE_FIXED_LEN].to_vec();
+        huge.extend_from_slice(&u32::MAX.to_le_bytes());
+        assert!(Wrap::from_storage_bytes(&huge).is_err());
+        let mut huge_attr = plain[..STORAGE_FIXED_LEN].to_vec();
+        *huge_attr.last_mut().unwrap() = STORAGE_FLAG_ATTRIBUTION;
+        huge_attr.extend_from_slice(&((MAX_STORAGE_ATTRIBUTION as u32) + 1).to_le_bytes());
+        assert!(Wrap::from_storage_bytes(&huge_attr).is_err());
+
+        // An attribution flag over garbage fails.
+        let mut bad_attr = plain[..STORAGE_FIXED_LEN].to_vec();
+        *bad_attr.last_mut().unwrap() = STORAGE_FLAG_ATTRIBUTION;
+        bad_attr.extend_from_slice(&3u32.to_le_bytes());
+        bad_attr.extend_from_slice(b"{x}");
+        bad_attr.extend_from_slice(&0u32.to_le_bytes());
+        assert!(Wrap::from_storage_bytes(&bad_attr).is_err());
+
+        // Random bytes and single-byte corruptions never panic. A deterministic xorshift keeps the
+        // test reproducible without a dependency.
+        let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        for _ in 0..2000 {
+            let len = (next() % 600) as usize;
+            let mut bytes: Vec<u8> = (0..len).map(|_| next() as u8).collect();
+            if next() % 2 == 0 && !bytes.is_empty() {
+                bytes[0] = WRAP_STORAGE_MAGIC_V1;
+            }
+            let _ = Wrap::from_storage_bytes(&bytes);
+        }
+        for stored in [&plain, &attributed] {
+            for _ in 0..2000 {
+                let mut bytes = stored.clone();
+                let at = (next() as usize) % bytes.len();
+                bytes[at] ^= (next() as u8) | 1;
+                if let Ok(decoded) = Wrap::from_storage_bytes(&bytes) {
+                    // A flip inside a fixed field decodes to a different wrap, never the same.
+                    assert_ne!(decoded.to_storage_bytes().unwrap(), **stored);
+                }
+            }
+        }
     }
 }
