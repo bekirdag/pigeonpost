@@ -62,6 +62,10 @@ public sealed class GroupsModel(PostboxClient postbox, Func<string, IGroupStateS
     private int generation;
     private int selectionGeneration;
     private CancellationTokenSource scope = new();
+    // Phase 6: the selected group's live stream as last read from the postbox.
+    private bool streaming;
+    private GroupStream? live;
+    private string? liveFor;
     private GroupClient? ActiveClient => client is { IsActive: true } c ? c : null;
     private bool IsCurrent(GroupClient c, int version) => !disposed && version == generation && ReferenceEquals(client, c) && c.IsActive;
     private bool IsSelectionCurrent(GroupClient c, int version, int intent, string gid) =>
@@ -104,6 +108,29 @@ public sealed class GroupsModel(PostboxClient postbox, Func<string, IGroupStateS
     public bool CanSend => !IsSending && Info is { CanPost: true } info && CurrentValue(c => c.InGroup(info.Id), false) && (Draft.Trim().Length > 0 || DraftFiles.Count > 0);
     public bool CanCall => Info is { IsActive: true };
     public string TimerBanner => Timers.Banner(Info?.EphemeralSecs);
+
+    // ---- Phase 6: live streams --------------------------------------------------------------
+
+    public bool Streaming => streaming && Enabled;
+    public GroupStream? LiveStream => Streaming && Info is { IsActive: true } info && live is { } s && liveFor == info.Id && s.GroupId == info.Id ? s : null;
+    public bool ShowsLiveBanner => LiveStream is not null;
+    public bool LiveIsMine => LiveStream is { } s && s.By == mailbox?.Address;
+    public string LiveBannerText => LiveStream is { } s ? (LiveIsMine ? "You are" : StreamerName(s) + " is") + " live: " + GroupStreams.Title(s.Title) : "";
+    // The streamer by the name this inbox knows; the stream's own handle when the member list
+    // has not been read yet.
+    private string StreamerName(GroupStream s)
+    {
+        var known = selected is { } row && handles.TryGetValue(row.Id, out var map) && s.By is not null && map.ContainsKey(s.By);
+        if (known || s.ByHandle is not { Length: > 0 } handle || !PostAddress.IsValid(handle)) return NameOf(s.By);
+        var alias = ConversationBuilder.FindContact(handle, contacts)?.Alias;
+        return string.IsNullOrWhiteSpace(alias) ? PostAddress.DisplayName(handle) : alias;
+    }
+    public bool ShowsGoLive => Streaming && Info is { CanGoLive: true } && LiveStream is null;
+    public bool CanChooseWhoGoesLive => Streaming && Info is { IsActive: true, IsAdmin: true };
+    // A stage invitation for this mailbox on the selected group's stream.
+    public string? StageInviteText => LiveStream is { } s && GroupStreams.StageOf(s, mailbox?.Address) == "invited"
+        ? NameOf(s.Stage!.First(e => e.Address == mailbox!.Address).By ?? s.By) + " invited you onto the stage. Your microphone and camera turn on only if you join."
+        : null;
     public string EmptyText => Groups.Count == 0 ? "No groups yet. Use New group to start one." : "";
     public event EventHandler? LinesChanged;
 
@@ -113,6 +140,10 @@ public sealed class GroupsModel(PostboxClient postbox, Func<string, IGroupStateS
         if (disposed) return;
         contacts = known;
         own = mailboxes;
+        var wasStreaming = streaming;
+        streaming = acting is not null && features.Has(ServerFeatures.Streaming);
+        if (!streaming) { live = null; liveFor = null; }
+        if (wasStreaming != streaming) NotifyAll();
         var enabled = acting is not null && features.Has(ServerFeatures.Groups) && LibraryAvailable;
         var accepted = postbox.AcceptedAuthorization;
         if (enabled == Enabled && acting?.Address == mailbox?.Address && ReferenceEquals(accepted, authorization)
@@ -131,6 +162,7 @@ public sealed class GroupsModel(PostboxClient postbox, Func<string, IGroupStateS
         mailbox = acting;
         Enabled = enabled;
         selected = null;
+        live = null; liveFor = null;
         Draft = "";
         DraftFiles.Clear();
         IsSending = false;
@@ -280,6 +312,7 @@ public sealed class GroupsModel(PostboxClient postbox, Func<string, IGroupStateS
         var c = ActiveClient;
         var token = scope.Token;
         selected = null;
+        live = null; liveFor = null;
         Draft = "";
         DraftFiles.Clear();
         Error = null;
@@ -453,6 +486,7 @@ public sealed class GroupsModel(PostboxClient postbox, Func<string, IGroupStateS
             "timer_changed" => $"{actor} set disappearing messages to {Timers.Label(int.TryParse(m.GetValueOrDefault("ephemeral_secs"), out var secs) ? secs : null)}",
             "call_started" => $"{actor} started a call",
             "call_ended" => "Call ended",
+            "stream" => GroupStreams.NoticeText(actor, m),
             "link_reset" => $"{actor} reset the invite link",
             _ => null,
         };
@@ -631,10 +665,47 @@ public sealed class GroupsModel(PostboxClient postbox, Func<string, IGroupStateS
         catch (Exception) { return null; }
     }
 
+    // Reads the selected group's live stream (the LIVE banner and Go live). Answers for a group,
+    // inbox or login that is no longer selected are dropped.
+    public async Task RefreshStreamAsync()
+    {
+        if (!Streaming || ActiveClient is not { } c || selected is not { Info.IsActive: true } row)
+        {
+            if (live is not null) { live = null; liveFor = null; NotifyAll(); }
+            return;
+        }
+        var version = generation; var intent = selectionGeneration; var token = scope.Token;
+        GroupStream? found;
+        try { found = GroupStreams.LiveOf(row.Id, await c.Api.StreamsAsync(row.Id, token)); }
+        catch (OperationCanceledException) { return; }
+        catch (Exception) { found = null; }
+        if (!IsSelectionCurrent(c, version, intent, row.Id) || !streaming) return;
+        if (liveFor == row.Id && live?.Id == found?.Id && live?.Revision == found?.Revision && live?.Title == found?.Title) return;
+        live = found; liveFor = row.Id;
+        NotifyAll();
+    }
+
+    // The current record of one stream this inbox is watching or streaming (stage changes), or
+    // null when it has ended, is unknown, or the inbox or login changed meanwhile.
+    public async Task<GroupStream?> StreamStatusAsync(string streamId)
+    {
+        if (!Streaming || ActiveClient is not { } c || !GroupStreams.ValidStreamId(streamId)) return null;
+        var version = generation; var token = scope.Token;
+        try
+        {
+            var stream = await c.Api.StreamAsync(streamId, token);
+            return IsCurrent(c, version) && stream.IsLive ? stream : null;
+        }
+        catch (Exception) { return null; }
+    }
+
+    public Task SetStreamPolicyAsync(bool everyone) => Update(new Dictionary<string, object?> { ["stream_policy"] = everyone ? "everyone" : "admins" });
+
     private void NotifyAll()
     {
         foreach (var name in new[] { nameof(Selected), nameof(Info), nameof(Title), nameof(Subtitle), nameof(HasSelection), nameof(ShowsInvitation),
             nameof(ShowsComposer), nameof(ShowsAnnouncementBar), nameof(AnnouncementText), nameof(ShowsKeying), nameof(CanSend), nameof(CanCall), nameof(TimerBanner),
+            nameof(Streaming), nameof(LiveStream), nameof(ShowsLiveBanner), nameof(LiveIsMine), nameof(LiveBannerText), nameof(ShowsGoLive), nameof(CanChooseWhoGoesLive), nameof(StageInviteText),
             nameof(Invitations), nameof(UnreadTotal), nameof(EmptyText), nameof(Enabled), nameof(DeviceFingerprint), nameof(Persistent) })
             Changed(name);
     }
@@ -659,6 +730,7 @@ public sealed class GroupsModel(PostboxClient postbox, Func<string, IGroupStateS
         scope.Cancel();
         scope.Dispose();
         selected = null;
+        live = null; liveFor = null;
         DraftFiles.Clear();
         Draft = "";
         handles.Clear();

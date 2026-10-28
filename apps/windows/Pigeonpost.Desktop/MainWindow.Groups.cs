@@ -93,6 +93,7 @@ public sealed partial class MainWindow
         }
         Tool("", "Group voice call", async (_, _) => await GroupCallAsync(video: false, join: false));
         Tool("", "Group video call", async (_, _) => await GroupCallAsync(video: true, join: false));
+        groupHeaderActions.Children.Add(BuildGoLiveButton());
         Tool("", "Group info", async (_, _) => await GroupInfoAsync());
         Grid.SetColumn(groupHeaderActions, 2);
         header.Children.Add(groupHeaderActions);
@@ -122,6 +123,7 @@ public sealed partial class MainWindow
         banners.Children.Add(groupError);
         groupStatus = new InfoBar { IsClosable = true, Severity = InfoBarSeverity.Success };
         banners.Children.Add(groupStatus);
+        BuildLiveControls(banners);
         Grid.SetRow(banners, 1);
         groupView.Children.Add(banners);
 
@@ -224,7 +226,9 @@ public sealed partial class MainWindow
         if (groupDraft!.Text != m.Draft) groupDraft.Text = m.Draft;
         groupDraft.IsEnabled = !m.IsSending;
         if (groupList is not null && !ReferenceEquals(groupList.SelectedItem, m.Selected)) groupList.SelectedItem = m.Selected;
+        UpdateLiveControls();
         _ = UpdateGroupCallAsync();
+        _ = UpdateGroupStreamAsync();
     }
 
     private void UpdateGroupFiles()
@@ -259,9 +263,19 @@ public sealed partial class MainWindow
     private async Task SendGroupAsync()
     {
         if (!groupsModel.CanSend) return;
-        if (await groupsModel.SendAsync()) groupDraft?.Focus(FocusState.Programmatic);
+        await groupsModel.SendAsync();
         UpdateGroupPage();
+        KeepGroupComposerFocus();
     }
+
+    // Sending disables the box for a moment (and a click moves focus to Send): put the caret back
+    // for the next message, whether or not the send went through, unless the person moved on.
+    private void KeepGroupComposerFocus() => DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
+    {
+        if (dialogOpen || groupDraft is null || groupComposer?.Visibility != Visibility.Visible || callMode == CallMode.Full || !groupDraft.IsEnabled) return;
+        if (Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(Root.XamlRoot) is TextBox other && !ReferenceEquals(other, groupDraft)) return;
+        groupDraft.Focus(FocusState.Programmatic);
+    });
 
     private async Task AttachGroupFilesAsync()
     {
@@ -453,6 +467,8 @@ public sealed partial class MainWindow
                 actions.Children.Add(Action(info.AnnouncementOnly ? "Let everyone post" : "Only admins can post", () => groupsModel.SetPostPolicyAsync(!info.AnnouncementOnly)));
                 actions.Children.Add(Action(info.MembersCanInvite == true ? "Only admins can add people" : "Let members add people", () => groupsModel.SetMembersCanInviteAsync(info.MembersCanInvite != true)));
                 actions.Children.Add(Action("Edit name and description…", async () => { dialogOpen = false; await RenameGroupAsync(info); }));
+                if (groupsModel.CanChooseWhoGoesLive)
+                    actions.Children.Add(Action(info.EveryoneCanGoLive ? "Only admins can go live" : "Let everyone go live", () => groupsModel.SetStreamPolicyAsync(!info.EveryoneCanGoLive)));
             }
             if (!info.IsOwner || info.MemberCount <= 1) actions.Children.Add(Action("Leave group", async () =>
             {

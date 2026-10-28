@@ -10,6 +10,7 @@ namespace Pigeonpost.Desktop;
 internal static class PreviewSideData
 {
     public static void SeedRooms(PreviewPostbox server) => PreviewRooms.Seed(server);
+    public static void SeedLiveAndNotes(PreviewPostbox server) => PreviewLiveNotes.Seed(server);
     public static void Seed(PreviewPostbox server)
     {
         var main = server.AddMailbox(PreviewInboxService.MainSeed, "/preview/main");
@@ -19,6 +20,36 @@ internal static class PreviewSideData
         server.AddCall(main, new CallLogEntry { Id = "call-out", Direction = "outgoing", Outcome = "answered", Kind = "audio", Peer = "/k/eng", PeerHandle = "/preview/engineering", StartedAt = at - 3000, AnsweredAt = at - 2995, EndedAt = at - 2800 });
         server.AddCall(main, new CallLogEntry { Id = "call-filtered", Direction = "incoming", Outcome = "filtered", Kind = "audio", Peer = "/k/unknowncaller", StartedAt = at - 5000 });
         server.AddFiltered(main, new InboxMessage { MessageId = "filtered-1", Body = "Limited offer just for you", From = "/k/promoter", SenderHandle = "/promo/deals", ReceivedAt = at - 600, Filtered = true });
+    }
+}
+
+// Native round three (test-live-notes.ps1): a group named "Live rehearsal" is live as soon as it
+// exists, streamed by /preview/design with the creator invited onto the stage; the account has a
+// ready meeting brief, one still being prepared and one made for another device.
+internal static class PreviewLiveNotes
+{
+    public static void Seed(PreviewPostbox server)
+    {
+        server.Features.UnionWith([ServerFeatures.Streaming, ServerFeatures.MeetingSummaries]);
+        var design = server.AddMailbox(PreviewPostbox.Seed(0xC7), "/preview/design");
+        server.GroupCreated = (group, name, creator) =>
+        {
+            if (name != "Live rehearsal") return;
+            var stream = server.StartStream(group, design, "Launch rehearsal");
+            server.SetStage(stream, creator, "invited", design);
+        };
+        static byte[] Brief(string id) => System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            v = 1, meeting_id = id, title = "Launch review", started_at = "2026-10-27T09:00:00Z", duration_s = 1260,
+            participants = new[] { "Preview Main", "Preview Design" }, summary = "The synthetic launch review agreed the release order.",
+            decisions = new[] { "Release Windows and Linux together" }, action_items = new[] { new { owner = "Preview Design", task = "Update the store notes", due = "Friday" } },
+            open_questions = new[] { "Which screenshots change?" }, draft = false,
+            transcript = new[] { new { at = "00:04", speaker = "Preview Main", text = "Let's go through the checklist." }, new { at = "00:21", speaker = "Preview Design", text = "Screenshots are ready." } },
+            generated_by = new { stt = "whisper.cpp", llm = "local model" },
+        });
+        server.AddMeeting("ready", "/preview/main", Brief, ago: 3600);
+        server.AddMeeting("processing", "/preview/main", ago: 600);
+        server.AddMeeting("ready", "/preview/design", Brief, otherDevice: true, ago: 86_400);
     }
 }
 

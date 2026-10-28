@@ -12,6 +12,10 @@ on:
       - 'site-inbox/calls.js'
       - 'site-inbox/names.js'
       - 'calls-service/**'
+      # The live stream test runs the web stream client and its stand-in postbox.
+      - 'site-inbox/live.js'
+      - 'site-inbox/calls-e2ee*.js'
+      - 'tests/e2e-streams/**'
 
 permissions:
   contents: read
@@ -117,6 +121,18 @@ jobs:
         if: matrix.architecture == 'x64'
         shell: pwsh
         run: ./apps/windows/test-calls.ps1 -Executable "$PWD/apps/windows/artifacts/ui-tests/Pigeonpost.exe" -OutputDirectory apps/windows/artifacts/screenshots/calls
+      - name: Live streams in WebView2 with a browser streamer and viewer (local LiveKit, synthetic media)
+        if: matrix.architecture == 'x64'
+        shell: pwsh
+        run: |
+          $zip = Join-Path $env:RUNNER_TEMP 'livekit.zip'
+          Invoke-WebRequest -Uri 'https://github.com/livekit/livekit/releases/download/v1.13.10/livekit_1.13.10_windows_amd64.zip' -OutFile $zip
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -ne 'fd4b7c2c3c1e4c71adaa4f6a046ad1c0abaaaf1e09fae904b35bf231ffae11d2') { throw "LiveKit archive hash mismatch: $hash" }
+          $folder = Join-Path $env:RUNNER_TEMP 'livekit'
+          Expand-Archive $zip -DestinationPath $folder -Force
+          $server = Get-ChildItem $folder -Filter 'livekit-server.exe' -Recurse | Select-Object -First 1
+          ./apps/windows/test-streams.ps1 -Executable "$PWD/apps/windows/artifacts/ui-tests/Pigeonpost.exe" -OutputDirectory apps/windows/artifacts/screenshots/streams -LiveKit $server.FullName
       - name: Install and activate the MSIX on the disposable runner
         if: matrix.architecture == 'x64'
         shell: pwsh
@@ -136,6 +152,8 @@ jobs:
             apps/windows/artifacts/screenshots/installed/*.log
             apps/windows/artifacts/screenshots/calls/*.png
             apps/windows/artifacts/screenshots/calls/*.json
+            apps/windows/artifacts/screenshots/streams/*.png
+            apps/windows/artifacts/screenshots/streams/*.json
           if-no-files-found: warn
           retention-days: 30
       - name: Check public account and privacy pages

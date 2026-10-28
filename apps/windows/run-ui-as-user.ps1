@@ -10,6 +10,7 @@ $messageModes = Join-Path $PSScriptRoot 'test-message-modes.ps1'
 $calendar = Join-Path $PSScriptRoot 'test-calendar.ps1'
 $approval = Join-Path $PSScriptRoot 'test-approval.ps1'
 $rooms = Join-Path $PSScriptRoot 'test-rooms.ps1'
+$liveNotes = Join-Path $PSScriptRoot 'test-live-notes.ps1'
 # WinUI drag/drop requires an ordinary user. Hosted workers run elevated with UAC disabled.
 # Use a real, short-lived local account instead of modifying the worker's security token.
 Add-Type @'
@@ -85,6 +86,7 @@ try {
     & $(Literal $calendar) -Executable $(Literal (Resolve-Path $Executable).Path) -OutputDirectory $(Literal $directory)
     & $(Literal $approval) -Executable $(Literal (Resolve-Path $Executable).Path) -OutputDirectory $(Literal $directory)
     & $(Literal $rooms) -Executable $(Literal (Resolve-Path $Executable).Path) -OutputDirectory $(Literal $directory)
+    & $(Literal $liveNotes) -Executable $(Literal (Resolve-Path $Executable).Path) -OutputDirectory $(Literal $directory)
     & $(Literal $smoke) -Executable $(Literal (Resolve-Path $Executable).Path) -OutputDirectory $(Literal $directory) -Fixture
     exit 0
 } catch { Write-Host (`$_ | Out-String); exit 1 }

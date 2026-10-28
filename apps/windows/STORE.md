@@ -68,6 +68,44 @@ disabling the tray or native alerts. Overlay display in a normal same-user Explo
 visually tested. Evidence and package hashes are recorded in
 `docs/planning/2026-10-16-desktop-notifications-progress.md`.
 
+### Version 1.0.11 release notes
+
+Live streams in groups: a red LIVE banner shows who is streaming, Watch opens the stream full screen,
+and members the group allows can go live with their camera or screen. The person streaming can invite
+viewers onto the stage; nothing turns on until you join. Group admins choose who may go live. New
+Meeting notes screen: summaries, decisions, action items and transcripts of calls where everyone
+agreed to notes, decrypted on this computer, with Copy as text and Delete my copy. The group message
+box keeps the cursor after you send.
+
+1.0.11 adds no package capabilities: streams and meeting-notes capture run in the existing WebView2
+call host with the 1.0.9 `microphone` and `webcam` capabilities. Not submitted yet (releases are
+batched).
+
+### Privacy checklist: meeting audio (before submitting 1.0.11)
+
+Meeting notes (docs/meeting-summaries.md) send microphone audio off the device when, and only while,
+everyone in a call agreed. Before this submission:
+
+- [ ] Partner Center > Properties > Privacy policy URL is https://pigeonpost.dev/privacy, which has the
+  "Meeting notes" section (`#meeting-summaries`): what is captured (each consenting person's own
+  microphone, in ~10 s encrypted chunks), the processor (Pigeonpost's own server; local speech-to-text
+  and summary model, no third party), retention (audio held in memory only and discarded; brief and
+  transcript stored encrypted for attendees, deleted after 90 days or when the last attendee deletes
+  theirs), and how to decline or stop ("Stop for me").
+- [ ] The listing's description and "What's new" mention meeting notes as opt-in, consent-gated and
+  host-requested; never "recording".
+- [ ] Certification note: "Meeting notes: a call's host can ask for notes; every participant sees a
+  disclosure and must agree before any audio is captured. Audio is encrypted on the device to the
+  notes service. Notes appear under Meeting notes, decrypted on the device. Test accounts: two
+  Pigeonpost accounts with the meeting_summaries feature on."
+- [ ] Age rating questionnaire unchanged (no user-generated public content is added; streams reach
+  only group members).
+- [ ] Microphone/camera consent text (Settings > Privacy & security) still names calls; streams and
+  notes use the same capabilities, and Windows asks once.
+- [ ] The device's notes key is stored only on this computer, sealed with Windows data protection for
+  the signed-in Windows user and bound to the Pigeonpost account it was made for
+  (`%LOCALAPPDATA%\Pigeonpost\meeting-notes`); no notes content is stored locally.
+
 ### Version 1.0.10 release notes
 
 End-to-end encrypted groups: start a group, invite people, chat and share files that only members'

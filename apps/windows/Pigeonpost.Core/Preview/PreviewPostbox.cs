@@ -141,6 +141,7 @@ public sealed class PreviewPostbox : HttpMessageHandler
         public long CreatedAt { get; init; }
         public long? DeletedAt { get; set; }
         public string? OrgId { get; set; }
+        public string StreamPolicy { get; set; } = "admins";
         public string? RequestKey { get; set; }
         public string? RequestHash { get; set; }
         public Dictionary<string, Member> Members { get; } = new(StringComparer.Ordinal);
@@ -316,7 +317,9 @@ public sealed class PreviewPostbox : HttpMessageHandler
             }
             return new JsonObject { ["avatars"] = map };
         }
+        if (path.StartsWith("/v1/meetings", StringComparison.Ordinal)) return MeetingRoute(method, path, body);
         var me = BoxFor(identity);
+        if (path.StartsWith("/v1/streams/", StringComparison.Ordinal)) return StreamRoute(method, path, me);
         switch (method, path)
         {
             case ("GET", "/v1/whoami"): return new JsonObject { ["address"] = me.Address, ["handle"] = me.Handle };
@@ -557,6 +560,7 @@ public sealed class PreviewPostbox : HttpMessageHandler
                     results.Add(new JsonObject { ["address"] = address, ["status"] = "invited" });
                 }
                 groups[g.Id] = g;
+                GroupCreated?.Invoke(g.Id, g.Name, me.Address);
                 return (201, new JsonObject { ["group"] = GroupJson(g, me), ["invitations"] = results });
             }
             return new JsonObject
@@ -588,6 +592,9 @@ public sealed class PreviewPostbox : HttpMessageHandler
                         case "join_policy": grp.JoinPolicy = (string)v!; break;
                         case "members_can_invite": grp.MembersCanInvite = (bool)v!; break;
                         case "members_can_change_timer": grp.MembersCanChangeTimer = (bool)v!; break;
+                        case "stream_policy":
+                            if (!Features.Contains(ServerFeatures.Streaming) || (string?)v is not ("admins" or "everyone")) throw new Fail(400, "invalid_policy");
+                            grp.StreamPolicy = (string)v!; break;
                         case "ephemeral_secs":
                             var secs = v?.GetValue<int?>();
                             if (secs is not null && !Timers.Choices.Contains(secs)) throw new Fail(400, "bad_request");
@@ -653,6 +660,10 @@ public sealed class PreviewPostbox : HttpMessageHandler
             case ("POST", "read"):
                 mine.ReadCursor = Math.Max(mine.ReadCursor, (long)body!["seq"]!);
                 return new JsonObject { ["ok"] = true };
+            case ("GET", "streams"):
+                if (!Features.Contains(ServerFeatures.Streaming)) throw new Fail(404, "feature_disabled");
+                if (mine.State != "active") throw new Fail(403, "not_member");
+                return new JsonObject { ["streams"] = new JsonArray(streams.Values.Where(x => x.GroupId == grp.Id && x.State == "live").Select(StreamJson).ToArray()) };
             case ("POST", "link"):
                 return new JsonObject { ["link_token"] = (bool)body!["enabled"]! ? "tok" + ++counter : null, ["url"] = null };
             case ("GET", "crypto"):
@@ -728,7 +739,8 @@ public sealed class PreviewPostbox : HttpMessageHandler
         throw new Fail(404, "not_found");
     }
 
-    private string GroupApiIdSafe() => Convert.ToHexString(RandomNumberGenerator.GetBytes(13)).ToLowerInvariant()[..26];
+    // grp_ + 26 base32 characters, as the postbox makes them (groups.rs new_group_id).
+    private static string GroupApiIdSafe() => GroupApi.RandomId(26);
 
     private IEnumerable<(string Kind, string Mailbox, string Device)> Pending(Grp g)
     {
@@ -830,6 +842,150 @@ public sealed class PreviewPostbox : HttpMessageHandler
         return (201, new JsonObject { ["seq"] = seq, ["id"] = "gm_" + seq, ["expires_at"] = expires });
     }
 
+    // ---- Phase 6 live streams (read side; going live runs in the call host) ------------------
+
+    private sealed class LiveStream
+    {
+        public required string Id { get; init; }
+        public required string GroupId { get; init; }
+        public required string Title { get; init; }
+        public required string By { get; init; }
+        public long StartedAt { get; init; }
+        public string State { get; set; } = "live";
+        public long Revision { get; set; } = 1;
+        public Dictionary<string, (string State, string By)> Stage { get; } = new(StringComparer.Ordinal);
+    }
+    private readonly Dictionary<string, LiveStream> streams = new(StringComparer.Ordinal);
+    // A group was created (groupId, name, creator); the UI preview seeds a stream from it.
+    public Action<string, string, string>? GroupCreated { get; set; }
+
+    public string StartStream(string groupId, string by, string title)
+    {
+        lock (sync)
+        {
+            var s = new LiveStream { Id = "str_" + GroupApi.RandomId(26), GroupId = groupId, Title = title, By = by, StartedAt = Now };
+            streams[s.Id] = s; return s.Id;
+        }
+    }
+    public void SetStage(string streamId, string address, string? state, string by)
+    {
+        lock (sync)
+        {
+            var s = streams[streamId];
+            if (state is null) s.Stage.Remove(address); else s.Stage[address] = (state, by);
+            s.Revision++;
+        }
+    }
+    public void EndStream(string streamId, long duration, int viewers)
+    {
+        lock (sync)
+        {
+            var s = streams[streamId];
+            s.State = "ended";
+            if (groups.TryGetValue(s.GroupId, out var g))
+                Notice(g, "stream", s.By, new JsonObject { ["stream_id"] = s.Id, ["duration"] = duration, ["viewers"] = viewers, ["reason"] = "stopped" });
+        }
+    }
+
+    private JsonObject StreamJson(LiveStream s) => new()
+    {
+        ["id"] = s.Id, ["group_id"] = s.GroupId, ["title"] = s.Title, ["sources"] = new JsonArray("camera"), ["by"] = s.By,
+        ["by_handle"] = boxes.TryGetValue(s.By, out var box) ? box.Handle : null, ["state"] = s.State, ["started_at"] = s.StartedAt,
+        ["ends_by"] = s.StartedAt + 14_400, ["viewers"] = 2, ["revision"] = s.Revision, ["max_viewers"] = 200,
+        ["stage"] = new JsonArray(s.Stage.Select(e => (JsonNode)new JsonObject { ["address"] = e.Key, ["state"] = e.Value.State, ["by"] = e.Value.By }).ToArray()),
+    };
+
+    private object StreamRoute(string method, string path, Box me)
+    {
+        if (!Features.Contains(ServerFeatures.Streaming)) throw new Fail(404, "feature_disabled");
+        var id = path["/v1/streams/".Length..];
+        if (method != "GET" || !streams.TryGetValue(id, out var s) || !groups.TryGetValue(s.GroupId, out var g)
+            || !g.Members.TryGetValue(me.Address, out var m) || m.State is not ("active" or "keying")) throw new Fail(404, "no_stream");
+        return new JsonObject { ["stream"] = StreamJson(s), ["role"] = s.By == me.Address ? "host" : s.Stage.TryGetValue(me.Address, out var st) ? st.State : "viewer" };
+    }
+
+    // ---- Phase 7 meeting notes (account routes; this stand-in has one account) ---------------
+
+    private sealed class Notes
+    {
+        public required string Id { get; init; }
+        public required string State { get; init; }
+        public required string Host { get; init; }
+        public long CreatedAt { get; init; }
+        public string? Failure { get; init; }
+        public byte[]? Brief { get; init; }
+        public bool OtherDevice { get; init; }
+        public (string Iv, string Ciphertext, IReadOnlyList<Pigeonpost.Core.Meetings.MeetingWrap> Wraps)? Sealed { get; set; }
+    }
+    private readonly Dictionary<string, Notes> meetings = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, (string PublicKey, string? Label)> notesKeys = new(StringComparer.Ordinal);
+    public IReadOnlyDictionary<string, (string PublicKey, string? Label)> NotesKeys { get { lock (sync) return notesKeys.ToDictionary(); } }
+
+    // A meeting whose brief meeting-intel wraps, when it is first read, for every notes key then
+    // registered (as if they were registered before the meeting ended); `otherDevice` wraps it
+    // only for another device's key.
+    public string AddMeeting(string state, string host, Func<string, byte[]>? brief = null, bool otherDevice = false, string? failure = null, long ago = 3600)
+    {
+        lock (sync)
+        {
+            var id = "mtg_" + Convert.ToHexString(RandomNumberGenerator.GetBytes(13)).ToLowerInvariant();
+            meetings[id] = new Notes { Id = id, State = state, Host = host, CreatedAt = Now - ago, Failure = failure, Brief = brief?.Invoke(id), OtherDevice = otherDevice };
+            return id;
+        }
+    }
+
+    private object MeetingRoute(string method, string path, JsonNode? body)
+    {
+        if (!Features.Contains(ServerFeatures.MeetingSummaries) && !(method == "GET" && path == "/v1/meetings")) throw new Fail(404, "feature_disabled");
+        if (path.StartsWith("/v1/meetings/keys/", StringComparison.Ordinal) && method == "PUT")
+        {
+            var keyId = path["/v1/meetings/keys/".Length..];
+            var publicKey = (string?)body?["public_key"] ?? throw new Fail(400, "bad_request");
+            if (!Pigeonpost.Core.Meetings.NotesDeviceKey.ValidKeyId(keyId) || Convert.FromBase64String(publicKey) is not { Length: 65 }) throw new Fail(400, "bad_request");
+            if (notesKeys.TryGetValue(keyId, out var existing) && existing.PublicKey != publicKey) throw new Fail(409, "key_exists");
+            notesKeys[keyId] = (publicKey, (string?)body?["label"]);
+            return new JsonObject { ["key_id"] = keyId, ["registered"] = true };
+        }
+        if (path == "/v1/meetings" && method == "GET")
+            return new JsonObject { ["meetings"] = new JsonArray(meetings.Values.OrderByDescending(m => m.CreatedAt).Select(m => (JsonNode)new JsonObject
+            {
+                ["id"] = m.Id, ["kind"] = "room", ["state"] = m.State, ["created_at"] = m.CreatedAt, ["ended_at"] = m.CreatedAt + 900,
+                ["ready_at"] = m.State == "ready" ? m.CreatedAt + 960 : null, ["expires_at"] = m.CreatedAt + 90 * 86_400, ["host"] = m.Host,
+                ["as"] = m.Host, ["failure"] = m.Failure,
+            }).ToArray()) };
+        var id = path["/v1/meetings/".Length..];
+        if (!meetings.TryGetValue(id, out var notes)) throw new Fail(404, "not_found");
+        if (method == "DELETE") { meetings.Remove(id); return new JsonObject { ["removed"] = true, ["brief_deleted"] = true }; }
+        if (method != "GET") throw new Fail(404, "not_found");
+        var record = new JsonObject
+        {
+            ["id"] = notes.Id, ["kind"] = "room", ["state"] = notes.State, ["created_at"] = notes.CreatedAt, ["ended_at"] = notes.CreatedAt + 900,
+            ["expires_at"] = notes.CreatedAt + 90 * 86_400, ["host"] = notes.Host, ["failure"] = notes.Failure,
+        };
+        if (notes.State == "ready" && notes.Brief is { } plain)
+        {
+            if (notes.Sealed is null)
+            {
+                IEnumerable<(string, string)> to = notes.OtherDevice
+                    ? [("nkotherdevice01", Convert.ToBase64String(OtherDeviceKey()))]
+                    : notesKeys.Select(k => (k.Key, k.Value.PublicKey)).ToArray();
+                notes.Sealed = Pigeonpost.Core.Meetings.MeetingNotesCrypto.Seal(notes.Id, plain, to);
+            }
+            var (iv, ciphertext, wraps) = notes.Sealed.Value;
+            record["alg"] = "A256GCM"; record["iv"] = iv; record["ciphertext"] = ciphertext;
+            record["keys"] = new JsonArray(wraps.Where(w => notesKeys.ContainsKey(w.KeyId) || notes.OtherDevice).Select(w => (JsonNode)new JsonObject
+            { ["key_id"] = w.KeyId, ["epk"] = w.Epk, ["iv"] = w.Iv, ["wrapped"] = w.Wrapped }).ToArray());
+        }
+        return record;
+    }
+
+    private static byte[] OtherDeviceKey()
+    {
+        using var other = System.Security.Cryptography.ECDiffieHellman.Create(System.Security.Cryptography.ECCurve.NamedCurves.nistP256);
+        var p = other.ExportParameters(false);
+        return [0x04, .. p.Q.X!, .. p.Q.Y!];
+    }
+
     private JsonNode GroupJson(Grp g, Box me)
     {
         var m = g.Members[me.Address];
@@ -848,7 +1004,7 @@ public sealed class PreviewPostbox : HttpMessageHandler
             ["ephemeral_secs"] = g.EphemeralSecs, ["revision"] = g.Revision, ["epoch"] = g.Epoch, ["activation_state"] = g.Activation,
             ["member_count"] = g.Members.Values.Count(x => x.State is "active" or "keying"), ["max_members"] = 1000, ["created_by"] = g.CreatedBy,
             ["created_at"] = g.CreatedAt, ["last_at"] = g.Items.Count == 0 ? g.CreatedAt : (long)g.Items[^1]["created_at"]!, ["last_seq"] = g.Seq,
-            ["deleted_at"] = g.DeletedAt, ["has_link"] = false, ["org_id"] = g.OrgId, ["my"] = my,
+            ["deleted_at"] = g.DeletedAt, ["has_link"] = false, ["org_id"] = g.OrgId, ["stream_policy"] = g.StreamPolicy, ["my"] = my,
         };
     }
 

@@ -61,6 +61,7 @@ public sealed partial class MainWindow : Window
             stand_in.Features.Add(ServerFeatures.Calendar);
         if (approvalFixture is not null || roomsState is not null) stand_in.Features.Add(ServerFeatures.Organizations);
         if (roomsState is not null) PreviewSideData.SeedRooms(stand_in);
+        if (Environment.GetEnvironmentVariable("PIGEONPOST_UI_LIVE_NOTES") is not null) PreviewSideData.SeedLiveAndNotes(stand_in);
         postbox.Dispose();
         HttpMessageHandler routed = new PreviewRouter(new AttachmentFixtureHandler(preview), stand_in);
         if (roomsState is not null) routed = roomLoss = new RoomLossHandler(routed, roomsState);
