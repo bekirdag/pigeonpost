@@ -65,11 +65,11 @@ try {
 
     # ---- Meeting notes ----
     Invoke-Like 'Meeting notes'
-    $null = Wait-Like 'Meeting notes, *Ready · host Preview Main*'
+    $null = Wait-Like 'Meeting notes, *Ready · host Preview · kept*'
     Check ($null -ne (Like 'Meeting notes, *Being prepared*')) 'A meeting still being prepared is listed'
     Check ($null -ne (Like 'Meeting notes, *host Preview Design*')) 'Notes made for another device are listed'
     Capture 'notes-list.png'
-    Invoke-Like 'Meeting notes, *Ready · host Preview Main*'
+    Invoke-Like 'Meeting notes, *Ready · host Preview · kept*'
     $null = Wait-Like '•  Release Windows and Linux together'
     Check ($null -ne (Like 'Launch review')) 'The brief title becomes the heading'
     Check ($null -ne (Like 'The synthetic launch review agreed the release order.')) 'The summary is decrypted on this device'
@@ -89,7 +89,7 @@ try {
     $checks.Add('Notes in preparation say so')
     Invoke-Like 'Delete my copy of these notes'
     Commit-Dialog 'Delete'
-    Wait-Check { $null -eq (Like 'Meeting notes, *Being prepared*') -and $null -ne (Like 'Meeting notes, *Ready · host Preview Main*') } 'Delete my copy removes only that meeting'
+    Wait-Check { $null -eq (Like 'Meeting notes, *Being prepared*') -and $null -ne (Like 'Meeting notes, *Ready · host Preview · kept*') } 'Delete my copy removes only that meeting'
 
     # ---- Groups: Go live, composer focus ----
     Invoke-Like 'Groups'
