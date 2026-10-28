@@ -55,6 +55,8 @@ export function configFromEnv(env = process.env) {
     ringPush: env.CALLS_RING_PUSH === "1",
     postboxInternalUrl: env.POSTBOX_INTERNAL_URL || "",
     postboxServiceToken: env.POSTBOX_SERVICE_TOKEN || "",
+    // Phase 9: keep queued call-history events across restarts (systemd StateDirectory).
+    eventSpool: env.CALLS_EVENT_SPOOL || "",
     // Calls stay a mesh up to this many people; beyond it they move to the media server.
     meshMax: Number(env.CALLS_MESH_MAX || 6),
     sfu: sfuConfigFromEnv(env),
@@ -204,7 +206,7 @@ export function createCallsService(cfgIn, deps = {}) {
 
   // ---- Phase 1b: postbox admission + call history reporting ---------------------------------------
   const internal = deps.postboxInternal || createPostboxInternal({
-    url: cfg.postboxInternalUrl, token: cfg.postboxServiceToken, fetch: fetchImpl, now,
+    url: cfg.postboxInternalUrl, token: cfg.postboxServiceToken, fetch: fetchImpl, now, spoolPath: cfg.eventSpool,
   });
   function participantName(p) {
     return p.mailbox ? p.mailbox.address : "guest:" + p.name;
@@ -1171,6 +1173,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const stop = () => {
     if (stopping) return;
     stopping = true;
+    service.internal?.persist?.(); // Phase 9: queued call events survive the restart
     const deadline = setTimeout(() => {
       server.closeAllConnections();
       process.exit(1);
