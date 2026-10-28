@@ -209,3 +209,46 @@ a limit at 40 setups/s (16 % of a core). The call-history queue is the first lim
    Neither matters at launch scale.
 5. Re-run `tests/load/postbox.mjs --only events,org,flood --seed-rows 300000` after each of these, and
    on the production host class before raising any advertised limit.
+
+## Phase 9b re-run (2026-10-28, after the medium findings)
+
+Same machine, same harness, 500 accounts, 300k seeded rows, both binaries built and run back to
+back: **main** = `343eefb` (Phase 9 as deployed), **9b** = the Phase 9b branch (bounded listings,
+change-based long polls, admission control; storage encoding measured separately below). New
+scenarios: `apps` (one device per account on the apps' history long poll
+`include_sent&include_read&wait=25`, back to back, every mailbox holding unread mail, plus sends)
+and `overload` (history listings offered at 400/s, 4× the knee, plus 25 sends/s, open loop).
+
+| Run | main | 9b |
+|---|---|---|
+| **10× mixed** (25 sends/s + 330 unread polls/s + 2,000 streams): poll p50 / p99 | 158 / 706 ms | **1.3 / 13 ms** |
+| same: send p99, delivery p99, CPU, peak RSS | 652 ms, 671 ms, 137 %, 801 MB | **23 ms, 23 ms, 51 %, 203 MB** |
+| Send ramp with streams, 400 / 800 offered/s: ok/s, delivery p99 | 305 / 304, 4.1 / 7.7 s | 245 / 241, 1.7 / 1.8 s (excess shed with 503) |
+| **apps, 1×** (2.5 sends/s): history listings/s, send p99, CPU, RSS | 67.6/s (tight loop), 9.4 s, 901 %, 2.0 GB | 43.5/s, 605 ms, 357 %, 280 MB |
+| apps, 10× (25 sends/s): listings/s, send p99, CPU, RSS | 45.9/s, 13.4 s, 750 %, 2.4 GB | 57.3/s, 854 ms, 826 %, 315 MB |
+| **overload** (400 history listings/s + 25 sends/s, 60 s): listings answered, p50 | 48.8/s, **229 s** (all queued) | 61.7/s, 1.1 s; 20,191 refused 503 |
+| same: sends ok, peak RSS | 61 of 1,500, **15.1 GB** | 733 of 1,500 (768 refused 503), **284 MB** |
+| Full listing closed loop (`include_read`, c = 256) | 107/s, p99 3.2 s, 860 MB | 99/s, p99 3.3 s, 198 MB |
+
+What the numbers say:
+
+- Unread polls (agents, CLI, MCP) no longer read history: at 10× they cost 13 ms p99 and the
+  postbox idles at half a core.
+- Memory is bounded under any arrival rate: 15.1 GB → 284 MB at 4× the listing knee. Excess work
+  is refused with `503` + `Retry-After` instead of queued; what is accepted is answered in about a
+  second. (A listing that waits over 1 s for one of the 32 listing slots is refused, so listings
+  cannot crowd sends out of the ordinary slots: sends served under overload went 61 → 733.)
+- The apps' tight loop is gone, but full-history apps are still the most expensive client. With
+  500 devices each parked on `wait=25`, every timeout returns a full ~600-row listing (500 / 25 s
+  = 20 listings/s before any change), and each change re-lists the history of both mailboxes; a
+  600-row listing costs ~80 ms of CPU (opening each envelope). The fix is client-side: the apps
+  moving to `since` + `after` deltas (`docs/inbox-paging.md`), after a `message.deleted` event
+  exists. Until then the full-listing knee (~100/s on this machine) is the capacity limit for
+  app-heavy load; at launch scale (1,000 accounts) it is not reached.
+- The full-listing knee itself is unchanged (~100/s): those listings return the same rows.
+
+**Storage** (`docs/ops/message-storage-encoding.md`): stored bytes per send (two copies plus
+metadata), 20 / 300 / 2,000-byte bodies: 13,028 / 15,102 / 29,439 → **2,430 / 3,454 / 10,622**
+(5.4× → 4.4×, 3.9×, 2.8× smaller); 5,884 / 6,908 / 14,076 with a reply quote. The remaining
+~1 KB floor is the hex and padding inside envelope v3 (protocol). SDS §22.4 assumed 2 KB per
+message; now ~1.2–1.7 KB per copy for short messages.
