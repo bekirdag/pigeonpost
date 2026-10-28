@@ -43,7 +43,7 @@
       "name": "python3-cryptography",
       "buildsystem": "simple",
       "build-commands": [
-        "pip3 install --verbose --exec-prefix=/app --prefix=/app --no-index --find-links=\"file://${PWD}\" --no-build-isolation cryptography"
+        "pip3 install --verbose --prefix=/app --no-index --find-links=\"file://${PWD}\" --no-build-isolation cryptography"
       ],
       "sources": [
         {
