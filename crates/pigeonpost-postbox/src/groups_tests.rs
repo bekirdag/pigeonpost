@@ -2062,3 +2062,236 @@ async fn pruning_only_desyncs_devices_that_missed_a_pruned_commit() {
         "{v}"
     );
 }
+
+/// Phase 9 load measurement, not a regression test: group fan-out at the largest enabled sizes.
+/// Real MLS devices; the server stores one ciphertext per post and every member reads it.
+///
+///     GROUP_LOAD_SIZES=50,200,1000 cargo test --release -p pigeonpost-postbox \
+///         group_fanout_load -- --ignored --nocapture
+///
+/// Prints one JSON line per size (`group_load {...}`); tests/load/README.md explains the numbers.
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+#[ignore = "load measurement; run explicitly"]
+async fn group_fanout_load() {
+    let sizes: Vec<usize> = std::env::var("GROUP_LOAD_SIZES")
+        .unwrap_or_else(|_| "50,200".into())
+        .split(',')
+        .filter_map(|s| s.trim().parse().ok())
+        .collect();
+    let posts: usize = std::env::var("GROUP_LOAD_POSTS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(60);
+    let pct = |v: &mut Vec<f64>, p: f64| -> f64 {
+        v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        v[((p * v.len() as f64) as usize).min(v.len() - 1)]
+    };
+    for n in sizes {
+        let srv = serve().await;
+        let t_setup = std::time::Instant::now();
+        let mut owner = member(&srv, &format!("own{n}{}", rand_hex(3))).await;
+        let mut others = Vec::with_capacity(n - 1);
+        for i in 0..n - 1 {
+            others.push(member(&srv, &format!("m{n}x{i}{}", rand_hex(2))).await);
+        }
+        let gid = owner.create(&srv, "load", json!({})).await;
+        // Invitations in batches of the per-request cap, then every invitee accepts.
+        for chunk in others.chunks(crate::groups::INVITES_PER_REQUEST) {
+            let addrs: Vec<&str> = chunk.iter().map(|m| m.address.as_str()).collect();
+            let (s, v) = owner
+                .req(
+                    &srv,
+                    reqwest::Method::POST,
+                    &format!("/v1/groups/{gid}/members"),
+                    Some(json!({ "request_key": rand_hex(6), "invite": addrs })),
+                )
+                .await;
+            assert!(s == 200 || s == 201, "invite: {s} {v}");
+        }
+        for m in &others {
+            let (s, v) = m
+                .req(
+                    &srv,
+                    reqwest::Method::POST,
+                    &format!("/v1/groups/{gid}/invitation"),
+                    Some(json!({ "accept": true })),
+                )
+                .await;
+            assert_eq!(s, 200, "accept: {v}");
+        }
+        // The owner's device adds pending members, at most 200 key packages per claim.
+        let mut commits = 0;
+        let mut last_added: Vec<String> = Vec::new();
+        loop {
+            let (s, crypto) = owner
+                .req(
+                    &srv,
+                    reqwest::Method::GET,
+                    &format!("/v1/groups/{gid}/crypto"),
+                    None,
+                )
+                .await;
+            assert_eq!(s, 200);
+            let adds: Vec<String> = crypto["pending"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+                .iter()
+                .filter(|p| p["kind"] == "add")
+                .map(|p| p["mailbox"].as_str().unwrap().to_string())
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .take(200)
+                .collect();
+            if adds.is_empty() {
+                break;
+            }
+            last_added = adds.clone();
+            let (s, v) = owner
+                .req(
+                    &srv,
+                    reqwest::Method::POST,
+                    &format!("/v1/groups/{gid}/key-packages/claim"),
+                    Some(json!({ "request_key": rand_hex(6), "mailboxes": adds })),
+                )
+                .await;
+            assert_eq!(s, 200, "claim: {v}");
+            let mut kps = Vec::new();
+            let mut add_refs = Vec::new();
+            for c in v["claims"].as_array().unwrap() {
+                kps.push(b64_decode(c["key_package"].as_str().unwrap()).unwrap());
+                add_refs.push(json!({ "mailbox": c["mailbox"], "device_id": c["device_id"], "key_package_ref": c["key_package_ref"] }));
+            }
+            let bundle = owner.device.commit(&gid, &kps, &[]).unwrap();
+            let (s, v) = owner
+                .req(
+                    &srv,
+                    reqwest::Method::POST,
+                    &format!("/v1/groups/{gid}/commits"),
+                    Some(json!({
+                        "request_key": rand_hex(6),
+                        "epoch": crypto["epoch"],
+                        "commit_id": bundle.commit_id,
+                        "commit": b64_encode(&bundle.commit),
+                        "envelope_signature": b64_encode(&bundle.envelope_signature),
+                        "welcome": bundle.welcome.as_ref().map(|w| b64_encode(w)),
+                        "adds": add_refs,
+                        "removes": [],
+                        "expected_revision": crypto["revision"],
+                    })),
+                )
+                .await;
+            assert_eq!(s, 201, "commit: {v}");
+            owner.device.confirm_commit(&gid).unwrap();
+            owner.cursor.insert(gid.clone(), v["seq"].as_i64().unwrap());
+            commits += 1;
+        }
+        for m in others.iter_mut() {
+            m.accept_welcomes(&srv).await;
+        }
+        let setup_s = t_setup.elapsed().as_secs_f64();
+
+        // Posts: the owner and up to nine others take turns (the per-sender limit is 120/min).
+        // The others are members from the owner's final commit: they hold the current epoch.
+        let sender_idx: Vec<usize> = others
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| last_added.contains(&m.address))
+            .map(|(k, _)| k)
+            .take(9)
+            .collect();
+        let senders = sender_idx.len();
+        let mut post_ms = Vec::new();
+        // The owner's posts alone: request + server work + one encryption, no client sync.
+        let mut owner_ms = Vec::new();
+        let t_posts = std::time::Instant::now();
+        for i in 0..posts {
+            let t = std::time::Instant::now();
+            let (s, v) = if i % (senders + 1) == 0 || senders == 0 {
+                owner.send(&srv, &gid, &format!("load {i}")).await
+            } else {
+                let k = sender_idx[i % (senders + 1) - 1];
+                others[k].sync(&srv, &gid).await;
+                others[k].send(&srv, &gid, &format!("load {i}")).await
+            };
+            assert_eq!(s, 201, "post: {v}");
+            let ms = t.elapsed().as_secs_f64() * 1000.0;
+            if i % (senders + 1) == 0 || senders == 0 {
+                owner_ms.push(ms);
+            }
+            post_ms.push(ms);
+        }
+        let posts_s = t_posts.elapsed().as_secs_f64();
+
+        // Fan-out read: every member fetches the page with the new posts, 64 at a time.
+        let after = *others[0].cursor.get(&gid).unwrap_or(&0);
+        let reqs: Vec<(String, String, String)> = others
+            .iter()
+            .map(|m| (m.token.clone(), m.address.clone(), m.device_id.clone()))
+            .collect();
+        let read_ms = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let t_read = std::time::Instant::now();
+        let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(64));
+        let mut tasks = Vec::new();
+        for (token, address, device) in reqs {
+            let http = srv.http.clone();
+            let url = format!(
+                "{}/v1/groups/{gid}/messages?after_seq={after}&limit=100",
+                srv.public
+            );
+            let sem = sem.clone();
+            let read_ms = read_ms.clone();
+            tasks.push(tokio::spawn(async move {
+                let _p = sem.acquire().await.unwrap();
+                let t = std::time::Instant::now();
+                let r = http
+                    .get(url)
+                    .bearer_auth(token)
+                    .header("x-pigeonpost-identity", address)
+                    .header("x-pigeonpost-device", device)
+                    .send()
+                    .await
+                    .unwrap();
+                assert_eq!(r.status().as_u16(), 200);
+                let _ = r.bytes().await.unwrap();
+                read_ms
+                    .lock()
+                    .unwrap()
+                    .push(t.elapsed().as_secs_f64() * 1000.0);
+            }));
+        }
+        for t in tasks {
+            t.await.unwrap();
+        }
+        let read_s = t_read.elapsed().as_secs_f64();
+        // Correctness under load: a member from the final commit decrypts every post.
+        let newest = sender_idx.first().copied().unwrap_or(others.len() - 1);
+        let last = &mut others[newest];
+        last.sync(&srv, &gid).await;
+        let decrypted = last
+            .received
+            .iter()
+            .filter(|b| b.starts_with("load "))
+            .count();
+        let mut reads = read_ms.lock().unwrap().clone();
+        println!(
+            "group_load {}",
+            json!({
+                "members": n, "commits_to_add": commits, "setup_s": (setup_s * 10.0).round() / 10.0,
+                "posts": posts, "post_rps": (posts as f64 / posts_s * 10.0).round() / 10.0,
+                "post_p50_ms": (pct(&mut post_ms, 0.5) * 10.0).round() / 10.0,
+                "post_p99_ms": (pct(&mut post_ms, 0.99) * 10.0).round() / 10.0,
+                "owner_post_p50_ms": (pct(&mut owner_ms, 0.5) * 10.0).round() / 10.0,
+                "owner_post_max_ms": (pct(&mut owner_ms, 1.0) * 10.0).round() / 10.0,
+                "fanout_reads": reads.len(), "fanout_read_s": (read_s * 100.0).round() / 100.0,
+                "read_p50_ms": (pct(&mut reads, 0.5) * 10.0).round() / 10.0,
+                "read_p99_ms": (pct(&mut reads, 0.99) * 10.0).round() / 10.0,
+                "newest_member_decrypted": decrypted,
+            })
+        );
+        assert!(
+            decrypted >= posts - posts / (senders + 1) - 1,
+            "newest member decrypts the posts"
+        );
+    }
+}
