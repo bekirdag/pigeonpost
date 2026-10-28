@@ -54,6 +54,8 @@ pub(crate) enum Endpoint {
     CallEvents,
     /// Avatar reports and takedowns.
     ModerateAvatars,
+    /// `POST /internal/v1/accounts/{id}/purge` (Phase 9, ops only).
+    AccountPurge,
     /// `POST /internal/v1/group-call-admission` (Phase 3a).
     GroupCallAdmission,
     /// `POST /internal/v1/call-ring` and `/call-ring-cancel` (Phase 1c).
@@ -109,6 +111,7 @@ const SERVICES: &[(&str, &str, &[Endpoint])] = &[
             Endpoint::FeaturesRead,
             Endpoint::FeaturesWrite,
             Endpoint::ModerateAvatars,
+            Endpoint::AccountPurge,
         ],
     ),
 ];
@@ -297,6 +300,7 @@ pub(crate) fn router(state: AppState) -> Router {
             "/internal/v1/shell/closed",
             post(crate::shell::broker_closed),
         )
+        .route("/internal/v1/accounts/{id}/purge", post(purge_account))
         .route("/internal/v1/avatar-reports", get(crate::avatars::reports))
         .route(
             "/internal/v1/avatars/{id}/remove",
@@ -450,6 +454,99 @@ async fn set_feature(
         }
         Err(e) => {
             tracing::error!(error = %e, "feature set failed");
+            ApiError::server("store_error").into_response()
+        }
+    }
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PurgeReq {
+    /// `false` (the default) only reports what would happen.
+    #[serde(default)]
+    confirm: bool,
+    /// Why, for the audit record: a short operator label such as `test_cleanup`.
+    reason: String,
+}
+
+/// `POST /internal/v1/accounts/{id}/purge` — remove an **empty** account and its empty mailboxes
+/// (`store::purge`). Ops token only. Without `confirm: true` it is a dry run. Refuses with `409
+/// account_not_empty` and the blocking tables when anything worth keeping exists; consented
+/// erasure of a real account stays with `deploy/account-deletions.py`.
+async fn purge_account(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    peer: Option<Extension<ConnectInfo<std::net::SocketAddr>>>,
+    Path(id): Path<String>,
+    body: Result<Json<PurgeReq>, axum::extract::rejection::JsonRejection>,
+) -> Response {
+    let service = match authorize_service(
+        &state,
+        &headers,
+        Endpoint::AccountPurge,
+        Action::PurgeEmptyAccount,
+    ) {
+        Ok(service) => service,
+        Err(resp) => return *resp,
+    };
+    let Ok(Json(req)) = body else {
+        return ApiError::bad("bad_request", "expected {reason, confirm?}").into_response();
+    };
+    let reason = req.reason.trim();
+    if reason.is_empty()
+        || reason.len() > 64
+        || !reason
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | ' '))
+    {
+        return ApiError::bad("bad_reason", "reason: 1-64 characters of [A-Za-z0-9 _.-]")
+            .into_response();
+    }
+    if !(id.starts_with("acct_")
+        && id.len() <= 64
+        && id[5..]
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_'))
+    {
+        return err_response(StatusCode::NOT_FOUND, "no_account", None);
+    }
+    let now = now_unix();
+    let user_agent = headers
+        .get(header::USER_AGENT)
+        .and_then(|v| v.to_str().ok());
+    let audit_row = state.auditor.row(
+        ActorKind::System,
+        None,
+        "account.purge",
+        Some(format!("account:{id}")),
+        json!({ "service": service, "reason": reason }),
+        peer.map(|Extension(ConnectInfo(addr))| addr.ip()),
+        user_agent,
+        now,
+    );
+    match state
+        .store
+        .purge_empty_account(id, !req.confirm, audit_row)
+        .await
+    {
+        Ok(None) => err_response(StatusCode::NOT_FOUND, "no_account", None),
+        Ok(Some(report)) if !report.blockers.is_empty() => (
+            StatusCode::CONFLICT,
+            Json(json!({
+                "error": "account_not_empty",
+                "message": "the account holds data that this path does not remove",
+                "report": report,
+            })),
+        )
+            .into_response(),
+        Ok(Some(report)) => {
+            if report.purged {
+                tracing::info!(account = %report.account_id, mailboxes = report.mailboxes, "empty account purged");
+            }
+            Json(json!({ "report": report })).into_response()
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "account purge failed");
             ApiError::server("store_error").into_response()
         }
     }

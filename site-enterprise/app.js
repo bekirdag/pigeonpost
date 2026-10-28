@@ -29,6 +29,7 @@
     ["ssh", "Open a terminal on its workspace (SSH)"],
   ];
   const sshOn = () => app.features.includes("agent_ssh");
+  const streamsOn = () => app.features.includes("streaming");
 
   const app = { features: [], orgs: [], org: null, me: null, page: "people" };
   PPE.app = app;
@@ -771,7 +772,8 @@
         toggle("Require two-step sign-in for everyone in the organization", Boolean(s.require_mfa), (v) => patchSettings({ require_mfa: v })),
         toggle("Only invite addresses at verified domains", Boolean(s.invite_domains_only), (v) => patchSettings({ invite_domains_only: v })),
         sshOn() ? toggle("Allow SSH to agents (each agent and each person still needs its own permission)", Boolean(s.ssh_allowed), (v) => patchSettings({ ssh_allowed: v })) : null,
-        sshOn() ? toggle("Every SSH session needs an owner's, admin's or agent admin's approval", Boolean(s.ssh_requires_approval), (v) => patchSettings({ ssh_requires_approval: v })) : null),
+        sshOn() ? toggle("Every SSH session needs an owner's, admin's or agent admin's approval", Boolean(s.ssh_requires_approval), (v) => patchSettings({ ssh_requires_approval: v })) : null,
+        streamsOn() ? viewerLimit(s) : null),
       el("h2", {}, "Domains"), domains.length ? domainCards : el("p", { class: "muted" }, "No domains yet. Verify your company's domain to restrict invitations to it."),
       app.can("api-keys") ? el("div", { class: "card" }, el("h2", {}, "API keys and webhooks"),
         el("p", { class: "muted" }, "Scoped keys let your own systems manage people, agents, rules and rooms. Webhooks tell them when something changes. Neither can read messages."),
@@ -780,6 +782,21 @@
       el("div", { class: "row" }, filter, el("div", { class: "actions", style: null }, exportBtn("csv"), exportBtn("json"))),
       el("div", { class: "table-wrap" }, el("table", {}, el("thead", {}, el("tr", {}, ["When", "Who", "Action", "Target"].map((h) => el("th", { scope: "col" }, h)))), tbody)),
       el("div", { class: "actions" }, more));
+  }
+
+  // Viewers per live stream in this organization's rooms (SDS §14A.5). Blank = the server's limit;
+  // the server refuses anything above it.
+  function viewerLimit(s) {
+    const input = el("input", { type: "number", min: "1", step: "1", inputmode: "numeric", placeholder: "Server default", value: s.stream_max_viewers ? String(s.stream_max_viewers) : "" });
+    const save = el("button", { class: "btn btn-small", type: "button" }, "Save");
+    save.addEventListener("click", busy(save, async () => {
+      const raw = input.value.trim();
+      const n = raw === "" ? 0 : Number(raw);
+      if (!Number.isInteger(n) || n < 0) return PPE.toast("Enter a whole number, or leave it empty for the default.", "error");
+      await patchSettings({ stream_max_viewers: n });
+      PPE.toast("Saved.");
+    }));
+    return PPE.field("Viewers per live stream", el("div", { class: "row" }, input, save), "Leave empty to use the server's limit.");
   }
 
   function domainSheet() {

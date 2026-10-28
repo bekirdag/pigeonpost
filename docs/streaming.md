@@ -21,7 +21,7 @@ viewer's device until they accept. Stopping posts a `stream` notice in the group
 | Stop | The streamer, or a group owner/admin. |
 | Streams per group | One live stream at a time (`409 stream_in_progress {stream_id}`). |
 | Length | 4 hours, then the stream ends (`max_duration`). |
-| Viewers | 200 per stream (`PIGEONPOST_STREAM_MAX_VIEWERS` on the postbox, `CALLS_STREAM_MAX_VIEWERS` on the calls service), and fewer when the media server's budget requires it (§5): `409 stream_full` at the configured limit, `503 stream_capacity` when the budget is the limit. |
+| Viewers | 200 per stream (`PIGEONPOST_STREAM_MAX_VIEWERS` on the postbox, `CALLS_STREAM_MAX_VIEWERS` on the calls service); an organization's owner or admin can set a lower `settings.stream_max_viewers` for its rooms (`PATCH /v1/orgs/{id}`, portal → Security; `0` restores the default), which `stream-admission` returns as `max_viewers`; and fewer when the media server's budget requires it (§5): `409 stream_full` at the configured limit, `503 stream_capacity` when the budget is the limit. |
 | Ends when | The streamer stops or leaves for good (30 s grace for a reload), the streamer may no longer stream (policy changed to admins, restricted, removed), the group is deleted, four hours pass, or the calls service stops reporting the stream for 2 minutes. |
 
 Policy changes and removals take effect on the media server and on key access, not only in the UI:

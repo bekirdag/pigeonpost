@@ -26,11 +26,13 @@ mod filtering;
 mod googleplay;
 mod groups;
 mod lifecycle;
+mod limits;
 pub(crate) mod meetings;
 mod msgactions;
 mod org_api;
 mod org_model;
 mod orgs;
+mod purge;
 mod shell;
 mod streams;
 pub use audit::AuditRow;
@@ -371,6 +373,9 @@ const MIGRATIONS: &[&str] = &[
     "ALTER TABLE messages ADD COLUMN direction TEXT NOT NULL DEFAULT 'in'",
     "UPDATE messages SET owner = recipient WHERE owner IS NULL",
     "CREATE INDEX IF NOT EXISTS messages_by_owner ON messages(owner)",
+    // Phase 9 (load test): every mailbox query filters on this exact expression; without an index
+    // on it each one scanned the whole table (~95 sends/s at today's size, ~11 at 80k rows).
+    "CREATE INDEX IF NOT EXISTS messages_by_mailbox ON messages(COALESCE(owner, recipient), created_at)",
     // Threads. The column is nullable only for the instant between adding it and the backfill
     // below; every read treats a NULL thread as a bug rather than a state to handle.
     "ALTER TABLE messages ADD COLUMN thread_id TEXT",
@@ -976,6 +981,8 @@ impl Store {
         // Phase 7: meeting summaries (SDS §14) — metadata, consent, public keys, ciphertext.
         conn.execute_batch(meetings::SCHEMA)?;
         conn.execute_batch(shell::SCHEMA)?;
+        // Phase 9: rate-limiter state that survives restarts.
+        conn.execute_batch(limits::SCHEMA)?;
         for stmt in MIGRATIONS
             .iter()
             .chain(filtering::MIGRATIONS)
@@ -6003,6 +6010,46 @@ mod event_cursor_tests {
             owner: owner.into(),
             outgoing,
         }
+    }
+
+    /// Phase 9: a deleted newest message's rowid is never handed to the next message, so a cursor
+    /// that already passed it still sees the new one.
+    #[tokio::test]
+    async fn a_deleted_newest_rowid_is_never_reused() {
+        let store = Store::open(":memory:").unwrap();
+        for id in ["r1", "r2"] {
+            store
+                .enqueue(msg(id, "/k/bob", "/k/alice", false))
+                .await
+                .unwrap();
+        }
+        let before = store
+            .scalar_raw("SELECT MAX(rowid) FROM messages".into())
+            .await
+            .unwrap();
+        store
+            .exec_raw("DELETE FROM messages WHERE id = 'r2'")
+            .await
+            .unwrap();
+        store
+            .enqueue(msg("r3", "/k/bob", "/k/alice", false))
+            .await
+            .unwrap();
+        let after = store
+            .scalar_raw("SELECT rowid FROM messages WHERE id = 'r3'".into())
+            .await
+            .unwrap();
+        assert!(after > before, "r3 got rowid {after}, reusing {before}");
+        // A typed event after another deletion still sorts after every rowid ever handed out.
+        store
+            .exec_raw("DELETE FROM messages WHERE id = 'r3'")
+            .await
+            .unwrap();
+        let seq = store
+            .scalar_raw("SELECT v FROM account_event_meta WHERE k = 'mail_seq'".into())
+            .await
+            .unwrap();
+        assert_eq!(seq, after);
     }
 
     /// The cursor is the resumption contract: everything after it, nothing twice.

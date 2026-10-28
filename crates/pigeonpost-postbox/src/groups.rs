@@ -295,6 +295,47 @@ fn limiter() -> &'static Limiter {
     })
 }
 
+/// The longest window any `rate_limit` caller uses (daily quotas).
+pub(crate) const LONGEST_RATE_WINDOW: u64 = 86_400;
+
+/// Hits inside the longest window, for the restart-safe limiter snapshot (`limits.rs`).
+pub(crate) fn rate_limit_snapshot(now: u64) -> HashMap<String, Vec<u64>> {
+    let hits = limiter().hits.lock().expect("limiter lock");
+    hits.iter()
+        .map(|(k, v)| {
+            let kept: Vec<u64> = v
+                .iter()
+                .copied()
+                .filter(|t| t + LONGEST_RATE_WINDOW > now)
+                .collect();
+            (k.clone(), kept)
+        })
+        .filter(|(_, v)| !v.is_empty())
+        .collect()
+}
+
+/// Merge a snapshot taken before a restart, so daily and hourly quotas survive deploys.
+pub(crate) fn rate_limit_restore(rows: HashMap<String, Vec<u64>>, now: u64) {
+    let mut hits = limiter().hits.lock().expect("limiter lock");
+    for (key, times) in rows.into_iter().take(50_000) {
+        let entry = hits.entry(key).or_default();
+        entry.extend(
+            times
+                .into_iter()
+                .filter(|t| *t <= now && t + LONGEST_RATE_WINDOW > now),
+        );
+        entry.sort_unstable();
+    }
+}
+
+/// Whether `key` already has `max` hits in the last `window` seconds, without counting one.
+pub(crate) fn rate_limit_peek(key: &str, max: usize, window: u64) -> bool {
+    let now = now_unix();
+    let hits = limiter().hits.lock().expect("limiter lock");
+    hits.get(key)
+        .is_some_and(|v| v.iter().filter(|t| **t + window > now).count() >= max)
+}
+
 /// `Err(rate_limited)` when `key` has already been hit `max` times in the last `window` seconds.
 pub(crate) fn rate_limit(key: &str, max: usize, window: u64) -> GResult<()> {
     let now = now_unix();

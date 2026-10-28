@@ -60,6 +60,24 @@ pub(crate) fn max_viewers() -> i64 {
     crate::env_num::<i64>("PIGEONPOST_STREAM_MAX_VIEWERS", 200).clamp(1, 10_000)
 }
 
+/// Viewers per stream for one group: the server ceiling, lowered by the group's organization when
+/// it set `stream_max_viewers` (SDS §14A.5 "configurable per org"). Personal groups get the ceiling.
+pub(crate) fn max_viewers_for(c: &Connection, group_id: &str) -> GResult<i64> {
+    let ceiling = max_viewers();
+    let settings: Option<String> = c
+        .query_row(
+            "SELECT o.settings FROM groups g JOIN orgs o ON o.id = g.org_id WHERE g.id = ?1",
+            params![group_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let org_limit = settings
+        .and_then(|s| serde_json::from_str::<crate::org::Settings>(&s).ok())
+        .and_then(|s| s.stream_max_viewers)
+        .filter(|n| *n > 0);
+    Ok(org_limit.map_or(ceiling, |n| n.min(ceiling)))
+}
+
 const SOURCES: [&str; 2] = ["camera", "screen"];
 
 /// An uncompressed P-256 public key, base64url without padding (65 bytes, first byte 4).
@@ -236,7 +254,7 @@ pub(crate) fn stream_view(c: &Connection, s: &StreamRow) -> GResult<Value> {
         "viewers": s.viewers_now,
         "peak_viewers": s.viewers_peak,
         "stage": stage,
-        "max_viewers": max_viewers(),
+        "max_viewers": max_viewers_for(c, &s.group_id)?,
         "revision": s.revision,
     }))
 }
@@ -1130,7 +1148,7 @@ pub(crate) async fn admission(
                 "sources": s.sources,
                 "state": s.state,
                 "ends_by": s.ends_by,
-                "max_viewers": max_viewers(),
+                "max_viewers": max_viewers_for(c, &s.group_id)?,
                 "key_attested": key_attested,
             }))
         })
@@ -1549,5 +1567,31 @@ mod tests {
         );
         assert!(clean_title("   ").is_err());
         assert!(clean_title(&"x".repeat(101)).is_err());
+    }
+}
+
+#[cfg(test)]
+mod viewer_limit_tests {
+    use super::*;
+
+    #[test]
+    fn an_org_can_only_lower_the_viewer_ceiling() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "CREATE TABLE orgs (id TEXT PRIMARY KEY, settings TEXT);
+             CREATE TABLE groups (id TEXT PRIMARY KEY, org_id TEXT);
+             INSERT INTO orgs VALUES ('o_low', '{\"stream_max_viewers\": 25}'),
+                                     ('o_high', '{\"stream_max_viewers\": 999999}'),
+                                     ('o_none', '{}');
+             INSERT INTO groups VALUES ('g_low', 'o_low'), ('g_high', 'o_high'),
+                                       ('g_none', 'o_none'), ('g_personal', NULL);",
+        )
+        .unwrap();
+        let ceiling = max_viewers();
+        assert_eq!(max_viewers_for(&c, "g_low").unwrap(), 25.min(ceiling));
+        assert_eq!(max_viewers_for(&c, "g_high").unwrap(), ceiling);
+        assert_eq!(max_viewers_for(&c, "g_none").unwrap(), ceiling);
+        assert_eq!(max_viewers_for(&c, "g_personal").unwrap(), ceiling);
+        assert_eq!(max_viewers_for(&c, "missing").unwrap(), ceiling);
     }
 }

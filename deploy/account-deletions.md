@@ -52,11 +52,22 @@ wait until its deadline to start. Verify the queue after every deployment.
    `billing_retention_reviewed`, `registry_retention_reviewed`, `services_stopped`,
    `completion_notice_arranged`, `backup_expiry_recorded`. Set
    `retain_abuse_evidence` only when a specific security retention basis is recorded.
+   The tool refuses an account that still owns an organization, is an active
+   organization member, or holds a live organization agent: offboard it first
+   through the portal or the org API, so the organization decides ownership
+   transfer and keeps its own records.
 7. Run the reviewed local tool with `--erase REQUEST_ID --evidence PRIVATE_JSON
    --db DATABASE --blobs BLOB_DIRECTORY`. It refuses requests that are missing,
    completed, or no longer owned by the confirmed subject. It removes that
    account's keys, mailboxes, message copies, contacts, settings, notification
-   devices, provider links and unshared files. It clears the request's contact
+   devices, provider links and unshared files; call history; profile pictures and
+   their unshared variants; calendars, the events it organized (with their
+   attendees, occurrences, tokens and reminders) and its attendance elsewhere;
+   group memberships, receipts and keys (ciphertext it sent stays with the other
+   members, under a pseudonym); MLS devices and key packages; agent shell hosts,
+   policies and session rows; device grants and credentials; account flags and
+   typed events. Entitlements and plan names keep their billing rows under the
+   erased-account identifier. It clears the request's contact
    and subject when complete. Inspect the result before restarting services.
 8. Restart services; verify health, an unaffected account, and rejection of old
    credentials. Confirm completion to the member through the previously verified
@@ -72,3 +83,26 @@ completed merely because a notification was sent or a queue row was created.
 
 Apple permits manual fulfillment within a communicated timeframe, with completion
 confirmation: https://developer.apple.com/support/offering-account-deletion-in-your-app/.
+
+## Purge an empty account (test cleanup)
+
+Smoke tests and abandoned sign-ins leave accounts with nothing in them. These do
+not need the consented erasure above; the ops service token can remove them:
+
+```sh
+# On the postbox host; the ops token is in /opt/pigeonpost-postbox/ops-service-token.
+curl -s -H "Authorization: Bearer $(cat ops-service-token)" -H 'Content-Type: application/json' \
+  -d '{"reason":"test_cleanup"}' http://127.0.0.1:8991/internal/v1/accounts/acct_…/purge      # dry run
+curl -s … -d '{"reason":"test_cleanup","confirm":true}' …                                     # remove
+```
+
+It refuses (`409 account_not_empty`, listing the tables) when the account holds
+messages, attachments, group or organization membership, namespaces, purchases or
+entitlements, calendar entries, meeting notes, profile pictures, a pending deletion
+request or a live SSH session. Otherwise it removes the account, its empty
+mailboxes and their residue (settings, revoked keys, devices, key packages, closed
+sessions) in one transaction with an `account.purge` audit record. Every table is
+classified in `crates/pigeonpost-postbox/src/store/purge.rs`; a test fails when a
+new table has no decision, and another fails when this erasure tool does not handle
+an account table. Never use it on a real person's account that holds data; that is
+the request flow above.

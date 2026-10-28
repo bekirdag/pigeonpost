@@ -46,6 +46,22 @@ CREATE TABLE IF NOT EXISTS account_event_meta (
     k TEXT PRIMARY KEY,
     v INTEGER NOT NULL
 );
+-- Phase 9: message rowids are never reused. `messages` has no AUTOINCREMENT, so SQLite gives a new
+-- row MAX(rowid)+1 — the rowid of a just-deleted newest message. A client whose cursor already
+-- passed that rowid (it saw the deleted message) would never be told about the new one. `mail_seq`
+-- is the highest rowid ever inserted; a new row at or below it is moved just above it.
+INSERT OR IGNORE INTO account_event_meta (k, v)
+    SELECT 'mail_seq', MAX(COALESCE((SELECT MAX(rowid) FROM messages), 0),
+                           COALESCE((SELECT v FROM account_event_meta WHERE k = 'mail_hwm'), 0));
+CREATE TRIGGER IF NOT EXISTS messages_rowid_never_reused AFTER INSERT ON messages
+BEGIN
+    UPDATE messages
+       SET rowid = (SELECT v FROM account_event_meta WHERE k = 'mail_seq') + 1
+     WHERE rowid = NEW.rowid
+       AND NEW.rowid <= COALESCE((SELECT v FROM account_event_meta WHERE k = 'mail_seq'), 0);
+    INSERT INTO account_event_meta (k, v) VALUES ('mail_seq', (SELECT MAX(rowid) FROM messages))
+        ON CONFLICT(k) DO UPDATE SET v = MAX(v, excluded.v);
+END;
 ";
 
 /// A position in an account's merged mail + typed-event stream.
@@ -102,7 +118,16 @@ pub(super) fn append_in(
             |r| r.get(0),
         )
         .unwrap_or(0);
-    let hwm = messages.max(previous);
+    // Never below the highest rowid ever inserted either: a deleted newest message must not let a
+    // typed event sort behind a mail cursor that already passed it.
+    let seq: i64 = c
+        .query_row(
+            "SELECT v FROM account_event_meta WHERE k = 'mail_seq'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    let hwm = messages.max(previous).max(seq);
     c.execute(
         "INSERT INTO account_event_meta (k, v) VALUES ('mail_hwm', ?1)
          ON CONFLICT(k) DO UPDATE SET v = excluded.v",

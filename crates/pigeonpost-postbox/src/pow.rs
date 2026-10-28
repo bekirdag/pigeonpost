@@ -148,6 +148,24 @@ impl Pow {
         Ok(verified)
     }
 
+    /// Spent challenges still inside their TTL, for the restart-safe limiter snapshot.
+    pub fn spent_snapshot(&self, now: u64) -> Vec<(String, u64)> {
+        let spent = self.spent.lock().expect("pow spent lock");
+        spent
+            .iter()
+            .filter(|(_, exp)| **exp > now)
+            .map(|(c, exp)| (c.clone(), *exp))
+            .collect()
+    }
+
+    /// Merge spent challenges from a snapshot, so a restart cannot reopen a replay window.
+    pub fn restore_spent(&self, rows: Vec<(String, u64)>, now: u64) {
+        let mut spent = self.spent.lock().expect("pow spent lock");
+        for (challenge, exp) in rows.into_iter().filter(|(_, exp)| *exp > now) {
+            spent.insert(challenge, exp);
+        }
+    }
+
     fn sign(&self, payload: &[u8]) -> String {
         let mut mac =
             HmacSha256::new_from_slice(&self.secret).expect("HMAC accepts any key length");

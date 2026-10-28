@@ -220,6 +220,10 @@ pub(crate) struct Settings {
     /// Whether every SSH session also needs an owner/admin/agent admin's approval (§11.5 item 5).
     #[serde(default)]
     pub ssh_requires_approval: bool,
+    /// Viewers per live stream in this org's rooms, below the server ceiling (SDS §14A.5).
+    /// `None` = the server ceiling.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stream_max_viewers: Option<i64>,
 }
 
 fn everyone() -> String {
@@ -234,6 +238,7 @@ impl Default for Settings {
             rooms_creation: everyone(),
             ssh_allowed: false,
             ssh_requires_approval: false,
+            stream_max_viewers: None,
         }
     }
 }

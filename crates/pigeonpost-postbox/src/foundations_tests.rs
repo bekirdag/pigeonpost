@@ -766,3 +766,120 @@ async fn file_databases_use_wal_and_a_busy_timeout() {
     drop((store, reaper));
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// Phase 9: a stream opened with an API key ends soon after the key is revoked, instead of living
+/// until the client disconnects.
+#[tokio::test]
+async fn a_revoked_api_keys_stream_is_closed() {
+    let state = state();
+    let (token, _, _) = account(&state, "acct_revoke_stream").await;
+    let (public, _) = serve(state).await;
+    let mut stream = open_stream(&public, &token, None).await;
+    let client = reqwest::Client::new();
+    let keys: serde_json::Value = client
+        .get(format!("{public}/v1/api-keys"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let id = keys["keys"][0]["id"].as_str().unwrap().to_string();
+    let revoked = client
+        .delete(format!("{public}/v1/api-keys/{id}"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(revoked.status(), StatusCode::OK);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(6);
+    loop {
+        match tokio::time::timeout_at(deadline, stream.response.chunk()).await {
+            Err(_) => panic!("the stream outlived its revoked key"),
+            Ok(Ok(None)) | Ok(Err(_)) => break,
+            Ok(Ok(Some(_))) => continue,
+        }
+    }
+}
+
+/// Phase 9: the ops-only purge of an empty account — dry run, refusal with content, removal, audit.
+#[tokio::test]
+async fn ops_can_purge_an_empty_account_and_nothing_else() {
+    let state = state();
+    let (_token, a, b) = account(&state, "acct_purge_me").await;
+    let (_t2, c, _) = account(&state, "acct_purge_busy").await;
+    do_send(&state, &a, &c.address, "hello", ThreadRequest::Default)
+        .await
+        .unwrap();
+    let (_, internal) = serve(state.clone()).await;
+    let client = reqwest::Client::new();
+    let purge = |id: &str, token: &str, body: serde_json::Value| {
+        client
+            .post(format!("{internal}/internal/v1/accounts/{id}/purge"))
+            .bearer_auth(token)
+            .json(&body)
+            .send()
+    };
+    let other_service = purge("acct_purge_me", CALLS, json!({"reason": "x"}))
+        .await
+        .unwrap();
+    assert_eq!(other_service.status(), StatusCode::FORBIDDEN);
+
+    // The sender's mailbox holds its sent copy: not empty.
+    let refused = purge(
+        "acct_purge_me",
+        OPS,
+        json!({"reason": "test_cleanup", "confirm": true}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(refused.status(), StatusCode::CONFLICT);
+    let body: serde_json::Value = refused.json().await.unwrap();
+    assert_eq!(body["error"], "account_not_empty");
+    assert!(state.store.get(a.address.clone()).await.unwrap().is_some());
+
+    // Empty it the way a member would, then purge.
+    for m in [&a, &b] {
+        state
+            .store
+            .delete_identity(Some("acct_purge_me".into()), m.address.clone())
+            .await
+            .unwrap();
+    }
+    let dry = purge("acct_purge_me", OPS, json!({"reason": "test_cleanup"}))
+        .await
+        .unwrap();
+    assert_eq!(dry.status(), StatusCode::OK);
+    let dry: serde_json::Value = dry.json().await.unwrap();
+    assert_eq!(dry["report"]["purged"], false);
+    let done: serde_json::Value = purge(
+        "acct_purge_me",
+        OPS,
+        json!({"reason": "test_cleanup", "confirm": true}),
+    )
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(done["report"]["purged"], true);
+    let gone = purge("acct_purge_me", OPS, json!({"reason": "test_cleanup"}))
+        .await
+        .unwrap();
+    assert_eq!(gone.status(), StatusCode::NOT_FOUND);
+    // The busy account is untouched.
+    assert!(state.store.get(c.address.clone()).await.unwrap().is_some());
+}
+
+/// Phase 9: the refused-credential throttle counts per address and only refusals.
+#[test]
+fn auth_failures_throttle_an_address() {
+    let key = format!("authfail:198.51.100.{}", rand_hex(2));
+    for _ in 0..5 {
+        assert!(!groups::rate_limit_peek(&key, 5, 600));
+        let _ = groups::rate_limit(&key, usize::MAX, 600);
+    }
+    assert!(groups::rate_limit_peek(&key, 5, 600));
+    assert!(!groups::rate_limit_peek("authfail:203.0.113.9", 5, 600));
+}

@@ -38,6 +38,11 @@ use tokio::sync::Notify;
 /// long sleep should catch up in bounded chunks rather than building one enormous response.
 const EVENT_BATCH: usize = 256;
 
+/// How often a stream opened with an API key re-checks that the key still exists. A revoked key's
+/// stream ends within this long (Phase 9; before, it lived until the client disconnected).
+const CREDENTIAL_RECHECK: std::time::Duration =
+    std::time::Duration::from_secs(if cfg!(test) { 1 } else { 60 });
+
 /// Default ceiling on concurrently open streams per account.
 const DEFAULT_STREAMS_PER_ACCOUNT: usize = 32;
 
@@ -212,12 +217,34 @@ pub(crate) async fn events(
     };
 
     let asked_typed = matches!(q.typed.as_deref(), Some("1" | "true"));
+    // Member sessions are short-lived JWTs; an API key lives until revoked, so its stream is
+    // re-checked on a timer and closed once the key is gone.
+    let key_hash = bearer(&headers)
+        .filter(|t| crate::is_api_key(t))
+        .map(|t| crate::sha256(t.as_bytes()));
     tracing::info!(%account, start = %start.typed_id(), "event stream opened");
     let stream = async_stream::stream! {
         let subscription = subscription;
         let mut cursor = start;
         let mut resync_sent = false;
+        let mut checked_at = tokio::time::Instant::now();
         loop {
+            if let Some(hash) = key_hash {
+                if checked_at.elapsed() >= CREDENTIAL_RECHECK {
+                    checked_at = tokio::time::Instant::now();
+                    match state.store.account_for_key(hash).await {
+                        Ok(Some(a)) if a == account => {}
+                        Ok(_) => {
+                            tracing::info!(%account, "event stream closed: API key revoked");
+                            break;
+                        }
+                        Err(e) => {
+                            tracing::error!(error = %e, "events credential recheck failed");
+                            break;
+                        }
+                    }
+                }
+            }
             // Register interest before reading, for the same lost-wakeup reason `await_mail`
             // documents: an event landing between the read and the wait would notify nobody.
             let notified = subscription.notify().notified();
@@ -346,7 +373,12 @@ pub(crate) async fn events(
             if batch.more {
                 continue;
             }
-            notified.await;
+            match key_hash {
+                Some(_) => {
+                    let _ = tokio::time::timeout(CREDENTIAL_RECHECK, notified).await;
+                }
+                None => notified.await,
+            }
         }
     };
 
