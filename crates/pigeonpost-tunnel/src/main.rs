@@ -2,7 +2,7 @@
 //!
 //! Environment:
 //!
-//! * `TUNNEL_BIND` — listen address (default `127.0.0.1:8796`; it belongs behind the TLS proxy);
+//! * `TUNNEL_BIND` — listen address (default `127.0.0.1:8781`; it belongs behind the TLS proxy);
 //! * `TUNNEL_POSTBOX_INTERNAL_URL` — the postbox's internal API;
 //! * `TUNNEL_SERVICE_TOKEN` — this service's `svc_…` token;
 //! * optional limits: `TUNNEL_MAX_SESSIONS`, `TUNNEL_IDLE_SECS`, `TUNNEL_CHECK_SECS`,
@@ -25,7 +25,7 @@ async fn main() {
             std::process::exit(2);
         }
     };
-    let bind = std::env::var("TUNNEL_BIND").unwrap_or_else(|_| "127.0.0.1:8796".into());
+    let bind = std::env::var("TUNNEL_BIND").unwrap_or_else(|_| "127.0.0.1:8781".into());
     let broker = Broker::new(cfg);
     broker.start_heartbeat();
     let listener = match tokio::net::TcpListener::bind(&bind).await {

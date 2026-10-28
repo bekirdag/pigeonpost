@@ -1,7 +1,7 @@
 # Agent SSH: tunnel broker and SSH CA runbook (docs/agent-ssh.md)
 
 Path: `wss://tunnel.pigeonpost.dev` → Cloudflare → wodomini nginx (TLS, `nginx-wodomini-tunnel.conf`)
-→ raijin nginx `:48880` (`nginx-raijin-tunnel.conf`) → `pigeonpost-tunnel` on `127.0.0.1:8796`
+→ raijin nginx `:48880` (`nginx-raijin-tunnel.conf`) → `pigeonpost-tunnel` on `127.0.0.1:8781`
 → postbox internal API through the existing `pigeonpost-postbox-tunnel.service` (`127.0.0.1:18991`).
 
 ## Build (raijin has Docker, no Rust toolchain)
@@ -18,7 +18,11 @@ sha256sum target/release/pigeonpost-tunnel
 1. Back up to `/var/backups/pigeonpost/p8-tunnel-<ts>/`: `nginx.conf`, any existing unit/env.
 2. `install -D -m 0755 target/release/pigeonpost-tunnel /opt/pigeonpost-tunnel/pigeonpost-tunnel`
 3. `/etc/pigeonpost-tunnel.env` (0600 root) from `tunnel.env.example`; the token is generated on the
-   postbox host (`svc_` + 64 hex) and copied host-to-host, never through a workstation or a log.
+   postbox host (`svc_` + 64 hex, `/opt/pigeonpost-postbox/tunnel-service-token`, 0600) and piped
+   host-to-host over ssh straight into the root-only file — never displayed, logged or saved
+   anywhere in between.
+   Port 8781: raijin's 8796 belongs to another service. Never `sed` a port across the shared
+   nginx.conf — other tenants' blocks use the same `proxy_pass` lines; edit this block only.
 4. `install -m 0644 pigeonpost-tunnel.service /etc/systemd/system/`, `systemctl daemon-reload`,
    `systemctl enable --now pigeonpost-tunnel`.
 5. Add the server block to `/etc/nginx-raijin-webapps/nginx.conf`, `nginx -t`, reload.

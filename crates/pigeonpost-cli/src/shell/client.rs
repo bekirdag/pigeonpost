@@ -8,7 +8,7 @@
 //!    for this session only. The private half never leaves this process.
 //! 3. Check the agent's host key: the postbox's pinned fingerprint must equal the one this machine
 //!    pinned for that agent the first time. A change is refused unless `--accept-host-key` names
-//!    the new fingerprint (compare it with `pigeonpost agentd shell status` on the agent machine).
+//!    the new fingerprint (compare it with `pigeonpost agentd shell` on the agent machine).
 //! 4. Reach the broker, present the client leg's one-time token, and speak SSH end to end over it:
 //!    the server must present exactly the pinned host key, and is shown the certificate.
 
@@ -136,7 +136,7 @@ pub fn host_key_decision(
                 Err(format!(
                     "WARNING: the agent's host key changed.\n  pinned:  {p}\n  offered: {offered}\n\
                      This is expected only if the agent's machine was reinstalled and its new key approved.\n\
-                     Check the fingerprint on the agent machine (`pigeonpost agentd shell status`), then rerun with\n\
+                     Check the fingerprint on the agent machine (`pigeonpost agentd shell`), then rerun with\n\
                      --accept-host-key {offered}"
                 ))
             }
@@ -306,7 +306,9 @@ pub async fn run(opts: Options<'_>) -> Result<i32, Error> {
         Ok(true) => {
             if pinned.is_none() {
                 eprintln!("First connection to {agent}: pinning its host key {offered}");
-                eprintln!("(the agent machine's owner can confirm it with `pigeonpost agentd shell status`)");
+                eprintln!(
+                    "(the agent machine's owner can confirm it with `pigeonpost agentd shell`)"
+                );
             }
             save_pin(opts.home, &agent, &offered)?;
         }

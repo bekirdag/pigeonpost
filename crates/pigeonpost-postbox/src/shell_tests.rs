@@ -597,6 +597,11 @@ async fn session_lifecycle_and_broker_legs() {
         (403, "leg_invalid")
     );
     assert_eq!(leg(&srv, &sid, agent_leg).await.1["side"], "agent");
+    assert_eq!(
+        session_state(&srv, &sid).await.0,
+        "connected",
+        "connected as soon as both legs are at the broker"
+    );
     assert_eq!(check(&srv, &sid, true).await["end"], json!([]));
     assert_eq!(session_state(&srv, &sid).await.0, "connected");
     // The postbox never accepts a leg for another session.
@@ -1015,4 +1020,40 @@ async fn unconfigured_server_refuses() {
         srv.call(Method::GET, "/v1/shell/ca", None, None).await.0,
         503
     );
+}
+
+/// Deleting the agent's mailbox removes its pinned host key with the next sweep.
+#[tokio::test]
+async fn a_deleted_mailbox_takes_its_host_key_with_it() {
+    let srv = serve().await;
+    let me = srv.person("me").await;
+    let (_, mb) = srv
+        .post("/v1/identities", &me.token, json!({ "label": "box" }))
+        .await;
+    let agent = mb["address"].as_str().unwrap().to_string();
+    let cap = mb["capability_token"].as_str().unwrap().to_string();
+    assert_eq!(register(&srv, &cap, 1, "container").await.0, 200);
+    let (s, _) = srv
+        .call(
+            Method::DELETE,
+            &format!("/v1/identities?identity={}", enc(&agent)),
+            Some(&cap),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200);
+    shell::sweep(&srv.state).await;
+    let left: i64 = srv
+        .state
+        .store
+        .group_read(move |c| -> crate::groups::GResult<i64> {
+            Ok(c.query_row(
+                "SELECT COUNT(*) FROM agent_shell_hosts WHERE identity = ?1",
+                [&agent],
+                |r| r.get(0),
+            )?)
+        })
+        .await
+        .unwrap();
+    assert_eq!(left, 0);
 }
