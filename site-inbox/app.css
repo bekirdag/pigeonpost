@@ -2496,7 +2496,6 @@ audio.viewer-media { width: min(560px, 100%); background: none; }
 .crop-canvas { display: block; width: 100%; max-width: 280px; aspect-ratio: 1; margin: 0 auto 14px; border-radius: 12px; background: var(--inset); touch-action: none; cursor: grab; }
 .crop-canvas:focus-visible { outline: 2px solid var(--edge-focus); outline-offset: 2px; }
 .crop-zoom input { width: 100%; accent-color: var(--accent-fill); }
-=======
 /* ---- large calls (7–30 people): up to sixteen views per page, and a pager ---------------------- */
 .call-grid[data-count="7"], .call-grid[data-count="8"], .call-grid[data-count="9"] { grid-template-columns: repeat(3, 1fr); }
 .call-grid[data-count="10"], .call-grid[data-count="11"], .call-grid[data-count="12"],
