@@ -226,6 +226,7 @@ final class GroupTests: XCTestCase {
         let banner = element("groupLiveBanner")
         XCTAssertTrue(banner.waitForExistence(timeout: 10), "a live stream shows the LIVE banner")
         XCTAssertTrue(banner.label.contains("is live: 0.9.0 walkthrough") && banner.label.hasSuffix("Watch"), banner.label)
+        XCTAssertTrue(element("groupTitle").exists, "the banner leaves the group bar as it was")
         XCTAssertFalse(element("groupGoLive").exists, "a member may not go live where only admins can")
         banner.tap()
         // The fixture build has no call page, so the call view refuses; the refusal is said, not lost.
@@ -234,9 +235,13 @@ final class GroupTests: XCTestCase {
 
     func testGoLiveNeedsATitleBeforeItStarts() {
         launch(["-open=" + garden])
-        let goLive = element("groupGoLive").firstMatch
-        XCTAssertTrue(goLive.waitForExistence(timeout: 10), "the owner may go live")
+        // On a phone Go live is in group info: the bar keeps its three buttons and the title.
+        XCTAssertTrue(element("groupTitle").waitForExistence(timeout: 10), "the group bar keeps its title")
+        XCTAssertFalse(element("groupGoLive").exists, "no fourth button in a phone's group bar")
         XCTAssertFalse(element("groupLiveBanner").exists, "nobody is live in this group")
+        element("groupInfo").firstMatch.tap()
+        let goLive = element("groupInfoGoLive").firstMatch
+        XCTAssertTrue(goLive.waitForExistence(timeout: 10), "the owner may go live")
         goLive.tap()
         XCTAssertTrue(app.navigationBars["Go live"].waitForExistence(timeout: 5))
         let start = app.buttons["goLiveStart"].firstMatch
@@ -251,7 +256,7 @@ final class GroupTests: XCTestCase {
         camera.switches.firstMatch.exists ? camera.switches.firstMatch.tap() : camera.tap()
         XCTAssertFalse(start.isEnabled, "something has to be shared")
         app.buttons["Cancel"].firstMatch.tap()
-        XCTAssertTrue(goLive.waitForExistence(timeout: 5))
+        XCTAssertTrue(element("groupTitle").waitForExistence(timeout: 5))
     }
 
     func testGroupComposerKeepsFocusAfterSend() {

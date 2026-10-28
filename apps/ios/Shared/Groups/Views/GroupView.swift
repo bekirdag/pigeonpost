@@ -27,6 +27,18 @@ private struct GroupConversation: View {
     @Environment(GroupStore.self) private var groups
     @Environment(Account.self) private var account
     @Environment(CallHost.self) private var calls
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    #endif
+    /// A phone's group bar holds three buttons before iOS drops the title for them; Go live moves
+    /// into group info there.
+    private var roomyBar: Bool {
+        #if os(iOS)
+        return sizeClass == .regular
+        #else
+        return true
+        #endif
+    }
 
     @State private var draft = ""
     @State private var staged: [StagedFile] = []
@@ -118,7 +130,8 @@ private struct GroupConversation: View {
         #endif
         .sheet(item: $sheet) { selected in
             switch selected {
-            case .group: GroupInfoSheet(groupId: group.id).environment(groups)
+            case .group:
+                GroupInfoSheet(groupId: group.id, goLive: roomyBar ? nil : { sheet = .goLive }).environment(groups)
             case let .block(target): BlockSheet(target: target)
             case let .message(seq): GroupMessageInfo(groupId: group.id, seq: seq).environment(groups)
             case .goLive: GoLiveSheet(group: group).environment(groups).environment(calls)
@@ -194,7 +207,7 @@ private struct GroupConversation: View {
                     .accessibilityLabel("Call in progress — Join")
                     .accessibilityIdentifier("groupCallJoin")
             }
-            if account.features.streaming, group.canGoLive, groups.streams[group.id] == nil {
+            if roomyBar, account.features.streaming, group.canGoLive, groups.streams[group.id] == nil {
                 Button { sheet = .goLive } label: { Image(systemName: "dot.radiowaves.left.and.right") }
                     .accessibilityLabel("Go live")
                     .accessibilityIdentifier("groupGoLive")

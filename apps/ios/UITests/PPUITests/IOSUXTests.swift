@@ -338,8 +338,14 @@ final class IPadLayoutTests: XCTestCase {
             Scene(name: "join-group", arguments: ["-fixtures", "-join=grp_fixturejoin00000000000000"], ready: "joinGroup"),
             // Phase 6 and 7.
             Scene(name: "group-live", arguments: ["-fixtures", "-open=grp_fixtureannounce0000000000"], ready: "groupLiveBanner"),
-            Scene(name: "go-live", arguments: ["-fixtures", "-open=grp_fixturegarden000000000000"], ready: "groupGoLive") { app in
-                app.descendants(matching: .any)["groupGoLive"].firstMatch.tap()
+            Scene(name: "go-live", arguments: ["-fixtures", "-open=grp_fixturegarden000000000000"], ready: "groupComposer") { app in
+                // In the bar on a roomy iPad, in group info on a compact one.
+                let bar = app.descendants(matching: .any)["groupGoLive"].firstMatch
+                if bar.waitForExistence(timeout: 3) { bar.tap() } else {
+                    app.descendants(matching: .any)["groupInfo"].firstMatch.tap()
+                    let info = app.descendants(matching: .any)["groupInfoGoLive"].firstMatch
+                    if info.waitForExistence(timeout: 5) { info.tap() }
+                }
                 _ = app.navigationBars["Go live"].waitForExistence(timeout: 5)
             },
             Scene(name: "meeting-notes", arguments: ["-fixtures", "-sheet=meeting-notes"], ready: "meeting-mtg_fixtureready00000000000000"),
