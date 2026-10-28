@@ -52,8 +52,11 @@ let appProcess = null, A = null, H = null, V = null;
 const logFile = path.join(process.env.LOCALAPPDATA || "", "Pigeonpost", "logs", "desktop.log");
 const appLog = () => !appProcess || !existsSync(logFile) ? [] : readFileSync(logFile, "utf8").split(/\r?\n/).filter((l) => l.includes(`[${appProcess.pid}]`));
 const logged = (text) => appLog().filter((l) => l.includes(text)).length;
-const capture = (name) => { try { execFileSync("pwsh", ["-NoProfile", "-File", here("window.ps1"), "-ProcessId", String(appProcess.pid), "-Action", "capture", "-Path", path.join(out, name)]); } catch (e) { note("capture " + name, String(e.message || e).slice(0, 200)); } };
-const page = (who) => launch([], null).then(async (p) => {
+const capture = (name) => { if (!appProcess) return; try { execFileSync("pwsh", ["-NoProfile", "-File", here("window.ps1"), "-ProcessId", String(appProcess.pid), "-Action", "capture", "-Path", path.join(out, name)]); } catch (e) { note("capture " + name, String(e.message || e).slice(0, 200)); } };
+// Browser pages report what the page tells its native host (toasts, modes) to the console log.
+const shim = `window.chrome = window.chrome || {}; window.chrome.webview = { postMessage: (m) => console.log("native " + JSON.stringify(m)) };
+  window.addEventListener("unhandledrejection", (e) => console.log("unhandled " + String(e.reason && (e.reason.stack || e.reason.message) || e.reason)));`;
+const page = (who) => launch([], shim).then(async (p) => {
   await p.send("Page.navigate", { url: `http://127.0.0.1:${P.web}/native-call.html` });
   await until(() => p.evaluate("Boolean(window.PigeonpostNative && window.PigeonpostLive)"), 30000, 250, who + " page");
   await p.evaluate(`PigeonpostNative.configure(${JSON.stringify({ token: "tok-" + who, mailbox: { address: "/k/" + who, handle: null } })})`);
@@ -128,6 +131,9 @@ try {
 } catch (e) {
   result.error = String(e.stack || e);
   result.appConsole = A?.logs?.slice(-20);
+  result.hostConsole = H?.logs?.slice(-30);
+  result.viewerConsole = V?.logs?.slice(-20);
+  try { result.mockPostbox = pb.log.slice(-30); } catch {}
   console.error(result.error);
   try { capture("stream-failure.png"); } catch {}
 } finally {
