@@ -1,0 +1,15 @@
+meta {
+  name: The SSH CA public key
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/v1/shell/ca
+  body: none
+  auth: none
+}
+
+docs {
+  Public, for pinning and independent checks. 503 shell_unavailable when this server has no CA.
+}

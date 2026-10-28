@@ -156,6 +156,7 @@ fn config(mailbox: &str, workspace: &Path, verbs: &[&str], report_status: bool) 
             permission: Permission::Full,
             branches: vec!["main".into()],
             daily_runs_per_sender: 50,
+            shell: None,
             panel: None,
         }],
         max_concurrent: 2,

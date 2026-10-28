@@ -694,6 +694,7 @@ mod tests {
                 permission: Permission::ReadOnly,
                 branches: Vec::new(),
                 daily_runs_per_sender: 50,
+                shell: None,
                 panel: None,
             },
             verb: verb.into(),

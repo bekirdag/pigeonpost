@@ -1,0 +1,29 @@
+meta {
+  name: The agent machine reports its local SSH opt-in and host key
+  type: http
+  seq: 2
+}
+
+put {
+  url: {{baseUrl}}/v1/shell/agent
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "enabled": false,
+    "mode": "string",
+    "max_sessions": 0,
+    "host_key": "string",
+    "version": "string"
+  }
+}
+
+docs {
+  The agent mailbox's own credential only (capability token or device credential). The first host key is pinned; a different one waits as pending until a supervisor approves it (status host_key_pending). Disabling, or changing mode, ends open sessions.
+}

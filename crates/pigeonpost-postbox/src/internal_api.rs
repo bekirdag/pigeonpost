@@ -62,6 +62,8 @@ pub(crate) enum Endpoint {
     CalendarMeetingAccess,
     /// `POST /internal/v1/stream-admission`, `/stream-check`, `/stream-end` (Phase 6).
     StreamAdmission,
+    /// `POST /internal/v1/shell/legs`, `/shell/check`, `/shell/closed` (Phase 8).
+    ShellBroker,
 }
 
 /// The services this postbox knows, the variable each one's token lives in, and what each may
@@ -81,6 +83,13 @@ const SERVICES: &[(&str, &str, &[Endpoint])] = &[
             Endpoint::CalendarMeetingAccess,
             Endpoint::StreamAdmission,
         ],
+    ),
+    (
+        // The SSH tunnel broker (Phase 8). It learns which side a leg token is and which sessions
+        // to end; it can neither open a session nor read one.
+        "tunnel",
+        "POSTBOX_SVC_TOKEN_TUNNEL",
+        &[Endpoint::Health, Endpoint::ShellBroker],
     ),
     (
         "billing",
@@ -281,6 +290,12 @@ pub(crate) fn router(state: AppState) -> Router {
         .route(
             "/internal/v1/stream-end",
             post(crate::streams::end_internal),
+        )
+        .route("/internal/v1/shell/legs", post(crate::shell::broker_leg))
+        .route("/internal/v1/shell/check", post(crate::shell::broker_check))
+        .route(
+            "/internal/v1/shell/closed",
+            post(crate::shell::broker_closed),
         )
         .route("/internal/v1/avatar-reports", get(crate::avatars::reports))
         .route(

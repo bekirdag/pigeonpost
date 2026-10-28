@@ -929,6 +929,27 @@ jobs:
       - run: cargo test --locked -p pigeonpost-core --test conformance
       - run: cargo test --locked -p pigeonpost-compliance --test conformance
 
+  agent-ssh-e2e:
+    # Agent SSH (SDS §11) end to end with the exact binaries: a postbox, the tunnel broker,
+    # `pigeonpost agentd run` and `pigeonpost ssh`, on loopback, with a recording proxy proving the
+    # broker sees ciphertext only. Docker on the hosted runner exercises container mode too.
+    # Synthetic issuer, CA and accounts made for the run; no secrets, no network services.
+    name: agent SSH end to end (loopback)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@8632757d5a758c452f724e9d837848c694a7bb48 # 1.91.1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Build the exact binaries
+        run: cargo build --locked -p pigeonpost-postbox -p pigeonpost-tunnel -p pigeonpost-cli
+      - name: Run the harness
+        run: |
+          python3 -c 'import cryptography' 2>/dev/null || python3 -m pip install --user cryptography
+          python3 tests/e2e-ssh/verify.py --postbox target/debug/pigeonpost-postbox \
+            --tunnel target/debug/pigeonpost-tunnel --cli target/debug/pigeonpost | tee e2e-ssh.log
+          grep -q '^PASS:' e2e-ssh.log
+          if grep -q 'SKIPPED container' e2e-ssh.log; then echo '::error::container mode was not exercised'; exit 1; fi
+
   openapi:
     # The postbox route-drift tests read the specs as text, so they cannot notice a merge that
     # leaves a file unparseable. This parses both specs strictly (duplicate keys fail), validates

@@ -676,6 +676,7 @@ mod tests {
             permission,
             branches: vec!["*".into()],
             daily_runs_per_sender: 0,
+            shell: None,
             panel,
         }
     }

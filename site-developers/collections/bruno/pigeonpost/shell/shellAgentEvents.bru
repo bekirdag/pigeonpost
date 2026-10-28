@@ -1,0 +1,19 @@
+meta {
+  name: The agent machine's shell control stream (Server-Sent Events)
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/v1/shell/agent/events
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  The agent mailbox's own credential only. Events: shell.hello {ca_public_key, ca_fp, broker_url}, shell.request {session_id, leg_token, broker_url, requester, via, mode, client_key_fp, cert_serial, ca_fp, principal, connect_by, ends_by, idle_secs}, shell.revoke {session_id, reason}. Holding it is what connected means.
+}

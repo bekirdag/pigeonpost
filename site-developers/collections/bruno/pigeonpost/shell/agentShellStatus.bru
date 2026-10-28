@@ -1,0 +1,23 @@
+meta {
+  name: An agent's SSH status
+  type: http
+  seq: 11
+}
+
+get {
+  url: {{baseUrl}}/v1/agents/:address/shell
+  body: none
+  auth: bearer
+}
+
+params:path {
+  address: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  A person related to the agent (owner, supervisor or ssh delegate); others get 404.
+}

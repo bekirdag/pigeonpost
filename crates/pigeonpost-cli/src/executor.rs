@@ -100,6 +100,10 @@ pub struct MailboxRoute {
     /// intentions.
     #[serde(default)]
     pub daily_runs_per_sender: u32,
+    /// SSH to this mailbox's workspace (SDS §11.4): absent or `enabled = false` means none. Only
+    /// this file can enable it. A table, so it sits with `panel` after every scalar field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shell: Option<crate::shell::config::ShellConfig>,
     /// A second agent that reads the work and comments before the reply is sent.
     ///
     /// Absent means one agent answers, which is what every config written before this existed
@@ -1201,6 +1205,7 @@ mod tests {
             permission: Permission::ReadOnly,
             branches: Vec::new(),
             daily_runs_per_sender: 50,
+            shell: None,
             panel: None,
         }
     }

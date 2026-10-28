@@ -1,0 +1,19 @@
+meta {
+  name: Sessions I requested, and sessions on agents I supervise
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/v1/shell/sessions
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  A person. Metadata only.
+}

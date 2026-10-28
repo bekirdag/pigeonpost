@@ -116,6 +116,21 @@ pub(crate) enum Action {
     StreamModerate,
     /// `POST /internal/v1/stream-admission`, `/stream-check`, `/stream-end` (the calls service).
     StreamAdmission,
+    /// Open an SSH session to an agent's workspace (SDS §11.5), or collect its credentials after
+    /// approval: a person, signed in recently and strongly, holding the agent (or the org owner
+    /// role, or a live `ssh` delegation) — resolved into `Facts::shell_permitted`. Never an API
+    /// key, an org key, a connector or another agent's mailbox (`human_required`).
+    ShellOpen,
+    /// Approve or deny someone else's pending session, approve a host-key rotation, or switch SSH
+    /// on for an org agent: a person with authority over the agent, with step-up.
+    ShellApprove,
+    /// See an agent's shell status, list or end sessions: a person with a relation to the agent.
+    ShellView,
+    /// The agent machine's own side: hold the shell control stream and report its local opt-in
+    /// and host key. Only the agent's own mailbox credential, never an account credential.
+    ShellAgent,
+    /// `POST /internal/v1/shell/*` (the tunnel broker).
+    ShellBroker,
 }
 
 /// The resource acted on, with bindings resolved from server state.
@@ -135,6 +150,11 @@ pub(crate) enum Resource<'a> {
     Org(&'a str),
     /// A pending device pairing or enrollment, by id.
     DeviceGrant(&'a str),
+    /// An agent's shell, by the agent's immutable mailbox address. A person's grant (owner, org
+    /// owner, or a live `ssh` delegation, plus the org's and the agent's switches) is resolved
+    /// from server state into [`Facts::shell_permitted`]; the agent itself acts with its own
+    /// mailbox credential only.
+    AgentShell { agent: &'a str },
     /// A group's live stream, acted on as `mailbox` (with its stored account binding). The group
     /// rules (membership, role, the group's `stream_policy`, the stage) are resolved from the rows
     /// the request changes into [`Facts::stream_permitted`].
@@ -172,6 +192,9 @@ enum Requirement {
     Anyone,
     /// An org API key, and nothing else.
     OrgKey,
+    /// One mailbox's own credential (capability token or device credential), and nothing else:
+    /// not the account that owns it.
+    Mailbox,
 }
 
 impl Action {
@@ -203,6 +226,10 @@ impl Action {
             Action::StreamWatch => Requirement::NotConnector,
             Action::StreamPublish | Action::StreamModerate => Requirement::Human,
             Action::StreamAdmission => Requirement::Service,
+            Action::ShellOpen | Action::ShellApprove => Requirement::HumanStepUp,
+            Action::ShellView => Requirement::Human,
+            Action::ShellAgent => Requirement::Mailbox,
+            Action::ShellBroker => Requirement::Service,
         }
     }
 }
@@ -234,6 +261,10 @@ pub(crate) struct Facts {
     /// watch; an active non-restricted member allowed by `stream_policy` to go live; the invited
     /// member to accept the stage; the streamer or a group admin to moderate.
     pub stream_permitted: bool,
+    /// The person's authority over the agent's shell for this action (SDS §11.5): ownership, the
+    /// org owner role or a live `ssh` delegation, with the org's `ssh_allowed` and the agent's own
+    /// switch — or, for approvals, the org role that may approve.
+    pub shell_permitted: bool,
 }
 
 /// Why a request was refused. Stable; mapped to an HTTP status and error code.
@@ -344,6 +375,11 @@ pub(crate) fn authorize_with(
                 return Err(DenyReason::CredentialNotAccepted);
             }
         }
+        (Requirement::Mailbox, Actor::Principal(p)) => {
+            if !matches!(p, Principal::Identity(_)) {
+                return Err(DenyReason::CredentialNotAccepted);
+            }
+        }
         (Requirement::AccountHolder, Actor::Principal(p)) => match p {
             Principal::Account(_, AccountCredential::ApiKey | AccountCredential::Member(_)) => {}
             _ => return Err(DenyReason::CredentialNotAccepted),
@@ -395,6 +431,19 @@ pub(crate) fn authorize_with(
         // A key acts on its own org only, within its scope and its creator's live authority.
         (Actor::OrgKey { org_id, .. }, Resource::Org(id)) => {
             org_id == id && facts.org_permitted && facts.scope_granted
+        }
+        // The agent's own side: only that agent's mailbox credential.
+        (Actor::Principal(Principal::Identity(identity)), Resource::AgentShell { agent })
+            if action == Action::ShellAgent =>
+        {
+            identity.address == *agent
+        }
+        // A person's side: the grant resolved from server state, for the person actions only.
+        (Actor::Principal(Principal::Account(_, _)), Resource::AgentShell { .. }) => {
+            matches!(
+                action,
+                Action::ShellOpen | Action::ShellApprove | Action::ShellView
+            ) && facts.shell_permitted
         }
         (_, Resource::DeviceGrant(_)) => {
             matches!(action, Action::DeviceEnroll) && facts.device_proof
@@ -1007,6 +1056,139 @@ mod tests {
                 &granted
             ),
             Err(DenyReason::NotPermitted)
+        );
+    }
+
+    /// SDS §11.5: a shell is for a person with step-up and a resolved grant; the agent's own side
+    /// is its mailbox credential only; nothing else reaches either.
+    #[test]
+    fn shell_actions_need_a_strong_person_or_the_agents_own_mailbox() {
+        let strong = human("a1", Some("gold"));
+        let weak = human("a1", None);
+        let key = Principal::Account("a1".into(), AccountCredential::ApiKey);
+        let connector = Principal::Account(
+            "a1".into(),
+            AccountCredential::Connector { client: "c".into() },
+        );
+        let mut own = crate::store::StoredIdentity::test_fixture("/k/agent");
+        own.account_id = Some("a1".into());
+        let agent_mb = Principal::Identity(own);
+        let mut other = crate::store::StoredIdentity::test_fixture("/k/other");
+        other.account_id = Some("a1".into());
+        let other_mb = Principal::Identity(other);
+        let shell = Resource::AgentShell { agent: "/k/agent" };
+        let granted = Facts {
+            shell_permitted: true,
+            ..facts()
+        };
+        assert!(authorize(
+            &Actor::Principal(&strong),
+            Action::ShellOpen,
+            &shell,
+            &granted
+        )
+        .is_ok());
+        // No grant, no shell, however strong the sign-in.
+        assert_eq!(
+            authorize(
+                &Actor::Principal(&strong),
+                Action::ShellOpen,
+                &shell,
+                &facts()
+            ),
+            Err(DenyReason::NotPermitted)
+        );
+        assert_eq!(
+            authorize(
+                &Actor::Principal(&weak),
+                Action::ShellOpen,
+                &shell,
+                &granted
+            )
+            .unwrap_err()
+            .code(),
+            "step_up_required"
+        );
+        for p in [&key, &connector, &agent_mb, &other_mb] {
+            for action in [Action::ShellOpen, Action::ShellApprove, Action::ShellView] {
+                assert_eq!(
+                    authorize(&Actor::Principal(p), action, &shell, &granted)
+                        .unwrap_err()
+                        .code(),
+                    "human_required"
+                );
+            }
+        }
+        let org_key = Actor::OrgKey {
+            key_id: "k",
+            org_id: "o",
+        };
+        assert_eq!(
+            authorize(&org_key, Action::ShellOpen, &shell, &granted)
+                .unwrap_err()
+                .code(),
+            "human_required"
+        );
+        // A mandatory deny still wins.
+        let revoked = Facts {
+            credential_revoked: true,
+            ..granted.clone()
+        };
+        assert!(authorize(
+            &Actor::Principal(&strong),
+            Action::ShellOpen,
+            &shell,
+            &revoked
+        )
+        .is_err());
+        // The agent's side: exactly its own mailbox credential.
+        assert!(authorize(
+            &Actor::Principal(&agent_mb),
+            Action::ShellAgent,
+            &shell,
+            &facts()
+        )
+        .is_ok());
+        assert_eq!(
+            authorize(
+                &Actor::Principal(&other_mb),
+                Action::ShellAgent,
+                &shell,
+                &facts()
+            ),
+            Err(DenyReason::NotPermitted)
+        );
+        for p in [&strong, &key, &connector] {
+            assert_eq!(
+                authorize(&Actor::Principal(p), Action::ShellAgent, &shell, &granted),
+                Err(DenyReason::CredentialNotAccepted)
+            );
+        }
+        // The broker is a service on the platform, and only that.
+        assert!(authorize(
+            &Actor::Service("tunnel"),
+            Action::ShellBroker,
+            &Resource::Platform,
+            &facts()
+        )
+        .is_ok());
+        assert_eq!(
+            authorize(
+                &Actor::Principal(&strong),
+                Action::ShellBroker,
+                &Resource::Platform,
+                &granted
+            ),
+            Err(DenyReason::CredentialNotAccepted)
+        );
+        assert_eq!(
+            authorize(
+                &Actor::Service("tunnel"),
+                Action::ShellOpen,
+                &shell,
+                &granted
+            ),
+            Err(DenyReason::CredentialNotAccepted)
         );
     }
 }

@@ -1,0 +1,29 @@
+meta {
+  name: Approve the agent's pending host key (explicit rotation)
+  type: http
+  seq: 12
+}
+
+post {
+  url: {{baseUrl}}/v1/agents/:address/shell/host-key
+  body: json
+  auth: bearer
+}
+
+params:path {
+  address: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "fingerprint": "string"
+  }
+}
+
+docs {
+  A supervisor of the agent, with step-up; the fingerprint must equal the pending one. Ends the agent's open sessions.
+}

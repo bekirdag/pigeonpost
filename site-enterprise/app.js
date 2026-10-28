@@ -26,7 +26,9 @@
     ["bind_handle", "Bind the address to a machine's mailbox"],
     ["configure_rules", "Change its personal rules"],
     ["read_inbox", "Read its inbox in the apps"],
+    ["ssh", "Open a terminal on its workspace (SSH)"],
   ];
+  const sshOn = () => app.features.includes("agent_ssh");
 
   const app = { features: [], orgs: [], org: null, me: null, page: "people" };
   PPE.app = app;
@@ -394,6 +396,7 @@
   }
 
   async function agentSheet(a) {
+    const ssh = sshOn() ? await sshState(a).catch(() => null) : null;
     const [devices, delegations, members] = await Promise.all([
       PPE.postbox(orgPath(`/agents/${encodeURIComponent(a.address)}/devices`)).then((r) => r.devices || []).catch(() => []),
       PPE.postbox(orgPath("/delegations")).then((r) => (r.delegations || []).filter((d) => d.target === a.address || d.target === a.handle)).catch(() => []),
@@ -444,6 +447,8 @@
         PPE.toast("Operator added"); PPE.closeSheet(); go("agents", true);
       }));
       body.append(el("details", {}, el("summary", {}, "Add an operator"), PPE.field("Person", who), ...caps, PPE.field("Until (optional)", until), el("div", { class: "actions" }, grant)));
+
+      if (sshOn()) body.append(sshSection(a, ssh));
 
       const toggle = el("button", { class: "btn", type: "button" }, a.status === "active" ? "Suspend" : "Reactivate");
       toggle.addEventListener("click", busy(toggle, async () => {
@@ -654,6 +659,63 @@
         : el("p", { class: "muted" }, "No invoices yet."));
   }
 
+  // ---- SSH to an agent's workspace (Phase 8, SDS §11) -------------------------------------------
+  // Supervision only: switching it on for the agent, approving its machine's host key, and
+  // approving, denying or ending sessions. Opening a terminal is `pigeonpost ssh` (docs/agent-ssh.md):
+  // the browser has no vetted SSH client, and the server never carries a shell's plaintext.
+
+  async function sshState(a) {
+    const enc = encodeURIComponent(a.address);
+    const [status, sessions] = await Promise.all([
+      PPE.postbox(`/v1/agents/${enc}/shell`).catch(() => null),
+      PPE.postbox("/v1/shell/sessions").then((r) => (r.sessions || []).filter((x) => x.agent === a.address && x.state !== "closed")).catch(() => []),
+    ]);
+    return { status, sessions };
+  }
+
+  function sshSection(a, ssh) {
+    const st = (ssh && ssh.status) || {};
+    const org = st.org || {};
+    const wrap = el("div", {}, el("h3", {}, "Terminal (SSH)"));
+    if (!(app.org.settings || {}).ssh_allowed) {
+      wrap.append(el("p", { class: "muted" }, "SSH to agents is off for this organization. An owner or admin can allow it under Security."));
+      return wrap;
+    }
+    wrap.append(toggle("Allow SSH to this agent (people still need the “Open a terminal” permission)", Boolean(org.agent_enabled), async (v) => {
+      await PPE.postbox(orgPath(`/agents/${encodeURIComponent(a.address)}/shell`), { method: "PUT", body: { enabled: v } });
+    }));
+    const facts = st.enabled
+      ? `${st.connected ? "Machine connected" : "Machine not connected"} · ${st.mode} mode · host key ${st.host_key_fp}`
+      : "The agent's machine has not enabled SSH in its agentd.toml.";
+    wrap.append(el("p", { class: "muted" }, facts));
+    if (st.pending_host_key_fp) {
+      const ok = el("button", { class: "btn btn-small", type: "button" }, "Approve new key");
+      ok.addEventListener("click", busy(ok, async () => {
+        if (!window.confirm(`The agent's machine presents a new host key:\n${st.pending_host_key_fp}\n\nApprove it only if you can confirm this fingerprint on the machine (pigeonpost agentd shell). Open sessions end.`)) return;
+        await PPE.postbox(`/v1/agents/${encodeURIComponent(a.address)}/shell/host-key`, { method: "POST", body: { fingerprint: st.pending_host_key_fp } });
+        PPE.toast("New host key approved"); PPE.closeSheet(); go("agents", true);
+      }));
+      wrap.append(el("div", { class: "setting" }, el("p", {}, "New host key waiting for approval", el("span", { class: "sub muted mono" }, ` ${st.pending_host_key_fp}`)), ok));
+    }
+    for (const x of (ssh && ssh.sessions) || []) {
+      const who = (x.requester && (x.requester.handle || x.requester.account)) || "someone";
+      const row = el("div", { class: "setting" }, el("p", {}, who, el("span", { class: "sub muted" }, ` · ${x.state.replace("_", " ")} · since ${PPE.date(x.created_at)}`)));
+      const act = (label, path, method, msg, cls) => {
+        const b = el("button", { class: `btn btn-small ${cls || ""}`, type: "button" }, label);
+        b.addEventListener("click", busy(b, async () => {
+          await PPE.postbox(`/v1/shell/sessions/${encodeURIComponent(x.id)}${path}`, { method, body: method === "POST" ? {} : undefined });
+          PPE.toast(msg); PPE.closeSheet(); go("agents", true);
+        }));
+        return b;
+      };
+      if (x.state === "awaiting_approval") row.append(act("Approve", "/approve", "POST", "Approved"), act("Deny", "/deny", "POST", "Denied", "btn-quiet"));
+      else row.append(act("End", "", "DELETE", "Session ended", "btn-danger"));
+      wrap.append(row);
+    }
+    wrap.append(el("p", { class: "muted" }, "People with permission connect from a terminal:"), secretBox(`pigeonpost ssh ${a.handle}`));
+    return wrap;
+  }
+
   // ---- Security --------------------------------------------------------------------------------
 
   function toggle(sentence, checked, onChange) {
@@ -707,7 +769,9 @@
       head("Security", null, add),
       el("div", { class: "card" },
         toggle("Require two-step sign-in for everyone in the organization", Boolean(s.require_mfa), (v) => patchSettings({ require_mfa: v })),
-        toggle("Only invite addresses at verified domains", Boolean(s.invite_domains_only), (v) => patchSettings({ invite_domains_only: v }))),
+        toggle("Only invite addresses at verified domains", Boolean(s.invite_domains_only), (v) => patchSettings({ invite_domains_only: v })),
+        sshOn() ? toggle("Allow SSH to agents (each agent and each person still needs its own permission)", Boolean(s.ssh_allowed), (v) => patchSettings({ ssh_allowed: v })) : null,
+        sshOn() ? toggle("Every SSH session needs an owner's, admin's or agent admin's approval", Boolean(s.ssh_requires_approval), (v) => patchSettings({ ssh_requires_approval: v })) : null),
       el("h2", {}, "Domains"), domains.length ? domainCards : el("p", { class: "muted" }, "No domains yet. Verify your company's domain to restrict invitations to it."),
       app.can("api-keys") ? el("div", { class: "card" }, el("h2", {}, "API keys and webhooks"),
         el("p", { class: "muted" }, "Scoped keys let your own systems manage people, agents, rules and rooms. Webhooks tell them when something changes. Neither can read messages."),

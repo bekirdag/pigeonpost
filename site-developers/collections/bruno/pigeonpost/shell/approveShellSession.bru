@@ -1,0 +1,23 @@
+meta {
+  name: Approve a pending session
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/v1/shell/sessions/:id/approve
+  body: none
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  A supervisor of the agent other than the requester, with step-up.
+}
