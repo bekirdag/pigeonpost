@@ -12,6 +12,7 @@ from pathlib import Path
 
 from pigeonpost import groupcrypto
 from pigeonpost import meeting_notes as mn
+from pigeonpost.groupstore import MemoryStorage
 from pigeonpost.protected import MemoryProtectedStore
 from pigeonpost.theme import Preferences
 from pigeonpost.ui import Gtk, Window
@@ -219,6 +220,8 @@ class NotesWindowTests(WindowCase):
         self.window = Window(self.app, api=self.api, restore=False, preferences=Preferences(Path(self.config.name) / "p.json"),
                              protected=self.store)
         self.window.session.owner = "owner-a"
+        # Never the desktop keyring in tests: group devices use memory storage, as in WindowCase.
+        self.window.group_storage_factory = lambda _gc: MemoryStorage()
         self.window.present()
         self.window.account_loaded(self.api.identities())
         pump(lambda: self.window.known_ids is not None and self.window.features == self.features, timeout=5)
