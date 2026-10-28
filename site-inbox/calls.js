@@ -2043,6 +2043,43 @@
     measure();
   }
 
+  // Every picture in its real shape. A phone sends portrait while upright and landscape on its
+  // side, and switches mid-call when turned; a laptop sends landscape. What arrives is read from the
+  // video itself (videoWidth/videoHeight, again on every "resize", which is how a turned phone shows
+  // up), never assumed. A tile fills itself (object-fit: cover) only while that costs at most a
+  // quarter of the picture — a 16:9 camera in a 4:3 tile — and otherwise shows all of it
+  // (data-fit="contain"), so a landscape speaker is never cut down to a portrait strip or a portrait
+  // one to a band across their face. Your own view takes your camera's shape (--self-ar).
+  const FIT_MAX_CROP = 0.25;
+  const fitting = typeof ResizeObserver !== "undefined" ? new ResizeObserver((entries) => {
+    // A tile taken off the stage reports once, at zero size: let it go then.
+    for (const e of entries) if (e.target.isConnected) fitVideo(e.target); else fitting.unobserve(e.target);
+  }) : null;
+  function fitVideo(video) {
+    const w = video.videoWidth, h = video.videoHeight;
+    if (!w || !h) return;
+    const shape = w > h ? "landscape" : w < h ? "portrait" : "square";
+    if (video.id === "call-self-video") {
+      const box = $("call-self");
+      if (!box) return;
+      box.style.setProperty("--self-ar", w + " / " + h);
+      box.dataset.shape = shape;
+      return;
+    }
+    video.dataset.shape = shape;
+    video.style.setProperty("--video-ar", w + " / " + h);
+    const bw = video.clientWidth, bh = video.clientHeight;
+    if (!bw || !bh) return;
+    const a = w / h, b = bw / bh;
+    video.dataset.fit = 1 - Math.min(a, b) / Math.max(a, b) > FIT_MAX_CROP ? "contain" : "cover";
+  }
+  function watchShape(video) {
+    const fit = () => fitVideo(video);
+    video.addEventListener("loadedmetadata", fit);
+    video.addEventListener("resize", fit);
+    if (fitting) fitting.observe(video);
+  }
+
   // Your own view, in whichever corner you put it. Drag it (finger, pen or mouse) and it snaps to
   // the nearest corner; with it focused, the arrow keys move it between corners. The corner is
   // remembered on this device. The corners themselves are the stylesheet's ([data-corner]): clear
@@ -2237,6 +2274,7 @@
     if (!host()) document.body.append(el("div", { class: "toast", id: "call-toast", role: "status", "aria-live": "polite", hidden: true }));
     watchLayout(ui);
     movableSelf($("call-self"));
+    watchShape($("call-self-video"));
 
     $("call-mute").addEventListener("click", toggleMute);
     $("call-camera").addEventListener("click", toggleCamera);
@@ -2468,7 +2506,9 @@
     if (tile) return tile;
     const pin = el("button", { class: "call-tile-act call-pin", type: "button" }, svg(ICON.pin));
     pin.addEventListener("click", (e) => { e.stopPropagation(); togglePin(view.id); });
-    const children = [el("video", { class: "call-tile-video", autoplay: true, playsinline: true, muted: true })];
+    const picture = el("video", { class: "call-tile-video", autoplay: true, playsinline: true, muted: true });
+    watchShape(picture);
+    const children = [picture];
     if (view.kind === "cam") {
       children.push(el("span", { class: "avatar call-tile-face", "aria-hidden": "true" }));
       children.push(el("span", { class: "call-mute-badge", hidden: true, title: "Muted", "aria-label": "Muted" }, svg(ICON.mic + ICON.slash)));

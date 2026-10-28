@@ -14,12 +14,25 @@
 // at 1440x900 (desktop), 1180x820 and 820x1180 (iPad), 844x390 (phone landscape), 390x844 and
 // 430x932 (phones).
 //
+// Orientation: Alice's camera starts upright (a phone held upright, 720x1280), Bob's on its side
+// (1280x720); then both turn theirs mid-call. Every camera must arrive in the shape it was sent,
+// each side must show the other's whole picture rather than crop it to the tile's shape (at most a
+// quarter cut away), and your own view must take your camera's shape — in every viewport, with the
+// other's camera and screen side by side and with the camera alone on the stage.
+//
 // Also: no tile runs under the controls dock (bar the solo view, which fills the stage by design),
 // and your own view — moved to each corner with the arrow keys, and once by dragging — lies wholly
 // inside the call, clear of the dock and the header's controls. Screenshots of every state are
 // written to OUT (default: a temporary folder) for review.
 //
 //   cd site-inbox && npm run test:call-layout
+//   SFU=1 npm run test:call-layout     # the same call through a local media server (livekit-server on
+//                                      # PATH; 127.0.0.1:7990-7991, 50500-50600/udp), encrypted frames
+//   ROTATED=1 npm run test:call-layout # Alice's camera as a phone's: landscape frames marked as turned
+//                                      # a quarter, carried as the video-orientation extension. Mesh
+//                                      # only: the media server negotiates no such extension, so there
+//                                      # each sender turns the pixels itself (WebKit does; Chrome sends
+//                                      # nothing for a generated frame marked as turned).
 //   CHROME=/path/to/chrome OUT=/tmp/call-layout node test/call-layout/run.mjs
 //
 // Exits 1 and lists every intersecting pair when anything overlaps.
@@ -101,7 +114,20 @@ const server = http.createServer(async (req, res) => {
 });
 await new Promise((r) => server.listen(0, "127.0.0.1", r));
 const ORIGIN = `http://127.0.0.1:${server.address().port}`;
-calls = createCallsService(configFromEnv({ CALLS_POSTBOX_URL: "http://postbox.test", CALLS_ALLOWED_ORIGINS: ORIGIN, CALLS_TRUST_PROXY: "0" }), { fetch: postbox });
+// SFU=1: a mesh of one, so the call moves to the media server as soon as Bob answers — what a call of
+// seven or more does, with the same frame encryption and simulcast.
+let livekit = null;
+if (process.env.SFU === "1" && process.env.ROTATED === "1") { console.error("ROTATED=1 checks the mesh only (see above)"); process.exit(2); }
+const SFU = process.env.SFU === "1" ? { key: "APIlayout", secret: "s".repeat(48), port: 7990 } : null;
+if (SFU) {
+  const yaml = path.join(OUT, "livekit.yaml");
+  writeFileSync(yaml, `port: ${SFU.port}\nbind_addresses: ["127.0.0.1"]\nrtc:\n  tcp_port: ${SFU.port + 1}\n  port_range_start: 50500\n  port_range_end: 50600\n  use_external_ip: false\n  node_ip: 127.0.0.1\nkeys:\n  ${SFU.key}: ${SFU.secret}\nlogging:\n  level: warn\n`);
+  livekit = spawn(process.env.LIVEKIT || "livekit-server", ["--config", yaml], { stdio: "ignore" });
+  await sleep(1500);
+}
+calls = createCallsService(configFromEnv({ CALLS_POSTBOX_URL: "http://postbox.test", CALLS_ALLOWED_ORIGINS: ORIGIN, CALLS_TRUST_PROXY: "0",
+  ...(SFU ? { CALLS_MESH_MAX: "1", CALLS_SFU_URL: `ws://127.0.0.1:${SFU.port}`, CALLS_SFU_API_URL: `http://127.0.0.1:${SFU.port}`,
+    CALLS_SFU_KEY: SFU.key, CALLS_SFU_SECRET: SFU.secret, CALLS_SFU_BUDGET_MBPS: "400" } : {}) }), { fetch: postbox });
 
 // ---- headless Chrome over the DevTools protocol ---------------------------------------------------
 function findChrome() {
@@ -263,12 +289,33 @@ const CLOSE_DETAILS = `(async () => {
   return pill.getAttribute("aria-expanded") === "false" && details.hidden && document.activeElement === pill ? [] : ["Escape did not close the details"];
 })()`;
 
+// The other person's camera as this side shows it, and your own view: the shape that arrived, and how
+// much of each picture the tile cuts away.
+const SHAPES = `(() => {
+  const crop = (vw, vh, bw, bh, fit) => {
+    if (!vw || !vh || !bw || !bh || fit !== "cover") return 0;
+    const a = vw / vh, b = bw / bh;
+    return 1 - Math.min(a, b) / Math.max(a, b);
+  };
+  const shape = (w, h) => !w || !h ? "none" : w > h ? "landscape" : w < h ? "portrait" : "square";
+  const v = document.querySelector('.call-tile[data-kind="cam"] .call-tile-video');
+  const s = document.getElementById("call-self-video");
+  // Your camera fills your view, or while you share, a corner of it.
+  const r = v && v.getBoundingClientRect(), sr = s && s.getBoundingClientRect();
+  return {
+    remote: v ? { shape: shape(v.videoWidth, v.videoHeight), size: v.videoWidth + "x" + v.videoHeight, fit: getComputedStyle(v).objectFit,
+      box: Math.round(r.width) + "x" + Math.round(r.height), crop: crop(v.videoWidth, v.videoHeight, r.width, r.height, getComputedStyle(v).objectFit) } : null,
+    self: s ? { shape: shape(s.videoWidth, s.videoHeight), box: Math.round(sr.width) + "x" + Math.round(sr.height),
+      crop: crop(s.videoWidth, s.videoHeight, sr.width, sr.height, getComputedStyle(s).objectFit) } : null,
+  };
+})()`;
+
 const failures = [];
 const report = [];
 let browser;
 try {
   browser = await launchChrome();
-  const alice = await browser.page(`${ORIGIN}/native-call.html?as=alice`);
+  const alice = await browser.page(`${ORIGIN}/native-call.html?as=alice&cam=${process.env.ROTATED === "1" ? "rotated" : "portrait"}`);
   const bob = await browser.page(`${ORIGIN}/?as=bob`);
   await until(() => alice.evaluate(`Boolean(window.PigeonpostNative && window.PigeonpostCalls)`), "the native call page");
   await until(() => bob.evaluate(`Boolean(window.PigeonpostCalls && PigeonpostCalls.inspect().session)`), "Bob's inbox to sign in to calls");
@@ -280,6 +327,10 @@ try {
   const people = { alice, bob };
   const connected = (p) => p.evaluate(`(PigeonpostCalls.inspect().peers || []).some((x) => x.connected)`);
   await until(async () => (await connected(alice)) && (await connected(bob)), "the call to connect");
+  if (SFU) {
+    await until(async () => (await alice.evaluate(`PigeonpostCalls.inspect().room.topology`)) === "sfu" && (await bob.evaluate(`PigeonpostCalls.inspect().peers.every((p) => p.sfu && !p.mesh)`)), "the call to move to the media server", 40000);
+    report.push({ name: "on the media server", layout: "sfu", count: "-", acts: "-", problems: [] });
+  }
   await sleep(1500);
 
   async function check(state, expect) {
@@ -326,6 +377,41 @@ try {
   for (const p of Object.values(people)) await p.evaluate(`document.getElementById("call-layout").click()`);
   await check("grid", { layout: "grid", count: "2" });
 
+  // Orientation: each camera arrives in the shape it is sent, whole, and turning it is followed.
+  const sent = { alice: "portrait", bob: "landscape" };
+  const other = { alice: "bob", bob: "alice" };
+  async function shapes(state) {
+    for (const v of VIEWPORTS) {
+      for (const [who, p] of Object.entries(people)) {
+        await p.viewport(v);
+        const name = `${who}-${state}-${v.name}`;
+        let m;
+        try {
+          m = await until(async () => { const x = await p.evaluate(SHAPES); return x.remote && x.remote.shape === sent[other[who]] && x.self && x.self.shape === sent[who] && x; }, "the cameras' shapes", 15000);
+        } catch (_) { m = await p.evaluate(SHAPES); }
+        await sleep(300);
+        m = await p.evaluate(SHAPES);
+        await p.shot(path.join(OUT, name + ".png"));
+        const problems = [];
+        if (!m.remote || m.remote.shape !== sent[other[who]]) problems.push(`${other[who]}'s ${sent[other[who]]} camera arrived ${m.remote ? m.remote.shape + " (" + m.remote.size + ")" : "not at all"}`);
+        else if (m.remote.crop > 0.26) problems.push(`${other[who]}'s ${m.remote.shape} camera is cropped by ${Math.round(m.remote.crop * 100)}% (${m.remote.fit} in ${m.remote.box})`);
+        if (!m.self || m.self.shape !== sent[who]) problems.push(`your own view is ${m.self ? m.self.shape : "missing"}, not ${sent[who]}`);
+        else if (m.self.crop > 0.26) problems.push(`your own ${m.self.shape} view is cropped by ${Math.round(m.self.crop * 100)}% (in ${m.self.box})`);
+        for (const problem of problems) failures.push(`${name}: ${problem}`);
+        report.push({ name, layout: "shape", count: m.remote ? m.remote.size : "-", acts: m.remote ? m.remote.fit : "-", pill: m.remote && m.remote.box, dock: m.self && m.self.box, act: m.remote && Math.round(m.remote.crop * 100) + "%", problems });
+      }
+    }
+    for (const p of Object.values(people)) await p.viewport(VIEWPORTS[0]);
+  }
+  await shapes("shapes-grid");
+  for (const p of Object.values(people)) await p.evaluate(`document.getElementById("call-share").click()`);
+  for (const p of Object.values(people)) await until(() => p.evaluate(`document.getElementById("call-grid").dataset.count === "1"`), "the shared screens to stop");
+  await shapes("shapes-solo");
+  // Turned: Alice's phone on its side, Bob's upright.
+  Object.assign(sent, { alice: "landscape", bob: "portrait" });
+  for (const [who, p] of Object.entries(people)) await p.evaluate(`window.__turnCamera(${JSON.stringify(sent[who])})`);
+  await shapes("shapes-turned");
+
   // Dragging: a mouse on the desktop, a finger on a phone. Released past the middle, it snaps to the
   // nearest corner and remembers it.
   async function drag(p, v, kind, to) {
@@ -358,6 +444,7 @@ try {
   failures.push("harness: " + (error && error.stack || error));
 } finally {
   browser?.close();
+  livekit?.kill();
   server.close();
 }
 
