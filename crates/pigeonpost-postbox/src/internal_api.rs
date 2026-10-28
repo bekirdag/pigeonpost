@@ -504,7 +504,9 @@ async fn purge_account(
     }
     if !(id.starts_with("acct_")
         && id.len() <= 64
-        && id[5..].chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
+        && id[5..]
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_'))
     {
         return err_response(StatusCode::NOT_FOUND, "no_account", None);
     }
