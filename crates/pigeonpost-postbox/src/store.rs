@@ -26,11 +26,13 @@ mod filtering;
 mod googleplay;
 mod groups;
 mod lifecycle;
+mod limits;
 pub(crate) mod meetings;
 mod msgactions;
 mod org_api;
 mod org_model;
 mod orgs;
+mod purge;
 mod shell;
 mod streams;
 pub use audit::AuditRow;
@@ -976,6 +978,8 @@ impl Store {
         // Phase 7: meeting summaries (SDS §14) — metadata, consent, public keys, ciphertext.
         conn.execute_batch(meetings::SCHEMA)?;
         conn.execute_batch(shell::SCHEMA)?;
+        // Phase 9: rate-limiter state that survives restarts.
+        conn.execute_batch(limits::SCHEMA)?;
         for stmt in MIGRATIONS
             .iter()
             .chain(filtering::MIGRATIONS)

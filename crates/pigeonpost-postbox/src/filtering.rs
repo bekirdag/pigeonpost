@@ -134,6 +134,37 @@ impl PairLimiter {
         }
     }
 
+    /// Attempts inside the hourly window, for the restart-safe limiter snapshot.
+    pub(crate) fn snapshot(&self, now: u64) -> Vec<(String, String, Vec<u64>)> {
+        let map = self.attempts.lock().expect("pair limiter");
+        map.iter()
+            .map(|((a, b), q)| {
+                let kept: Vec<u64> = q
+                    .iter()
+                    .copied()
+                    .filter(|t| now.saturating_sub(*t) < PAIR_HOURLY.1)
+                    .collect();
+                (a.clone(), b.clone(), kept)
+            })
+            .filter(|(_, _, v)| !v.is_empty())
+            .collect()
+    }
+
+    /// Merge a snapshot taken before a restart.
+    pub(crate) fn restore(&self, rows: Vec<(String, String, Vec<u64>)>, now: u64) {
+        let mut map = self.attempts.lock().expect("pair limiter");
+        for (a, b, times) in rows.into_iter().take(PAIR_TRACKED) {
+            let q = map.entry((a, b)).or_default();
+            for t in times
+                .into_iter()
+                .filter(|t| *t <= now && now.saturating_sub(*t) < PAIR_HOURLY.1)
+            {
+                q.push_back(t);
+            }
+            q.make_contiguous().sort_unstable();
+        }
+    }
+
     /// Record an attempt and say whether the pair is now over a limit.
     pub(crate) fn attempt(&self, caller: &str, callee: &str, now: u64) -> bool {
         let mut map = self.attempts.lock().expect("pair limiter");

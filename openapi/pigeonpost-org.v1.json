@@ -8230,6 +8230,11 @@
           "ssh_requires_approval": {
             "type": "boolean",
             "description": "Every SSH session also needs an owner's, admin's or agent admin's approval."
+          },
+          "stream_max_viewers": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Viewers per live stream in this org's rooms, below the server's ceiling. Absent means the server's ceiling. Changed on the dashboard only."
           }
         },
         "additionalProperties": false

@@ -134,6 +134,7 @@ async fn list_mine(State(state): State<AppState>, headers: HeaderMap) -> Respons
             crate::Principal::Account(a, _) => a.clone(),
             crate::Principal::Identity(_) => return Err(GErr::forbidden("account_required", "sign in to list your organizations")),
         };
+        crate::authorize_own_account(&principal).map_err(|e| GErr::forbidden(e.code, "this credential may not list organizations"))?;
         let acct = account.clone();
         let now = now_unix();
         let (orgs, operated) = state
@@ -255,6 +256,9 @@ struct PatchSettings {
     ssh_allowed: Option<bool>,
     #[serde(default)]
     ssh_requires_approval: Option<bool>,
+    /// `0` clears it back to the server ceiling.
+    #[serde(default)]
+    stream_max_viewers: Option<i64>,
 }
 
 /// `PATCH /v1/orgs/{id}`
@@ -313,6 +317,17 @@ async fn patch_org(
                 }
                 settings.ssh_requires_approval = v;
                 changed.push("ssh_requires_approval");
+            }
+            if let Some(v) = s.stream_max_viewers {
+                let ceiling = crate::streams::max_viewers();
+                if !(0..=ceiling).contains(&v) {
+                    return Err(GErr::bad(
+                        "bad_request",
+                        "stream_max_viewers is 1 to the server's limit, or 0 for the default",
+                    ));
+                }
+                settings.stream_max_viewers = (v > 0).then_some(v);
+                changed.push("stream_max_viewers");
             }
         }
         if name.is_some() {

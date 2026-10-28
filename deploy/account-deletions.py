@@ -22,6 +22,60 @@ def pending(conn):
         "WHERE completed_at IS NULL ORDER BY complete_by")]
 
 
+def has(conn, table):
+    return conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone() is not None
+
+
+# Mailbox-scoped rows that only describe the erased person's own mailboxes (Phase 1b-8 tables).
+# Each entry is (table, column holding the mailbox address). Absent tables are skipped.
+MAILBOX_ROWS = (
+    ("message_meta", "owner"), ("call_log", "owner"), ("call_log_cleared", "owner"),
+    ("receipt_settings", "mailbox"), ("calendar_settings", "mailbox"),
+    ("calendar_import_drafts", "mailbox"), ("calendar_feed_grants", "exporter_identity"),
+    ("mls_welcomes", "mailbox"), ("mls_kp_claims", "mailbox"), ("mls_key_packages", "mailbox"),
+    ("mls_devices", "mailbox"), ("agent_shell_policy", "identity"), ("agent_shell_hosts", "identity"),
+    ("device_credentials", "identity"), ("device_grants", "identity"), ("enrollments", "identity"),
+    ("group_receipts", "member"), ("group_leaves", "mailbox"),
+)
+
+# Rows keyed by an attendee id; removed with the attendee.
+ATTENDEE_ROWS = ("event_occurrence_attendees", "event_attendee_tokens", "event_guest_challenges",
+                 "event_guest_sessions", "event_join_tickets", "event_reminders")
+
+
+def erase_calendar(conn, addresses, account):
+    """Events the person organized go entirely; their attendance elsewhere is removed."""
+    if not has(conn, "events"):
+        return
+    marks = ",".join("?" * len(addresses)) or "''"
+    events = [r[0] for r in conn.execute(
+        "SELECT id FROM events WHERE created_by_account=? OR organizer IN (" + marks + ") OR calendar_id IN "
+        "(SELECT id FROM calendars WHERE owner_identity IN (" + marks + "))", (account, *addresses, *addresses))]
+    attendees = [r[0] for r in conn.execute(
+        "SELECT id FROM event_attendees WHERE address IN (" + marks + ")", tuple(addresses))]
+    for event in events:
+        attendees += [r[0] for r in conn.execute("SELECT id FROM event_attendees WHERE event_id=?", (event,))]
+    for attendee in set(attendees):
+        for table in ATTENDEE_ROWS:
+            if has(conn, table):
+                conn.execute("DELETE FROM " + table + " WHERE attendee_id=?", (attendee,))
+        conn.execute("DELETE FROM event_attendees WHERE id=?", (attendee,))
+    for event in events:
+        occurrences = [r[0] for r in conn.execute("SELECT id FROM event_occurrences WHERE event_id=?", (event,))]
+        for occurrence in occurrences:
+            conn.execute("DELETE FROM event_overrides WHERE occurrence_id=?", (occurrence,))
+            conn.execute("DELETE FROM event_occurrence_attendees WHERE occurrence_id=?", (occurrence,))
+            conn.execute("DELETE FROM event_join_tickets WHERE occurrence_id=?", (occurrence,))
+        conn.execute("DELETE FROM event_occurrences WHERE event_id=?", (event,))
+        conn.execute("DELETE FROM event_reminders WHERE event_id=?", (event,))
+        conn.execute("DELETE FROM calendar_delivery_outbox WHERE event_id=?", (event,))
+        conn.execute("DELETE FROM events WHERE id=?", (event,))
+    conn.execute("DELETE FROM calendar_delivery_outbox WHERE account_id=?", (account,))
+    for address in addresses:
+        conn.execute("DELETE FROM event_reminders WHERE owner_identity=?", (address,))
+        conn.execute("DELETE FROM calendars WHERE owner_identity=?", (address,))
+
+
 def erase(conn, request_id, blob_root, evidence):
     """Erase only a consented account's copies; services must be stopped by the operator."""
     if not re.fullmatch(r"del_[a-f0-9]{32}", request_id):
@@ -42,6 +96,19 @@ def erase(conn, request_id, blob_root, evidence):
         if not subject or conn.execute("SELECT id FROM accounts WHERE id=? AND oidc_sub=?", (account, subject)).fetchone() is None:
             raise ValueError("Request no longer matches account ownership")
         addresses = [v[0] for v in conn.execute("SELECT address FROM identities WHERE account_id=?", (account,))]
+        # Organizations own their members' org data and audit trail; offboard first (portal or
+        # org API), so ownership transfer and the org's own records are decided by the org.
+        marks = ",".join("?" * len(addresses)) or "''"
+        if has(conn, "orgs") and conn.execute(
+                "SELECT 1 FROM orgs WHERE owner_account=? OR internal_account_id=?", (account, account)).fetchone():
+            raise ValueError("Account owns an organization; transfer or close it first")
+        if has(conn, "org_members") and conn.execute(
+                "SELECT 1 FROM org_members WHERE status <> 'removed' AND (account_id=? OR identity IN (" + marks + "))",
+                (account, *addresses)).fetchone():
+            raise ValueError("Account is an active organization member; offboard it first")
+        if has(conn, "org_agents") and conn.execute(
+                "SELECT 1 FROM org_agents WHERE deleted_at IS NULL AND identity IN (" + marks + ")", tuple(addresses)).fetchone():
+            raise ValueError("A mailbox is a live organization agent; remove it from the organization first")
         orphan_candidates = set()
         for address in addresses:
             orphan_candidates.update(v[0] for v in conn.execute("SELECT sha256 FROM attachments WHERE owner=?", (address,)))
@@ -52,6 +119,51 @@ def erase(conn, request_id, blob_root, evidence):
             conn.execute("DELETE FROM devices WHERE mailbox=?", (address,))
             conn.execute("DELETE FROM mint_events WHERE address=?", (address,))
         conn.execute("DELETE FROM devices WHERE account=?", (account,))
+        for address in addresses:
+            for table, column in MAILBOX_ROWS:
+                if has(conn, table):
+                    conn.execute("DELETE FROM " + table + " WHERE " + column + "=?", (address,))
+            # Groups: the person leaves. Ciphertext they sent stays with the other members, as
+            # delivered direct-message copies do; membership, receipts and keys go.
+            if has(conn, "group_members"):
+                conn.execute("DELETE FROM group_members WHERE member=?", (address,))
+                conn.execute("DELETE FROM group_membership_intervals WHERE member=?", (address,))
+                conn.execute("DELETE FROM group_stream_keys WHERE member=?", (address,))
+                conn.execute("DELETE FROM group_stream_stage WHERE member=?", (address,))
+                for table in ("group_messages", "group_attachments"):
+                    column = "sender" if table == "group_messages" else "uploader"
+                    conn.execute("UPDATE " + table + " SET " + column + "='erased' WHERE " + column + "=?", (address,))
+            if has(conn, "org_agents"):
+                conn.execute("DELETE FROM org_agents WHERE identity=? AND deleted_at IS NOT NULL", (address,))
+            if has(conn, "org_members"):
+                conn.execute("UPDATE org_members SET identity=NULL WHERE identity=? AND status='removed'", (address,))
+        if has(conn, "org_members"):
+            conn.execute("UPDATE org_members SET account_id=? WHERE account_id=? AND status='removed'",
+                         ("erased_" + request_id, account))
+        if has(conn, "groups"):
+            conn.execute("UPDATE groups SET created_by_account=? WHERE created_by_account=?", ("erased_" + request_id, account))
+        if has(conn, "org_api_keys"):
+            # Org keys belong to the org; with the creator gone they fail its live-role check.
+            conn.execute("UPDATE org_api_keys SET created_by_account=? WHERE created_by_account=?", ("erased_" + request_id, account))
+        erase_calendar(conn, addresses, account)
+        avatar_digests = set()
+        if has(conn, "avatars"):
+            for address in addresses:
+                for (variants,) in conn.execute("SELECT variants FROM avatars WHERE owner_kind='identity' AND owner_id=?", (address,)):
+                    avatar_digests.update(json.loads(variants or "{}").values())
+                conn.execute("DELETE FROM avatars WHERE owner_kind='identity' AND owner_id=?", (address,))
+        for table, column, value in (("features", "scope_id", account), ("account_events", "account_id", account),
+                                     ("account_event_floor", "account_id", account),
+                                     ("ssh_sessions", "requester_account", account)):
+            if has(conn, table):
+                extra = " AND scope='account'" if table == "features" else ""
+                conn.execute("DELETE FROM " + table + " WHERE " + column + "=?" + extra, (value,))
+        # Billing records are kept for refunds and law, no longer naming the person.
+        if has(conn, "entitlements"):
+            conn.execute("UPDATE entitlements SET subject_id=? WHERE subject_kind='account' AND subject_id=?",
+                         ("erased_" + request_id, account))
+        if has(conn, "plan_names"):
+            conn.execute("UPDATE plan_names SET account_id=? WHERE account_id=?", ("erased_" + request_id, account))
         for table in ("api_keys", "provider_identities", "identities"):
             conn.execute("DELETE FROM " + table + " WHERE account_id=?", (account,))
         # Keep purchase uniqueness and the current public lease from being reassigned prematurely.
@@ -78,13 +190,24 @@ def erase(conn, request_id, blob_root, evidence):
                 conn.execute("DELETE FROM spam_reports WHERE reporter=? OR sender=?", (address, address))
                 conn.execute("DELETE FROM reputation WHERE subject=?", (address,))
         orphaned = [sha for sha in orphan_candidates if conn.execute("SELECT 1 FROM attachments WHERE sha256=? LIMIT 1", (sha,)).fetchone() is None]
-        for sha in orphaned:
+        orphaned_avatars = [d for d in avatar_digests
+                            if conn.execute("SELECT 1 FROM avatars WHERE instr(variants, ?) > 0 LIMIT 1", (d,)).fetchone() is None]
+        for sha in orphaned + orphaned_avatars:
             if not re.fullmatch(r"[a-f0-9]{64}", sha):
                 raise ValueError("Invalid blob digest; stop for operator inspection")
         # Keep the request pending until every unshared blob is also removed. A failed unlink
         # rolls back SQLite; the offline operator can retry after fixing storage permissions.
         for sha in orphaned:
             blob = root / sha[:2] / sha[2:4] / sha
+            if root not in blob.resolve().parents:
+                raise ValueError("Blob path escapes storage")
+            try:
+                blob.unlink()
+            except FileNotFoundError:
+                pass
+        avatar_root = root / "avatars"
+        for sha in orphaned_avatars:
+            blob = avatar_root / sha[:2] / sha[2:4] / sha
             if root not in blob.resolve().parents:
                 raise ValueError("Blob path escapes storage")
             try:

@@ -268,6 +268,34 @@ fn buckets() -> &'static Mutex<HashMap<String, Bucket>> {
     B.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// Live windows `(key, start, all, writes)`, for the restart-safe limiter snapshot (`limits.rs`).
+pub(crate) fn rate_snapshot(now: u64) -> Vec<(String, u64, u32, u32)> {
+    let map = buckets().lock().expect("rate lock");
+    map.iter()
+        .filter(|(_, b)| b.start + RATE_WINDOW > now)
+        .map(|(k, b)| (k.clone(), b.start, b.all, b.writes))
+        .collect()
+}
+
+/// Merge a snapshot taken before a restart; a window keeps its original start.
+pub(crate) fn rate_restore(rows: Vec<(String, u64, u32, u32)>, now: u64) {
+    let mut map = buckets().lock().expect("rate lock");
+    for (key, start, all, writes) in rows.into_iter().take(20_000) {
+        if start > now || start + RATE_WINDOW <= now {
+            continue;
+        }
+        let b = map.entry(key).or_insert(Bucket {
+            start,
+            all: 0,
+            writes: 0,
+        });
+        if b.start == start {
+            b.all = b.all.max(all);
+            b.writes = b.writes.max(writes);
+        }
+    }
+}
+
 /// Count one request against the key's window. `Err` carries the state for a `429`.
 fn hit(key: &str, write: bool, now: u64) -> Result<RateState, RateState> {
     let mut map = buckets().lock().expect("rate lock");

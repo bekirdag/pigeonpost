@@ -81,6 +81,7 @@ mod groups;
 #[cfg(test)]
 mod groups_tests;
 mod internal_api;
+mod limits;
 mod mcp;
 mod meetings;
 #[cfg(test)]
@@ -111,6 +112,8 @@ mod push;
 mod recipients;
 mod reputation;
 mod review_access;
+#[cfg(test)]
+mod route_policy_tests;
 mod shell;
 #[cfg(test)]
 mod shell_tests;
@@ -423,6 +426,9 @@ async fn serve(cfg: Config) {
         "pigeonpost-postbox listening (/v1 REST + /mcp connector live)"
     );
 
+    // Rate limits and spent proof-of-work challenges survive restarts (Phase 9).
+    limits::restore(&state).await;
+    limits::start(state.clone());
     googleplay_routes::start_reconciliation(state.clone());
     appstore_routes::start_reconciliation(state.clone());
     start_internal_listener(&state).await;
@@ -1503,7 +1509,15 @@ async fn bind_identity_handle(
     Json(req): Json<BindHandleReq>,
 ) -> Response {
     let account = match principal_for_token(&state, bearer(&headers)).await {
-        Ok(Principal::Account(account, _)) => account,
+        Ok(principal @ Principal::Account(..)) => {
+            if let Err(e) = authorize_own_account(&principal) {
+                return e.into_response();
+            }
+            let Principal::Account(account, _) = principal else {
+                unreachable!("matched above")
+            };
+            account
+        }
         Ok(Principal::Identity(_)) => {
             // A capability token is the mailbox's own credential, not the account's. Naming a
             // mailbox spends a slot in a namespace the *account* paid for, so it is the account
@@ -2689,6 +2703,35 @@ async fn account_for_headers(state: &AppState, headers: &HeaderMap) -> Result<St
         .map(|(account, _)| account)
 }
 
+/// The policy check for account management (`Action::ManageOwnAccount`), for handlers that
+/// resolve the principal themselves.
+pub(crate) fn authorize_own_account(principal: &Principal) -> Result<(), ApiError> {
+    let Principal::Account(account, _) = principal else {
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "account_required",
+            "this needs the account's own credential",
+        ));
+    };
+    let facts = policy::Facts {
+        now: now_unix(),
+        ..policy::Facts::default()
+    };
+    policy::authorize(
+        &policy::Actor::Principal(principal),
+        policy::Action::ManageOwnAccount,
+        &policy::Resource::Account(account),
+        &facts,
+    )
+    .map_err(|deny| {
+        ApiError::new(
+            StatusCode::FORBIDDEN,
+            deny.code(),
+            "this credential may not manage this account",
+        )
+    })
+}
+
 /// [`account_for_headers`], plus how the caller is classified in the audit log.
 async fn account_and_actor_for_headers(
     state: &AppState,
@@ -2696,6 +2739,26 @@ async fn account_and_actor_for_headers(
 ) -> Result<(String, audit::ActorKind), ApiError> {
     match principal_for_token(state, bearer(headers)).await? {
         principal @ Principal::Account(..) => {
+            // Account management (keys, mailboxes, handles) goes through the policy (Phase 9).
+            if let Principal::Account(account, _) = &principal {
+                let facts = policy::Facts {
+                    now: now_unix(),
+                    ..policy::Facts::default()
+                };
+                policy::authorize(
+                    &policy::Actor::Principal(&principal),
+                    policy::Action::ManageOwnAccount,
+                    &policy::Resource::Account(account),
+                    &facts,
+                )
+                .map_err(|deny| {
+                    ApiError::new(
+                        StatusCode::FORBIDDEN,
+                        deny.code(),
+                        "this credential may not manage this account",
+                    )
+                })?;
+            }
             let actor = audit::ActorKind::of(&principal);
             let Principal::Account(account, _) = principal else {
                 unreachable!("matched above")
@@ -2749,7 +2812,40 @@ async fn resolve_acting_identity(
     principal: Principal,
     explicit: Option<&str>,
 ) -> Result<store::StoredIdentity, ApiError> {
+    let account_view = match &principal {
+        Principal::Account(account, credential) => Some((account.clone(), credential.clone())),
+        Principal::Identity(_) => None,
+    };
     let id = resolve_acting_identity_inner(state, principal, explicit).await?;
+    // Every route that acts as a mailbox passes through the policy (Phase 9): the credential kind,
+    // the mandatory denies, and ownership — or the live delegation `operated_mailbox` just proved.
+    let principal = match account_view {
+        Some((account, credential)) => Principal::Account(account, credential),
+        None => Principal::Identity(id.clone()),
+    };
+    let delegated = matches!(&principal, Principal::Account(account, _)
+        if id.account_id.as_deref() != Some(account.as_str()));
+    let facts = policy::Facts {
+        now: now_unix(),
+        delegated,
+        ..policy::Facts::default()
+    };
+    policy::authorize(
+        &policy::Actor::Principal(&principal),
+        policy::Action::ManageOwnMailbox,
+        &policy::Resource::Mailbox {
+            address: &id.address,
+            account: id.account_id.as_deref(),
+        },
+        &facts,
+    )
+    .map_err(|deny| {
+        ApiError::new(
+            StatusCode::FORBIDDEN,
+            deny.code(),
+            "this credential may not act as this mailbox",
+        )
+    })?;
     // Org mailboxes: a suspended member, a removed member's detached mailbox, a deleted agent or a
     // suspended org cannot be used through any route (SDS §3.3 step 3).
     if let org::Gate::Closed(code) = org::mailbox_gate(state, &id.address).await {
@@ -4755,8 +4851,38 @@ async fn unregister_device(
     Path(token): Path<String>,
 ) -> Response {
     let (account, mailbox) = match principal_for_token(&state, bearer(&headers)).await {
-        Ok(Principal::Account(account, _)) => (Some(account), None),
-        Ok(Principal::Identity(identity)) => (None, Some(identity.address)),
+        Ok(principal @ Principal::Account(..)) => {
+            if let Err(e) = authorize_own_account(&principal) {
+                return e.into_response();
+            }
+            let Principal::Account(account, _) = principal else {
+                unreachable!("matched above")
+            };
+            (Some(account), None)
+        }
+        Ok(Principal::Identity(identity)) => {
+            // The mailbox's own token removes only its own registrations.
+            let facts = policy::Facts {
+                now: now_unix(),
+                ..policy::Facts::default()
+            };
+            let principal = Principal::Identity(identity);
+            let Principal::Identity(identity) = &principal else {
+                unreachable!("built above")
+            };
+            if let Err(deny) = policy::authorize(
+                &policy::Actor::Principal(&principal),
+                policy::Action::ManageOwnMailbox,
+                &policy::Resource::Mailbox {
+                    address: &identity.address,
+                    account: identity.account_id.as_deref(),
+                },
+                &facts,
+            ) {
+                return deny.into_response();
+            }
+            (None, Some(identity.address.clone()))
+        }
         Err(error) => return error.into_response(),
     };
     match state

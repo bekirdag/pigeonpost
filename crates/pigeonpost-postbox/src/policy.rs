@@ -70,6 +70,11 @@ pub(crate) enum Action {
     CallEvents,
     /// `/internal/v1/avatar-reports`, `/internal/v1/avatars/{id}/remove`.
     ModerateAvatars,
+    /// The account's own keys, mailboxes and handles (`/v1/api-keys`, `/v1/identities`, …): the
+    /// account holder's own credential (member session or API key).
+    ManageOwnAccount,
+    /// `POST /internal/v1/accounts/{id}/purge`: remove an empty account (ops only, Phase 9).
+    PurgeEmptyAccount,
     /// Take part in a group as one's own mailbox: read, post, leave, own keys (SDS §4.4). Agents
     /// may; a connector acting for the member may not reach E2EE content at all.
     GroupParticipate,
@@ -210,10 +215,12 @@ impl Action {
             Action::SensitiveAccountChange => Requirement::HumanStepUp,
             Action::ManageOwnMailbox | Action::ReportAbuse => Requirement::AnyPrincipal,
             Action::RaiseTrust => Requirement::NotConnector,
+            Action::ManageOwnAccount => Requirement::AccountHolder,
             Action::ViewAvatar => Requirement::Anyone,
             Action::CallAdmission
             | Action::CallEvents
             | Action::ModerateAvatars
+            | Action::PurgeEmptyAccount
             | Action::GroupCallAdmission => Requirement::Service,
             Action::GroupParticipate | Action::CalendarUse => Requirement::NotConnector,
             Action::MeetingAccess => Requirement::Service,

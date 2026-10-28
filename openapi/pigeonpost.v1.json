@@ -8152,6 +8152,124 @@
         }
       }
     },
+    "/internal/v1/accounts/{id}/purge": {
+      "post": {
+        "tags": [
+          "internal"
+        ],
+        "x-internal": true,
+        "operationId": "internalPurgeEmptyAccount",
+        "summary": "Remove an empty account and its empty mailboxes (operator)",
+        "description": "Ops token only. Without `confirm: true` it is a dry run that reports what would be removed. Refuses with `409 account_not_empty` and the blocking tables when the account holds messages, memberships, names, purchases, calendar entries or anything else this path does not remove; consented erasure of a real account uses the operator erasure tool instead. Audited as `account.purge` in the same transaction.",
+        "security": [
+          {
+            "serviceToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "reason"
+                ],
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "maxLength": 64,
+                    "description": "Short operator label for the audit record, such as `test_cleanup`."
+                  },
+                  "confirm": {
+                    "type": "boolean",
+                    "default": false
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The report; `purged` is true when the account was removed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "report"
+                  ],
+                  "properties": {
+                    "report": {
+                      "$ref": "#/components/schemas/AccountPurgeReport"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The account is not empty.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "report"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "account_not_empty"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "report": {
+                      "$ref": "#/components/schemas/AccountPurgeReport"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`bad_request`, `bad_reason`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "401": {
+            "$ref": "#/components/responses/InvalidServiceToken"
+          },
+          "403": {
+            "$ref": "#/components/responses/EndpointNotAllowed"
+          }
+        }
+      }
+    },
     "/internal/v1/avatars/{id}/remove": {
       "post": {
         "tags": [
@@ -17920,6 +18038,61 @@
       }
     },
     "schemas": {
+      "AccountPurgeReport": {
+        "type": "object",
+        "required": [
+          "account_id",
+          "mailboxes",
+          "blockers",
+          "removed",
+          "purged"
+        ],
+        "properties": {
+          "account_id": {
+            "type": "string"
+          },
+          "mailboxes": {
+            "type": "integer"
+          },
+          "blockers": {
+            "type": "array",
+            "description": "`[table, rows]` pairs that refuse the purge.",
+            "items": {
+              "type": "array",
+              "prefixItems": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ],
+              "minItems": 2,
+              "maxItems": 2
+            }
+          },
+          "removed": {
+            "type": "array",
+            "description": "`[table, rows]` pairs removed, or that a dry run would remove.",
+            "items": {
+              "type": "array",
+              "prefixItems": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ],
+              "minItems": 2,
+              "maxItems": 2
+            }
+          },
+          "purged": {
+            "type": "boolean"
+          }
+        }
+      },
       "Entitlement": {
         "type": "object",
         "description": "One provider-bound entitlement (SDS §8.8). `active` means a live status and an unexpired `paid_through` (null only for perpetual grants).",
