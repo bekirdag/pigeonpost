@@ -14,6 +14,10 @@
 //            delivery latency send → `mail` frame on every stream of the recipient; then a send-rate ramp
 //   org      org API keys at their 600/min limit (sustained) and over it (burst): latency, 429 accuracy
 //   flood    unauthenticated junk at high concurrency while a member sends at the target rate
+//   apps     (9b) one device per account on the apps' history long poll
+//            (include_sent&include_read&wait=25, back to back) with unread mail waiting, 25 sends/s
+//   overload (9b) history listings far past the knee (--overload-rps, 400/s) + 25 sends/s:
+//            does the postbox shed (503) and keep its memory, or queue without bound?
 
 import { DatabaseSync } from "node:sqlite";
 import { writeFileSync } from "node:fs";
@@ -259,6 +263,70 @@ async function events(people) {
   results.scenarios.events = { streams_per_account: STREAMS_PER_ACCOUNT, mixed: mixedRow, ramp: rampRows };
 }
 
+const HISTORY = "/v1/inbox?include_sent=true&include_read=true";
+
+// The apps' poll (web fallback, iOS/Mac, Android, Linux): list the history, then long-poll it back
+// to back. Every mailbox holds unread mail, as a real one usually does; before 9b that made each
+// long poll return at once with the whole history.
+async function apps(people) {
+  markAllRead();
+  await pool(ACCOUNTS, 16, (i) => send(people, i)); // one unread message in every mailbox
+  const devices = people.slice(0, Number(arg("app-devices", ACCOUNTS)));
+  const listings = new L.Stats("app listings");
+  let stop = false;
+  const device = async (p) => {
+    let wait = "";
+    while (!stop) {
+      try {
+        const r = await L.request("GET", P(HISTORY + wait), { token: p.key });
+        listings.add(r.status, r.ms);
+        if (r.status !== 200) await L.sleep(1000);
+      } catch (_) {
+        listings.error();
+        await L.sleep(1000);
+      }
+      wait = "&wait=25";
+    }
+  };
+  const m = await L.measured(pid, async () => {
+    const running = devices.map(device);
+    const s = await L.openLoop(`send ${TARGET_SEND_RPS}/s`, TARGET_SEND_RPS, SUSTAIN, (n) => send(people, n * 7919));
+    stop = true;
+    listings.stop();
+    return { s, running };
+  });
+  const sum = listings.summary([200]);
+  const row = {
+    devices: devices.length, listings: sum.requests, listings_per_s: sum.rps, listing_p50: sum.p50, listing_p99: sum.p99,
+    codes: sum.codes, send: m.result.s.summary([201]), cpu_pct: m.cpuPct, rss_mb: m.peakRssMb,
+  };
+  L.log(`apps: ${row.devices} devices, ${row.listings_per_s} history listings/s (p50 ${row.listing_p50} p99 ${row.listing_p99}), send p99 ${row.send.p99}, cpu ${row.cpu_pct}%, rss ${row.rss_mb} MB`);
+  results.scenarios.apps = row;
+  await Promise.all(m.result.running); // parked polls end within 25 s
+}
+
+// Far past the history-listing knee, open loop. A postbox without admission control accepts it all
+// and grows; one with it answers what it can and refuses the rest with 503 + Retry-After.
+async function overload(people) {
+  const rate = Number(arg("overload-rps", 400));
+  const m = await L.measured(pid, async () => {
+    const [h, s] = await Promise.all([
+      L.openLoop(`history ${rate}/s`, rate, SUSTAIN, () => {
+        const p = people[Math.floor(Math.random() * ACCOUNTS)];
+        return L.request("GET", P(HISTORY), { token: p.key, timeoutMs: 120_000 });
+      }, 50_000),
+      L.openLoop(`send ${TARGET_SEND_RPS}/s`, TARGET_SEND_RPS, SUSTAIN, (n) => send(people, n * 7919), 50_000),
+    ]);
+    return { h, s };
+  });
+  const after = L.procSample(pid).rssMb;
+  const hs = m.result.h.summary([200]);
+  const ss = m.result.s.summary([201]);
+  const row = { offered_rps: rate, history: hs, send: ss, cpu_pct: m.cpuPct, peak_rss_mb: m.peakRssMb, rss_after_mb: +after.toFixed(0) };
+  L.log(`overload ${rate}/s: history ok ${hs.ok_rps}/s p50 ${hs.p50} p99 ${hs.p99} codes ${JSON.stringify(hs.codes)} net errors ${hs.net_errors}; send ok ${ss.ok_rps}/s p99 ${ss.p99} codes ${JSON.stringify(ss.codes)}; peak rss ${m.peakRssMb} MB, cpu ${m.cpuPct}%`);
+  results.scenarios.overload = row;
+}
+
 async function orgSetup(people, orgCount, keysPerOrg, tag) {
   const keys = [];
   const db = new DatabaseSync(path.join(pb.work, "postbox.db"), { readOnly: true });
@@ -362,6 +430,8 @@ try {
   if (want("events")) await events(people);
   if (want("org")) await org(people);
   if (want("flood")) await flood(people);
+  if (want("apps")) await apps(people);
+  if (want("overload")) await overload(people);
   results.final = { messages: messageCount(), db_bytes: pb.dbBytes(), rss_mb: +L.procSample(pid).rssMb.toFixed(0) };
   results.finished = new Date().toISOString();
   const text = JSON.stringify(results, null, 2);
