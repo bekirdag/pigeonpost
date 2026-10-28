@@ -72,6 +72,30 @@ Feature flags are toggled through it with the `ops` token, e.g.
 `PUT /internal/v1/features/account_events {"scope":"account","account_id":"acct_…","enabled":true}`.
 Every flag change is written to the append-only `audit_log` table.
 
+### Container egress limit (Phase 9)
+
+The webhook worker refuses private destinations, redirects and ports other than 443/8443 in the
+application. The host adds a second layer: connections the postbox and reaper containers start may
+only reach **public addresses on TCP 443/8443**, plus DNS to the host's upstream resolvers
+(8.8.8.8, 1.1.1.1). Private, loopback, link-local (cloud metadata), CGNAT, documentation and
+multicast ranges are dropped; other ports are dropped and logged (`pp-postbox-egress-drop:` in
+`journalctl -k`, rate-limited). Replies to inbound connections are unaffected, and so are the other
+containers on the host (only the source subnet of `pigeonpost-postbox_default` jumps to the chain).
+
+- Script: `egress-firewall.sh apply|remove|show`, installed at `/opt/pigeonpost-postbox/egress-firewall.sh`.
+- Unit: `pigeonpost-postbox-egress.service` (enabled; applies at boot after Docker creates the network).
+- Everything is one chain, `PP-POSTBOX-EGRESS`, plus one jump in `DOCKER-USER`.
+- **After recreating the compose network** (a `docker compose down`), run
+  `systemctl restart pigeonpost-postbox-egress` so the rule follows the new subnet. Without it the
+  limit is absent (fail-open), never blocking.
+- A new outbound dependency on another port (for example SMTP) needs `PP_POSTBOX_EGRESS_PORTS`
+  in the unit's environment, a reviewed change, and a restart of the unit.
+- Rollback: `systemctl disable --now pigeonpost-postbox-egress` (runs `remove`).
+
+Verified 2026-10-28 from the container's network namespace: auth/example.com on 443 → 200;
+example.com:80, 169.254.169.254, 10.1.2.3:443 and DNS to 9.9.9.9 → blocked; the containers' own
+resolver, public and internal health unchanged.
+
 ### Bound container logs on every deployment
 
 Both manual `docker run` commands must include
@@ -448,6 +472,7 @@ Supervise across reboots with a `pigeonpost-postbox.service` systemd unit that r
 | `docker-compose.yml` | four-container stack: caddy · postbox · reaper · backup (P0 storage is SQLite on the `data` volume) |
 | `Caddyfile` | TLS + reverse proxy for both hostnames; no-buffer for MCP streaming |
 | `postbox.env.example` | env template (copy to `postbox.env`, never commit the real one) |
+| `egress-firewall.sh`, `pigeonpost-postbox-egress.service` | host egress limit for the postbox containers (see above) |
 
 ## Local dev (no Docker)
 

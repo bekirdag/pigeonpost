@@ -1,0 +1,16 @@
+[Unit]
+Description=Pigeonpost postbox container egress limit (public TCP 443/8443 and DNS only)
+Documentation=file:///opt/pigeonpost-src/deploy/postbox/README.md
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Docker creates the compose network a moment after it starts the containers at boot.
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 60); do docker network inspect pigeonpost-postbox_default >/dev/null 2>&1 && exit 0; sleep 2; done; exit 0'
+ExecStart=/opt/pigeonpost-postbox/egress-firewall.sh apply
+ExecStop=/opt/pigeonpost-postbox/egress-firewall.sh remove
+
+[Install]
+WantedBy=multi-user.target
