@@ -23,6 +23,7 @@ public sealed partial class MainWindow
     private Button? groupSend, groupJoinCall;
     private Grid? groupView;
     private bool groupPageHooked;
+    private string? groupDraftSeen;
 
     private FrameworkElement BuildGroupList()
     {
@@ -150,7 +151,8 @@ public sealed partial class MainWindow
         groupComposer.Children.Add(groupFiles);
         groupDraft = new TextBox { PlaceholderText = "Write to the group…", AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 56, MaxHeight = 144, MaxLength = 20000 };
         AutomationProperties.SetName(groupDraft, "Group message");
-        groupDraft.TextChanged += (_, _) => { groupsModel.Draft = groupDraft.Text; groupSend!.IsEnabled = groupsModel.CanSend; };
+        groupDraftSeen = null; // a new box shows the model's draft once
+        groupDraft.TextChanged += (_, _) => { groupsModel.Draft = groupDraft.Text; groupDraftSeen = groupsModel.Draft; groupSend!.IsEnabled = groupsModel.CanSend; };
         groupDraft.PreviewKeyDown += async (_, e) =>
         {
             if (e.Key != Windows.System.VirtualKey.Enter || !Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Control)
@@ -223,7 +225,14 @@ public sealed partial class MainWindow
         groupAnnouncement.Text = m.AnnouncementText;
         groupComposer!.Visibility = ToVisibility(m.ShowsComposer);
         groupSend!.IsEnabled = m.CanSend;
-        if (groupDraft!.Text != m.Draft) groupDraft.Text = m.Draft;
+        // Only a change the model made itself (sent, cleared, another group, a restored draft) is
+        // written into the box: WinUI raises TextChanged asynchronously, so comparing the box with
+        // the model mid-typing would overwrite fresh keystrokes and move the caret.
+        if (m.Draft != groupDraftSeen)
+        {
+            groupDraftSeen = m.Draft;
+            if (groupDraft!.Text != m.Draft) { groupDraft.Text = m.Draft; groupDraft.SelectionStart = m.Draft.Length; }
+        }
         groupDraft.IsEnabled = !m.IsSending;
         if (groupList is not null && !ReferenceEquals(groupList.SelectedItem, m.Selected)) groupList.SelectedItem = m.Selected;
         UpdateLiveControls();
