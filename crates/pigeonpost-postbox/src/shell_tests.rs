@@ -13,7 +13,10 @@ const TUNNEL: &str = "svc_tunnel_0123456789abcdef0123456789abcdef";
 const CA_SEED: [u8; 32] = [42; 32];
 
 async fn serve() -> Srv {
-    let srv = serve_with(|s| {
+    let mut srv = serve_with(|s| {
+        // Each test server is its own client address, so these tests do not spend the
+        // process-wide per-address limits (invitation acceptance) other test modules rely on.
+        s.trusted_proxy_hops = 1;
         s.service_tokens = Arc::new(internal_api::tokens_for_test(&[
             ("POSTBOX_SVC_TOKEN_OPS", OPS),
             ("POSTBOX_SVC_TOKEN_BILLING", BILLING),
@@ -22,6 +25,17 @@ async fn serve() -> Srv {
         s.shell = Arc::new(shell::Runtime::for_test(CA_SEED, "ws://127.0.0.1:9"));
     })
     .await;
+    let mut ip = [0u8; 3];
+    rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut ip);
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        "x-forwarded-for",
+        format!("10.{}.{}.{}", ip[0], ip[1], ip[2]).parse().unwrap(),
+    );
+    srv.http = reqwest::Client::builder()
+        .default_headers(headers)
+        .build()
+        .unwrap();
     for flag in ["orgs", "groups", "org_api", "agent_ssh"] {
         srv.global_flag(flag).await;
     }

@@ -5266,6 +5266,12 @@ components:
         rooms_creation:
           type: string
           enum: [everyone, admins]
+        ssh_allowed:
+          type: boolean
+          description: People may open SSH sessions to this org's agents (docs/agent-ssh.md). Changed on the dashboard only.
+        ssh_requires_approval:
+          type: boolean
+          description: Every SSH session also needs an owner's, admin's or agent admin's approval.
       additionalProperties: false
     Org:
       type: object

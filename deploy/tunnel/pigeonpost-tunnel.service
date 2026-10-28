@@ -1,0 +1,31 @@
+# The agent SSH tunnel broker (docs/agent-ssh.md §3). Holds no keys; sees ciphertext only.
+[Unit]
+Description=Pigeonpost tunnel broker (agent SSH, ciphertext only)
+After=network-online.target pigeonpost-postbox-tunnel.service
+Wants=network-online.target
+
+[Service]
+ExecStart=/opt/pigeonpost-tunnel/pigeonpost-tunnel
+EnvironmentFile=/etc/pigeonpost-tunnel.env
+DynamicUser=yes
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+MemoryMax=512M
+TasksMax=512
+
+[Install]
+WantedBy=multi-user.target

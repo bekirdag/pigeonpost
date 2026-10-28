@@ -108,3 +108,33 @@ test("the rules page adds a template and draws sentence editors", async (t) => {
   await tick(30);
   assert.deepEqual(pb.posted.map((r) => [r.owners, r.peers, r.admission]), [["agents", "/acme/*", "allow"], ["agents", "*", "block"]]);
 });
+
+test("Security shows the SSH switches only with agent_ssh, and saves them", async (t) => {
+  const make = (features) => {
+    const patches = [];
+    const base = postbox({ features });
+    const fn = (c) => {
+      const p = new URL(c.url).pathname;
+      if (p.endsWith("/domains")) return reply(200, { domains: [] });
+      if (p.endsWith("/audit")) return reply(200, { entries: [] });
+      if (p === `/v1/orgs/${ORG.id}` && c.method === "PATCH") { patches.push(c.body); return reply(200, { org: { ...ORG, settings: { ...ORG.settings, ...c.body.settings } } }); }
+      return base(c);
+    };
+    fn.patches = patches;
+    return fn;
+  };
+  const off = load(t, "app.html", { url: "https://enterprise.pigeonpost.dev/app/security", session: jwt(), fetch: make(["orgs", "enterprise_portal"]) });
+  await tick(60);
+  assert.doesNotMatch(off.$("#content").textContent, /SSH/);
+  const f = make(["orgs", "enterprise_portal", "agent_ssh"]);
+  const on = load(t, "app.html", { url: "https://enterprise.pigeonpost.dev/app/security", session: jwt(), fetch: f });
+  await tick(60);
+  const sw = [...on.window.document.querySelectorAll("#content input[role=switch]")].find((i) => /Allow SSH to agents/.test(i.getAttribute("aria-label")));
+  assert.ok(sw, "the org switch is there");
+  assert.ok(!sw.checked, "off by default");
+  sw.checked = true;
+  sw.dispatchEvent(new on.window.Event("change"));
+  await tick(30);
+  assert.deepEqual(plain(f.patches), [{ settings: { ssh_allowed: true } }]);
+  assert.match(on.$("#content").textContent, /needs an owner's, admin's or agent admin's approval/);
+});
