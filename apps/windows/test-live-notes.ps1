@@ -114,9 +114,9 @@ try {
     $draft = Wait-Like 'Group message'
     Wait-Check { $draft.Current.IsEnabled } 'The group composer is ready once keyed'
     $draft.SetFocus(); Start-Sleep -Milliseconds 300
-    [System.Windows.Forms.SendKeys]::SendWait('Typed then Ctrl+Enter')
+    [System.Windows.Forms.SendKeys]::SendWait('Typed then Ctrl and Enter')
     [System.Windows.Forms.SendKeys]::SendWait('^{ENTER}')
-    $null = Wait-Like 'Typed then Ctrl+Enter'
+    $null = Wait-Like 'Typed then Ctrl and Enter'
     Wait-Check { (Focused) -eq 'Group message' } 'The group composer keeps focus after Ctrl+Enter'
     [System.Windows.Forms.SendKeys]::SendWait('Sent with the button')
     Invoke-Like 'Send to group'
