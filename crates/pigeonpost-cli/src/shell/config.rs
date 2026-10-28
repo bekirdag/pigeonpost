@@ -17,6 +17,9 @@
 //! max_sessions = 2
 //! ```
 
+// Parsed on every platform (agentd.toml is shared); enforced only where agent SSH runs.
+#![cfg_attr(not(unix), allow(dead_code))]
+
 use std::path::{Path, PathBuf};
 
 pub const DEFAULT_IMAGE: &str = "docker.io/library/debian:13";

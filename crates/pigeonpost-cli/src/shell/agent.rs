@@ -1515,9 +1515,40 @@ mod ssh_tests {
         teardown(&r.proc_info).await;
         let (_, _, status, _) = collect(&mut ch).await;
         assert_ne!(status, Some(0));
-        let gone = rustix::process::test_kill_process_group(
-            rustix::process::Pid::from_raw(pid as i32).unwrap(),
-        );
-        assert!(gone.is_err(), "the whole process group is gone");
+        // Killed members linger as zombies until their reaper collects them; poll briefly.
+        let group = rustix::process::Pid::from_raw(pid as i32).unwrap();
+        let mut gone = false;
+        for _ in 0..50 {
+            if rustix::process::test_kill_process_group(group).is_err()
+                || !group_has_live_member(pid)
+            {
+                gone = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert!(gone, "the whole process group is gone");
+    }
+
+    /// Whether any process in group `pgid` is still running (zombies excluded), on Linux; elsewhere
+    /// whether the group exists at all.
+    fn group_has_live_member(pgid: u32) -> bool {
+        let Ok(dir) = std::fs::read_dir("/proc") else {
+            return true;
+        };
+        for e in dir.flatten() {
+            let Ok(stat) = std::fs::read_to_string(e.path().join("stat")) else {
+                continue;
+            };
+            // pid (comm) state ppid pgrp …
+            let Some(rest) = stat.rsplit_once(')').map(|(_, r)| r.trim().to_string()) else {
+                continue;
+            };
+            let f: Vec<&str> = rest.split_whitespace().collect();
+            if f.len() > 2 && f[2] == pgid.to_string() && f[0] != "Z" {
+                return true;
+            }
+        }
+        false
     }
 }

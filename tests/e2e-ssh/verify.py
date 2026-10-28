@@ -352,7 +352,8 @@ def main():
         # An interactive terminal.
         out = interactive(args.cli, cli_env(me), full["address"],
                           [b"echo PPTTY-$((3+4))\n", b"tty\n", b"exit 3\n"], b"PPTTY-7")
-        c.ok(b"PPTTY-7" in out[0] and b"/dev/" in out[0], "an interactive shell with a real terminal")
+        c.ok(b"PPTTY-7" in out[0] and b"/dev/" in out[0],
+             f"an interactive shell with a real terminal (status {out[1]}, output {out[0][-600:]!r})")
         c.ok(out[1] == 3, "the remote exit status comes back")
 
         # The broker saw ciphertext only.
@@ -559,6 +560,18 @@ def interactive(cli, env, agent, lines, until, timeout=40):
         done, st = os.waitpid(pid, os.WNOHANG)
         if done:
             status = os.waitstatus_to_exitcode(st)
+            # Read what the terminal still holds (the session's last output).
+            while True:
+                r, _, _ = select.select([fd], [], [], 0.5)
+                if not r:
+                    break
+                try:
+                    chunk = os.read(fd, 65536)
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                out += chunk
             break
     if status is None:
         try:
