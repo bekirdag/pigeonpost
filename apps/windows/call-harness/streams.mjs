@@ -39,7 +39,12 @@ procs.push(spawn(process.execPath, [here("calls.mjs"), path.join(repo, "calls-se
 // The pages get the stand-in postbox and synthetic media before any of their own scripts run.
 const inject = `window.__POSTBOX = "http://127.0.0.1:${P.pb}";\n` + readFileSync(path.join(repo, "tests/e2e-streams/inject.js"), "utf8");
 const nativePage = readFileSync(path.join(repo, "site-inbox/native-call.html"), "utf8").replace("<head>", '<head>\n<script src="/__inject.js"></script>');
+// The vendored LiveKit client is loaded with a subresource-integrity hash; serve the committed bytes
+// (a Windows checkout may have rewritten its line endings).
+const committed = (file) => (req, res) => { res.writeHead(200, { "content-type": "text/javascript", "cache-control": "no-store" }); res.end(execFileSync("git", ["-C", repo, "show", "HEAD:site-inbox" + file], { maxBuffer: 64 << 20 })); };
 const web = createStatic(path.join(repo, "site-inbox"), P.calls, { routes: {
+  "/vendor/livekit-client/livekit-client.umd.js": committed("/vendor/livekit-client/livekit-client.umd.js"),
+  "/vendor/livekit-client/livekit-client.e2ee.worker.js": committed("/vendor/livekit-client/livekit-client.e2ee.worker.js"),
   "/__inject.js": (req, res) => { res.writeHead(200, { "content-type": "text/javascript", "cache-control": "no-store" }); res.end(inject); },
   "/native-call.html": (req, res) => { res.writeHead(200, { "content-type": "text/html", "cache-control": "no-store" }); res.end(nativePage); },
 } });
@@ -78,7 +83,14 @@ try {
   // ---- 1. the app watches a browser's stream ----
   H = await page("host");
   const live = await H.evaluate(`PigeonpostNative.goLive({ id: ${JSON.stringify(pb.GID)}, name: "Crew" }, { title: "Native watch", camera: true })`);
-  check("The browser streamer is live", live?.ok && /^str_[a-z2-7]{26}$/.test(live.stream), live);
+  if (!live?.ok) result.hostDiagnosis = await H.evaluate(`(async () => {
+    const out = { session: window.PigeonpostCalls && PigeonpostCalls.inspect && PigeonpostCalls.inspect().session || null, frames: Boolean(window.PigeonpostCalls && PigeonpostCalls.inspect && PigeonpostCalls.inspect().canEncryptFrames) };
+    try { const s = await navigator.mediaDevices.getUserMedia({ audio: true, video: true }); out.media = s.getTracks().map((t) => t.kind); } catch (e) { out.media = String(e && (e.stack || e)); }
+    try { out.inspect = PigeonpostLive.inspect(); } catch (e) { out.inspect = String(e); }
+    out.supported = PigeonpostLive.supported();
+    return out;
+  })()`).catch((e) => String(e));
+  check("The browser streamer is live", live?.ok && /^str_[a-z2-7]{26}$/.test(live.stream), { live, diagnosis: result.hostDiagnosis });
   A = await startApp({ action: "watch", group: pb.GID, name: "Crew", stream: live.stream }, P.devtools);
   await until(() => logged("Stream result: ok"), 60000, 250, "the app's watch result");
   check("The app's production bridge watched the stream (operation-bound result)", true);
