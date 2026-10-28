@@ -1913,11 +1913,14 @@ button { font: inherit; color: inherit; }
 .call-grid[data-count="1"] .call-tile { border: 0; border-radius: 0; background: var(--call-ground); }
 .call-tile-video, .call-tile-screen { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: transparent; }
 .call-grid:not([data-count="1"]) .call-tile-video { object-fit: cover; }
+/* …unless that would crop away more than a quarter of the picture: a landscape camera in a portrait
+   tile, or a portrait one in a landscape tile, is shown whole (calls.js, fitVideo). */
+.call-ui .call-tile .call-tile-video[data-fit="contain"] { object-fit: contain; }
 /* Kept playing while hidden: a person's voice arrives on the camera element. */
 .call-tile[data-video="false"] .call-tile-video { visibility: hidden; }
 .call-tile-screen { visibility: hidden; }
 .call-tile[data-screen="true"] .call-tile-screen { visibility: visible; object-fit: contain; background: var(--call-ground); }
-.call-tile[data-screen="true"] .call-tile-video { inset: 12px 12px auto auto; width: 22%; height: auto; aspect-ratio: 16 / 9; border-radius: 10px; z-index: 1; object-fit: cover; }
+.call-tile[data-screen="true"] .call-tile-video { inset: 12px 12px auto auto; width: 22%; height: auto; aspect-ratio: var(--video-ar, 16 / 9); border-radius: 10px; z-index: 1; object-fit: cover; }
 .call-tile-face.avatar { width: 88px; height: 88px; border-radius: 50%; font-size: 30px; font-weight: 600; }
 .call-grid[data-count="1"] .call-tile-face.avatar { width: 112px; height: 112px; font-size: 38px; }
 .call-tile[data-video="true"] .call-tile-face, .call-tile[data-screen="true"] .call-tile-face { display: none; }
@@ -1946,7 +1949,9 @@ button { font: inherit; color: inherit; }
   --self-top: calc(var(--call-top-h, 86px) + 52px);
   --self-bottom: calc(var(--call-controls-h, 92px) + 12px);
   right: calc(var(--self-side) + env(safe-area-inset-right)); bottom: var(--self-bottom);
-  width: min(24vw, 260px); aspect-ratio: 16 / 9;
+  /* Your camera's own shape (--self-ar, from calls.js): landscape, or portrait from a phone held
+     upright, which is narrower so it covers no more of the call. */
+  width: min(24vw, 260px); aspect-ratio: var(--self-ar, 16 / 9);
   /* A short window (a phone on its side) has less room between the header and the dock than the
      view is tall: it gives up height rather than slide under either. */
   max-height: calc(100% - var(--self-top) - var(--self-bottom) - 8px);
@@ -1954,6 +1959,7 @@ button { font: inherit; color: inherit; }
   box-shadow: 0 12px 32px var(--call-shadow);
   touch-action: none; cursor: grab; user-select: none; -webkit-user-select: none;
 }
+.call-self[data-shape="portrait"] { width: min(13.5vw, 146px); }
 .call-self[data-corner="tl"], .call-self[data-corner="bl"] { right: auto; left: calc(var(--self-side) + env(safe-area-inset-left)); }
 .call-self[data-corner="tl"], .call-self[data-corner="tr"] { bottom: auto; top: var(--self-top); }
 .call-self.call-self-dragging { cursor: grabbing; z-index: 7; }
@@ -2160,6 +2166,7 @@ body[data-page="join"] { min-height: 100vh; margin: 0; background: var(--page); 
   .call-grid[data-presenting="true"] .call-tile-presenter { grid-column: 1; grid-row: 1; }
   .call-grid[data-presenting="true"] .call-tile:not(.call-tile-presenter) { grid-column: 1; max-height: none; }
   .call-self { width: 30vw; --self-side: 12px; }
+  .call-self[data-shape="portrait"] { width: 24vw; }
   .call-controls { gap: 6px; padding: 8px 10px; max-width: calc(100vw - 16px); }
   .call-btn { width: 42px; height: 42px; }
   .call-btn svg { width: 19px; height: 19px; }
@@ -2217,9 +2224,9 @@ body.share-pip { margin: 0; background: var(--call-ground); color: var(--call-in
 
 /* Your own view, and while sharing, the screen the others see (with your camera in its corner). */
 .call-self-screen { display: none; }
-.call-self[data-screen="true"] { width: min(34vw, 420px); }
+.call-self[data-screen="true"] { width: min(34vw, 420px); aspect-ratio: 16 / 9; }
 .call-self[data-screen="true"] .call-self-screen { display: block; width: 100%; height: 100%; object-fit: contain; background: var(--call-ground); }
-.call-self[data-screen="true"] .call-self-camera { position: absolute; right: 8px; top: 8px; width: 28%; height: auto; aspect-ratio: 16 / 9; border-radius: 8px; border: 1px solid var(--call-edge); }
+.call-self[data-screen="true"] .call-self-camera { position: absolute; right: 8px; top: 8px; width: 28%; height: auto; aspect-ratio: var(--self-ar, 16 / 9); border-radius: 8px; border: 1px solid var(--call-edge); }
 .call-self[data-camera="false"] .call-self-camera { display: none; }
 .call-self .call-self-camera { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); display: block; }
 .call-audio { display: none; }

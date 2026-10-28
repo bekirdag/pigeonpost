@@ -9,3 +9,18 @@ body { min-height: 0; }
    stage, the tiles and your own view follow these through --call-top-h and --call-controls-h. */
 .call-ui { --call-top-pad: calc(12px + env(safe-area-inset-top)); --call-dock-bottom: calc(16px + env(safe-area-inset-bottom)); }
 .call-ring { top: calc(10px + env(safe-area-inset-top)); }
+/* On its side, a phone's notch or Dynamic Island and rounded corners are at the left or the right:
+   the header, the tiles and a lone tile's buttons keep clear of them (your own view already does).
+   The insets are zero upright and on an iPad, where these come to the stylesheet's own paddings. */
+.call-ui .call-top { padding-left: max(24px, env(safe-area-inset-left)); padding-right: max(24px, env(safe-area-inset-right)); }
+.call-ui .call-grid:not([data-count="1"]) { padding-left: max(20px, env(safe-area-inset-left)); padding-right: max(20px, env(safe-area-inset-right)); }
+.call-ui .call-grid[data-layout="spotlight"] { padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); }
+.call-ui .call-grid[data-count="1"] .call-tile-acts { left: max(24px, env(safe-area-inset-left)); }
+.call-ui .call-grid[data-count="1"] .call-tile[data-video="true"] .call-mute-badge,
+.call-ui .call-grid[data-count="1"] .call-tile[data-screen="true"] .call-mute-badge { right: max(24px, env(safe-area-inset-right)); }
+@media (max-width: 760px) {
+  .call-ui .call-top { padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); }
+  .call-ui .call-grid:not([data-count="1"]) { padding-left: max(10px, env(safe-area-inset-left)); padding-right: max(10px, env(safe-area-inset-right)); }
+  .call-ui .call-grid[data-layout="spotlight"] { padding-left: max(8px, env(safe-area-inset-left)); padding-right: max(8px, env(safe-area-inset-right)); }
+  .call-ui .call-grid[data-count="1"] .call-tile-acts { left: max(16px, env(safe-area-inset-left)); }
+}
