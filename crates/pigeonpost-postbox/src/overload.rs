@@ -20,7 +20,8 @@
 //!
 //! Inbox listings, the expensive read, also share `POSTBOX_MAX_LISTINGS` slots
 //! ([`listing_slot`]): with `POSTBOX_INBOX_MAX_ROWS` that bounds the memory listings can hold at
-//! once, whatever the arrival rate.
+//! once, whatever the arrival rate. A listing that waits more than `POSTBOX_LISTING_WAIT_MS` for
+//! a slot is refused (503), so queued listings cannot crowd sends out of the ordinary slots.
 //!
 //! Body sizes: request bodies are limited by class — none (64 KiB) on GET/HEAD/DELETE/OPTIONS,
 //! [`CONTROL_BODY_MAX`] on ordinary JSON routes, [`MESSAGE_BODY_MAX`] on the routes that carry a
@@ -121,9 +122,21 @@ pub(crate) fn limits() -> Arc<Limits> {
     LIMITS.get_or_init(|| Arc::new(Limits::from_env())).clone()
 }
 
-/// Wait for one of the inbox listing slots. Held for the listing's duration.
+/// One of the inbox listing slots, held for the listing's duration, or `None` when none came free
+/// within `POSTBOX_LISTING_WAIT_MS` (default 1,000). The caller refuses with 503 then: a listing
+/// waiting longer would only hold an ordinary request slot that a send could use.
 pub(crate) async fn listing_slot() -> Option<OwnedSemaphorePermit> {
-    limits().listings.clone().acquire_owned().await.ok()
+    static WAIT: OnceLock<Duration> = OnceLock::new();
+    let wait =
+        *WAIT.get_or_init(|| Duration::from_millis(env_num("POSTBOX_LISTING_WAIT_MS", 1_000)));
+    let slots = limits().listings.clone();
+    match tokio::time::timeout(wait, slots.acquire_owned()).await {
+        Ok(Ok(permit)) => Some(permit),
+        _ => {
+            SHED.fetch_add(1, Ordering::Relaxed);
+            None
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

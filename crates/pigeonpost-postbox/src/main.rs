@@ -3895,7 +3895,14 @@ pub(crate) async fn do_inbox_page(
     let max_rows = inbox_max_rows();
     let limit = page.limit.unwrap_or(max_rows).clamp(1, max_rows);
     // Listings hold their rows in memory; only so many at once (Phase 9b, `overload`).
-    let _slot = overload::listing_slot().await;
+    let Some(_slot) = overload::listing_slot().await else {
+        return Err(ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "overloaded",
+            "the server is busy; retry shortly",
+        )
+        .with_retry_after(1));
+    };
     let listing = state
         .store
         .list_page(store::ListRequest {
