@@ -922,6 +922,11 @@ final class GroupStore {
         let now = Int(Date().timeIntervalSince1970)
         mailbox = me
         identity = GroupDeviceIdentity(deviceId: "ios-fixture0000", fingerprint: "40512 77310 98245 11034")
+        if let seed = MarketingFixtures.groupSeed(me: me, myHandle: account.me?.handle, now: now) {
+            groups = seed.groups; histories = seed.histories; members = seed.members; handles = seed.handles
+            inGroup = seed.inGroup; safetyNumbers = seed.safetyNumbers; status = .ready
+            return
+        }
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         let json = """

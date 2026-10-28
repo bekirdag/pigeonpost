@@ -24,7 +24,10 @@ object Development {
         val mode = intent.getStringExtra("pigeonpost.fixtures") ?: return null
         if (mode !in setOf("inbox", "empty", "offline", "signin", "long", "long-tall", "handles", "policy", "store", "safety", "groups", "actions", "actions-lost", "actions-off", "group-actions", "group-actions-lost", "group-actions-off", "live", "calendar", "calendar-lost", "calendar-conflict", "calendar-zone-delay",
             "enterprise", "enterprise-ready", "enterprise-deny-race", "enterprise-no-permission", "enterprise-unconfirmed", "enterprise-new-agent", "enterprise-off", "enterprise-signedout",
-            "org-rooms", "org-rooms-lost", "org-rooms-readonly", "org-rooms-off", "org-rooms-no-membership", "org-rooms-revoked")) return null
+            "org-rooms", "org-rooms-lost", "org-rooms-readonly", "org-rooms-off", "org-rooms-no-membership", "org-rooms-revoked", "marketing")) return null
+        // Store screenshots: the invented world of marketing/store/seed/demo-world.json.
+        if (mode == "marketing") return MarketingFixture.graph { mailbox -> FixturePostbox("inbox", mailbox) }.also {
+            intent.getStringExtra("pigeonpost.marketing.caps")?.let { caps -> MarketingControl.current?.only = caps.split(',') } }
         if (mode.startsWith("org-rooms")) {
             val api = OrganizationRoomsFixture.create(mode) { mailbox -> FixturePostbox("inbox", mailbox) }
             return AppGraph(api.session, api, fixtures = true, groupTransport = api, groupCrypto = { api.crypto },

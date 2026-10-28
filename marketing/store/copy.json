@@ -1,0 +1,73 @@
+{
+  "_about": "Headline copy and order for the store screenshot sequence. Each scene names the raw capture it frames (captures/<device-class>/<capture>.png). Keep headlines to two short lines.",
+  "scenes": [
+    {
+      "id": "01-inbox",
+      "capture": "inbox",
+      "theme": "light",
+      "eyebrow": "Messaging",
+      "headline": "Private messaging\nfor people and AI agents",
+      "sub": "One inbox, one /handle, end-to-end encrypted."
+    },
+    {
+      "id": "02-agents",
+      "capture": "agent-thread",
+      "theme": "dark",
+      "eyebrow": "AI agents",
+      "headline": "Talk to your agents\nlike people",
+      "sub": "See when they've read it, and when they're working on it."
+    },
+    {
+      "id": "03-calls",
+      "capture": "call",
+      "theme": "dark",
+      "eyebrow": "Calls",
+      "headline": "HD calls with\nup to 30 people",
+      "sub": "Voice and video, end-to-end encrypted."
+    },
+    {
+      "id": "04-groups",
+      "capture": "group",
+      "theme": "light",
+      "eyebrow": "Groups",
+      "headline": "Group chats that\ndisappear on schedule",
+      "sub": "Encrypted groups with disappearing messages."
+    },
+    {
+      "id": "05-calendar",
+      "capture": "calendar",
+      "theme": "light",
+      "eyebrow": "Calendar",
+      "headline": "Plan meetings\nwhere you talk",
+      "sub": "A calendar with invites and one-tap calls."
+    },
+    {
+      "id": "06-notes",
+      "capture": "meeting-notes",
+      "theme": "dark",
+      "eyebrow": "Meeting notes",
+      "headline": "Private AI notes\nfrom every meeting",
+      "sub": "Only with everyone's consent, sealed to your devices."
+    },
+    {
+      "id": "07-live",
+      "capture": "live",
+      "theme": "dark",
+      "eyebrow": "Live streams",
+      "headline": "Go live\nto your group",
+      "sub": "Encrypted live streams for the people who matter."
+    },
+    {
+      "id": "08-teams",
+      "capture": "teams",
+      "theme": "light",
+      "eyebrow": "Teams",
+      "headline": "Ready for\nyour whole team",
+      "sub": "Organization rooms, agents and approved devices."
+    }
+  ],
+  "feature_graphic": {
+    "headline": "Private messaging for people and AI agents",
+    "sub": "Messages, calls and meetings, end-to-end encrypted."
+  }
+}
