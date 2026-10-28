@@ -9,6 +9,7 @@
 //! runtime; a single connection behind a mutex is ample at P0 volume.
 
 use crate::vault::Wrapped;
+pub use listing::ListRequest;
 use rusqlite::{params, Connection, OptionalExtension};
 use std::sync::{Arc, Mutex};
 
@@ -27,6 +28,7 @@ mod googleplay;
 mod groups;
 mod lifecycle;
 mod limits;
+mod listing;
 pub(crate) mod meetings;
 mod msgactions;
 mod org_api;
@@ -35,6 +37,7 @@ mod orgs;
 mod purge;
 mod shell;
 mod streams;
+pub(crate) mod wraps;
 pub use audit::AuditRow;
 pub use avatars::{AvatarRow, NewAvatar, SetAvatar, Visibility};
 pub use calllog::{CallEvent, CallEventKind, LogFilter};
@@ -51,6 +54,7 @@ pub(crate) use groups::append_event;
 use lifecycle::AppleRefresh;
 pub use msgactions::{DeliveryWrite, MessageMeta, ReceiptKind, RefRow};
 pub use orgs::{ActivateOutcome, DraftOutcome, Org, OrgDraft};
+pub use wraps::{decode_wrap, encode_wrap, WrapStorage};
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS identities (
@@ -585,8 +589,9 @@ pub struct BlobSweep {
     pub blobs: Vec<String>,
 }
 
-/// A stored, sealed message awaiting delivery to `recipient`. `wrap_blob` is a JSON-serialized
-/// `pigeonpost_core::envelope::Wrap`.
+/// A stored, sealed message awaiting delivery to `recipient`. `wrap_blob` is a stored
+/// `pigeonpost_core::envelope::Wrap`, compact or legacy JSON: always go through [`encode_wrap`] and
+/// [`decode_wrap`].
 pub struct Message {
     pub id: String,
     pub recipient: String,
@@ -988,6 +993,7 @@ impl Store {
             .chain(filtering::MIGRATIONS)
             .chain(avatars::MIGRATIONS)
             .chain(ephemeral::MIGRATIONS)
+            .chain(listing::MIGRATIONS)
         {
             if let Err(e) = conn.execute(stmt, []) {
                 // "duplicate column name" means the migration already applied (fresh DB) — benign.
@@ -3375,6 +3381,8 @@ impl Store {
         .map_err(|_| StoreError::Join)?
     }
 
+    /// Every row of a mailbox. Tests only: listings read a page (`store::listing`).
+    #[cfg(test)]
     pub async fn list_for(&self, owner: String) -> Result<Vec<Message>, StoreError> {
         let conn = self.conn.clone();
         tokio::task::spawn_blocking(move || -> Result<Vec<Message>, StoreError> {

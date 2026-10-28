@@ -498,8 +498,9 @@ pub(crate) async fn accept_filtered(
     };
     if moved > 0 {
         state.inbox_signal.notify_waiters();
+        state.event_hub.mail.touch(&me.address);
         if let Some(account) = me.account_id.as_deref() {
-            state.event_hub.wake(account);
+            state.event_hub.wake_mail(account);
         }
     }
     Json(json!({ "accepted": true, "contact": contact, "moved": moved })).into_response()

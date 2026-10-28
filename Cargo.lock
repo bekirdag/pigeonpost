@@ -3053,6 +3053,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "ed25519-dalek 2.2.0",
+ "futures-util",
  "hmac 0.12.1",
  "image",
  "jsonwebtoken",

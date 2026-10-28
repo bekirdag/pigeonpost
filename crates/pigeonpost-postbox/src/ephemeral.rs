@@ -79,7 +79,7 @@ pub(crate) async fn set_thread_timer(
             for holder in holders {
                 if let Ok(Some(identity)) = state.store.get(holder).await {
                     if let Some(account) = identity.account_id.as_deref() {
-                        state.event_hub.wake(account);
+                        state.event_hub.wake_mail(account);
                     }
                 }
             }
@@ -168,7 +168,7 @@ pub(crate) fn start_worker(state: AppState) {
             let mut seen = std::collections::HashSet::new();
             for account in wake {
                 if seen.insert(account.clone()) {
-                    state.event_hub.wake(&account);
+                    state.event_hub.wake_mail(&account);
                 }
             }
         }

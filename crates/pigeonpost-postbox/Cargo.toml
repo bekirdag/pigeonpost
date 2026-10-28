@@ -17,6 +17,7 @@ publish = false
 [dependencies]
 axum = "0.8"
 async-stream = "0.3"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "signal", "sync", "process", "io-util"] }
 serde.workspace = true
 serde_json.workspace = true

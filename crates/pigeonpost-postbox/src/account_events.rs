@@ -55,6 +55,107 @@ pub(crate) const EVENT_RETENTION_COUNT: usize = 10_000;
 pub(crate) struct EventHub {
     channels: Mutex<HashMap<String, (Arc<Notify>, usize)>>,
     max_per_account: usize,
+    /// What `GET /v1/inbox?wait=` long polls wait on (Phase 9b); see [`MailClock`].
+    pub(crate) mail: MailClock,
+}
+
+/// How many long-poll baselines to remember before forgetting stale ones.
+const MAX_SERVED: usize = 100_000;
+/// A baseline older than this is forgotten first; a client polling every 25 s refreshes its own.
+const SERVED_TTL: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
+/// Which listing a client long-polls: mailbox, a digest of its credential (one entry per signed-in
+/// device session, never the credential itself), and the listing's shape.
+pub(crate) type ServedKey = (String, [u8; 16], bool, Option<String>);
+
+/// A change counter per mailbox and per account for direct mail, so a history long poll can wait
+/// for something to *change* rather than return while anything is unread (Phase 9b).
+///
+/// Before, `GET /v1/inbox?include_read=true&wait=25` — what the iOS, Android and Linux apps poll —
+/// returned at once whenever the mailbox held unread mail, which is most of the time, so each of
+/// those apps re-listed its whole history back to back. Now the wait ends when this mailbox or its
+/// account changed since the listing the same client was last given (or since the `version` it
+/// sends back as `since`). Counters are in memory: a restart forgets them, which costs each client
+/// one immediate answer, never a missed change.
+pub(crate) struct MailClock {
+    versions: Mutex<HashMap<String, u64>>,
+    served: Mutex<HashMap<ServedKey, (u64, std::time::Instant)>>,
+    changed: Notify,
+    epoch: u64,
+}
+
+impl Default for MailClock {
+    fn default() -> Self {
+        MailClock {
+            versions: Mutex::new(HashMap::new()),
+            served: Mutex::new(HashMap::new()),
+            changed: Notify::new(),
+            epoch: rand_core::RngCore::next_u64(&mut rand_core::OsRng),
+        }
+    }
+}
+
+impl MailClock {
+    /// Something a direct-mail listing shows changed for `key` (a mailbox address or an account
+    /// id). Over-counting costs one extra listing; under-counting delays a client until its wait
+    /// ends, so callers err on the side of touching.
+    pub(crate) fn touch(&self, key: &str) {
+        {
+            let mut versions = self.versions.lock().expect("mail clock lock");
+            *versions.entry(key.to_string()).or_insert(0) += 1;
+        }
+        self.changed.notify_waiters();
+    }
+
+    /// The listing version of a mailbox: its own counter plus its account's. Both only grow, so
+    /// the sum changes whenever either does.
+    pub(crate) fn version(&self, mailbox: &str, account: Option<&str>) -> u64 {
+        let versions = self.versions.lock().expect("mail clock lock");
+        let of = |k: &str| versions.get(k).copied().unwrap_or(0);
+        of(mailbox).wrapping_add(account.map(of).unwrap_or(0))
+    }
+
+    /// `version` as the opaque token a client sends back as `since`.
+    pub(crate) fn token(&self, version: u64) -> String {
+        format!("{:016x}.{version}", self.epoch)
+    }
+
+    /// The version a `since` token names, or `None` when it is from another process (a restart)
+    /// or not a token at all — either way the client's view is stale.
+    pub(crate) fn parse(&self, token: &str) -> Option<u64> {
+        let (epoch, version) = token.split_once('.')?;
+        (u64::from_str_radix(epoch, 16).ok()? == self.epoch)
+            .then(|| version.parse().ok())
+            .flatten()
+    }
+
+    pub(crate) fn changed(&self) -> &Notify {
+        &self.changed
+    }
+
+    /// The version of the last listing this client was given, if it is remembered.
+    pub(crate) fn served(&self, key: &ServedKey) -> Option<u64> {
+        self.served
+            .lock()
+            .expect("mail clock lock")
+            .get(key)
+            .map(|(v, _)| *v)
+    }
+
+    pub(crate) fn record_served(&self, key: ServedKey, version: u64) {
+        let now = std::time::Instant::now();
+        let mut served = self.served.lock().expect("mail clock lock");
+        if served.len() >= MAX_SERVED && !served.contains_key(&key) {
+            served.retain(|_, (_, at)| now.duration_since(*at) < SERVED_TTL);
+            if served.len() >= MAX_SERVED {
+                // Still full of live clients: forget one. Its next poll answers at once.
+                if let Some(k) = served.keys().next().cloned() {
+                    served.remove(&k);
+                }
+            }
+        }
+        served.insert(key, (version, now));
+    }
 }
 
 impl Default for EventHub {
@@ -68,6 +169,7 @@ impl EventHub {
         EventHub {
             channels: Mutex::new(HashMap::new()),
             max_per_account: max_per_account.max(1),
+            mail: MailClock::default(),
         }
     }
 
@@ -95,6 +197,13 @@ impl EventHub {
             account: account.to_string(),
             notify: entry.0.clone(),
         })
+    }
+
+    /// [`wake`](Self::wake) for a change a direct-mail listing shows (a receipt, an edit, an
+    /// expiry, mail moved out of Filtered): also releases the account's inbox long polls.
+    pub(crate) fn wake_mail(&self, account: &str) {
+        self.mail.touch(account);
+        self.wake(account);
     }
 
     /// Wake every open stream of `account`. A no-op when it has none.

@@ -1662,9 +1662,46 @@
           {
             "name": "wait",
             "in": "query",
-            "description": "Seconds to hold the request open while the inbox is empty; clamped to 60.",
+            "description": "Seconds to hold the request open, clamped to 60. An unread listing waits while there is no unread mail. A listing with `include_read` (or any request with `since`) waits until the listing changes from the one this client was last given (or from `since`); a client the server has not answered yet gets an answer at once.",
             "schema": {
               "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "description": "The `version` of the listing the client holds; with `wait`, hold the request until the listing changes from it.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Most rows on this page, at most the server's ceiling (`POSTBOX_INBOX_MAX_ROWS`, default 5,000), which also applies when `limit` is absent. Without a cursor an unread listing returns the oldest unread rows and a history listing the newest rows.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "description": "Only rows stored after this `seq` (a previous page's `page.newest_seq`), oldest first.",
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "description": "Only rows older than this `seq` (a previous page's `page.oldest_seq`), newest first. Not with `after`.",
+            "schema": {
+              "type": "integer",
+              "format": "int64",
               "minimum": 0
             }
           },
@@ -1729,6 +1766,37 @@
                     },
                     "policy": {
                       "$ref": "#/components/schemas/InboxPolicy"
+                    },
+                    "page": {
+                      "type": "object",
+                      "description": "Which slice of the listing this is. Each message also carries its `seq`.",
+                      "properties": {
+                        "limit": {
+                          "type": "integer"
+                        },
+                        "has_more": {
+                          "type": "boolean",
+                          "description": "More rows match beyond this page, in the direction it was read."
+                        },
+                        "oldest_seq": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ],
+                          "format": "int64"
+                        },
+                        "newest_seq": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ],
+                          "format": "int64"
+                        }
+                      }
+                    },
+                    "version": {
+                      "type": "string",
+                      "description": "Opaque listing version; send it back as `since`."
                     }
                   }
                 }
@@ -1746,6 +1814,9 @@
           },
           "500": {
             "$ref": "#/components/responses/ServerError"
+          },
+          "503": {
+            "description": "Overloaded (`overloaded`) or past the time limit (`request_timeout`); retry after `Retry-After` seconds."
           }
         }
       }

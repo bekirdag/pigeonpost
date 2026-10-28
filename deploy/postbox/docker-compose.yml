@@ -48,6 +48,11 @@ services:
     env_file: [./postbox.env]              # copied from postbox.env.example; keep 600, never committed
     logging: *bounded-logging
     networks: [internal]
+    # Phase 9b: a hard ceiling under the admission limits (docs/inbox-paging.md). Under 10x
+    # overload the process stays well below it; the limit is what turns a bug into a restart
+    # instead of the host swapping.
+    mem_limit: 2g
+    memswap_limit: 2g
     # The internal API (POSTBOX_INTERNAL_BIND=0.0.0.0:8991), published to loopback only. Never
     # add it to the Caddyfile.
     ports:
