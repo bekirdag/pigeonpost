@@ -7,13 +7,16 @@
 //     block. Cached for 30 s per (caller, callee, kind). If the postbox is configured but cannot be
 //     asked, admission fails closed: the call behaves exactly like an unanswered one.
 //   * lifecycle events — ring, answer, decline, missed, end … so each participant's call history can
-//     be written. Sent through a bounded in-memory retry queue with stable event ids, so a retried
-//     event is deduplicated by the postbox. Nothing is written to disk; a restart loses what is
-//     queued, and the health counters say how much was dropped.
+//     be written. Sent through a bounded retry queue with stable event ids, so a retried event is
+//     deduplicated by the postbox. With `spoolPath` (CALLS_EVENT_SPOOL, Phase 9) the queue is also
+//     kept in one 0600 JSON file, rewritten shortly after each change and on shutdown, and reloaded
+//     at start, so a restart no longer loses call history. Entries older than the give-up window
+//     are discarded on load; without a spool path nothing is written to disk.
 //
 // Logs carry counts and outcomes only: no tokens, no addresses.
 
 import crypto from "node:crypto";
+import fs from "node:fs";
 
 export const INTERNAL_LIMITS = {
   admissionTimeoutMs: 3_000,
@@ -40,7 +43,7 @@ const MEETING_ROLES = new Set(["host", "cohost", "attendee", "guest", "none"]);
 const MEETING_ADMISSIONS = new Set(["direct", "knock", "deny"]);
 const MEETING_REASONS = new Set(["unavailable", "window_closed", "not_invited", "declined", "cancelled", "ticket_invalid", "choose_occurrence"]);
 
-export function createPostboxInternal({ url, token, fetch, now, setTimeout: setTimer, limits } = {}) {
+export function createPostboxInternal({ url, token, fetch, now, setTimeout: setTimer, limits, spoolPath } = {}) {
   const L = { ...INTERNAL_LIMITS, ...(limits || {}) };
   const base = (url || "").replace(/\/+$/, "");
   const configured = Boolean(base && token);
@@ -53,6 +56,49 @@ export function createPostboxInternal({ url, token, fetch, now, setTimeout: setT
   const queue = []; // pending events: { body, attempts, firstAt, nextAt }
   let timer = null;
   let flushing = false;
+
+  // ---- optional spool (Phase 9) --------------------------------------------------------------------
+  const spool = configured && spoolPath ? spoolPath : "";
+  let spoolTimer = null;
+
+  function persist() {
+    if (!spool) return;
+    if (spoolTimer) { globalThis.clearTimeout(spoolTimer); spoolTimer = null; }
+    const tmp = `${spool}.tmp`;
+    try {
+      const data = JSON.stringify(queue.map(({ body, attempts, firstAt }) => ({ body, attempts, firstAt })));
+      fs.writeFileSync(tmp, data, { mode: 0o600 });
+      fs.renameSync(tmp, spool);
+    } catch (e) {
+      counters.spool_errors = (counters.spool_errors || 0) + 1;
+      console.warn(`calls: call-event spool write failed (${e.code || "error"})`);
+    }
+  }
+
+  function persistSoon() {
+    if (!spool || spoolTimer) return;
+    spoolTimer = globalThis.setTimeout(() => { spoolTimer = null; persist(); }, 250);
+    spoolTimer.unref?.();
+  }
+
+  if (spool) {
+    try {
+      const saved = JSON.parse(fs.readFileSync(spool, "utf8"));
+      const t = clock();
+      for (const item of Array.isArray(saved) ? saved : []) {
+        const ok = item && typeof item.body === "object" && item.body && typeof item.body.event_id === "string"
+          && /^[a-f0-9]{32}$/.test(item.body.event_id) && Number.isFinite(item.firstAt) && Number.isInteger(item.attempts)
+          && t - item.firstAt < L.giveUpAfterMs;
+        if (ok && queue.length < L.queueMax) queue.push({ body: item.body, attempts: item.attempts, firstAt: item.firstAt, nextAt: t });
+      }
+      if (queue.length) {
+        counters.restored = queue.length;
+        console.log(`calls: ${queue.length} call events restored from the spool`);
+      }
+    } catch (e) {
+      if (e.code !== "ENOENT") console.warn(`calls: call-event spool unreadable (${e.code || "parse"}); starting empty`);
+    }
+  }
 
   async function post(path, body, timeoutMs) {
     const ac = new AbortController();
@@ -303,6 +349,7 @@ export function createPostboxInternal({ url, token, fetch, now, setTimeout: setT
     }
     const t = clock();
     queue.push({ body, attempts: 0, firstAt: t, nextAt: t });
+    persistSoon();
     arm(0);
     return body.event_id;
   }
@@ -357,6 +404,7 @@ export function createPostboxInternal({ url, token, fetch, now, setTimeout: setT
       }
     } finally {
       flushing = false;
+      persistSoon();
     }
   }
 
@@ -364,5 +412,7 @@ export function createPostboxInternal({ url, token, fetch, now, setTimeout: setT
     return { configured, queued: queue.length, ...counters };
   }
 
-  return { configured, admit, groupAdmit, meetingAccess, streamAdmit, streamCheck, streamEnd, report, health, flush, _queue: queue, _cache: cache };
+  if (queue.length) arm(0);
+
+  return { configured, admit, groupAdmit, meetingAccess, streamAdmit, streamCheck, streamEnd, report, health, flush, persist, _queue: queue, _cache: cache };
 }

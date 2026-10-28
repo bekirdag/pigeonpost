@@ -356,3 +356,50 @@ test("events retry with backoff and keep their id; 4xx is dropped; the queue is 
   assert.deepEqual(pi3._queue.map((q) => q.body.seq), [2, 3, 4]);
   assert.equal(pi3.health().dropped, 2);
 });
+
+// Phase 9: with a spool path, queued call events survive a restart (and stale ones do not).
+test("queued call events survive a restart through the spool", async () => {
+  const fs = await import("node:fs");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pp-calls-spool-"));
+  const spoolPath = path.join(dir, "call-events.json");
+  const sent = [];
+  let up = false;
+  const fetch = async (_url, opts) => {
+    if (!up) return { ok: false, status: 503, json: async () => ({}) };
+    sent.push(JSON.parse(opts.body));
+    return { ok: true, status: 200, json: async () => ({}) };
+  };
+  const opts = { url: "http://postbox.test", token: "svc_calls_test_token_0123456789abcdef", fetch, spoolPath,
+    setTimeout: () => null };
+  const first = createPostboxInternal(opts);
+  const a = first.report({ room_id: "r1", kind: "ring" });
+  const b = first.report({ room_id: "r1", kind: "missed" });
+  await first.flush(); // postbox down: both stay queued
+  first.persist();
+  assert.equal((fs.statSync(spoolPath).mode & 0o777), 0o600);
+
+  // A stale entry from long ago is dropped on load.
+  const saved = JSON.parse(fs.readFileSync(spoolPath, "utf8"));
+  saved.push({ body: { event_id: "f".repeat(32), room_id: "old" }, attempts: 1, firstAt: Date.now() - 31 * 60_000 });
+  fs.writeFileSync(spoolPath, JSON.stringify(saved));
+
+  up = true;
+  const second = createPostboxInternal(opts);
+  assert.equal(second.health().queued, 2);
+  await second.flush();
+  assert.deepEqual(sent.map((e) => e.event_id), [a, b], "same ids, same order, so the postbox deduplicates");
+  assert.equal(second.health().queued, 0);
+  second.persist();
+  assert.deepEqual(JSON.parse(fs.readFileSync(spoolPath, "utf8")), []);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("without a spool path nothing touches the disk", () => {
+  const internal = createPostboxInternal({ url: "http://postbox.test", token: "svc_x_0123456789abcdef0123456789abcdef",
+    fetch: async () => ({ ok: false, status: 503, json: async () => ({}) }), setTimeout: () => null });
+  internal.report({ room_id: "r1", kind: "ring" });
+  internal.persist(); // no-op
+  assert.equal(internal.health().queued, 1);
+});

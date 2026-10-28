@@ -105,8 +105,11 @@ Behaviour:
   "filtered" entry in the callee's history; `block` records nothing for the callee.
 - Events go through a bounded in-memory retry queue (1,000 events, oldest dropped when full) with a
   stable `event_id` per event, exponential backoff from 1 s to 60 s and up to 12 attempts (or 30
-  minutes). A 4xx other than 429 is dropped as rejected. The queue is not durable: a restart loses
-  whatever is queued.
+  minutes). A 4xx other than 429 is dropped as rejected. With `CALLS_EVENT_SPOOL` set (Phase 9;
+  `/var/lib/pigeonpost-calls/call-events.json`, the unit's `StateDirectory`) the queue is also kept in
+  that 0600 file — rewritten within 250 ms of a change and on SIGTERM — and reloaded at start, so a
+  restart no longer loses call history; entries past the 30-minute give-up window are discarded on
+  load. The file holds call metadata (room, participants, kind), never media or message text.
 - `GET /calls/v1/health` includes `postbox: {configured, queued, sent, retried, dropped, rejected,
   failed, admission_ok, admission_failed, cache_hits}` — counts only. A growing `dropped` or
   `admission_failed` means the tunnel or the postbox is down.
