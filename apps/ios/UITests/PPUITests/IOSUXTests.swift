@@ -259,7 +259,9 @@ final class IOSUXTests: XCTestCase {
         let scenes: [(String, [String])] = pad
             ? [("1-conversation", ["-open=/bekir/agent1"]),
                ("2-first-contact", ["-open=/k/eeee5555ffff6666gggg7777hh"]),
-               ("3-settings", ["-open=/bekir/agent1", "-sheet=settings"])]
+               ("3-settings", ["-open=/bekir/agent1", "-sheet=settings"]),
+               ("4-group-live", ["-open=grp_fixtureannounce0000000000"]),
+               ("5-meeting-notes", ["-open=/bekir/agent1", "-sheet=meeting-notes"])]
             : [("1-list", []), ("2-thread", ["-open=/bekir/agent1"])]
         for (name, extra) in scenes {
             app.terminate()
@@ -334,6 +336,17 @@ final class IPadLayoutTests: XCTestCase {
             Scene(name: "group-info", arguments: ["-fixtures", "-open=grp_fixturegarden000000000000", "-sheet=group-info"], ready: "Group info"),
             Scene(name: "new-group", arguments: ["-fixtures", "-sheet=new-group"], ready: "New group"),
             Scene(name: "join-group", arguments: ["-fixtures", "-join=grp_fixturejoin00000000000000"], ready: "joinGroup"),
+            // Phase 6 and 7.
+            Scene(name: "group-live", arguments: ["-fixtures", "-open=grp_fixtureannounce0000000000"], ready: "groupLiveBanner"),
+            Scene(name: "go-live", arguments: ["-fixtures", "-open=grp_fixturegarden000000000000"], ready: "groupGoLive") { app in
+                app.descendants(matching: .any)["groupGoLive"].firstMatch.tap()
+                _ = app.navigationBars["Go live"].waitForExistence(timeout: 5)
+            },
+            Scene(name: "meeting-notes", arguments: ["-fixtures", "-sheet=meeting-notes"], ready: "meeting-mtg_fixtureready00000000000000"),
+            Scene(name: "meeting-note", arguments: ["-fixtures", "-sheet=meeting-notes"], ready: "meeting-mtg_fixtureready00000000000000") { app in
+                app.descendants(matching: .any)["meeting-mtg_fixtureready00000000000000"].firstMatch.tap()
+                _ = app.descendants(matching: .any)["meetingNoteSummary"].waitForExistence(timeout: 5)
+            },
             // Phase 1b.
             Scene(name: "calls-sidebar", arguments: open) { app in
                 // iOS 26 in portrait opens on the conversation with the sidebar folded away.

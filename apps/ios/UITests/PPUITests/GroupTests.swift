@@ -212,4 +212,94 @@ final class GroupTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Neighbourhood swap"].waitForExistence(timeout: 10))
         XCTAssertTrue(element("joinGroup").exists)
     }
+
+    // ---- Phase 6: live streams --------------------------------------------------------------------
+
+    private let announce = "grp_fixtureannounce0000000000"
+
+    private func keyboardFocus(_ id: String) -> Bool {
+        (element(id).value(forKey: "hasKeyboardFocus") as? Bool) == true
+    }
+
+    func testLiveBannerShowsWhoIsLiveAndWatchGoesToTheCallView() {
+        launch(["-open=" + announce])
+        let banner = element("groupLiveBanner")
+        XCTAssertTrue(banner.waitForExistence(timeout: 10), "a live stream shows the LIVE banner")
+        XCTAssertTrue(banner.label.contains("is live: 0.9.0 walkthrough") && banner.label.hasSuffix("Watch"), banner.label)
+        XCTAssertFalse(element("groupGoLive").exists, "a member may not go live where only admins can")
+        banner.tap()
+        // The fixture build has no call page, so the call view refuses; the refusal is said, not lost.
+        XCTAssertTrue(app.staticTexts["Live streams aren't ready yet. Try again in a moment, or close and reopen the app."].waitForExistence(timeout: 8))
+    }
+
+    func testGoLiveNeedsATitleBeforeItStarts() {
+        launch(["-open=" + garden])
+        let goLive = element("groupGoLive").firstMatch
+        XCTAssertTrue(goLive.waitForExistence(timeout: 10), "the owner may go live")
+        XCTAssertFalse(element("groupLiveBanner").exists, "nobody is live in this group")
+        goLive.tap()
+        XCTAssertTrue(app.navigationBars["Go live"].waitForExistence(timeout: 5))
+        let start = app.buttons["goLiveStart"].firstMatch
+        XCTAssertFalse(start.isEnabled, "a stream needs a title")
+        let title = app.textFields["goLiveTitle"].firstMatch
+        if !app.keyboards.firstMatch.waitForExistence(timeout: 3) { title.tap() }
+        title.typeText("Seed swap")
+        XCTAssertTrue(start.isEnabled)
+        XCTAssertTrue(element("goLiveCamera").exists)
+        XCTAssertFalse(element("goLiveScreen").exists, "an iPhone or iPad web view cannot share its screen")
+        let camera = app.switches["goLiveCamera"].firstMatch
+        camera.switches.firstMatch.exists ? camera.switches.firstMatch.tap() : camera.tap()
+        XCTAssertFalse(start.isEnabled, "something has to be shared")
+        app.buttons["Cancel"].firstMatch.tap()
+        XCTAssertTrue(goLive.waitForExistence(timeout: 5))
+    }
+
+    func testGroupComposerKeepsFocusAfterSend() {
+        launch(["-open=" + garden])
+        typeInComposer("First line out")
+        element("groupSend").tap()
+        XCTAssertTrue(app.staticTexts["First line out"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 3), "the keyboard stays up after Send")
+        XCTAssertTrue(keyboardFocus("groupComposer"), "the group composer keeps focus after Send")
+        element("groupComposer").typeText("Second without tapping")
+        expectDraft("Second without tapping")
+    }
+
+    // ---- Phase 7: meeting notes -------------------------------------------------------------------
+
+    func testMeetingNotesListOpensBriefsAndExplainsOthers() {
+        launch(["-sheet=meeting-notes"])
+        let ready = element("meeting-mtg_fixtureready00000000000000")
+        XCTAssertTrue(ready.waitForExistence(timeout: 10), "the reader lists meetings")
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS 'Being prepared'")).firstMatch.exists)
+        ready.tap()
+        XCTAssertTrue(element("meetingNoteSummary").waitForExistence(timeout: 5), "a ready brief opens")
+        XCTAssertTrue(app.staticTexts["Ship 0.9.1 on Thursday"].exists && app.staticTexts["Do we need a migration note for Windows?"].exists)
+        XCTAssertTrue(app.staticTexts["/alp/main: Land the calendar fix (due Wednesday)"].exists, "action items read owner: task (due)")
+        element("meetingNoteCopy").tap()
+        XCTAssertTrue(app.staticTexts["Copied."].waitForExistence(timeout: 3))
+        let back = app.navigationBars.buttons["Meeting notes"].firstMatch
+        XCTAssertTrue(back.waitForExistence(timeout: 5))
+        back.tap()
+        let other = element("meeting-mtg_fixtureother00000000000000")
+        XCTAssertTrue(other.waitForExistence(timeout: 5))
+        other.tap()
+        let message = element("meetingNoteMessage")
+        XCTAssertTrue(message.waitForExistence(timeout: 5))
+        XCTAssertTrue(message.label.hasPrefix("These notes were encrypted for your other devices."), message.label)
+        element("meetingNoteDelete").tap()
+        let confirm = app.buttons.matching(NSPredicate(format: "label == 'Delete my copy' AND identifier != 'meetingNoteDelete'")).firstMatch
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5), "deleting asks first")
+        confirm.tap()
+        XCTAssertTrue(element("meeting-mtg_fixtureready00000000000000").waitForExistence(timeout: 5))
+        XCTAssertFalse(element("meeting-mtg_fixtureother00000000000000").exists, "the deleted copy leaves the list")
+    }
+
+    func testMeetingNotesEntryOnlyWhenTheFeatureIsOn() {
+        launch([])
+        XCTAssertTrue(element("meetingNotesButton").waitForExistence(timeout: 10))
+        launch(["-features=groups"])
+        XCTAssertTrue(element("composeMenu").waitForExistence(timeout: 10) || app.buttons["New conversation"].exists)
+        XCTAssertFalse(element("meetingNotesButton").exists, "no reader on a postbox without meeting notes")
+    }
 }

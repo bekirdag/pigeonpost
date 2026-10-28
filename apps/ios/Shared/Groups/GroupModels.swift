@@ -33,6 +33,8 @@ struct GroupSummary: Decodable, Identifiable, Equatable, Hashable {
     var lastSeq: Int?
     var deletedAt: Int?
     var hasLink: Bool?
+    /// Phase 6: who may go live, `admins` (the default) or `everyone` (docs/streaming.md §1).
+    var streamPolicy: String?
     var my: GroupMembership?
 
     var role: String { my?.role ?? "member" }
@@ -51,6 +53,14 @@ struct GroupSummary: Decodable, Identifiable, Equatable, Hashable {
     var canPost: Bool {
         guard isActive, role != "restricted" else { return false }
         return postPolicy == "admins" ? isAdmin : true
+    }
+
+    /// Whether this mailbox may start a live stream here, as the postbox will decide it: an active,
+    /// unrestricted member, and an admin unless the group lets everyone go live. Only offered; the
+    /// postbox and the calls service check again.
+    var canGoLive: Bool {
+        guard isActive, role != "restricted" else { return false }
+        return streamPolicy == "everyone" || isAdmin
     }
 }
 
@@ -268,6 +278,9 @@ struct NoticeMeta: Codable, Equatable, Hashable {
     var kind: String?
     var duration: Int?
     var deviceId: String?
+    /// Phase 6: a `stream` notice's viewer count, and `settings_changed`'s new stream policy.
+    var viewers: Int?
+    var streamPolicy: String?
 }
 
 /// `GET /calls/v1/groups/{id}/call`.

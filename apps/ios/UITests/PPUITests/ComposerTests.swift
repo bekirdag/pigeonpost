@@ -274,4 +274,23 @@ final class ComposerTests: XCTestCase {
         round("double tap on Send", "double tapped", doubleTap: true)
         round("very long single line", String(repeating: "word ", count: 60))
     }
+
+    /// After Send the composer keeps the keyboard, so the next message is typed straight away.
+    func testComposerKeepsFocusAfterSend() {
+        let app = openThread()
+        let field = app.textViews["messageComposer"]
+        for _ in 0..<3 where !app.keyboards.firstMatch.exists {
+            let frame = field.frame
+            app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: frame.midX, dy: frame.midY)).tap()
+            if app.keyboards.firstMatch.waitForExistence(timeout: 2) { break }
+        }
+        field.typeText("first message")
+        app.buttons["Send"].tap()
+        Thread.sleep(forTimeInterval: 1.5)
+        assertCleared(app, "focus check")
+        XCTAssertTrue(app.keyboards.firstMatch.exists, "the keyboard stays up after Send")
+        XCTAssertTrue((field.value(forKey: "hasKeyboardFocus") as? Bool) == true, "the composer keeps focus after Send")
+        field.typeText("second")
+        XCTAssertEqual(drafted(app), "second", "the next message types into the composer without a tap")
+    }
 }

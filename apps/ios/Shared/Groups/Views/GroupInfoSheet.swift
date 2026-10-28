@@ -277,6 +277,15 @@ struct GroupInfoSheet: View {
                 Text("Only admins").tag("admins")
             }
             .accessibilityIdentifier("groupPostPolicy")
+            if account.features.streaming {
+                Picker("Who can go live", selection: Binding(get: { group.streamPolicy ?? "admins" }, set: { value in
+                    Task { _ = await groups.update(group, ["stream_policy": value]) }
+                })) {
+                    Text("Only admins").tag("admins")
+                    Text("Everyone").tag("everyone")
+                }
+                .accessibilityIdentifier("groupStreamPolicy")
+            }
             Toggle("Members can add people", isOn: Binding(get: { group.membersCanInvite == true }, set: { on in
                 Task { _ = await groups.update(group, ["members_can_invite": on]) }
             }))

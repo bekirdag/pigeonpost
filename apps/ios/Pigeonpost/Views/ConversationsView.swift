@@ -42,7 +42,7 @@ struct ConversationsView: View {
     @State private var didStageFixtures = false
 
     private enum Sheet: Identifiable {
-        case identities, settings, new, scanner, newGroup, joinLink, calls, filtered, calendar, organizationRooms
+        case identities, settings, new, scanner, newGroup, joinLink, calls, filtered, calendar, organizationRooms, meetingNotes
         case peer(Conversation)
         case join(GroupStore.JoinLink)
         case meetingLink(CalendarLinkRequest)
@@ -59,6 +59,7 @@ struct ConversationsView: View {
             case "new-group": self = .newGroup
             case "calendar": self = .calendar
             case "org-rooms": self = .organizationRooms
+            case "meeting-notes": self = .meetingNotes
             case "device-approval": self = .deviceApproval(DeviceApprovalRequest(code: nil))
             default: return nil
             }
@@ -77,6 +78,7 @@ struct ConversationsView: View {
             case .filtered: return "filtered"
             case .calendar: return "calendar"
             case .organizationRooms: return "org-rooms"
+            case .meetingNotes: return "meeting-notes"
             case .peer(let conversation): return "peer:" + conversation.peer
             case .meetingLink(let request): return "meeting-link:" + request.id.uuidString
             case .deviceApproval(let request): return "device-approval:" + request.id.uuidString
@@ -195,6 +197,8 @@ struct ConversationsView: View {
                 if account.features.orgs && account.features.groups {
                     OrganizationRoomsScreen(account: account, visit: visit) { id in selection = id; subthread = nil }
                 }
+            case .meetingNotes:
+                if account.features.meetingSummaries { MeetingNotesScreen() }
             case .joinLink: JoinLinkSheet { link in sheet = .join(link) }
             case .join(let link): JoinGroupSheet(link: link) { id in selection = id }
             case .peer(let conversation):
@@ -221,7 +225,8 @@ struct ConversationsView: View {
                 joinLink: { sheet = .joinLink },
                 openFiltered: { sheet = .filtered },
                 openCalendar: { sheet = .calendar },
-                openRooms: { sheet = .organizationRooms }
+                openRooms: { sheet = .organizationRooms },
+                openNotes: { sheet = .meetingNotes }
             )
         } else {
             phone
@@ -277,10 +282,15 @@ struct ConversationsView: View {
         return NavigationSplitView {
             list
                 .safeAreaInset(edge: .top, spacing: 0) {
-                    if let calendar, account.features.calendar {
-                        CalendarEntry(count: calendar.pendingCount) { sheet = .calendar }
-                            .padding(.horizontal, 16).background(Theme.sidebar)
+                    VStack(spacing: 0) {
+                        if let calendar, account.features.calendar {
+                            CalendarEntry(count: calendar.pendingCount) { sheet = .calendar }
+                        }
+                        if account.features.meetingSummaries {
+                            MeetingNotesEntry { sheet = .meetingNotes }
+                        }
                     }
+                    .padding(.horizontal, 16).background(Theme.sidebar)
                 }
                 .navigationTitle(inbox.viewingArchive ? "Archive" : "Inbox")
                 .navigationBarTitleDisplayMode(.inline)

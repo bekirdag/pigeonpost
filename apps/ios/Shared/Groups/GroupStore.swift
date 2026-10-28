@@ -45,6 +45,9 @@ final class GroupStore {
     private(set) var identity: GroupDeviceIdentity? { get { canRead ? storedIdentity : nil } set { storedIdentity = newValue } }
     private var storedCalls: [String: GroupCallState] = [:]
     private(set) var calls: [String: GroupCallState] { get { canRead ? storedCalls : [:] } set { storedCalls = newValue } }
+    /// Phase 6: each group's live stream, as last polled (absent: nobody is live, or not asked yet).
+    private var storedStreams: [String: GroupStream] = [:]
+    private(set) var streams: [String: GroupStream] { get { canRead ? storedStreams : [:] } set { storedStreams = newValue } }
     private var storedReceipts: [String: GroupReceipts] = [:]
     private(set) var receipts: [String: GroupReceipts] { get { canRead ? storedReceipts : [:] } set { storedReceipts = newValue } }
     /// Address → handle, learned from member lists, so names read as names.
@@ -189,6 +192,10 @@ final class GroupStore {
             tick += 1
             if let open { await syncGroup(open) }
             guard current(lifecycle) else { return }
+            // The web hears `group.stream` events; this app has no event stream, so the open group's
+            // LIVE banner is polled a little faster than its call state.
+            if tick % 2 == 0, let open { await pollStream(open) }
+            guard current(lifecycle) else { return }
             if tick % 5 == 0 {
                 if let open { await pollCall(open) }
                 guard current(lifecycle) else { return }
@@ -240,6 +247,7 @@ final class GroupStore {
         inGroup = []
         identity = nil
         calls = [:]
+        streams = [:]
         receipts = [:]
         handles = [:]
         open = nil
@@ -458,6 +466,8 @@ final class GroupStore {
             await reloadHistory(group)
             guard current(visit) else { return }
             await pollCall(group)
+            guard current(visit) else { return }
+            await pollStream(group)
         }
     }
 
@@ -874,6 +884,31 @@ final class GroupStore {
         calls[group] = state
     }
 
+    // ---- live streams (docs/streaming.md) ----------------------------------------------------------------
+
+    /// The group's live stream, if any. Quiet on failure: no banner is better than a wrong one, and a
+    /// postbox without `streaming` answers `feature_disabled`.
+    func pollStream(_ group: String) async {
+        #if DEBUG
+        if Fixtures.enabled { return }
+        #endif
+        guard account.features.streaming, let caller, let client else { streams[group] = nil; return }
+        let visit = generation
+        let stream = try? await client.liveStream(caller, group: group)
+        guard current(visit) else { return }
+        if let stream { streams[group] = stream } else { streams[group] = nil }
+    }
+
+    /// After going live or a stop: ask again shortly, so the banner follows without waiting a tick.
+    func streamChanged(_ group: String) {
+        let visit = generation
+        Task {
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            guard current(visit) else { return }
+            await pollStream(group)
+        }
+    }
+
     // ---- disappearing direct messages -------------------------------------------------------------------
 
     func setThreadTimer(thread: String, seconds: Int?) async -> Bool {
@@ -969,6 +1004,14 @@ final class GroupStore {
             GroupItem(kind: .message, seq: 5, createdAt: now - 7200, sender: alp, text: "0.9.0 is out: groups and disappearing messages."),
         ]
         inGroup = [garden, "grp_fixtureannounce0000000000"]
+        // Phase 6: an admin of Release notes is live there (a member watches; only admins may go
+        // live in it), while the Garden club's owner has nobody live and may go live.
+        if account.features.streaming, !CommandLine.arguments.contains("-no-live-fixture") {
+            streams["grp_fixtureannounce0000000000"] = GroupStream(
+                id: "str_fixturelivestreamaaaaaaaaa", groupId: "grp_fixtureannounce0000000000",
+                title: "0.9.0 walkthrough", sources: ["camera"], by: alp, byHandle: "/alp/main",
+                state: "live", startedAt: now - 240, endsBy: now + 14000, viewers: 3, stage: [])
+        }
         safetyNumbers[garden] = "305718840266914073559128840013375066481927"
         members[garden] = [
             GroupMember(address: me, handle: account.me?.handle, role: "owner", state: "active", revision: 3),

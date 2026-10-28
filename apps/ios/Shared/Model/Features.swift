@@ -26,6 +26,10 @@ final class Features {
     static let calendar = "calendar"
     static let calendarEmail = "calendar_email"
     static let orgs = "orgs"
+    /// Phase 6: live streams in groups (docs/streaming.md).
+    static let streaming = "streaming"
+    /// Phase 7: consented meeting notes (docs/meeting-summaries.md).
+    static let meetingSummaries = "meeting_summaries"
 
     private var values: Set<String> = []
     var enabled: Set<String> { visible() ? values : [] }
@@ -49,6 +53,9 @@ final class Features {
     var calendar: Bool { has(Self.calendar) }
     var calendarEmail: Bool { has(Self.calendarEmail) }
     var orgs: Bool { has(Self.orgs) }
+    /// Streams ride on groups: a stream is always a group's.
+    var streaming: Bool { has(Self.streaming) && has(Self.groups) }
+    var meetingSummaries: Bool { has(Self.meetingSummaries) }
     /// Settings → Privacy & filtering is worth a row when any of its controls would be shown.
     var privacy: Bool { has(Self.callAdmission) || has(Self.messageFiltering) || has(Self.callHistory) || receipts }
 
@@ -91,7 +98,8 @@ final class Features {
             values = Set(named.split(separator: ",").map(String.init))
         } else {
             values = [Self.messageFiltering, Self.callAdmission, Self.callHistory, Self.avatars,
-                       Self.groups, Self.disappearing, Self.messageEdit, Self.messageReply, Self.receipts, Self.agentStatus]
+                       Self.groups, Self.disappearing, Self.messageEdit, Self.messageReply, Self.receipts, Self.agentStatus,
+                      Self.streaming, Self.meetingSummaries]
         }
         didLoad = true
     }

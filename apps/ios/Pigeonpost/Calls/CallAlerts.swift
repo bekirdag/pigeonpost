@@ -69,6 +69,9 @@ final class CallAlerts: NSObject {
     }
 
     private var calls: [UUID: Call] = [:]
+    /// Phase 6: a live stream this device is talking in (the streamer, or a speaker on the stage),
+    /// reported to CallKit as an outgoing call. See "Live streams" below.
+    private var streamCall: UUID?
     /// CallKit has activated the audio session for the current call.
     private var audioActive = false
     /// Answered, and waiting for the audio session before the page is told.
@@ -304,6 +307,14 @@ final class CallAlerts: NSObject {
     @discardableResult
     private func answerCall(_ uuid: UUID) -> Bool {
         guard var call = calls[uuid] else { return false }
+        // One thing at a time, as the call page runs: answering leaves a live stream (and ends it,
+        // for the streamer — the system's "End & Accept" has already said so).
+        if host.live != nil {
+            NSLog("pigeonpost: leaving the live stream to answer room=\(call.ring.room)")
+            host.stopStream()
+            endStreamCall()
+            inbox?.toast = "You left the live stream to take the call."
+        }
         call.answered = true
         call.watch?.cancel()
         call.watch = nil
@@ -366,8 +377,91 @@ final class CallAlerts: NSObject {
     // ---- ending ------------------------------------------------------------------------------
 
     private func endAction(_ action: CXEndCallAction) {
+        if action.callUUID == streamCall {
+            // Ended from the system's call screen or the lock screen: stop streaming (the streamer)
+            // or leave the stream (a speaker).
+            NSLog("pigeonpost: live stream ended from the call screen")
+            streamCall = nil
+            host.stopStream()
+            return action.fulfill()
+        }
         endHere(action.callUUID)
         action.fulfill()
+    }
+
+    // ---- live streams (Phase 6) ----------------------------------------------------------------
+    //
+    // While this device talks in a group's live stream — it went live, or joined the stage — the
+    // stream is an outgoing CallKit call: the system shows it as a call in progress (the green
+    // indicator, the lock screen), keeps the microphone and audio running with the screen off,
+    // gives an incoming call "End & Accept", and ending it on the call screen stops the stream.
+    // CallKit owns the session then (play-and-record, video chat). Watching is not a call: a viewer
+    // only listens, with the playback session `AudioRoute.prepareToWatch` set (sound with the ring
+    // switch on silent, AirPlay allowed), and is never put in Recents.
+
+    private func liveChanged(_ message: [String: Any]) {
+        let on = message["state"] as? String == "on"
+        let role = message["role"] as? String
+        let publishing = on && (role == "host" || role == "speaker")
+        if publishing, streamCall == nil, let stream = message["stream"] as? String {
+            startStreamCall(stream: stream, group: (message["name"] as? String) ?? "Group")
+        } else if !publishing, streamCall != nil {
+            endStreamCall()
+            if on { AudioRoute.prepareToWatch() }
+        }
+        if !on, calls.isEmpty {
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
+    }
+
+    private func startStreamCall(stream: String, group: String) {
+        let uuid = CallRing.uuid(forRoom: "stream:" + stream)
+        streamCall = uuid
+        #if targetEnvironment(simulator)
+        // The simulator's CallKit ends every call it cannot draw a screen for, which would stop the
+        // stream under the test; there the report is only recorded.
+        NSLog("pigeonpost: stream call reported (stand-in) stream=\(stream)")
+        return
+        #else
+        let start = CXStartCallAction(call: uuid, handle: CXHandle(type: .generic, value: "Live in " + group))
+        start.isVideo = true
+        start.contactIdentifier = group
+        controller.request(CXTransaction(action: start)) { error in
+            guard let error else { return }
+            Task { @MainActor in
+                NSLog("pigeonpost: stream call not shown: \(error.localizedDescription)")
+                if self.streamCall == uuid { self.streamCall = nil }
+            }
+        }
+        #endif
+    }
+
+    private func startAction(_ action: CXStartCallAction) {
+        guard action.callUUID == streamCall else { return action.fail() }
+        prepareAudio(video: true)
+        provider.reportOutgoingCall(with: action.callUUID, startedConnectingAt: Date())
+        action.fulfill()
+        let update = CXCallUpdate()
+        update.remoteHandle = action.handle
+        update.localizedCallerName = "Live: " + (action.contactIdentifier ?? action.handle.value)
+        update.hasVideo = true
+        update.supportsHolding = false
+        update.supportsGrouping = false
+        update.supportsUngrouping = false
+        update.supportsDTMF = false
+        provider.reportCall(with: action.callUUID, updated: update)
+        provider.reportOutgoingCall(with: action.callUUID, connectedAt: Date())
+    }
+
+    /// The stream's call is over here; reported, not requested (a request would come back to
+    /// `endAction` and stop the stream a second time).
+    private func endStreamCall() {
+        guard let uuid = streamCall else { return }
+        streamCall = nil
+        #if !targetEnvironment(simulator)
+        provider.reportCall(with: uuid, endedAt: Date(), reason: .remoteEnded)
+        #endif
+        NSLog("pigeonpost: stream call ended \(uuid)")
     }
 
     /// Declined or hung up on this device's call screen.
@@ -506,6 +600,8 @@ extension CallAlerts: CallPageEvents {
             default:
                 break
             }
+        case "live":
+            liveChanged(message)
         case "muted":
             // Muted with the page's own button: tell CallKit, so its button agrees. The state is
             // recorded first, so the action coming back is recognised and not passed to the page.
@@ -563,12 +659,17 @@ extension CallAlerts: CXProviderDelegate {
         MainActor.assumeIsolated {
             if calls.values.contains(where: \.answered) { host.hangUp() }
             for uuid in calls.keys { forget(uuid) }
+            streamCall = nil
             audioActive = false
         }
     }
 
     nonisolated func provider(_ provider: CXProvider, perform action: CXAnswerCallAction) {
         MainActor.assumeIsolated { answer(action) }
+    }
+
+    nonisolated func provider(_ provider: CXProvider, perform action: CXStartCallAction) {
+        MainActor.assumeIsolated { startAction(action) }
     }
 
     nonisolated func provider(_ provider: CXProvider, perform action: CXEndCallAction) {

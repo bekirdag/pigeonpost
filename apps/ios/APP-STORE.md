@@ -1,6 +1,33 @@
 # Pigeonpost iOS public release
 
+## 1.1 (50) release prep
+
+**1.1 (50) — prepared 2026-10-28, not uploaded or submitted.** The owner reviews Apple releases
+before anything goes to App Store Connect. Contents: live streams in groups (LIVE banner, Watch, Go
+live, stage invitations through the call view; CallKit while talking in a stream), the Meeting notes
+reader, the composer keeping focus after Send, and new camera/microphone usage strings. Notes for
+testers: `Store/TESTFLIGHT-NOTES.txt`.
+
+Before submitting 1.1 (in this order):
+
+1. **Remove China mainland from availability** (Pricing and Availability → Edit → untick China
+   mainland). Availability is one setting for the app record, shared by iPhone, iPad and Mac. Apps
+   using CallKit are not allowed in China mainland; builds since 48 report calls, and now live
+   streams, to CallKit.
+2. **App Privacy:** answer per `docs/apple-privacy-labels.md` (meeting audio: consented, own
+   microphone only, transient, linked, not used for tracking). Paste its review note.
+3. **Versions:** `MARKETING_VERSION = 1.1`, `CURRENT_PROJECT_VERSION = 50` in the project for both
+   targets (the last uploads were iOS 48 and Mac 49). Dispatch `ios-testflight.yml` and
+   `mac-appstore.yml` with `build_number=50`; for the Developer ID website build follow the
+   mac-release-chain steps with `--version 1.1 --build 50`.
+4. **Screenshots:** iPad 13" landscape and iPhone 6.9" were retaken for 1.1
+   (`~/Documents/releases/pigeonpost/apple-1.1-50/screenshots/`); bake the iPad orientation before
+   upload (2752×2064), as below.
+5. Attach the build to the TestFlight group (an upload alone is not a delivery), then submit 1.1
+   with the review note.
+
 ## September 28 replacement in progress
+
 
 **Build 48 (2026-10-19)** answers the 18 October rejection of build 46 under guideline 4 ("Sign in with Apple button still includes logo artwork that is not downloaded from Apple Design Resources", reviewed on an iPad Air). On iPhone and iPad the button is `ASAuthorizationAppleIDButton` and now opens Apple's own system sheet; the realm's hosted Apple page (used only as a fallback, and on the Mac) carries Apple's official artwork since 2026-10-18. The build also adds calls, in-app attachment viewing and the iPad three-column layout; screenshots were retaken for the new design, including 13" iPad landscape (`Screenshots/13-inch-ipad`).
 

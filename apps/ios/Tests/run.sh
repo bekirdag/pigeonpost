@@ -15,7 +15,7 @@ swiftc -O -parse-as-library -o "$out/account-scope" Tests/AccountScopeTests.swif
 swiftc -O -parse-as-library -o "$out/group-store-scope" Tests/GroupStoreScopeTests.swift Shared/Config.swift \
   Shared/API/Models.swift Shared/API/APIError.swift Shared/API/PostboxClient.swift Shared/Auth/AuthorizationLease.swift \
   Shared/Model/Account.swift Shared/Model/Features.swift Shared/Groups/GroupModels.swift Shared/Groups/GroupAPI.swift \
-  Shared/Groups/GroupVault.swift Shared/Groups/GroupEngine.swift Shared/Groups/GroupText.swift Shared/Groups/GroupStore.swift
+  Shared/Groups/GroupVault.swift Shared/Groups/GroupEngine.swift Shared/Groups/GroupText.swift Shared/Groups/GroupStreams.swift Shared/Groups/GroupStore.swift
 "$out/group-store-scope"
 swiftc -O -o "$out/auth" Tests/AuthTests.swift Shared/Config.swift
 "$out/auth"
@@ -66,6 +66,10 @@ swiftc -O -parse-as-library -o "$out/inbox-loading" \
 swiftc -O -o "$out/ios-navigation" Tests/IOSNavigationTests.swift Shared/API/Models.swift \
   Pigeonpost/Views/MailboxOrder.swift Pigeonpost/Views/HistoryWindow.swift
 "$out/ios-navigation"
+swiftc -O -parse-as-library -o "$out/streams-notes" Tests/StreamNotesTests.swift Shared/Config.swift \
+  Shared/API/Models.swift Shared/API/APIError.swift Shared/API/PostboxClient.swift Shared/Groups/GroupModels.swift \
+  Shared/Groups/GroupAPI.swift Shared/Groups/GroupStreams.swift Shared/Meetings/MeetingNotesModels.swift Shared/Meetings/MeetingNotesStore.swift
+"$out/streams-notes"
 swiftc -O -parse-as-library -o "$out/call-rings" Tests/CallRingTests.swift Shared/Calls/CallRing.swift
 "$out/call-rings"
 mkdir -p "$out/group-logic-src" && cp Tests/GroupLogicTests.swift "$out/group-logic-src/main.swift"

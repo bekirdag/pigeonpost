@@ -182,3 +182,17 @@ setting people have already made.
   veil's alpha is the one number worth touching: 0.94 hid it entirely, 0.80 reads as a pattern you
   notice only if you look for it. It sits behind the scroll view, not inside it — pinned to the
   content it would slide away as the conversation is read.
+
+## Live streams and meeting notes (1.1)
+
+- **Streams** (`docs/streaming.md` §6): `Shared/Groups/GroupStreams.swift` (the group's live stream,
+  polled), `Shared/Groups/Views/LiveStreamViews.swift` (LIVE banner, Go live sheet, permissions and
+  the audio session), `CallHost.watchStream`/`goLive`/`stopStream` and its stage-invitation hand-off,
+  and CallKit for a device talking in a stream (`Pigeonpost/Calls/CallAlerts.swift`).
+- **Meeting notes** (`docs/meeting-summaries.md` §6): `Shared/Meetings/` — the reader, decrypting with
+  the call page's own notes key through `CallHost.notesKey`/`openBrief`.
+- Synthetic-media check of the app's own call view, against a local LiveKit, the real calls service
+  and the stand-in postbox: `node Tests/streams-native.mjs <simulator-udid>` (build and install the
+  Debug app on that simulator first). Meeting-notes consent in the app's calls:
+  `tests/e2e-meeting-summaries/native.mjs`, then launch the app with the arguments it prints.
+

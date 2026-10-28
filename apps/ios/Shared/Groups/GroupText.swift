@@ -49,6 +49,9 @@ enum GroupText {
                 return meta.postPolicy == "admins" ? "\(actor) set posting to admins only" : "\(actor) let everyone post"
             }
             if changed.contains("name") { return "\(actor) renamed the group to “\(meta.name ?? "")”" }
+            if changed.contains("stream_policy") {
+                return meta.streamPolicy == "everyone" ? "\(actor) let everyone go live" : "\(actor) set going live to admins only"
+            }
             if changed.contains("join_policy") {
                 return meta.joinPolicy == "public" ? "\(actor) made the group public" : "\(actor) made the group invite only"
             }
@@ -63,6 +66,11 @@ enum GroupText {
         case "call_ended":
             if let duration = meta.duration, duration > 0 { return "Call ended · \(Int((Double(duration) / 60).rounded())) min" }
             return "Call ended"
+        case "stream":
+            // Phase 6: server metadata only, never the title (docs/streaming.md §2).
+            let minutes = max(1, Int((Double(meta.duration ?? 0) / 60).rounded()))
+            let viewers = meta.viewers ?? 0
+            return "\(actor) streamed for \(minutes) min · \(viewers) \(viewers == 1 ? "viewer" : "viewers")"
         case "link_reset": return "\(actor) reset the invite link"
         case "you_joined": return "You joined this group. Earlier messages are not available on this device."
         case "device_removed": return "\(who)'s device was removed"
