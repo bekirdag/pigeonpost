@@ -1,0 +1,96 @@
+diff --git a/apps/ios/Shared/Debug/MarketingFixtures+LiveNotes.swift b/apps/ios/Shared/Debug/MarketingFixtures+LiveNotes.swift
+new file mode 100644
+index 00000000..beba6e8f
+--- /dev/null
++++ b/apps/ios/Shared/Debug/MarketingFixtures+LiveNotes.swift
+@@ -0,0 +1,58 @@
++#if DEBUG
++//  Phase 6 and 7 additions to the store-screenshot world (`-fixtures -marketing`): Priya live in the
++//  Design team, and the Launch sync's meeting notes. Invented, like the rest of MarketingFixtures.
++
++import Foundation
++
++extension MarketingFixtures {
++    static func liveStream(now: Int) -> GroupStream {
++        GroupStream(id: "str_marketingfridaydemo00000000", groupId: design, title: "Friday demo: new onboarding",
++                    sources: ["camera", "screen"], by: priya, byHandle: "/priya", state: "live",
++                    startedAt: now - 360, endsBy: now + 7200, viewers: 48, stage: [])
++    }
++
++    static let launchNotes = "mtg_marketinglaunchsync0000000"
++    static let designNotes = "mtg_marketingdesignreview00000"
++    static let pendingNotes = "mtg_marketingoneonone00000000"
++
++    nonisolated static func meetingList() -> [MeetingSummary] {
++        let now = clock
++        return [
++            MeetingSummary(id: pendingNotes, kind: "direct", state: "processing", createdAt: now - 900, endedAt: now - 120,
++                           readyAt: nil, expiresAt: now + 90 * 86400, host: "/leo", as: nil, failure: nil),
++            MeetingSummary(id: launchNotes, kind: "group", state: "ready", createdAt: now - 5400, endedAt: now - 2880,
++                           readyAt: now - 2700, expiresAt: now + 89 * 86400, host: "/maya", as: nil, failure: nil),
++            MeetingSummary(id: designNotes, kind: "group", state: "ready", createdAt: now - 86400, endedAt: now - 82800,
++                           readyAt: now - 82500, expiresAt: now + 88 * 86400, host: "/priya", as: nil, failure: nil),
++        ]
++    }
++
++    nonisolated static func meetingOpen(_ id: String) -> MeetingNotesStore.Opened {
++        guard let summary = meetingList().first(where: { $0.id == id }) else { return .gone }
++        switch id {
++        case launchNotes:
++            return .brief(summary, MeetingBrief(
++                title: "Launch sync", language: "en", startedAt: "2026-10-28T07:00:00.000Z", durationS: 2520,
++                participants: ["/maya", "/leo", "/ana", "/priya", "/maya/research-agent"],
++                summary: "The team agreed to launch on May 20 with the new onboarding flow. Harbor Hall is held for the May offsite.",
++                decisions: ["Launch on Tuesday, May 20", "Ship the new onboarding screens in 1.2", "Offsite at Harbor Hall, May 14–15"],
++                actionItems: [.init(owner: "/priya", task: "Final onboarding designs", due: "Friday"),
++                              .init(owner: "/leo", task: "Confirm the Harbor Hall booking", due: nil),
++                              .init(owner: "/maya/research-agent", task: "Draft the launch announcement", due: "Monday")],
++                openQuestions: ["Do we record a demo video for the launch page?"],
++                draft: false,
++                transcript: [.init(at: "00:03", speaker: "/maya", text: "Let's lock the launch date first."),
++                             .init(at: "00:41", speaker: "/priya", text: "Onboarding will be ready by Friday."),
++                             .init(at: "01:12", speaker: "/leo", text: "I'll call Harbor Hall this afternoon.")],
++                generatedBy: .init(stt: "whisper.cpp small", llm: "qwen")))
++        case designNotes:
++            return .brief(summary, MeetingBrief(
++                title: "Design review", language: "en", startedAt: "2026-10-27T11:00:00.000Z", durationS: 1800,
++                participants: ["/priya", "/sam", "/maya"],
++                summary: "Step 3 of onboarding is being split in two.", decisions: ["Split step 3"],
++                actionItems: [], openQuestions: [], draft: false, transcript: [], generatedBy: nil))
++        default: return .pending(summary)
++        }
++    }
++}
++#endif
+diff --git a/apps/ios/Shared/Groups/GroupStore.swift b/apps/ios/Shared/Groups/GroupStore.swift
+index 2f18ed00..db0b3927 100644
+--- a/apps/ios/Shared/Groups/GroupStore.swift
++++ b/apps/ios/Shared/Groups/GroupStore.swift
+@@ -960,6 +960,7 @@ final class GroupStore {
+         if let seed = MarketingFixtures.groupSeed(me: me, myHandle: account.me?.handle, now: now) {
+             groups = seed.groups; histories = seed.histories; members = seed.members; handles = seed.handles
+             inGroup = seed.inGroup; safetyNumbers = seed.safetyNumbers; status = .ready
++            if account.features.streaming { streams[MarketingFixtures.design] = MarketingFixtures.liveStream(now: MarketingFixtures.clock) }
+             return
+         }
+         let decoder = JSONDecoder()
+diff --git a/apps/ios/Shared/Meetings/MeetingNotesStore.swift b/apps/ios/Shared/Meetings/MeetingNotesStore.swift
+index 43de0577..03b45b7c 100644
+--- a/apps/ios/Shared/Meetings/MeetingNotesStore.swift
++++ b/apps/ios/Shared/Meetings/MeetingNotesStore.swift
+@@ -147,6 +147,7 @@ final class MeetingNotesStore {
+     static let fixturePending = "mtg_fixturepending000000000000"
+ 
+     static func fixtureList() -> [MeetingSummary] {
++        if Fixtures.marketing { return MarketingFixtures.meetingList() }
+         let now = Int(Date().timeIntervalSince1970)
+         return [
+             MeetingSummary(id: fixtureReady, kind: "group", state: "ready", createdAt: now - 3600, endedAt: now - 1800,
+@@ -159,6 +160,7 @@ final class MeetingNotesStore {
+     }
+ 
+     static func fixtureOpen(_ id: String) -> Opened {
++        if Fixtures.marketing { return MarketingFixtures.meetingOpen(id) }
+         guard let summary = fixtureList().first(where: { $0.id == id }) else { return .gone }
+         switch id {
+         case fixtureReady:

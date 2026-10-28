@@ -12,7 +12,7 @@ enum CalendarFixtures {
         return PostboxClient(base: URL(string: "https://calendar-fixture.invalid")!, tokens: tokens)
     }
     static func now() -> Date {
-        Fixtures.enabled ? ISO8601DateFormatter().date(from: "2026-10-25T12:00:00Z")! : Date()
+        Fixtures.marketing ? MarketingFixtures.calendarNow : Fixtures.enabled ? ISO8601DateFormatter().date(from: "2026-10-25T12:00:00Z")! : Date()
     }
     static func meetingLookup() -> CalendarMeetingLookup {
         Fixtures.enabled ? CalendarMeetingLookup(base: URL(string: "https://calendar-fixture.invalid/calls")!) : CalendarMeetingLookup()
@@ -92,6 +92,11 @@ private final class CalendarFixtureTransport: URLProtocol {
 
     private static func seed(_ mailbox: String) -> Box {
         var box = Box()
+        if Fixtures.marketing {
+            box.folders[0]["name"] = "Work"; box.folders[1]["name"] = "Personal"
+            box.events = MarketingFixtures.calendarEvents(mailbox: mailbox)
+            return box
+        }
         func make(_ id: String, _ title: String, invited: Bool = false, filtered: Bool = false) -> [String: Any] {
             ["id": id, "title": title, "description": "Agenda and notes", "location": "Room 2", "revision": 1, "sequence": 1,
              "calendar_id": "cal_work", "all_day": false, "start": "2026-10-25T09:00:00", "end": "2026-10-25T10:00:00", "tzid": "Europe/Istanbul",

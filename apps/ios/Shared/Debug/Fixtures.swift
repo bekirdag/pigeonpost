@@ -90,6 +90,10 @@ enum Fixtures {
             account.installEmptyFixture()
             return
         }
+        if marketing {
+            MarketingFixtures.apply(session: session, account: account, inbox: inbox)
+            return
+        }
 
         let me = Mailbox(address: "/k/cz6900v2h90vnwefj7g7ezvbh4", handle: "/bekir/main", label: "main")
         let fleet = [

@@ -1,0 +1,106 @@
+{
+  "_about": "The one invented world every store screenshot is taken from. Every person, agent, group, organization, message and meeting here is fictional. No real account, person, message or address may appear in a capture. Times are relative to the capture moment (minutes ago, negative = past); the status bar is pinned to 9:41.",
+  "me": { "handle": "/maya", "name": "Maya", "mailbox_label": "Personal", "avatar": { "initials": "M", "color": "#2563eb" } },
+  "people": [
+    { "handle": "/leo", "name": "Leo", "avatar": { "initials": "L", "color": "#16a34a" } },
+    { "handle": "/ana", "name": "Ana", "avatar": { "initials": "A", "color": "#db2777" } },
+    { "handle": "/sam", "name": "Sam", "avatar": { "initials": "S", "color": "#ea580c" } },
+    { "handle": "/priya", "name": "Priya", "avatar": { "initials": "P", "color": "#7c3aed" } },
+    { "handle": "/noor", "name": "Noor", "avatar": { "initials": "N", "color": "#0891b2" } },
+    { "handle": "/kai", "name": "Kai", "avatar": { "initials": "K", "color": "#ca8a04" } },
+    { "handle": "/tomas", "name": "Tomás", "avatar": { "initials": "T", "color": "#475569" } }
+  ],
+  "agents": [
+    { "handle": "/maya/research-agent", "name": "Research agent", "role": "Finds, compares and summarizes", "grants": ["report_status", "answer_question", "read_file"] },
+    { "handle": "/maya/trip-planner", "name": "Trip planner", "role": "Plans and books travel", "grants": ["report_status", "answer_question"] },
+    { "handle": "/fernhill/support-agent", "name": "Fernhill support", "role": "An organization's agent", "grants": ["report_status"] }
+  ],
+  "organization": {
+    "name": "Fernhill Studio",
+    "namespace": "/fernhill",
+    "rooms": [
+      { "name": "Launch room", "members": 9, "note": "Product launch, people and two agents" },
+      { "name": "Design reviews", "members": 6 },
+      { "name": "Support desk", "members": 12, "note": "includes /fernhill/support-agent" }
+    ],
+    "device_request": { "who": "/fernhill/sam", "device": "Sam's new laptop", "where": "Lisbon, Portugal", "code": "482 913" }
+  },
+  "groups": [
+    { "id": "weekend-hikers", "name": "Weekend hikers", "members": ["/maya", "/leo", "/ana", "/kai", "/noor"], "disappearing": "1 week",
+      "messages": [
+        { "from": "/kai", "text": "Trailhead at 8 on Saturday? Forecast says clear skies ☀️", "min": -52 },
+        { "from": "/ana", "text": "In! I'll bring the good coffee.", "min": -47 },
+        { "from": "/leo", "text": "Can we do the ridge loop this time? 14 km, great views.", "min": -40 },
+        { "from": "/maya", "text": "Ridge loop it is. I'll drive — room for three.", "min": -33 },
+        { "from": "/noor", "text": "Seat for me please 🙋", "min": -21 },
+        { "from": "/kai", "text": "Packed lunch at the summit, then the lake on the way down?", "min": -8 }
+      ] },
+    { "id": "design-team", "name": "Design team", "members": ["/maya", "/priya", "/sam", "/tomas", "/leo", "/maya/research-agent"], "disappearing": null,
+      "last": { "from": "/priya", "text": "New onboarding screens are up for review 🎨", "min": -14 } }
+  ],
+  "conversations": [
+    { "with": "/maya/research-agent", "kind": "agent", "unread": 0, "last": "Here's the shortlist — Harbor Hall is the best fit.", "min": -2, "pinned": true },
+    { "with": "/leo", "kind": "person", "unread": 2, "last": "Dinner Friday? I found a great ramen place 🍜", "min": -6 },
+    { "with": "weekend-hikers", "kind": "group", "unread": 3, "last": "Kai: Packed lunch at the summit, then the lake?", "min": -8 },
+    { "with": "design-team", "kind": "group", "unread": 0, "last": "Priya: New onboarding screens are up for review 🎨", "min": -14 },
+    { "with": "/ana", "kind": "person", "unread": 0, "last": "Photos from Saturday are in the shared album", "min": -35 },
+    { "with": "/maya/trip-planner", "kind": "agent", "unread": 0, "last": "Your train to Porto is booked: Fri 17:05, seat 42.", "min": -95 },
+    { "with": "/priya", "kind": "person", "unread": 0, "last": "Sounds perfect, see you at 10!", "min": -180 },
+    { "with": "/sam", "kind": "person", "unread": 0, "last": "Thanks for the intro 🙏", "min": -1440 }
+  ],
+  "agent_thread": {
+    "with": "/maya/research-agent",
+    "messages": [
+      { "from": "/maya", "text": "Can you compare the three venues for the team offsite in May? 20 people, two days.", "min": -26, "receipt": "seen" },
+      { "from": "/maya/research-agent", "min": -19, "markdown": "## Venue shortlist\n\n| Venue | Seats | Per day | Transit |\n| --- | ---: | ---: | --- |\n| **Harbor Hall** | 24 | €1,450 | 5 min walk |\n| Mill House | 30 | €1,900 | 20 min bus |\n| The Glasshouse | 18 | €1,200 | 10 min walk |\n\n**Harbor Hall** is the best fit: room for everyone, quiet breakout spaces and lunch included." },
+      { "from": "/maya", "text": "Great — hold Harbor Hall for May 14–15 and send Leo the details.", "min": -3, "receipt": "working", "edited": false }
+    ]
+  },
+  "person_thread": {
+    "with": "/leo",
+    "messages": [
+      { "from": "/leo", "text": "Hey! Are we still on for Friday?", "min": -40 },
+      { "from": "/maya", "text": "Yes! 7:30 works for me.", "min": -38, "receipt": "seen" },
+      { "from": "/leo", "text": "Dinner Friday? I found a great ramen place 🍜", "min": -6, "reply_to": "Yes! 7:30 works for me." },
+      { "from": "/maya", "text": "Perfect. Send me the address 📍", "min": -1, "receipt": "delivered" }
+    ]
+  },
+  "call": {
+    "title": "Launch sync",
+    "kind": "video",
+    "participants": ["/maya", "/leo", "/ana", "/priya", "/sam", "/noor", "/kai", "/tomas", "/maya/research-agent"],
+    "video_rule": "Synthetic only: each tile is a canvas-drawn illustrated avatar (flat shapes, initials, brand colours, gentle motion). Never this Mac's camera, never photos of real people.",
+    "badge": "End-to-end encrypted"
+  },
+  "calendar": {
+    "week_of": "the capture week",
+    "events": [
+      { "title": "Launch sync", "day": "Thu", "start": "10:00", "end": "10:45", "with": ["/leo", "/ana", "/priya", "/maya/research-agent"], "meeting": true, "invite": "accepted" },
+      { "title": "Design review", "day": "Thu", "start": "14:00", "end": "15:00", "with": ["/priya", "/sam"], "meeting": true },
+      { "title": "1:1 with Leo", "day": "Fri", "start": "09:30", "end": "10:00", "with": ["/leo"], "meeting": true },
+      { "title": "Ramen with Leo 🍜", "day": "Fri", "start": "19:30", "end": "21:00", "with": ["/leo"], "meeting": false, "location": "Kōji Ramen" },
+      { "title": "Weekend hike", "day": "Sat", "start": "08:00", "end": "14:00", "with": ["/kai", "/ana", "/leo", "/noor"], "meeting": false, "location": "Ridge loop trailhead" }
+    ],
+    "pending_invite": { "title": "Offsite planning", "from": "/priya", "day": "Mon", "start": "11:00", "end": "11:30" }
+  },
+  "meeting_notes": {
+    "meeting": "Launch sync",
+    "duration": "42 min",
+    "consent": "Everyone agreed to notes before recording started",
+    "summary": "The team agreed to launch on May 20 with the new onboarding flow. Harbor Hall is held for the May offsite.",
+    "decisions": ["Launch date: Tuesday, May 20", "Ship the new onboarding screens in 1.2", "Offsite at Harbor Hall, May 14–15"],
+    "action_items": [
+      { "owner": "/priya", "text": "Final onboarding designs by Friday" },
+      { "owner": "/leo", "text": "Confirm the Harbor Hall booking" },
+      { "owner": "/maya/research-agent", "text": "Draft the launch announcement" }
+    ],
+    "privacy": "Sealed to your devices. Pigeonpost cannot read it."
+  },
+  "live_stream": {
+    "group": "Design team",
+    "title": "Friday demo: new onboarding",
+    "host": "/priya",
+    "viewers": 48,
+    "video_rule": "Synthetic only: an illustrated presenter avatar and a drawn slide (\"New onboarding — 3 screens\")."
+  }
+}

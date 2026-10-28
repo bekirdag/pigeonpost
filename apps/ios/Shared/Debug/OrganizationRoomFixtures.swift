@@ -38,6 +38,7 @@ import Foundation
             "grp_room_private": ["name": "Hiring room", "description": "Interview planning", "join_policy": "private", "my_state": "invited"],
             "grp_room_inviteonly": ["name": "Finance room", "description": "Organization accounts", "join_policy": "private", "my_state": NSNull()],
         ]
+        if Fixtures.marketing { rooms = MarketingFixtures.rooms }
         URLProtocol.registerClass(OrganizationRoomFixtureTransport.self)
         return OrganizationRoomStore(session: session, mailbox: { account.me?.address },
             enabled: { account.features.orgs && account.features.groups }, base: URL(string: "https://room-fixture.invalid")!)
@@ -92,7 +93,7 @@ private final class OrganizationRoomFixtureTransport: URLProtocol {
             var status = 200, answer: [String: Any] = [:]
             if path == "/v1/orgs" {
                 let readonly = CommandLine.arguments.contains("-room-read-only")
-                answer = ["orgs": [["id": OrganizationRoomFixtures.organizationId, "name": "Example Studio", "namespace": "example",
+                answer = ["orgs": [["id": OrganizationRoomFixtures.organizationId, "name": Fixtures.marketing ? MarketingFixtures.organizationName : "Example Studio", "namespace": Fixtures.marketing ? MarketingFixtures.organizationNamespace : "example",
                     "status": readonly ? "read_only" : "active", "my_roles": [], "settings": ["rooms_creation": "everyone"],
                     "my_mailbox": ["address": OrganizationRoomFixtures.memberMailbox, "handle": OrganizationRoomFixtures.memberHandle as Any? ?? NSNull()]]], "operated": []]
             } else if caller != OrganizationRoomFixtures.memberMailbox {
@@ -105,7 +106,7 @@ private final class OrganizationRoomFixtureTransport: URLProtocol {
                     answer = ["rooms": OrganizationRoomFixtures.rooms.keys.sorted().compactMap { id -> [String: Any]? in
                         guard let room = OrganizationRoomFixtures.rooms[id], let name = room["name"] as? String,
                               search.isEmpty || name.localizedCaseInsensitiveContains(search) else { return nil }
-                        return ["id": id, "name": name, "description": room["description"] ?? NSNull(), "member_count": 4,
+                        return ["id": id, "name": name, "description": room["description"] ?? NSNull(), "member_count": Fixtures.marketing ? (["grp_room_launch": 9, "grp_room_reviews": 6, "grp_room_support": 12, "grp_room_leads": 5][id] ?? 4) : 4,
                                 "my_state": room["my_state"] ?? NSNull(), "join_policy": room["join_policy"] ?? "private"]
                     }]
                 }
