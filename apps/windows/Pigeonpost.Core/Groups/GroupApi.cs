@@ -122,6 +122,19 @@ public sealed class GroupApi(PostboxClient transport, string mailbox)
     public Task ResyncAsync(string id, string device, CancellationToken ct) =>
         postbox.SendAsync(HttpMethod.Post, G(id) + "/resync", new { request_key = RequestKey() }, mailbox, ct, device);
 
+    // ---- live streams (docs/streaming.md §2) -----------------------------------------------
+
+    public async Task<IReadOnlyList<GroupStream>> StreamsAsync(string id, CancellationToken ct) =>
+        (await postbox.GetJsonAsync<StreamsBody>(G(id) + "/streams", mailbox, ct)).Streams ?? [];
+
+    public async Task<GroupStream> StreamAsync(string streamId, CancellationToken ct)
+    {
+        if (!GroupStreams.ValidStreamId(streamId)) throw new ArgumentException("Not a stream id.", nameof(streamId));
+        var body = await postbox.GetJsonAsync<StreamBody>("/v1/streams/" + streamId, mailbox, ct);
+        if (body.Stream.Id != streamId) throw new PostboxException(502, "bad_response");
+        return body.Stream;
+    }
+
     public static string RequestKey() => "rk_" + RandomId(20);
 
     private const string Base32 = "abcdefghijklmnopqrstuvwxyz234567";
@@ -140,6 +153,8 @@ public sealed class GroupApi(PostboxClient transport, string mailbox)
     private sealed record GroupBody(GroupInfo Group);
     private sealed record MembersBody(IReadOnlyList<GroupMember>? Members);
     private sealed record InviteBody(IReadOnlyList<InviteResult>? Results);
+    private sealed record StreamsBody(IReadOnlyList<GroupStream>? Streams);
+    private sealed record StreamBody(GroupStream Stream, string? Role);
 
     // Reuse the shared HTTP/renewal machinery while retaining this mailbox's accepted login.
     private sealed class BoundGroupTransport

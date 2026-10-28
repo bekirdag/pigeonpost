@@ -45,6 +45,8 @@ public sealed record GroupInfo
     public bool? HasLink { get; init; }
     // Present on organization rooms; absent for personal groups. Never inferred.
     public string? OrgId { get; init; }
+    // Phase 6: who may go live, "admins" (the default when absent) or "everyone".
+    public string? StreamPolicy { get; init; }
     public GroupMy? My { get; init; }
 
     [JsonIgnore] public string Role => My?.Role ?? "";
@@ -60,6 +62,9 @@ public sealed record GroupInfo
     [JsonIgnore] public bool CanPost => IsActive && Role != "restricted" && (!AnnouncementOnly || IsAdmin);
     [JsonIgnore] public bool CanInvite => IsActive && (IsAdmin || MembersCanInvite == true);
     [JsonIgnore] public bool CanChangeTimer => IsActive && (IsAdmin || MembersCanChangeTimer == true);
+    // Mirrors the postbox's rule (docs/streaming.md §1); the postbox still decides every start.
+    [JsonIgnore] public bool CanGoLive => IsActive && Role != "restricted" && (StreamPolicy == "everyone" || IsAdmin);
+    [JsonIgnore] public bool EveryoneCanGoLive => StreamPolicy == "everyone";
     [JsonIgnore] public string DisplayName => string.IsNullOrWhiteSpace(Name) ? "Group" : Name!;
 }
 

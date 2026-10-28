@@ -1055,6 +1055,7 @@ tests.AddRange(CallHistoryAuthorizationTests.All());
 tests.AddRange(NativeCallSessionTests.All());
 tests.AddRange(InboxAuthorizationTests.All());
 tests.AddRange(MessageActionsTests.All());
+tests.AddRange(LiveAndNotesTests.All());
 tests.AddRange(MessageTargetTests.All());
 tests.AddRange(SessionOwnerTests.All());
 tests.AddRange(MessageRecoveryScopeTests.All());

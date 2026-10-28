@@ -1,0 +1,36 @@
+{
+ "generator": "meeting-intel/src/crypto.js sealBrief (synthetic)",
+ "key": {
+  "key_id": "nkSyntheticMine01",
+  "public_key": "BMegqurpHpCCdmtlnprqQMl8lvC6RFpjM3ikg8qz+0fvJ+P/ysY/P0+GhnsczX11Oyf3aodorCwQevFduAAm77I=",
+  "pkcs8": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgZaessJ6SKlX4+vdQdgv3c4pPlwGZrJ8h4zV3M6LaR3ihRANCAATHoKrq6R6QgnZrZZ6a6kDJfJbwukRaYzN4pIPKs/tH7yfj/8rGPz9PhoZ7HM19dTsn92qHaKwsEHrxXbgAJu+y"
+ },
+ "record": {
+  "id": "mtg_q7q7q7q7q7q7q7q7q7q7q7q7q7",
+  "kind": "room",
+  "state": "ready",
+  "created_at": 1793091600,
+  "ended_at": 1793092400,
+  "ready_at": 1793092430,
+  "expires_at": 1800867600,
+  "host": "/k/synthetichost",
+  "failure": null,
+  "alg": "A256GCM",
+  "iv": "1NAIRKzY6WC4agPl",
+  "ciphertext": "m1DdZcThyJHVfTjoSpsYaaNO32xZWDtaw/Rtf+C6Y/oJuBr85GBuS3Ec8MycP0qZ0WRDBt16wRapDlpx83oGCRd3FpyYJGriizMkVHZaB17yckEdq4L5vJJO/lMXZPzhHPaEMlUZnXS4Zzo/NPvlvUsO5G8zzqCV0Yw99LZ2ukVDVKt9obj97LiLQZpDKjpDWOAQKneXsDKYLXySLFjI25xBaaLomWp1S6NZYACjuuk9NdEAo6DitUkWgRDfuw201oD8GzOvfxTbJdalioLIxe935BhVgbSd9POBQqux7wt+vcVzUHbVZPfZuIGbOsn7qNMmAdAoAciwrZZk4jkQa1nwikelsoObCac8an0x2XOsih7SY5Z+KSqkvvT6OEV4tX75h1nmWNwtOVEJSfILjYPkgidu8dNbcZ3I76GkZSqd/jInMMQ0T1N8VBilCtqKbg5LNT41Kv/SHrMmb6QZDB6F+ZFxeM0AHFmdxwHLJ8fE5lTI7Bjm8XheXnI9SgaQaquIzXKiuu59Bx9QbeOKDKQOHEPAh4xzWltCHiN6hrbhizNMy9lnRzoNa9oRfkhUuZLYootRQC1Kr3fvyV6IKPQck9CF0tlUey8NQLYOpqOoBO1sBgt+TLv44eTXhEo3J7EaL6vcE+XQNlqN2a0wLzKzc5nxnkL/x0FQy5BJIdzbvLB5SuZgwDnDxhbV8jMmJ27Vkr4jBr0vefpKrjZwJHJCijS8CrBX6Yc0hGjqa7TFQ3sKBejdaTgr8UEqRsvEH0WtcXF1gK7oIVYEGbFJzZa2yEd8i9TTBWWmF905uSiwZ0fQApuwtxmT+79xpu5LUlQEmc6r3ZQG7x7CO7GtvcWeUefQWvmIIpQHO8lgC4ldpGhTEE3HNCbL6EA94CTX0yGH3+KZRJeXrTpEYFY7DCGuDpx+JIJA4RhCUyarI9yo7K1rwRj3oI0TjzGMgaEjmJGecbptJbpz8GMJqJ6AJVbOReAz/qwa0pL4rQ+NnOmDxR3LzCNznYieycqvzGtrvMNdQhbhPfm48ukMs3QfXValhfqtExgThgdclA==",
+  "keys": [
+   {
+    "key_id": "nkSyntheticMine01",
+    "epk": "BAw3pWhGJDMXdcjanKrwQh0w3ltaRsrwoe4bvRWiG2cMOvZ51JBEIMNXVAFNcypc9pRAeqcPo69qGpQXR/VgDa0=",
+    "iv": "Yb4peoXvo8SOCKPD",
+    "wrapped": "hj+MpMIHn9H2IoZqSACj0BCreY89SPO4FWmQsIwnus8RDJb3VmCDcU9ijozZUDTv"
+   },
+   {
+    "key_id": "nkSyntheticOther1",
+    "epk": "BIXBx5DFkQC9ne8TglQFO5mPjKLekF17Ur/4dY6dFJXEwTC7gHni5tLpPyxc44Q1pCVi4ba3AshmVHIQpKovOfs=",
+    "iv": "6pgQ7sPkqY6GU9XJ",
+    "wrapped": "WaWRptxnc566CSQNMUwaLoA27FEPPFGQAVTT6zXrF7W2WBlzGXoO/k3XIE0Q2wLw"
+   }
+  ]
+ }
+}

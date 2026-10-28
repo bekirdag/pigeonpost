@@ -6,7 +6,7 @@ namespace Pigeonpost.Core;
 public enum CallMode { Hidden, Mini, Full }
 
 public sealed record CallPageMessage(string Type, CallMode Mode = CallMode.Hidden, string? Text = null, bool Ringing = false,
-    CallRing? Ring = null, string? Room = null, string? State = null, Guid? Operation = null, string? ErrorCode = null);
+    CallRing? Ring = null, string? Room = null, string? State = null, Guid? Operation = null, string? ErrorCode = null, string? Stream = null);
 
 // The contract between the app and the web call client's native page (site-inbox/native-call.js).
 // The page posts {type: ready|mode|renew|toast|ring|ring_ended|call}; the app answers through
@@ -27,6 +27,7 @@ public static partial class CallBridge
             {
                 "ready" or "renew" => new CallPageMessage(type),
                 "scheduled_result" => ParseScheduled(message),
+                "stream_result" => ParseStream(message),
                 "ring_card" => new CallPageMessage(type, Ringing: message["ringing"] is JsonValue r && r.TryGetValue<bool>(out var ringing) && ringing),
                 // Phase 1c: a ring arrived on the event stream (docs/call-alerting.md §5).
                 "ring" => CallRing.FromPage(message) is { } ring ? new CallPageMessage(type, Ring: ring, Room: ring.Room) : null,

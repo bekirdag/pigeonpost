@@ -288,6 +288,9 @@ public sealed partial class MainWindow
             case { Type: "scheduled_result" } result:
                 ScheduledCallResult(page, result);
                 break;
+            case { Type: "stream_result" } streamed:
+                StreamResult(page, streamed);
+                break;
             case { Type: "ready" }:
                 callReady = true;
                 callRestarts = 0;
@@ -300,6 +303,7 @@ public sealed partial class MainWindow
 #if UI_TESTS
                 await RunScheduledFixtureAsync(page);
                 if (!CallPageCurrent(page)) return;
+                _ = RunStreamFixtureAsync(page);
 #endif
 #if DEBUG || UI_TESTS
                 if (CallsDebug("CALL") is { } auto && auto.LastIndexOf(':') is > 0 and var colon)
@@ -428,7 +432,7 @@ public sealed partial class MainWindow
 
     private void UpdateCallButtons()
     {
-        var enabled = scheduledCall is null && callSession is { } actor && CallCurrent(actor) && callMode == CallMode.Hidden && ViewModel.SelectedConversation is { IsMine: false };
+        var enabled = scheduledCall is null && streamAttempt is null && callSession is { } actor && CallCurrent(actor) && callMode == CallMode.Hidden && ViewModel.SelectedConversation is { IsMine: false };
         VoiceCallButton.IsEnabled = VideoCallButton.IsEnabled = enabled;
     }
 
@@ -462,6 +466,7 @@ public sealed partial class MainWindow
                 view.Focus(FocusState.Programmatic);
             }
             if (previous != mode) DesktopLog.Write($"Call view {mode}");
+            if (mode == CallMode.Hidden && previous != CallMode.Hidden) StreamViewClosed();
             if (ringCard != lastRingCard) { lastRingCard = ringCard; DesktopLog.Write(ringCard ? "Call view ring card" : "Call view ring card closed"); }
         }
         UpdateCallButtons();
@@ -501,6 +506,7 @@ public sealed partial class MainWindow
     private WebView2? DetachCallView()
     {
         RetireScheduledCall();
+        RetireStreams();
         callSession?.Dispose();
         callSession = null;
         callInbox = null;
