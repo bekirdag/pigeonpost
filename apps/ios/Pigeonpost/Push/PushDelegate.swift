@@ -24,6 +24,11 @@ final class PushDelegate: NSObject, UIApplicationDelegate {
         return true
     }
 
+    /// iPhone: upright, except while a call fills the screen (`CallRotation`).
+    func application(_ application: UIApplication, supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
+        MainActor.assumeIsolated { CallRotation.mask }
+    }
+
     func application(
         _ application: UIApplication,
         didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
