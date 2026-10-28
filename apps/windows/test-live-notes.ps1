@@ -77,10 +77,13 @@ try {
     Check ($null -ne (Like '•  00:21  Preview Design: Screenshots are ready.')) 'The transcript is shown'
     Capture 'notes-brief.png'
     Invoke-Like 'Copy notes as text'
-    Wait-Check {
-        $copied = "$(Get-Clipboard -Raw)" -replace "`r", ''
-        $copied.StartsWith("Launch review`n") -and $copied.Contains("Decisions:`n- Release Windows and Linux together") -and $copied.Contains("Transcript:`n- [00:21] Preview Design: Screenshots are ready.")
-    } 'Copy as text puts the plain brief on the clipboard'
+    $script:copied = ''
+    try {
+        Wait-Check {
+            $script:copied = ("$(Get-Clipboard -Raw)" -replace "`r", '')
+            $script:copied.StartsWith('Launch review') -and $script:copied.Contains("Decisions:`n- Release Windows and Linux together") -and $script:copied.Contains("Transcript:`n- [00:21] Preview Design: Screenshots are ready.")
+        } 'Copy as text puts the plain brief on the clipboard'
+    } finally { Set-Content (Join-Path $directory 'live-notes-clipboard.txt') $script:copied }
     Invoke-Like 'All meeting notes'
     Invoke-Like 'Meeting notes, *host Preview Design*'
     $null = Wait-Like 'These notes were encrypted for your other devices.*'

@@ -148,6 +148,7 @@ jobs:
             apps/windows/artifacts/screenshots/*.png
             apps/windows/artifacts/screenshots/*.log
             apps/windows/artifacts/screenshots/*.json
+            apps/windows/artifacts/screenshots/*.txt
             apps/windows/artifacts/screenshots/installed/*.png
             apps/windows/artifacts/screenshots/installed/*.log
             apps/windows/artifacts/screenshots/calls/*.png
