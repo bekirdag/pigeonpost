@@ -231,33 +231,6 @@ pub fn device_fingerprint(mailbox: &str, device_id: &str, device_signature_key: 
 const FINGERPRINT_DOMAIN_OVERSIZE: &[u8] =
     b"pigeonpost/groupcrypto/device-fingerprint-oversize/v1\0";
 
-#[cfg(test)]
-mod fingerprint_length_tests {
-    use super::*;
-
-    #[test]
-    fn an_oversized_part_cannot_alias_a_truncated_one() {
-        let key = [7u8; 32];
-        let long = "a".repeat(u16::MAX as usize + 1);
-        // With a truncating cast, the length prefix of `long` would read 0, as for "".
-        assert_ne!(
-            device_fingerprint(&long, "d", &key),
-            device_fingerprint("", "d", &key)
-        );
-        let over = vec![1u8; u16::MAX as usize + 1];
-        assert_ne!(
-            device_fingerprint("/k/a", "d", &over),
-            device_fingerprint("/k/a", "d", &over[..u16::MAX as usize])
-        );
-        // At the limit the original encoding still applies.
-        let max = "b".repeat(u16::MAX as usize);
-        assert_eq!(
-            device_fingerprint(&max, "d", &key),
-            device_fingerprint(&max, "d", &key)
-        );
-    }
-}
-
 fn digits(bytes: &[u8], groups: usize) -> String {
     bytes
         .chunks_exact(5)
@@ -289,4 +262,31 @@ pub fn safety_number(fingerprints: &[[u8; 32]]) -> String {
         h.update(fp);
     }
     digits(&h.finalize()[..60], 12)
+}
+
+#[cfg(test)]
+mod fingerprint_length_tests {
+    use super::*;
+
+    #[test]
+    fn an_oversized_part_cannot_alias_a_truncated_one() {
+        let key = [7u8; 32];
+        let long = "a".repeat(u16::MAX as usize + 1);
+        // With a truncating cast, the length prefix of `long` would read 0, as for "".
+        assert_ne!(
+            device_fingerprint(&long, "d", &key),
+            device_fingerprint("", "d", &key)
+        );
+        let over = vec![1u8; u16::MAX as usize + 1];
+        assert_ne!(
+            device_fingerprint("/k/a", "d", &over),
+            device_fingerprint("/k/a", "d", &over[..u16::MAX as usize])
+        );
+        // At the limit the original encoding still applies.
+        let max = "b".repeat(u16::MAX as usize);
+        assert_eq!(
+            device_fingerprint(&max, "d", &key),
+            device_fingerprint(&max, "d", &key)
+        );
+    }
 }
