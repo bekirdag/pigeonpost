@@ -78,7 +78,9 @@ final class OrganizationRoomUITests: XCTestCase {
         }
         launch(staged: false)
         openComposeMenu()
-        tap(element("org-rooms-open"))
+        // Through the shared menu helper (CalendarTests.swift): an iPad menu can swallow a tap
+        // made while it is still opening; the directory must still appear.
+        app.choose(element("org-rooms-open"), until: element("org-room:grp_room_public")) { self.openComposeMenu() }
         XCTAssertTrue(element("org-room:grp_room_public").waitForExistence(timeout: 10))
     }
     func testPublicRoomRequiresAnExplicitJoinBeforeOpening() {

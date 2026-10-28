@@ -91,7 +91,7 @@ struct CalendarImportScreen: View {
                         }
                         Text("Choose an .ics file, up to 512 KB. Review its events before importing anything.")
                             .font(.geist(12)).foregroundStyle(Theme.secondary)
-                        Button(busy ? "Reading calendar…" : "Choose calendar file") { choosing = true }.disabled(busy)
+                        Button(busy ? "Reading calendar…" : "Choose calendar file") { choose() }.disabled(busy)
                             .accessibilityIdentifier("calendar-import-choose-file")
                     }
                 }
@@ -122,20 +122,7 @@ struct CalendarImportScreen: View {
         .onChange(of: store.scopeId) { _, _ in presentation = UUID(); reset(); dismiss() }
         .onDisappear { visible = false; presentation = UUID(); reset() }
         .fileImporter(isPresented: $choosing, allowedContentTypes: [CalendarFileDocument.contentType], allowsMultipleSelection: false) { choice in
-            Task {
-                guard store.scopeId == visit, visible else { return }
-                let screen = presentation
-                do {
-                    guard let url = try choice.get().first else { return }
-                    let data = try CalendarImportFile.read(url)
-                    problem = nil; store.clearError()
-                    let loaded = await store.previewImport(data: data, calendar: destination.isEmpty ? nil : destination)
-                    guard store.scopeId == visit, visible, screen == presentation, !Task.isCancelled else { return }
-                    preview = loaded
-                    selected = Set((loaded?.events ?? []).filter { $0.importable == true }.map(\.index))
-                } catch let error as CocoaError where error.code == .userCancelled { }
-                catch { if store.scopeId == visit { problem = error.localizedDescription } }
-            }
+            Task { await load(choice) }
         }
         .confirmationDialog("Leave this unconfirmed import?", isPresented: $leaveUnconfirmed, titleVisibility: .visible) {
             Button("Leave import", role: .destructive) { dismiss() }
@@ -144,6 +131,31 @@ struct CalendarImportScreen: View {
     }
 
     private func reset() { preview = nil; selected = []; confirmation = nil; result = nil; problem = nil }
+
+    /// The system's document picker, or (DEBUG fixture runs only) a synthetic file handed to the
+    /// same `load` the picker's answer goes through.
+    private func choose() {
+        #if DEBUG
+        if let url = CalendarImportFixtureFile.url() { Task { await load(.success([url])) }; return }
+        #endif
+        choosing = true
+    }
+
+    /// What the picker chose: read with the real bounded reader, then previewed by the postbox.
+    private func load(_ choice: Result<[URL], Error>) async {
+        guard store.scopeId == visit, visible else { return }
+        let screen = presentation
+        do {
+            guard let url = try choice.get().first else { return }
+            let data = try CalendarImportFile.read(url)
+            problem = nil; store.clearError()
+            let loaded = await store.previewImport(data: data, calendar: destination.isEmpty ? nil : destination)
+            guard store.scopeId == visit, visible, screen == presentation, !Task.isCancelled else { return }
+            preview = loaded
+            selected = Set((loaded?.events ?? []).filter { $0.importable == true }.map(\.index))
+        } catch let error as CocoaError where error.code == .userCancelled { }
+        catch { if store.scopeId == visit { problem = error.localizedDescription } }
+    }
     private func confirm() async {
         guard store.scopeId == visit, visible, let preview else { return }
         let screen = presentation
@@ -252,3 +264,24 @@ struct CalendarFeedScreen: View {
         }
     }
 }
+
+#if DEBUG
+/// UI tests only (`-fixtures -calendar-import-fixture-file`): a synthetic .ics written to this app's
+/// own temporary directory and chosen in place of the system document picker, whose out-of-process
+/// UI cannot be driven reliably on every simulator. Everything after the choice is the app's own
+/// path: the bounded file reader, the postbox preview (the fixture transport checks the bytes
+/// arrived), the preview screen and confirmation. Never compiled into a release.
+@MainActor
+enum CalendarImportFixtureFile {
+    static let contents = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:pp-local-picker-test\r\n"
+        + "DTSTAMP:20261025T000000Z\r\nDTSTART:20261025T090000Z\r\nDTEND:20261025T100000Z\r\n"
+        + "SUMMARY:Local picker interview\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+
+    static func url() -> URL? {
+        guard Fixtures.enabled, CommandLine.arguments.contains("-calendar-import-fixture-file") else { return nil }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("Pigeonpost import fixture.ics")
+        do { try Data(contents.utf8).write(to: url, options: .atomic) } catch { return nil }
+        return url
+    }
+}
+#endif
