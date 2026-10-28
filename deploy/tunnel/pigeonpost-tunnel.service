@@ -8,6 +8,10 @@ Wants=network-online.target
 ExecStart=/opt/pigeonpost-tunnel/pigeonpost-tunnel
 EnvironmentFile=/etc/pigeonpost-tunnel.env
 DynamicUser=yes
+# Phase 9: the proxy socket lives here; the socket itself is 0660 group www-data (nginx).
+RuntimeDirectory=pigeonpost-tunnel
+RuntimeDirectoryMode=0755
+SupplementaryGroups=www-data
 Restart=on-failure
 RestartSec=2
 NoNewPrivileges=yes

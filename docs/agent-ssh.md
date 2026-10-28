@@ -63,8 +63,12 @@ removes its container.
   changed key unless given `--accept-host-key <exact fingerprint>`. The independent check is
   `pigeonpost agentd shell` on the machine, which prints the fingerprint.
 
-agentd pins the CA public key on first contact (`shell-ca.pub`) and refuses all sessions if the
-postbox later presents another CA. It checks every certificate binding against the
+agentd never learns the CA from the postbox (Phase 9). For `https://postbox.pigeonpost.dev` the CA
+is pinned in the agentd release (`RELEASE_CA`, `SHA256:JYtla5q8tBzb4vFjJgeUNBiHblmEdsBvlKy2G+FbfGg`);
+a pin file or `PIGEONPOST_SSH_CA` cannot widen it, and a rotation ships in a new release. For any
+other postbox the owner supplies the CA out of band — `PIGEONPOST_SSH_CA`, or the public key in
+`shell-ca.pub` — after confirming its fingerprint with that postbox's operator; until then agentd
+logs the offered fingerprint and refuses all sessions. A different CA is always refused. It checks every certificate binding against the
 `shell.request` it received: CA, validity window, type, principal, key fingerprint, serial, agent,
 mode, no critical options.
 
@@ -95,7 +99,8 @@ workspace = "/srv/app"
 [mailbox.shell]
 enabled = true
 mode = "container"                    # container | allowlist | unconfined — required, no default
-image = "docker.io/library/debian:13" # container
+image = "docker.io/library/debian:13@sha256:…"  # container; default pinned by digest
+docker_rootful_acknowledged = false   # container + Docker: see below
 runtime = "podman"                    # container: podman | docker (default: podman if installed)
 network = "none"                      # container: none | outbound
 read_only = false                     # container: mount the workspace read-only
@@ -109,7 +114,7 @@ Every session is announced in `agentd.log`, as a desktop notification, and in
 
 | Mode | Boundary | Platforms |
 |---|---|---|
-| `container` (recommended) | Podman (rootless, `--userns keep-id`) or Docker (`--user` = this machine's uid). Only the workspace, bind-mounted at `/workspace`; `--cap-drop ALL`, `no-new-privileges`, read-only root filesystem, 64 MB `/tmp`, 256 pids, 1 GB, 1 CPU, `--init`, network `none` unless `outbound`, never the runtime socket. Named per session and removed on teardown. | Linux; macOS through Docker Desktop's VM (exercised by the end-to-end harness) |
+| `container` (recommended) | Podman (rootless, `--userns keep-id`; preferred) or Docker (`--user` = this machine's uid). Docker is refused when `docker info` shows a rootful daemon without user-namespace remapping (container root = host root after an escape), unless the owner sets `docker_rootful_acknowledged = true`; rootless Docker, `userns-remap` and Docker Desktop's VM are accepted. The default image is `debian:13` pinned by digest. Only the workspace, bind-mounted at `/workspace`; `--cap-drop ALL`, `no-new-privileges`, read-only root filesystem, 64 MB `/tmp`, 256 pids, 1 GB, 1 CPU, `--init`, network `none` unless `outbound`, never the runtime socket. Named per session and removed on teardown. | Linux; macOS through Docker Desktop's VM (exercised by the end-to-end harness) |
 | `allowlist` | No shell and no terminal. Each request is one exact argv from `[[mailbox.shell.command]]` (absolute program; shells, interpreters and launchers such as `env`, `xargs`, `find`, `sudo` are refused in the config), executed directly — never through a shell — with a fixed environment in the workspace. Up to `paths` trailing arguments, each a relative path that resolves, symlinks included, inside the workspace. Characters a shell would interpret are refused outright. | Linux, macOS |
 | `unconfined` | The machine user's login shell, `cwd` = workspace. Needs `unconfined_acknowledged = true` as a second explicit statement. Same risk as the existing `full` tier. | Linux, macOS |
 | `user` (SDS) | Not implemented in this build; refused by name rather than run as something weaker. | — |

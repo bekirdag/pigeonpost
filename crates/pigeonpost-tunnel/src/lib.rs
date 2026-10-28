@@ -61,7 +61,9 @@ pub struct Config {
     pub auth_timeout: Duration,
     /// New connections per client address per minute.
     pub per_ip_per_minute: usize,
-    /// Take the client address from `X-Real-IP` when the peer is loopback (behind the proxy).
+    /// Take the client address from `X-Real-IP` — only on the Unix socket (Phase 9), which only
+    /// the proxy can reach. Over TCP the header is never trusted, loopback or not: any local
+    /// process can connect from loopback.
     pub trust_proxy: bool,
 }
 
@@ -364,22 +366,51 @@ async fn health(State(b): State<Broker>) -> Response {
     .into_response()
 }
 
-fn client_ip(b: &Broker, peer: SocketAddr, headers: &HeaderMap) -> String {
-    if b.0.cfg.trust_proxy && peer.ip().is_loopback() {
-        if let Some(ip) = headers
+/// Who connected: a TCP peer (taken at face value), or the reverse proxy over the Unix socket,
+/// whose permissions (`0660`, the proxy's group) are what make its `X-Real-IP` trustworthy.
+#[derive(Clone, Copy, Debug)]
+pub enum Peer {
+    Tcp(SocketAddr),
+    Proxy,
+}
+
+impl
+    axum::extract::connect_info::Connected<axum::serve::IncomingStream<'_, tokio::net::TcpListener>>
+    for Peer
+{
+    fn connect_info(s: axum::serve::IncomingStream<'_, tokio::net::TcpListener>) -> Self {
+        Peer::Tcp(*s.remote_addr())
+    }
+}
+
+#[cfg(unix)]
+impl
+    axum::extract::connect_info::Connected<
+        axum::serve::IncomingStream<'_, tokio::net::UnixListener>,
+    > for Peer
+{
+    fn connect_info(_: axum::serve::IncomingStream<'_, tokio::net::UnixListener>) -> Self {
+        Peer::Proxy
+    }
+}
+
+pub fn client_ip(trust_proxy: bool, peer: Peer, headers: &HeaderMap) -> String {
+    match peer {
+        Peer::Tcp(addr) => addr.ip().to_string(),
+        Peer::Proxy => headers
             .get("x-real-ip")
+            .filter(|_| trust_proxy)
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.trim().parse::<std::net::IpAddr>().ok())
-        {
-            return ip.to_string();
-        }
+            .map(|ip| ip.to_string())
+            // Without the header every proxied client shares one bucket: safe, never spoofable.
+            .unwrap_or_else(|| "proxy".to_string()),
     }
-    peer.ip().to_string()
 }
 
 async fn upgrade(
     State(b): State<Broker>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    ConnectInfo(peer): ConnectInfo<Peer>,
     headers: HeaderMap,
     Path(sid): Path<String>,
     ws: WebSocketUpgrade,
@@ -387,7 +418,7 @@ async fn upgrade(
     if !valid_session_id(&sid) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    if !b.admit_ip(&client_ip(&b, peer, &headers)) {
+    if !b.admit_ip(&client_ip(b.0.cfg.trust_proxy, peer, &headers)) {
         return StatusCode::TOO_MANY_REQUESTS.into_response();
     }
     if b.session_count() >= b.0.cfg.max_sessions {
@@ -589,4 +620,27 @@ async fn leg(b: Broker, sid: String, mut socket: WebSocket) {
     };
     b.finish(&session, &ended_by);
     let _ = writer.await;
+}
+
+#[cfg(test)]
+mod client_ip_tests {
+    use super::*;
+
+    #[test]
+    fn x_real_ip_is_trusted_only_from_the_proxy_socket() {
+        let mut h = HeaderMap::new();
+        h.insert("x-real-ip", "203.0.113.7".parse().unwrap());
+        let loopback = Peer::Tcp("127.0.0.1:5555".parse().unwrap());
+        assert_eq!(
+            client_ip(true, loopback, &h),
+            "127.0.0.1",
+            "loopback TCP is not the proxy"
+        );
+        assert_eq!(client_ip(true, Peer::Proxy, &h), "203.0.113.7");
+        assert_eq!(client_ip(false, Peer::Proxy, &h), "proxy");
+        assert_eq!(client_ip(true, Peer::Proxy, &HeaderMap::new()), "proxy");
+        let mut junk = HeaderMap::new();
+        junk.insert("x-real-ip", "not-an-ip".parse().unwrap());
+        assert_eq!(client_ip(true, Peer::Proxy, &junk), "proxy");
+    }
 }

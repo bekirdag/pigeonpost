@@ -297,12 +297,18 @@ def main():
                 toml.append('[[mailbox.shell.command]]\nargv = ["/bin/cat"]\npaths = 1\n'
                             '[[mailbox.shell.command]]\nargv = ["/bin/echo", "allowed"]\n')
             if mode == "container":
-                toml.append('image = "docker.io/library/debian:13"\nruntime = "docker"\n')
+                # The default image (pinned by digest). CI's Docker is rootful: the owner opt-in
+                # is what lets container mode run there (rootless/userns/Desktop need none).
+                toml.append('runtime = "docker"\ndocker_rootful_acknowledged = true\n')
         write_private(os.path.join(machine, "agentd.toml"), "\n".join(toml))
         agent_env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": machine,
                      "PIGEONPOST_HOME": machine, "PIGEONPOST_POSTBOX": base, "PIGEONPOST_TUNNEL_URL": tunnel_url,
                      "PIGEONPOST_AGENTD_NOTIFY": "never", "PP_AGENTD_SECRET": "agentd-env-must-not-leak",
-                     "SHELL": "/bin/sh"}
+                     "SHELL": "/bin/sh",
+                     # The fixture postbox is not the production one, so its CA is pinned out of
+                     # band, as an owner would, instead of being learned on first contact.
+                     "PIGEONPOST_SSH_CA": subprocess.run(["ssh-keygen", "-y", "-f", ca_path], check=True,
+                                                         capture_output=True, text=True).stdout.strip()}
         if use_container:
             # Where this machine's Docker listens (Docker Desktop keeps it in a context).
             host = subprocess.run(["docker", "context", "inspect", "--format", "{{.Endpoints.docker.Host}}"],
