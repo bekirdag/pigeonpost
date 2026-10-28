@@ -93,6 +93,7 @@ jobs:
             adb shell svc power stayon true
             adb shell input keyevent KEYCODE_WAKEUP
             adb shell wm dismiss-keyguard
+            mkdir -p app/build/reports
             adb shell dumpsys power > app/build/reports/emulator-power-before-tests.txt
             grep -q 'mWakefulness=Awake' app/build/reports/emulator-power-before-tests.txt
             ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.pigeonpost_test_emulator=true --no-daemon --console=plain
