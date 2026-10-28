@@ -373,6 +373,9 @@ const MIGRATIONS: &[&str] = &[
     "ALTER TABLE messages ADD COLUMN direction TEXT NOT NULL DEFAULT 'in'",
     "UPDATE messages SET owner = recipient WHERE owner IS NULL",
     "CREATE INDEX IF NOT EXISTS messages_by_owner ON messages(owner)",
+    // Phase 9 (load test): every mailbox query filters on this exact expression; without an index
+    // on it each one scanned the whole table (~95 sends/s at today's size, ~11 at 80k rows).
+    "CREATE INDEX IF NOT EXISTS messages_by_mailbox ON messages(COALESCE(owner, recipient), created_at)",
     // Threads. The column is nullable only for the instant between adding it and the backfill
     // below; every read treats a NULL thread as a bug rather than a state to handle.
     "ALTER TABLE messages ADD COLUMN thread_id TEXT",

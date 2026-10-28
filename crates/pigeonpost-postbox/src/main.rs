@@ -1962,21 +1962,26 @@ async fn client_ip_layer(State(state): State<AppState>, mut req: Request, next: 
     // Tokens are long random values, so this is about load and noise, not guessing. Addresses of
     // our own services that relay members' tokens (the calls service, the billing bridge) are
     // exempt via POSTBOX_AUTH_FAIL_EXEMPT_IPS; they limit refused tokens per real client themselves.
+    //
+    // Only refusals are ever affected: a request whose credential is valid is always served, so a
+    // client sharing an address (office NAT, CGNAT) with someone presenting junk is never locked
+    // out. Over the limit, a refusal becomes `429` with `Retry-After`, telling well-behaved
+    // clients to back off.
     let presents_token = req.headers().contains_key(header::AUTHORIZATION);
     let throttled = presents_token && !auth_fail_exempt(&ip);
     let key = format!("authfail:{ip}");
-    if throttled && groups::rate_limit_peek(&key, AUTH_FAILS_PER_WINDOW, AUTH_FAIL_WINDOW) {
-        return ApiError::new(
-            StatusCode::TOO_MANY_REQUESTS,
-            "rate_limited",
-            "too many refused credentials from this address; try again later",
-        )
-        .with_retry_after(AUTH_FAIL_WINDOW)
-        .into_response();
-    }
     req.extensions_mut().insert(ClientIp(ip));
     let resp = next.run(req).await;
     if throttled && resp.status() == StatusCode::UNAUTHORIZED {
+        if groups::rate_limit_peek(&key, AUTH_FAILS_PER_WINDOW, AUTH_FAIL_WINDOW) {
+            return ApiError::new(
+                StatusCode::TOO_MANY_REQUESTS,
+                "rate_limited",
+                "too many refused credentials from this address; try again later",
+            )
+            .with_retry_after(AUTH_FAIL_WINDOW)
+            .into_response();
+        }
         let _ = groups::rate_limit(&key, usize::MAX, AUTH_FAIL_WINDOW);
     }
     resp
