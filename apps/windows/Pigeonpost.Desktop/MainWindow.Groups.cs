@@ -380,6 +380,7 @@ public sealed partial class MainWindow
         compactConversation = created is not null;
         UpdateLayoutMode();
         UpdateGroupPage();
+        if (created is not null) KeepGroupComposerFocus();
     }
 
     private static string[] Addresses(string text) => text.Split([',', ';', ' ', '\n', '\r'], StringSplitOptions.RemoveEmptyEntries)

@@ -367,15 +367,28 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
         }
     }
 
-    public async Task StartConversationAsync(string peer, string firstMessage)
+    // Opens (and selects) the conversation with a peer in the current inbox, then sends the first
+    // message from it. Returns whether that conversation is selected in the inbox the caller saw,
+    // so a window can bring it forward. The new thread is selected before anything is sent: the
+    // sent message, or its unconfirmed pending row with recovery, is then visible in place rather
+    // than in a list the person has to search after the dialog closes.
+    //
+    // `expectedMailbox` is the inbox the dialog was opened from. If the account or inbox changed
+    // while the dialog was open or while an inbox refresh finished, nothing is opened or sent.
+    public async Task<bool> StartConversationAsync(string peer, string firstMessage, string? expectedMailbox = null)
     {
-        if (SelectedMailbox is not { } mailbox || ActiveAccount is null || IsBusy || IsSending) return;
+        if (SelectedMailbox is not { } mailbox || ActiveAccount is not { } owner) return false;
+        if (expectedMailbox is not null && mailbox.Address != expectedMailbox) return false;
         peer = PostAddress.Canonical(PostAddress.Input(peer));
         if (!PostAddress.IsValid(peer))
         {
             Error = "Use an address such as /bekir, /bekir/main or /k/your-address.";
-            return;
+            return false;
         }
+        // A refresh or another send may be finishing as the dialog closes. That used to return
+        // without a word, leaving the window on whatever was open before and dropping the message.
+        var generation = mailboxVersion;
+        if (!await WaitForInboxIdleAsync(owner, generation)) return false;
         // Opening is local. It does not create a contact or grant the sender any permissions.
         peer = ConversationBuilder.ResolvePeer(peer, snapshot, Mailboxes);
         if (!opened.TryGetValue(mailbox.Address, out var peers)) opened[mailbox.Address] = peers = [];
@@ -385,16 +398,31 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
         Rebuild();
         SelectConversation(Conversations.FirstOrDefault(c => c.Peer == peer));
         SelectSubject(Subjects.FirstOrDefault(s => s.IsDefault));
-        if (string.IsNullOrWhiteSpace(firstMessage)) return;
+        if (string.IsNullOrWhiteSpace(firstMessage)) return IsStarted(owner, generation, peer);
         // Keep an existing draft instead of overwriting it when opening the same peer again.
         if (!string.IsNullOrEmpty(Draft) || HasDraftAttachments)
         {
             Draft += "\n" + firstMessage;
             Error = "This conversation already had an unsent draft. Review the combined message before sending.";
-            return;
+            return IsStarted(owner, generation, peer);
         }
         Draft = firstMessage;
         await SendDraftAsync();
+        return IsStarted(owner, generation, peer);
+    }
+
+    private bool IsStarted(InboxActor owner, int generation, string peer) => AccountCurrent(owner) && generation == mailboxVersion
+        && SelectedConversation is { } selected && (selected.Peer == peer || selected.Peer == ConversationBuilder.ResolvePeer(peer, snapshot, Mailboxes));
+
+    private async Task<bool> WaitForInboxIdleAsync(InboxActor owner, int generation)
+    {
+        for (var waited = 0; IsBusy || IsSending; waited += 50)
+        {
+            if (waited >= 15000) { Error = "The inbox is still busy. Try again in a moment."; return false; }
+            await Task.Delay(50);
+            if (disposed || !AccountCurrent(owner) || generation != mailboxVersion) return false;
+        }
+        return !disposed && AccountCurrent(owner) && generation == mailboxVersion;
     }
 
     public async Task<bool> CreateSubjectAsync(string title)
@@ -593,7 +621,11 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
         try
         {
             StableList.Reconcile(Conversations, next, c => c.Peer, StableList.SameConversation);
-            SetSelection(Conversations.FirstOrDefault(c => c.Peer == peer) ?? Conversations.FirstOrDefault(), subject);
+            // A conversation opened by a typed handle is filed under the handle the server reports once
+            // the first copy arrives; follow that alias instead of falling back to another row.
+            var resolved = peer is null ? null : ConversationBuilder.ResolvePeer(peer, snapshot, Mailboxes);
+            SetSelection(Conversations.FirstOrDefault(c => c.Peer == peer) ?? Conversations.FirstOrDefault(c => c.Peer == resolved)
+                ?? Conversations.FirstOrDefault(), subject);
         }
         finally { IsUpdatingLists = false; }
         Changed(nameof(IsListEmpty));

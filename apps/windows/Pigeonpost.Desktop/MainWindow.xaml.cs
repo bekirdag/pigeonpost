@@ -262,7 +262,9 @@ public sealed partial class MainWindow : Window
 
     private async Task NewConversationAsync()
     {
-        if (dialogOpen || ViewModel.SelectedMailbox is null || ViewModel.IsBusy || ViewModel.IsSending) return;
+        // Not gated on a refresh in progress: the model waits for it, and a shortcut that silently
+        // does nothing during every refresh reads as broken.
+        if (dialogOpen || ViewModel.SelectedMailbox is not { } mailbox) return;
         dialogOpen = true;
         try
         {
@@ -294,13 +296,30 @@ public sealed partial class MainWindow : Window
             };
             peer.TextChanged += Validate;
             message.TextChanged += Validate;
-            if (await dialog.ShowAsync() == ContentDialogResult.Primary)
-            {
-                await ViewModel.StartConversationAsync(peer.Text, message.Text);
-                ShowConversation();
-            }
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+            dialogOpen = false;
+            await OpenStartedConversationAsync(mailbox.Address, peer.Text, message.Text);
         }
         finally { dialogOpen = false; }
+    }
+
+    // The new conversation replaces whatever page was showing (Calls, Calendar, Groups …) and is
+    // selected in the list, with its first message (sent, or pending with recovery) in view and the
+    // caret in its message box. Bound to the inbox the dialog was opened from: if the account or
+    // inbox changed meanwhile the model refuses, and nothing here moves the window.
+    private async Task<bool> OpenStartedConversationAsync(string mailbox, string peer, string message)
+    {
+        if (sideView != SideView.Chats) ShowSideView(SideView.Chats);
+        if (!await ViewModel.StartConversationAsync(peer, message, mailbox) || ViewModel.SelectedMailbox?.Address != mailbox) return false;
+        if (sideView != SideView.Chats) ShowSideView(SideView.Chats);
+        ShowConversation();
+        if (ViewModel.Messages.LastOrDefault() is { } last) QueueScroll(last);
+        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
+        {
+            if (!dialogOpen && ViewModel.CanCompose && MessagingArea.Visibility == Visibility.Visible && ViewModel.SelectedMailbox?.Address == mailbox)
+                Composer.Focus(FocusState.Programmatic);
+        });
+        return true;
     }
 
     private async Task NewSubjectAsync()
