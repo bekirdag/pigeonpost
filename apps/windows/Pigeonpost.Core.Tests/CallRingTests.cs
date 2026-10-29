@@ -187,7 +187,26 @@ internal static class CallRingTests
             Require(requests[1].Uri.StartsWith("https://postbox.pigeonpost.dev/v1/devices/https%3A%2F%2Fdb5p.notify.windows.com%2F%3Ftoken%3D", StringComparison.Ordinal),
                 "The channel was not one escaped path segment: " + requests[1].Uri);
         });
+        yield return ("The package registers the Windows App SDK push server under the Entra application ID", () =>
+        {
+            var manifest = XDocument.Load(ManifestPath());
+            XNamespace com = "http://schemas.microsoft.com/appx/manifest/com/windows10";
+            var push = manifest.Descendants(com + "ExeServer").Where(e => (string?)e.Attribute("Arguments") == WnsChannel.PushServerArguments).ToList();
+            Equal(push.Count, 1);
+            Equal((string?)push[0].Attribute("Executable"), "Pigeonpost.exe");
+            var classes = push[0].Elements(com + "Class").Select(c => Guid.Parse((string)c.Attribute("Id")!)).ToList();
+            Require(classes.SequenceEqual(new[] { WnsChannel.AzureAppId }), "The push COM class is not the Entra application ID.");
+            // The channel request uses the service principal's object ID, a different value.
+            Require(WnsChannel.AzureObjectId != WnsChannel.AzureAppId && WnsChannel.AzureObjectId != Guid.Empty, "The channel remote ID is not the object ID.");
+            // The app-notification activator stays as it was, so toasts from either source activate the app.
+            var notifications = manifest.Descendants(com + "ExeServer").Where(e => (string?)e.Attribute("Arguments") == "----AppNotificationActivated:").ToList();
+            Equal(notifications.Count, 1);
+            return Task.CompletedTask;
+        });
     }
+
+    private static string ManifestPath([System.Runtime.CompilerServices.CallerFilePath] string here = "") =>
+        Path.Combine(Path.GetDirectoryName(here)!, "..", "Packaging", "Package.appxmanifest");
 
     private static void Equal<T>(T actual, T expected)
     {

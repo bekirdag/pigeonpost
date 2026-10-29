@@ -71,10 +71,18 @@ public partial class App : Application
             try { AppNotificationManager.Default.Unregister(); } catch (Exception) { }
             instance.UnregisterKey();
         };
+        // Windows App SDK push must be registered before the activation is read. Packaged only:
+        // channels need the package family name that Microsoft maps to the Entra app.
+        if (DesktopLog.PackageIdentity() != "unpackaged")
+        {
+            WindowsPush.Register();
+            _ = WindowsPush.CreateChannelAsync(); // Ready by sign-in; the result is logged.
+        }
         var initialActivation = AppInstance.GetCurrent().GetActivatedEventArgs();
         // COM launches deliver their target through NotificationInvoked. Wait for it
         // before activating, so the previously selected subject is not acknowledged.
-        var startedAtSignIn = initialActivation.Kind == ExtendedActivationKind.StartupTask;
+        // A raw push activation (the postbox sends none) is treated like start at sign-in.
+        var startedAtSignIn = initialActivation.Kind is ExtendedActivationKind.StartupTask or ExtendedActivationKind.Push;
 #if UI_TESTS
         startedAtSignIn |= Environment.GetEnvironmentVariable("PIGEONPOST_UI_STARTUP") == "1";
 #endif

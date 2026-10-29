@@ -24,6 +24,19 @@ try {
     $installed = Get-AppxPackage -Name WodoTeknolojiA.PigeonpostDesktop
     if (-not $installed -or $installed.Status -ne 'Ok') { throw 'MSIX did not register correctly.' }
     & "$PSScriptRoot/smoke-test.ps1" -PackageFamilyName $installed.PackageFamilyName -OutputDirectory $OutputDirectory
+    # Windows App SDK push (WindowsPush.cs): the installed package must register its push server.
+    # The channel result is evidence only: it needs Microsoft's mapping of this package family to
+    # the Entra app, which this test-signed package shares with the Store package.
+    $log = Join-Path $env:LOCALAPPDATA "Packages/$($installed.PackageFamilyName)/LocalCache/Local/Pigeonpost/logs/desktop.log"
+    $pushLines = @()
+    for ($i = 0; $i -lt 60; $i++) {
+        if (Test-Path $log) { $pushLines = @(Get-Content $log | Where-Object { $_ -match 'push' }) }
+        if ($pushLines -match 'Push channel (ready|unavailable)|Push channel request failed') { break }
+        Start-Sleep -Milliseconds 500
+    }
+    $pushLines | Set-Content (Join-Path $OutputDirectory 'push.log')
+    $pushLines | ForEach-Object { Write-Host "push: $_" }
+    if (-not ($pushLines -match 'Windows push registered')) { throw 'The installed package did not register Windows App SDK push.' }
     Write-Host "Installed package passed: $($installed.PackageFullName)"
 } finally {
     if ($installed) { Remove-AppxPackage -Package $installed.PackageFullName }

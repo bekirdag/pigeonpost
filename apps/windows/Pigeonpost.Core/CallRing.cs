@@ -279,4 +279,13 @@ public static class WnsChannel
 
     // Channels last 30 days; renewing on every start and once a day keeps the registration fresh.
     public static readonly TimeSpan RefreshInterval = TimeSpan.FromHours(24);
+
+    // Windows App SDK push (docs/call-alerting.md). The Entra app registration "Pigeonpost Desktop
+    // WNS" in the Wodo Network tenant (48477bf1-ca44-4687-a97c-3d39d7ef7572): Microsoft maps the
+    // package family name to its application ID, the package's push COM server is registered under
+    // that ID, the channel request names the app by its service principal's object ID, and the
+    // postbox signs in to WNS as the same application. None of these is a secret.
+    public static readonly Guid AzureAppId = new("6b717f08-17c7-4433-8ea8-25f06ed63e60");
+    public static readonly Guid AzureObjectId = new("d4a94855-b3f5-41af-8b48-c66d4d7eef73");
+    public const string PushServerArguments = "----WindowsAppRuntimePushServer:";
 }

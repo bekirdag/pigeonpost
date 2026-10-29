@@ -6,7 +6,7 @@
          xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
          IgnorableNamespaces="uap rescap com desktop">
   <!-- Microsoft Store product 9N0NWJ9L8XDP. Microsoft signs accepted Store packages. -->
-  <Identity Name="WodoTeknolojiA.PigeonpostDesktop" Publisher="CN=D850EB9E-D10B-4265-83A3-AC88170D8C6D" Version="1.0.11.0" ProcessorArchitecture="__ARCH__" />
+  <Identity Name="WodoTeknolojiA.PigeonpostDesktop" Publisher="CN=D850EB9E-D10B-4265-83A3-AC88170D8C6D" Version="1.0.12.0" ProcessorArchitecture="__ARCH__" />
   <Properties>
     <DisplayName>Pigeonpost Desktop</DisplayName>
     <PublisherDisplayName>Wodo Teknoloji A.Ş.</PublisherDisplayName>
@@ -34,6 +34,15 @@
           <com:ComServer>
             <com:ExeServer Executable="Pigeonpost.exe" Arguments="----AppNotificationActivated:" DisplayName="Pigeonpost Desktop">
               <com:Class Id="C879AF76-2C6D-47BE-82FA-089F77156685" />
+            </com:ExeServer>
+          </com:ComServer>
+        </com:Extension>
+        <!-- Windows App SDK push (incoming calls with the app closed): the class ID is the Entra
+             application ID that Microsoft maps to this package family (WnsChannel.AzureAppId). -->
+        <com:Extension Category="windows.comServer">
+          <com:ComServer>
+            <com:ExeServer Executable="Pigeonpost.exe" Arguments="----WindowsAppRuntimePushServer:" DisplayName="Pigeonpost Desktop push">
+              <com:Class Id="6b717f08-17c7-4433-8ea8-25f06ed63e60" DisplayName="Windows App SDK Push" />
             </com:ExeServer>
           </com:ComServer>
         </com:Extension>
