@@ -368,7 +368,7 @@ class MessagesMixin:
                 raise
 
         def done(outcome):
-            kind, _, attempt = outcome
+            kind, sent, attempt = outcome
             if identity == self.identity:
                 self.sending = False
             if kind == "uncertain":
@@ -400,7 +400,8 @@ class MessagesMixin:
                 self.keep_composer_focus(key)
             self.toast("Message edited" if options.get("edit_of") else "Message sent")
             if identity == self.identity:
-                self.reload_messages()
+                result = sent[0] if isinstance(sent, tuple) and sent and isinstance(sent[0], dict) else {}
+                self.reload_messages((identity, peer, result.get("sent_copy_id"), result.get("msg_ref") or attempt.msg_ref))
 
         def failed(error):
             if identity == self.identity:
@@ -471,7 +472,8 @@ class MessagesMixin:
             self.restore_draft()
             self.toast("Message confirmed")
             if identity == self.identity:
-                self.reload_messages()
+                sent = result[0] if isinstance(result, tuple) and result and isinstance(result[0], dict) else {}
+                self.reload_messages((identity, attempt.peer, sent.get("sent_copy_id"), sent.get("msg_ref") or attempt.msg_ref))
                 self.render_all()
 
         def failed(error):
