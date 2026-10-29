@@ -18,6 +18,7 @@ pub(crate) mod audit;
 mod avatars;
 mod calendar;
 mod calllog;
+pub(crate) mod contacts;
 mod deletion;
 mod entitlements;
 mod ephemeral;
@@ -988,6 +989,8 @@ impl Store {
         conn.execute_batch(shell::SCHEMA)?;
         // Phase 9: rate-limiter state that survives restarts.
         conn.execute_batch(limits::SCHEMA)?;
+        // Phase 10: phone numbers, contact discovery, SMS invitations, display names (SDS §14D).
+        conn.execute_batch(contacts::SCHEMA)?;
         for stmt in MIGRATIONS
             .iter()
             .chain(filtering::MIGRATIONS)

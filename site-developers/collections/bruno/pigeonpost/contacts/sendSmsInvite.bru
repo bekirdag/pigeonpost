@@ -1,0 +1,30 @@
+meta {
+  name: Invite one contact by SMS, on the person's explicit tap (feature `sms_invites`)
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/v1/contacts/invites
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "phone": "string",
+    "confirm": false,
+    "identity": "string"
+  }
+}
+
+docs {
+  The sender must have a verified number. `confirm` must be true. Per sender: 5 a day, 20 per
+  30 days. Per receiving number (all senders): 1 per 7 days, 3 per 30 days; never after an
+  opt-out. `not_sent.reason` is `already_invited` (you, within 30 days) or `unavailable`
+  (deliberately merged: opted out, invited recently by others, or not supported).
+}

@@ -21,7 +21,7 @@
 <link rel="apple-touch-icon" sizes="180x180" href="/favicon-180.png">
 <script src="theme.js?v=20261025-web1"></script>
 <link rel="preload" href="fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="app.css?v=20261029-openthread1">
+<link rel="stylesheet" href="app.css?v=20261029-contacts1">
 <link rel="stylesheet" href="calls-summary.css?v=20261027-notes1">
 <link rel="stylesheet" href="groups.css?v=20261025-web1">
 <link rel="stylesheet" href="calendar.css?v=20261025-web1">
@@ -294,7 +294,7 @@
       <button class="icon-btn" id="settings-close" type="button" aria-label="Close"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></button>
     </header>
     <div class="sheet-body">
-      <nav data-settings-page="root" aria-label="Settings pages"><button class="settings-row" id="settings-nav-account" data-settings-open="account" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 10a4 4 0 1 0 0-8 4 4 0 0 0 0 8M3 19v-2a7 7 0 0 1 14 0v2"/></svg><span><strong>Account</strong><small>Your account and sign-in</small></span><span class="settings-chevron" aria-hidden="true">›</span></button><button class="settings-row" id="settings-nav-handles" data-settings-open="handles" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M15 13c0 3 4 2 4-3a9 9 0 1 0-4 7M15 6v7M15 10a5 5 0 1 1-10 0 5 5 0 0 1 10 0"/></svg><span><strong>Handles</strong><small>Your names and subscriptions</small></span><span class="settings-chevron" aria-hidden="true">›</span></button><button class="settings-row" id="settings-nav-inbox" data-settings-open="inbox" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2 5h16v13H2ZM2 12h5l1 3h4l1-3h5"/></svg><span><strong>Inbox and appearance</strong><small>Theme, text size and archived conversations</small></span><span class="settings-chevron" aria-hidden="true">›</span></button><button class="settings-row" id="settings-nav-contacts" data-settings-open="contacts" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 10a3 3 0 1 0 0-6 3 3 0 0 0 0 6M1 18v-2a6 6 0 0 1 12 0v2M14 4a3 3 0 0 1 0 6M15 12a5 5 0 0 1 4 5"/></svg><span><strong>Contacts and permissions</strong><small>Senders you know and trust</small></span><span class="settings-chevron" aria-hidden="true">›</span></button><button class="settings-row" id="settings-nav-profile" data-settings-open="profile" type="button" hidden><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 4h14v12H3ZM3 13l4-4 3 3 2-2 5 5M13 7.5v.1"/></svg><span><strong>Profile picture</strong><small>Your picture and who can see it</small></span><span class="settings-chevron" aria-hidden="true">›</span></button><button class="settings-row" id="settings-nav-privacy" data-settings-open="privacy" type="button" hidden><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2l7 3v5c0 4-3 7-7 8-4-1-7-4-7-8V5ZM7 10l2 2 4-4"/></svg><span><strong>Privacy and filtering</strong><small>Unknown callers, unnamed senders, call history</small></span><span class="settings-chevron" aria-hidden="true">›</span></button><button class="settings-row" id="settings-nav-blocked" data-settings-open="blocked" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16M4.4 4.4l11.2 11.2"/></svg><span><strong>Blocked</strong><small>People and addresses you blocked</small></span><span class="settings-chevron" aria-hidden="true">›</span></button><button class="settings-row" id="settings-nav-help" data-settings-open="help" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 19a9 9 0 1 0 0-18 9 9 0 0 0 0 18M7 7a3 3 0 1 1 5 2l-2 2v1M10 15v1"/></svg><span><strong>Help and about</strong><small>Support, privacy and app information</small></span><span class="settings-chevron" aria-hidden="true">›</span></button></nav>
+      <nav data-settings-page="root" aria-label="Settings pages"><button class="settings-row" id="settings-nav-account" data-settings-open="account" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 10a4 4 0 1 0 0-8 4 4 0 0 0 0 8M3 19v-2a7 7 0 0 1 14 0v2"/></svg><span><strong>Account</strong><small>Your account and sign-in</small></span><span class="settings-chevron" aria-hidden="true">›</span></button><button class="settings-row" id="settings-nav-handles" data-settings-open="handles" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M15 13c0 3 4 2 4-3a9 9 0 1 0-4 7M15 6v7M15 10a5 5 0 1 1-10 0 5 5 0 0 1 10 0"/></svg><span><strong>Handles</strong><small>Your names and subscriptions</small></span><span class="settings-chevron" aria-hidden="true">›</span></button><button class="settings-row" id="settings-nav-inbox" data-settings-open="inbox" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2 5h16v13H2ZM2 12h5l1 3h4l1-3h5"/></svg><span><strong>Inbox and appearance</strong><small>Theme, text size and archived conversations</small></span><span class="settings-chevron" aria-hidden="true">›</span></button><button class="settings-row" id="settings-nav-contacts" data-settings-open="contacts" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 10a3 3 0 1 0 0-6 3 3 0 0 0 0 6M1 18v-2a6 6 0 0 1 12 0v2M14 4a3 3 0 0 1 0 6M15 12a5 5 0 0 1 4 5"/></svg><span><strong>Contacts and permissions</strong><small>Senders you know and trust</small></span><span class="settings-chevron" aria-hidden="true">›</span></button><button class="settings-row" id="settings-nav-profile" data-settings-open="profile" type="button" hidden><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 4h14v12H3ZM3 13l4-4 3 3 2-2 5 5M13 7.5v.1"/></svg><span><strong>Profile</strong><small>Your name, picture and who can see them</small></span><span class="settings-chevron" aria-hidden="true">›</span></button><button class="settings-row" id="settings-nav-phone" data-settings-open="phone" type="button" hidden><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 2h8v16H6ZM9 15h2"/></svg><span><strong>Phone number</strong><small>Add a number and choose who can find you</small></span><span class="settings-chevron" aria-hidden="true">›</span></button><button class="settings-row" id="settings-nav-privacy" data-settings-open="privacy" type="button" hidden><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2l7 3v5c0 4-3 7-7 8-4-1-7-4-7-8V5ZM7 10l2 2 4-4"/></svg><span><strong>Privacy and filtering</strong><small>Unknown callers, unnamed senders, call history</small></span><span class="settings-chevron" aria-hidden="true">›</span></button><button class="settings-row" id="settings-nav-blocked" data-settings-open="blocked" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16M4.4 4.4l11.2 11.2"/></svg><span><strong>Blocked</strong><small>People and addresses you blocked</small></span><span class="settings-chevron" aria-hidden="true">›</span></button><button class="settings-row" id="settings-nav-help" data-settings-open="help" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 19a9 9 0 1 0 0-18 9 9 0 0 0 0 18M7 7a3 3 0 1 1 5 2l-2 2v1M10 15v1"/></svg><span><strong>Help and about</strong><small>Support, privacy and app information</small></span><span class="settings-chevron" aria-hidden="true">›</span></button></nav>
       <div data-settings-page="account" hidden><section class="setting">
         <h3>Account</h3>
         <dl class="account-facts">
@@ -351,8 +351,31 @@
         </p>
         <ul class="contact-list" id="contact-list"></ul>
         <button class="btn-ghost" id="contact-add" type="button">Add a sender</button>
+      </section><section class="setting" id="discover-section" hidden>
+        <h3>Find people I know</h3>
+        <p class="field-note">Check which people in a contacts file you exported (Google Contacts, iCloud, Outlook) are on Pigeonpost.</p>
+        <button class="btn-ghost" id="discover-open" type="button">Find people I know…</button>
       </section></div>
-      <div data-settings-page="profile" hidden><section class="setting">
+      <div data-settings-page="profile" hidden><section class="setting" id="profile-name-section" hidden>
+        <h3>Display name</h3>
+        <label class="field" for="profile-name-input">
+          <span>What people see before they save you as a contact</span>
+          <input id="profile-name-input" type="text" maxlength="80" autocomplete="nickname" spellcheck="false" aria-describedby="profile-name-help">
+        </label>
+        <p class="field-note" id="profile-name-help">Up to 40 characters, no / or @. Shown as ~Name, with your address one tap away. It is not a handle.</p>
+        <h4 class="profile-subhead" id="profile-name-visibility-title">Who can see it</h4>
+        <div class="segmented" id="profile-name-visibility" role="radiogroup" aria-labelledby="profile-name-visibility-title">
+          <label><input type="radio" name="profile-name-visibility" value="everyone"><span>Everyone</span></label>
+          <label><input type="radio" name="profile-name-visibility" value="known"><span>People I know</span></label>
+          <label><input type="radio" name="profile-name-visibility" value="nobody"><span>Nobody</span></label>
+        </div>
+        <div class="profile-actions name-actions">
+          <button class="btn-primary" id="profile-name-save" type="button">Save name</button>
+          <button class="btn-ghost" id="profile-name-remove" type="button" hidden>Remove</button>
+        </div>
+        <p class="sheet-error" id="profile-name-error" role="alert" hidden></p>
+        <p class="field-note" id="profile-name-note" role="status"></p>
+      </section><section class="setting" id="profile-picture-section">
         <h3>Profile picture</h3>
         <div class="profile-row">
           <span class="avatar profile-avatar" id="profile-avatar" aria-hidden="true"></span>
@@ -364,7 +387,7 @@
         <input type="file" id="profile-file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" hidden aria-hidden="true" tabindex="-1">
         <label class="peer-toggle" for="profile-all"><span>Use for all my mailboxes</span><input id="profile-all" type="checkbox"></label>
         <p class="field-note" id="profile-note" role="status">This picture belongs to the mailbox you are using now.</p>
-      </section><section class="setting">
+      </section><section class="setting" id="profile-picture-visibility">
         <h3 id="profile-visibility-title">Who can see it</h3>
         <div class="segmented" id="profile-visibility" role="radiogroup" aria-labelledby="profile-visibility-title">
           <label><input type="radio" name="profile-visibility" value="everyone"><span>Everyone</span></label>
@@ -373,6 +396,14 @@
         </div>
         <p class="field-note">People I know means your contacts and people you have written to. Changing this stops new
           downloads; copies someone already has cannot be recalled.</p>
+      </section></div>
+      <div data-settings-page="phone" hidden><section class="setting">
+        <h3>Phone number</h3>
+        <p class="field-note">We keep your number encrypted and never show it to anyone. People who have your number can find you only if you turn that on.</p>
+        <ul class="contact-list" id="phone-list" aria-live="polite"></ul>
+        <p class="field-note" id="phone-note" role="status"></p>
+        <button class="btn-ghost" id="phone-add" type="button">Add a phone number…</button>
+        <p class="sheet-error" id="phone-list-error" role="alert" hidden></p>
       </section></div>
       <div data-settings-page="privacy" hidden><section class="setting">
         <h3>Privacy and filtering</h3>
@@ -407,6 +438,19 @@
     <div class="sheet-body peer-info" id="peer-info">
       <span class="avatar peer-info-avatar" id="peer-info-avatar" aria-hidden="true"></span>
       <dl id="peer-addresses"></dl>
+      <section class="peer-section" id="peer-alias-section" aria-labelledby="peer-alias-title" hidden>
+        <h3 id="peer-alias-title">Edit name</h3>
+        <label class="field" for="peer-alias-input">
+          <span>What you call them</span>
+          <input id="peer-alias-input" type="text" maxlength="100" autocomplete="off" spellcheck="false" aria-describedby="peer-alias-note">
+        </label>
+        <div class="profile-actions name-actions">
+          <button class="btn-ghost" id="peer-alias-save" type="button">Save name</button>
+          <button class="btn-ghost" id="peer-alias-remove" type="button" hidden>Remove</button>
+        </div>
+        <p class="sheet-error" id="peer-alias-error" role="alert" hidden></p>
+        <p class="note" id="peer-alias-note">Only on this device. They are not told, and it is never sent to Pigeonpost.</p>
+      </section>
       <section class="peer-section" aria-labelledby="peer-trust-title">
         <h3 id="peer-trust-title">Trust</h3>
         <label class="peer-toggle" for="peer-known"><span>Known sender</span><input id="peer-known" type="checkbox" role="switch" aria-describedby="peer-trust-note"></label>
@@ -544,6 +588,101 @@
   </div>
 </div>
 
+<!-- Phase 10: phone numbers, finding people, invitations and names ---------------------------- -->
+<div class="sheet-wrap" id="phone-sheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="phone-sheet-title">
+    <header class="sheet-head">
+      <h2 id="phone-sheet-title" tabindex="-1">Add a phone number</h2>
+      <button class="icon-btn" id="phone-sheet-close" type="button" aria-label="Close">×</button>
+    </header>
+    <div class="sheet-body">
+      <div id="phone-step-number">
+        <label class="field" for="phone-country"><span>Country</span><select id="phone-country"></select></label>
+        <label class="field" for="phone-country-other" id="phone-country-other-field" hidden><span>Country calling code</span>
+          <input id="phone-country-other" type="text" inputmode="tel" autocomplete="off" placeholder="+358"></label>
+        <label class="field" for="phone-number"><span>Phone number</span>
+          <input id="phone-number" type="text" inputmode="tel" autocomplete="tel-national" placeholder="555 555 0100"></label>
+        <p class="field-note">We text you a 6-digit code. We keep your number encrypted and never show it to anyone.</p>
+      </div>
+      <div id="phone-step-code" hidden>
+        <p class="field-note" id="phone-code-sent" role="status"></p>
+        <label class="field" for="phone-code"><span>Code</span>
+          <input id="phone-code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]*"></label>
+        <label class="peer-toggle" for="phone-discoverable"><span>Let people who have my number find me on Pigeonpost</span><input id="phone-discoverable" type="checkbox"></label>
+        <p class="field-note">Off unless you turn it on. You can change it later.</p>
+        <button class="btn-ghost" id="phone-resend" type="button" disabled>Resend code</button>
+      </div>
+      <p class="sheet-error" id="phone-error" role="alert" hidden></p>
+    </div>
+    <footer class="sheet-foot">
+      <button class="btn-ghost" id="phone-cancel" type="button">Cancel</button>
+      <button class="btn-primary" id="phone-send" type="button">Send code</button>
+      <button class="btn-primary" id="phone-verify" type="button" hidden>Verify</button>
+    </footer>
+  </div>
+</div>
+
+<div class="sheet-wrap" id="phone-unlink-sheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="phone-unlink-title" aria-describedby="phone-unlink-detail">
+    <header class="sheet-head"><h2 id="phone-unlink-title">Unlink this number?</h2></header>
+    <div class="sheet-body"><p id="phone-unlink-detail"></p><p class="sheet-error" id="phone-unlink-error" role="alert" hidden></p></div>
+    <footer class="sheet-foot"><button class="btn-ghost" id="phone-unlink-cancel" type="button">Cancel</button><button class="btn-danger" id="phone-unlink-confirm" type="button">Unlink</button></footer>
+  </div>
+</div>
+
+<div class="sheet-wrap" id="discover-sheet" hidden>
+  <div class="sheet sheet-wide" role="dialog" aria-modal="true" aria-labelledby="discover-title">
+    <header class="sheet-head">
+      <h2 id="discover-title" tabindex="-1">Find people I know</h2>
+      <button class="icon-btn" id="discover-close" type="button" aria-label="Close">×</button>
+    </header>
+    <div class="sheet-body">
+      <p class="field-note discover-privacy">Your contact names stay in this browser. Scrambled phone numbers are sent to find matches. Temporary records help prevent abuse.</p>
+      <label class="field" for="discover-country"><span>Numbers without a country code are from</span><select id="discover-country"></select></label>
+      <label class="field" for="discover-file"><span>Contacts file (.vcf or .csv)</span>
+        <input id="discover-file" type="file" accept=".vcf,.csv,text/vcard,text/csv"></label>
+      <p class="field-note" id="discover-status" role="status" aria-live="polite"></p>
+      <p class="sheet-error" id="discover-error" role="alert" hidden></p>
+      <section id="discover-found-section" aria-labelledby="discover-found-title" hidden>
+        <h3 id="discover-found-title">On Pigeonpost</h3>
+        <ul class="contact-list" id="discover-found"></ul>
+      </section>
+      <section id="discover-missing-section" aria-labelledby="discover-missing-title" hidden>
+        <h3 id="discover-missing-title">No match found</h3>
+        <ul class="contact-list" id="discover-missing"></ul>
+      </section>
+    </div>
+    <footer class="sheet-foot"><button class="btn-primary" id="discover-done" type="button">Done</button></footer>
+  </div>
+</div>
+
+<div class="sheet-wrap" id="invite-sheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="invite-title">
+    <header class="sheet-head"><h2 id="invite-title">Send an invitation?</h2></header>
+    <div class="sheet-body">
+      <p class="field-note" id="invite-to"></p>
+      <p class="field-note">Pigeonpost sends this text message for you:</p>
+      <blockquote class="invite-text" id="invite-text"></blockquote>
+      <p class="sheet-error" id="invite-error" role="alert" hidden></p>
+      <button class="btn-ghost" id="invite-verify" type="button" hidden>Verify your number</button>
+    </div>
+    <footer class="sheet-foot"><button class="btn-ghost" id="invite-cancel" type="button">Cancel</button><button class="btn-primary" id="invite-send" type="button">Send invite</button></footer>
+  </div>
+</div>
+
+<div class="sheet-wrap" id="name-prompt-sheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="name-prompt-title">
+    <header class="sheet-head"><h2 id="name-prompt-title">What should people call you?</h2></header>
+    <div class="sheet-body">
+      <label class="field" for="name-prompt-input"><span>Display name</span>
+        <input id="name-prompt-input" type="text" maxlength="80" autocomplete="nickname" spellcheck="false"></label>
+      <p class="field-note">People you write to see it as ~Name next to your address. You can change it in Settings → Profile.</p>
+      <p class="sheet-error" id="name-prompt-error" role="alert" hidden></p>
+    </div>
+    <footer class="sheet-foot"><button class="btn-ghost" id="name-prompt-skip" type="button">Skip</button><button class="btn-primary" id="name-prompt-save" type="button">Save</button></footer>
+  </div>
+</div>
+
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
 <div class="sheet-wrap" id="delete-thread-sheet" hidden>
@@ -575,7 +714,8 @@
 <script src="groups-core.js?v=20261025-web1"></script>
 <script src="groups.js?v=debc3bca44303c257f1aa2d1ac73edc9c009b8fd45c297c397e2dffd21386c6a"></script>
 <script src="calendar.js?v=20261025-web1"></script>
-<script src="app.js?v=20261029-openthread1"></script>
+<script src="contacts.js?v=20261029-contacts1"></script>
+<script src="app.js?v=20261029-contacts1"></script>
 <script src="calls-summary.js?v=20261027-notes1"></script>
 <script src="calls.js?v=20261029-answer1"></script>
 <script src="live.js?v=20261027-live1"></script>

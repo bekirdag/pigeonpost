@@ -44,7 +44,11 @@ tags:
   - name: calls
     description: Call history.
   - name: profile
-    description: Profile pictures.
+    description: Profile pictures and self-set display names.
+  - name: phone
+    description: SMS-verified phone numbers on mailboxes, opt-in discoverable (Phase 10, docs/contacts-and-phone.md).
+  - name: contacts
+    description: Find people I know by hashed phone number, and SMS invitations (Phase 10, docs/contacts-and-phone.md).
   - name: events
     description: Server-Sent Events stream.
   - name: handles
@@ -4926,6 +4930,616 @@ paths:
           $ref: '#/components/responses/InvalidServiceToken'
         '403':
           $ref: '#/components/responses/EndpointNotAllowed'
+  /v1/profile/name:
+    get:
+      tags: [profile]
+      operationId: getOwnDisplayName
+      summary: The acting mailbox's own display name (feature `display_names`)
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - $ref: '#/components/parameters/Identity'
+      responses:
+        '200':
+          description: The name, or null.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [name]
+                properties:
+                  name:
+                    oneOf:
+                      - $ref: '#/components/schemas/OwnDisplayName'
+                      - type: 'null'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/WrongIdentity'
+        '404':
+          description: '`feature_disabled`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    put:
+      tags: [profile]
+      operationId: setDisplayName
+      summary: Set the acting mailbox's self-chosen display name
+      description: |
+        Free for everyone and **not** a verified identity: clients show it as `~Name` and keep the
+        address or handle one tap away (docs/contacts-and-phone.md §6). 1–40 characters; no `/`, `@`,
+        control, format, bidi or invisible characters; reserved words and anything containing
+        "pigeonpost" are refused. Ten changes per mailbox per day. A connector acting for the member
+        may not set it.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - $ref: '#/components/parameters/Identity'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [display_name]
+              properties:
+                display_name:
+                  type: string
+                  maxLength: 200
+                visibility:
+                  type: string
+                  enum: [everyone, known, nobody]
+      responses:
+        '200':
+          description: The stored name.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [name]
+                properties:
+                  name:
+                    $ref: '#/components/schemas/OwnDisplayName'
+        '400':
+          description: '`invalid_name`, `bad_request`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: '`credential_not_accepted` (a connector), `wrong_identity`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: '`feature_disabled`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: '`rate_limited` (with `Retry-After`)'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      tags: [profile]
+      operationId: removeDisplayName
+      summary: Remove the acting mailbox's display name
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - $ref: '#/components/parameters/Identity'
+      responses:
+        '200':
+          description: Whether a name was removed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deleted]
+                properties:
+                  deleted:
+                    type: boolean
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/WrongIdentity'
+  /v1/profiles:
+    get:
+      tags: [profile]
+      operationId: lookupDisplayNames
+      summary: Display names of up to 100 addresses, as the caller may see them
+      description: |
+        Each requested address maps to `{address, handle, display_name}` or `null` (no such mailbox).
+        `display_name` is `null` when there is none, it is not visible to the caller (same rules as
+        profile pictures), or the owner's account does not have `display_names`. A credential is
+        required.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: addresses
+          in: query
+          required: true
+          description: Comma-separated addresses or handles (at most 100).
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Names by requested address.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [profiles]
+                properties:
+                  profiles:
+                    type: object
+                    additionalProperties:
+                      oneOf:
+                        - $ref: '#/components/schemas/PeerProfile'
+                        - type: 'null'
+        '400':
+          description: '`bad_request` (more than 100 addresses)'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/phone:
+    get:
+      tags: [phone]
+      operationId: listPhoneNumbers
+      summary: The account's verified numbers, masked (feature `phone_numbers`)
+      security:
+        - memberToken: []
+      responses:
+        '200':
+          description: Numbers.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [numbers, max_numbers]
+                properties:
+                  numbers:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PhoneNumber'
+                  max_numbers:
+                    type: integer
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/PersonRequired'
+        '404':
+          description: '`feature_disabled`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /v1/phone/verify:
+    post:
+      tags: [phone]
+      operationId: startPhoneVerification
+      summary: Text a 6-digit code to a number for one of the person's mailboxes
+      description: |
+        The answer is the same for every acceptable number, whether or not it is on Pigeonpost. The
+        code is valid for 10 minutes and 5 tries. Resend limits: 1 per 60 s and 5 per 24 h per
+        number, 10 per 24 h and 3 pending per account, 20 per 24 h per IP, plus the platform SMS
+        budget (docs/contacts-and-phone.md §4).
+      security:
+        - memberToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [phone]
+              properties:
+                phone:
+                  type: string
+                  description: E.164, e.g. `+15555550100`.
+                identity:
+                  type: string
+                  description: The mailbox to link (default the acting mailbox).
+      responses:
+        '202':
+          description: Code sent.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [challenge_id, expires_at, resend_after, code_length]
+                properties:
+                  challenge_id:
+                    type: string
+                  expires_at:
+                    type: integer
+                  resend_after:
+                    type: integer
+                  code_length:
+                    type: integer
+        '400':
+          description: '`invalid_phone`, `bad_request`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/PersonRequired'
+        '404':
+          description: '`feature_disabled`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: '`phone_limit` (3 numbers per account)'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: '`phone_not_supported` (premium-rate, network or blocked prefix)'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/ContactsRateLimited'
+        '503':
+          $ref: '#/components/responses/SmsUnavailable'
+  /v1/phone/verify/{challenge_id}:
+    post:
+      tags: [phone]
+      operationId: checkPhoneVerification
+      summary: Prove the code and link the number
+      description: |
+        `discoverable` is false unless the person ticked "Let people who have my number find me".
+        If another account had this number, it moves here and that account receives
+        `phone.unlinked {reason: verified_elsewhere}`.
+      security:
+        - memberToken: []
+      parameters:
+        - name: challenge_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [code]
+              properties:
+                code:
+                  type: string
+                discoverable:
+                  type: boolean
+                  default: false
+      responses:
+        '200':
+          description: Linked.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [number]
+                properties:
+                  number:
+                    $ref: '#/components/schemas/PhoneNumber'
+        '400':
+          description: '`invalid_code` (with `attempts_left`), `bad_request`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/PersonRequired'
+        '404':
+          description: '`feature_disabled`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: '`phone_limit`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '410':
+          description: '`challenge_expired` (expired, used up, or not this account''s)'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /v1/phone/{id}:
+    patch:
+      tags: [phone]
+      operationId: updatePhoneNumber
+      summary: Turn discoverability on or off, or move the number to another own mailbox
+      security:
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                discoverable:
+                  type: boolean
+                identity:
+                  type: string
+      responses:
+        '200':
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [number]
+                properties:
+                  number:
+                    $ref: '#/components/schemas/PhoneNumber'
+        '400':
+          description: '`bad_request`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/PersonRequired'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: '`mailbox_has_number`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      tags: [phone]
+      operationId: unlinkPhoneNumber
+      summary: Unlink a number (works with the flag off too)
+      security:
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Unlinked.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deleted]
+                properties:
+                  deleted:
+                    type: boolean
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/PersonRequired'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/contacts/discover:
+    post:
+      tags: [contacts]
+      operationId: discoverContacts
+      summary: Which hashed numbers belong to people who chose to be found (feature `contact_discovery`)
+      description: |
+        Each hash is the first 16 bytes of `SHA-256("pigeonpost:phone:v1:" || E.164)` as 32 lowercase
+        hex characters (docs/contacts-and-phone.md §3). Nothing of the upload is stored. Only
+        verified, discoverable, existing mailboxes are returned, never the caller's own numbers or
+        anyone who blocked one of the caller's mailboxes. A person only. Limits: 500 hashes per
+        request, 20 requests per hour per account and 30 per IP, 1,000 new hashes per day (200 for
+        accounts under a day old) and 5,000 per 30 days.
+      security:
+        - memberToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [hashes]
+              properties:
+                hashes:
+                  type: array
+                  minItems: 1
+                  maxItems: 500
+                  items:
+                    type: string
+                    pattern: '^[0-9a-f]{32}$'
+      responses:
+        '200':
+          description: Matches.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [matches, checked, new, remaining_today]
+                properties:
+                  matches:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DiscoveryMatch'
+                  checked:
+                    type: integer
+                  new:
+                    type: integer
+                  remaining_today:
+                    type: integer
+        '400':
+          description: '`bad_request`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: '`human_required`, `credential_not_accepted`, `discovery_locked` (with `until`)'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: '`feature_disabled`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/ContactsRateLimited'
+        '503':
+          description: '`discovery_busy` (platform-wide circuit breaker, with `Retry-After`)'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /v1/contacts/invites:
+    post:
+      tags: [contacts]
+      operationId: sendSmsInvite
+      summary: Invite one contact by SMS, on the person's explicit tap (feature `sms_invites`)
+      description: |
+        The sender must have a verified number. `confirm` must be true. Per sender: 5 a day, 20 per
+        30 days. Per receiving number (all senders): 1 per 7 days, 3 per 30 days; never after an
+        opt-out. `not_sent.reason` is `already_invited` (you, within 30 days) or `unavailable`
+        (deliberately merged: opted out, invited recently by others, or not supported).
+      security:
+        - memberToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [phone, confirm]
+              properties:
+                phone:
+                  type: string
+                confirm:
+                  type: boolean
+                identity:
+                  type: string
+      responses:
+        '200':
+          description: Sent or not.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    enum: [sent, not_sent]
+                  invite_id:
+                    type: string
+                  reason:
+                    type: string
+                    enum: [already_invited, unavailable]
+        '400':
+          description: '`confirm_required`, `invalid_phone`, `bad_request`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: '`human_required`, `credential_not_accepted`, `phone_required`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: '`feature_disabled`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/ContactsRateLimited'
+        '503':
+          $ref: '#/components/responses/SmsUnavailable'
+  /v1/sms/opt-out:
+    post:
+      tags: [contacts]
+      operationId: smsOptOut
+      summary: Stop SMS invitations to the number an invitation code was texted to (public)
+      description: 'Always answers `{"ok": true}`, so a code reveals nothing. Rate-limited per IP.'
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code:
+                  type: string
+      responses:
+        '200':
+          description: Done (or nothing to do).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok:
+                    type: boolean
+        '429':
+          description: '`rate_limited`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /v1/groups:
     post:
       tags: [groups]
@@ -10488,6 +11102,57 @@ components:
         type: string
 
   schemas:
+    OwnDisplayName:
+      type: object
+      required: [display_name, visibility, updated_at]
+      properties:
+        display_name:
+          type: string
+        visibility:
+          type: string
+          enum: [everyone, known, nobody]
+        updated_at:
+          type: integer
+    PeerProfile:
+      type: object
+      required: [address, handle, display_name]
+      properties:
+        address:
+          type: string
+        handle:
+          type: [string, 'null']
+        display_name:
+          type: [string, 'null']
+          description: Self-chosen and unverified; render as `~Name`.
+    PhoneNumber:
+      type: object
+      required: [id, identity, country_code, masked, discoverable, verified_at]
+      properties:
+        id:
+          type: string
+        identity:
+          type: string
+        country_code:
+          type: string
+        masked:
+          type: string
+          examples: ['+90 ••• ••• ••12']
+        discoverable:
+          type: boolean
+        verified_at:
+          type: integer
+    DiscoveryMatch:
+      type: object
+      required: [hash, address, handle, display_name]
+      properties:
+        hash:
+          type: string
+        address:
+          type: string
+        handle:
+          type: [string, 'null']
+        display_name:
+          type: [string, 'null']
     AccountPurgeReport:
       type: object
       required: [account_id, mailboxes, blockers, removed, purged]
@@ -11138,6 +11803,24 @@ components:
           enum: [cursor_expired]
 
   responses:
+    PersonRequired:
+      description: '`human_required` or `credential_not_accepted` — only a person signed in interactively (not an API key, mailbox token or connector).'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    ContactsRateLimited:
+      description: '`rate_limited` with `Retry-After` and `limit` (`requests`, `ip`, `daily`, `monthly`, `resend`, `number`, `account`, `pending`).'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    SmsUnavailable:
+      description: '`sms_unavailable` — the SMS provider is not configured or down, or a platform SMS budget is spent.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
     CalendarError:
       description: 'A calendar refusal: `{error, message, …}` with codes from docs/calendar.md §0 (`feature_disabled`, `not_found`, `forbidden`, `human_required`, `revision_conflict`, `time_invalid`, `recurrence_invalid`, `expansion_limit`, `attendee_limit`, `invite_limit`, `meeting_capacity`, `guest_token_invalid`, `window_closed`, …).'
       content:

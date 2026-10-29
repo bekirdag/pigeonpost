@@ -1,0 +1,32 @@
+meta {
+  name: Prove the code and link the number
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/v1/phone/verify/:challenge_id
+  body: json
+  auth: bearer
+}
+
+params:path {
+  challenge_id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "code": "string",
+    "discoverable": false
+  }
+}
+
+docs {
+  `discoverable` is false unless the person ticked "Let people who have my number find me".
+  If another account had this number, it moves here and that account receives
+  `phone.unlinked {reason: verified_elsewhere}`.
+}

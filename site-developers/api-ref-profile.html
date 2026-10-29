@@ -64,9 +64,9 @@
 </ul></aside>
   <main class="doc">
 <h1>profile</h1>
-<nav class="tagnav"><a href="/api-reference">All</a><a href="/api-ref-calendar">calendar</a><a href="/api-ref-meta">meta</a><a href="/api-ref-meetings">meetings</a><a href="/api-ref-accounts">accounts</a><a href="/api-ref-identities">identities</a><a href="/api-ref-messaging">messaging</a><a href="/api-ref-attachments">attachments</a><a href="/api-ref-threads">threads</a><a href="/api-ref-trust">trust</a><a href="/api-ref-calls">calls</a><a href="/api-ref-profile" class="on">profile</a><a href="/api-ref-events">events</a><a href="/api-ref-handles">handles</a><a href="/api-ref-purchases">purchases</a><a href="/api-ref-devices">devices</a><a href="/api-ref-mcp">mcp</a><a href="/api-ref-operator">operator</a><a href="/api-ref-groups">groups</a><a href="/api-ref-streams">streams</a><a href="/api-ref-shell">shell</a><a href="/api-ref-mls">mls</a><a href="/api-ref-organizations">organizations</a><a href="/api-ref-device-login">device-login</a></nav>
-<p>Profile pictures.</p>
-<div class="tw"><table><thead><tr><th>Method</th><th>Path</th><th>Does</th></tr></thead><tbody><tr><td><a href="#getOwnAvatar"><span class="method">GET</span></a></td><td><code>/v1/profile/avatar</code></td><td>The acting mailbox&#x27;s own picture (feature <code>avatars</code>)</td></tr><tr><td><a href="#setAvatar"><span class="method">PUT</span></a></td><td><code>/v1/profile/avatar</code></td><td>Set the picture from a raw image</td></tr><tr><td><a href="#setAvatarVisibility"><span class="method">PATCH</span></a></td><td><code>/v1/profile/avatar</code></td><td>Change who may see the picture (bumps its version; old URLs stop working)</td></tr><tr><td><a href="#removeAvatar"><span class="method">DELETE</span></a></td><td><code>/v1/profile/avatar</code></td><td>Remove the picture (back to initials)</td></tr><tr><td><a href="#lookupAvatars"><span class="method">GET</span></a></td><td><code>/v1/avatars</code></td><td>Pictures for up to 100 addresses</td></tr><tr><td><a href="#lookupAvatar"><span class="method">GET</span></a></td><td><code>/v1/avatars/{address}</code></td><td>One mailbox&#x27;s picture, if you may see it</td></tr><tr><td><a href="#avatarBlob"><span class="method">GET</span></a></td><td><code>/v1/avatar-blobs/{id}/{version}/{file}</code></td><td>Picture bytes, authorized on every request</td></tr><tr><td><a href="#reportAvatar"><span class="method">POST</span></a></td><td><code>/v1/report-avatar</code></td><td>Report a picture to the operator</td></tr></tbody></table></div>
+<nav class="tagnav"><a href="/api-reference">All</a><a href="/api-ref-calendar">calendar</a><a href="/api-ref-meta">meta</a><a href="/api-ref-meetings">meetings</a><a href="/api-ref-accounts">accounts</a><a href="/api-ref-identities">identities</a><a href="/api-ref-messaging">messaging</a><a href="/api-ref-attachments">attachments</a><a href="/api-ref-threads">threads</a><a href="/api-ref-trust">trust</a><a href="/api-ref-calls">calls</a><a href="/api-ref-profile" class="on">profile</a><a href="/api-ref-phone">phone</a><a href="/api-ref-contacts">contacts</a><a href="/api-ref-events">events</a><a href="/api-ref-handles">handles</a><a href="/api-ref-purchases">purchases</a><a href="/api-ref-devices">devices</a><a href="/api-ref-mcp">mcp</a><a href="/api-ref-operator">operator</a><a href="/api-ref-groups">groups</a><a href="/api-ref-streams">streams</a><a href="/api-ref-shell">shell</a><a href="/api-ref-mls">mls</a><a href="/api-ref-organizations">organizations</a><a href="/api-ref-device-login">device-login</a></nav>
+<p>Profile pictures and self-set display names.</p>
+<div class="tw"><table><thead><tr><th>Method</th><th>Path</th><th>Does</th></tr></thead><tbody><tr><td><a href="#getOwnAvatar"><span class="method">GET</span></a></td><td><code>/v1/profile/avatar</code></td><td>The acting mailbox&#x27;s own picture (feature <code>avatars</code>)</td></tr><tr><td><a href="#setAvatar"><span class="method">PUT</span></a></td><td><code>/v1/profile/avatar</code></td><td>Set the picture from a raw image</td></tr><tr><td><a href="#setAvatarVisibility"><span class="method">PATCH</span></a></td><td><code>/v1/profile/avatar</code></td><td>Change who may see the picture (bumps its version; old URLs stop working)</td></tr><tr><td><a href="#removeAvatar"><span class="method">DELETE</span></a></td><td><code>/v1/profile/avatar</code></td><td>Remove the picture (back to initials)</td></tr><tr><td><a href="#lookupAvatars"><span class="method">GET</span></a></td><td><code>/v1/avatars</code></td><td>Pictures for up to 100 addresses</td></tr><tr><td><a href="#lookupAvatar"><span class="method">GET</span></a></td><td><code>/v1/avatars/{address}</code></td><td>One mailbox&#x27;s picture, if you may see it</td></tr><tr><td><a href="#avatarBlob"><span class="method">GET</span></a></td><td><code>/v1/avatar-blobs/{id}/{version}/{file}</code></td><td>Picture bytes, authorized on every request</td></tr><tr><td><a href="#reportAvatar"><span class="method">POST</span></a></td><td><code>/v1/report-avatar</code></td><td>Report a picture to the operator</td></tr><tr><td><a href="#getOwnDisplayName"><span class="method">GET</span></a></td><td><code>/v1/profile/name</code></td><td>The acting mailbox&#x27;s own display name (feature <code>display_names</code>)</td></tr><tr><td><a href="#setDisplayName"><span class="method">PUT</span></a></td><td><code>/v1/profile/name</code></td><td>Set the acting mailbox&#x27;s self-chosen display name</td></tr><tr><td><a href="#removeDisplayName"><span class="method">DELETE</span></a></td><td><code>/v1/profile/name</code></td><td>Remove the acting mailbox&#x27;s display name</td></tr><tr><td><a href="#lookupDisplayNames"><span class="method">GET</span></a></td><td><code>/v1/profiles</code></td><td>Display names of up to 100 addresses, as the caller may see them</td></tr></tbody></table></div>
 <p>Base URL <code>https://postbox.pigeonpost.dev</code>. Overview: <a href="/api">HTTP API</a>.</p>
 <section class="op">
 <h2 id="getOwnAvatar"><span class="method">GET</span> <code class="path">/v1/profile/avatar</code><a class="ah" href="#getOwnAvatar">#</a></h2>
@@ -290,6 +290,91 @@
   -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
   -H &quot;Content-Type: application/json&quot; \
   -d &#x27;{&quot;address&quot;: &quot;string&quot;, &quot;identity&quot;: &quot;string&quot;}&#x27;</code></pre>
+</section>
+<section class="op">
+<h2 id="getOwnDisplayName"><span class="method">GET</span> <code class="path">/v1/profile/name</code><a class="ah" href="#getOwnDisplayName">#</a></h2>
+<p class="op-sum">The acting mailbox&#x27;s own display name (feature <code>display_names</code>)</p>
+<p class="op-facts">Credentials: <code>apiKey</code>, <code>capToken</code>, <code>memberToken</code></p>
+<h3>Parameters</h3>
+<div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr></tbody></table></div>
+<h3>Responses</h3>
+<p class="resp"><code>200</code> The name, or null.</p>
+<pre class="lang-json"><code>{
+  &quot;name&quot;: {
+    &quot;display_name&quot;: &quot;string&quot;,
+    &quot;visibility&quot;: &quot;everyone&quot;,
+    &quot;updated_at&quot;: 0
+  }
+}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>wrong_identity</code> (capability token bound to another mailbox) or <code>not_in_account</code>.</td></tr><tr><td><code>404</code></td><td><code>feature_disabled</code></td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/profile/name&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre>
+</section>
+<section class="op">
+<h2 id="setDisplayName"><span class="method">PUT</span> <code class="path">/v1/profile/name</code><a class="ah" href="#setDisplayName">#</a></h2>
+<p class="op-sum">Set the acting mailbox&#x27;s self-chosen display name</p>
+<p class="op-facts">Credentials: <code>apiKey</code>, <code>capToken</code>, <code>memberToken</code></p>
+<p>Free for everyone and <strong>not</strong> a verified identity: clients show it as <code>~Name</code> and keep the address or handle one tap away (docs/contacts-and-phone.md §6). 1–40 characters; no <code>/</code>, <code>@</code>, control, format, bidi or invisible characters; reserved words and anything containing &quot;pigeonpost&quot; are refused. Ten changes per mailbox per day. A connector acting for the member may not set it.</p>
+<h3>Parameters</h3>
+<div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr></tbody></table></div>
+<h3>Request body</h3><p><code>application/json</code></p>
+<pre class="lang-json"><code>{
+  &quot;display_name&quot;: &quot;string&quot;,
+  &quot;visibility&quot;: &quot;everyone&quot;
+}</code></pre>
+<h3>Responses</h3>
+<p class="resp"><code>200</code> The stored name.</p>
+<pre class="lang-json"><code>{
+  &quot;name&quot;: {
+    &quot;display_name&quot;: &quot;string&quot;,
+    &quot;visibility&quot;: &quot;everyone&quot;,
+    &quot;updated_at&quot;: 0
+  }
+}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td><code>invalid_name</code>, <code>bad_request</code></td></tr><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>credential_not_accepted</code> (a connector), <code>wrong_identity</code></td></tr><tr><td><code>404</code></td><td><code>feature_disabled</code></td></tr><tr><td><code>429</code></td><td><code>rate_limited</code> (with <code>Retry-After</code>)</td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS -X PUT &quot;https://postbox.pigeonpost.dev/v1/profile/name&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d &#x27;{&quot;display_name&quot;: &quot;string&quot;, &quot;visibility&quot;: &quot;everyone&quot;}&#x27;</code></pre>
+</section>
+<section class="op">
+<h2 id="removeDisplayName"><span class="method">DELETE</span> <code class="path">/v1/profile/name</code><a class="ah" href="#removeDisplayName">#</a></h2>
+<p class="op-sum">Remove the acting mailbox&#x27;s display name</p>
+<p class="op-facts">Credentials: <code>apiKey</code>, <code>capToken</code>, <code>memberToken</code></p>
+<h3>Parameters</h3>
+<div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr></tbody></table></div>
+<h3>Responses</h3>
+<p class="resp"><code>200</code> Whether a name was removed.</p>
+<pre class="lang-json"><code>{
+  &quot;deleted&quot;: false
+}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>wrong_identity</code> (capability token bound to another mailbox) or <code>not_in_account</code>.</td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS -X DELETE &quot;https://postbox.pigeonpost.dev/v1/profile/name&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre>
+</section>
+<section class="op">
+<h2 id="lookupDisplayNames"><span class="method">GET</span> <code class="path">/v1/profiles</code><a class="ah" href="#lookupDisplayNames">#</a></h2>
+<p class="op-sum">Display names of up to 100 addresses, as the caller may see them</p>
+<p class="op-facts">Credentials: <code>apiKey</code>, <code>capToken</code>, <code>memberToken</code></p>
+<p>Each requested address maps to <code>{address, handle, display_name}</code> or <code>null</code> (no such mailbox). <code>display_name</code> is <code>null</code> when there is none, it is not visible to the caller (same rules as profile pictures), or the owner&#x27;s account does not have <code>display_names</code>. A credential is required.</p>
+<h3>Parameters</h3>
+<div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>addresses</code></td><td>query</td><td>string</td><td>yes</td><td>Comma-separated addresses or handles (at most 100).</td></tr></tbody></table></div>
+<h3>Responses</h3>
+<p class="resp"><code>200</code> Names by requested address.</p>
+<pre class="lang-json"><code>{
+  &quot;profiles&quot;: {}
+}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td><code>bad_request</code> (more than 100 addresses)</td></tr><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/profiles&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre>
 </section>
     <footer class="pagefoot">
       <nav>

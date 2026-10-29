@@ -73,6 +73,12 @@ pub(crate) const TABLES: &[(&str, Rule)] = &[
         "account_deletion_requests",
         Block(A, "account_id = ?1 AND completed_at IS NULL"),
     ),
+    // A verified phone number links a real-world identifier: not an empty account (SDS §14D).
+    ("phone_numbers", Block(A, "account_id = ?1")),
+    (
+        "sms_ledger",
+        Keep("SMS cost accounting; 35-day retention, anonymised by erasure"),
+    ),
     ("namespaces", Block(A, "account_id = ?1")),
     ("apple_subscriptions", Block(A, "account_id = ?1")),
     ("google_subscriptions", Block(A, "account_id = ?1")),
@@ -120,6 +126,7 @@ pub(crate) const TABLES: &[(&str, Rule)] = &[
     ("device_grants", Remove(M, "identity = ?1")),
     ("enrollments", Remove(M, "identity = ?1")),
     ("mint_events", Remove(M, "address = ?1")),
+    ("profile_names", Remove(M, "address = ?1")),
     // ---- account residue --------------------------------------------------------------------
     ("api_keys", Remove(A, "account_id = ?1")),
     ("provider_identities", Remove(A, "account_id = ?1")),
@@ -134,6 +141,11 @@ pub(crate) const TABLES: &[(&str, Rule)] = &[
     ("account_events", Remove(A, "account_id = ?1")),
     ("account_event_floor", Remove(A, "account_id = ?1")),
     ("ssh_sessions", Remove(A, "requester_account = ?1")),
+    ("phone_challenges", Remove(A, "account_id = ?1")),
+    ("sms_invites", Remove(A, "sender_account = ?1")),
+    ("discovery_usage", Remove(A, "account_id = ?1")),
+    ("discovery_marks", Remove(A, "account_id = ?1")),
+    ("discovery_lockouts", Remove(A, "account_id = ?1")),
     ("identities", Remove(A, "account_id = ?1")),
     ("accounts", Remove(A, "id = ?1")),
     // ---- kept on purpose --------------------------------------------------------------------
@@ -221,6 +233,7 @@ pub(crate) const TABLES: &[(&str, Rule)] = &[
     ("org_domains", Unrelated),
     ("org_handle_holds", Unrelated),
     ("org_invite_deliveries", Unrelated),
+    ("sms_optouts", Unrelated),
     ("sqlite_sequence", Unrelated),
     ("thread_backfill_ids", Unrelated),
     ("webhook_deliveries", Unrelated),

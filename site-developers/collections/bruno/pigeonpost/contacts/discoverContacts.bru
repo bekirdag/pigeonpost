@@ -1,0 +1,32 @@
+meta {
+  name: Which hashed numbers belong to people who chose to be found (feature `contact_discovery`)
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/v1/contacts/discover
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "hashes": [
+      "string"
+    ]
+  }
+}
+
+docs {
+  Each hash is the first 16 bytes of `SHA-256("pigeonpost:phone:v1:" || E.164)` as 32 lowercase
+  hex characters (docs/contacts-and-phone.md §3). Nothing of the upload is stored. Only
+  verified, discoverable, existing mailboxes are returned, never the caller's own numbers or
+  anyone who blocked one of the caller's mailboxes. A person only. Limits: 500 hashes per
+  request, 20 requests per hour per account and 30 per IP, 1,000 new hashes per day (200 for
+  accounts under a day old) and 5,000 per 30 days.
+}

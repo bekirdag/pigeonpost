@@ -152,6 +152,20 @@ def erase(conn, request_id, blob_root, evidence):
                 for (variants,) in conn.execute("SELECT variants FROM avatars WHERE owner_kind='identity' AND owner_id=?", (address,)):
                     avatar_digests.update(json.loads(variants or "{}").values())
                 conn.execute("DELETE FROM avatars WHERE owner_kind='identity' AND owner_id=?", (address,))
+        # Phase 10 (SDS §14D): numbers, pending codes, invitations sent, discovery state, names.
+        # The SMS cost ledger keeps its rows for budget accounting without the account id;
+        # opt-outs name a number, never an account, and stay.
+        for address in addresses:
+            if has(conn, "profile_names"):
+                conn.execute("DELETE FROM profile_names WHERE address=?", (address,))
+        for table, column in (("phone_numbers", "account_id"), ("phone_challenges", "account_id"),
+                              ("sms_invites", "sender_account"), ("discovery_usage", "account_id"),
+                              ("discovery_marks", "account_id"), ("discovery_lockouts", "account_id"),
+                              ("profile_names", "account_id")):
+            if has(conn, table):
+                conn.execute("DELETE FROM " + table + " WHERE " + column + "=?", (account,))
+        if has(conn, "sms_ledger"):
+            conn.execute("UPDATE sms_ledger SET account_id=NULL WHERE account_id=?", (account,))
         for table, column, value in (("features", "scope_id", account), ("account_events", "account_id", account),
                                      ("account_event_floor", "account_id", account),
                                      ("ssh_sessions", "requester_account", account)):

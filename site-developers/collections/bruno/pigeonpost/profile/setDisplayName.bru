@@ -1,0 +1,30 @@
+meta {
+  name: Set the acting mailbox's self-chosen display name
+  type: http
+  seq: 10
+}
+
+put {
+  url: {{baseUrl}}/v1/profile/name
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "display_name": "string",
+    "visibility": "everyone"
+  }
+}
+
+docs {
+  Free for everyone and **not** a verified identity: clients show it as `~Name` and keep the
+  address or handle one tap away (docs/contacts-and-phone.md §6). 1–40 characters; no `/`, `@`,
+  control, format, bidi or invisible characters; reserved words and anything containing
+  "pigeonpost" are refused. Ten changes per mailbox per day. A connector acting for the member
+  may not set it.
+}

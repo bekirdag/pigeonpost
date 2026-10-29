@@ -66,7 +66,10 @@ wait until its deadline to start. Verify the queue after every deployment.
    group memberships, receipts and keys (ciphertext it sent stays with the other
    members, under a pseudonym); MLS devices and key packages; agent shell hosts,
    policies and session rows; device grants and credentials; account flags and
-   typed events. Entitlements and plan names keep their billing rows under the
+   typed events; verified phone numbers, pending codes, SMS invitations it sent,
+   contact-discovery counts, marks and lockouts, and display names. SMS cost-ledger
+   rows stay without the account id (35-day retention); SMS opt-outs name a number
+   by keyed hash, never an account, and stay. Entitlements and plan names keep their billing rows under the
    erased-account identifier. It clears the request's contact
    and subject when complete. Inspect the result before restarting services.
 8. Restart services; verify health, an unaffected account, and rejection of old

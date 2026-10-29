@@ -13,6 +13,9 @@ the first two and no application server for any of them: `site-developers/` is g
 
 Server blocks recorded here: `enterprise.conf` and `developers.conf` (whose CSP allows
 `script-src 'self'` for `/docs.js` since Phase 5).
+`invite-location.conf` (Phase 10) is included in the pigeonpost.dev server like
+`download-location.conf`: the SMS invitation page `/invite` runs `invite.js`, which may reach only the
+postbox's public `POST /v1/sms/opt-out`.
 
 All roots are owned by `www-data`; installation requires the authorized operator's sudo access on
 **raijin**. The public TLS proxy remains on wodomini. Do not deploy to its obsolete static copy.

@@ -1,0 +1,15 @@
+meta {
+  name: The account's verified numbers, masked (feature `phone_numbers`)
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/v1/phone
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}

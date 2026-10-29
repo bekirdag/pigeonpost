@@ -1,0 +1,22 @@
+meta {
+  name: Display names of up to 100 addresses, as the caller may see them
+  type: http
+  seq: 12
+}
+
+get {
+  url: {{baseUrl}}/v1/profiles
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  Each requested address maps to `{address, handle, display_name}` or `null` (no such mailbox).
+  `display_name` is `null` when there is none, it is not visible to the caller (same rules as
+  profile pictures), or the owner's account does not have `display_names`. A credential is
+  required.
+}

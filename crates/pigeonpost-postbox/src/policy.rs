@@ -136,6 +136,23 @@ pub(crate) enum Action {
     ShellAgent,
     /// `POST /internal/v1/shell/*` (the tunnel broker).
     ShellBroker,
+    /// Add, verify, move, unlink a phone number or change its discoverability (SDS §14D): a person
+    /// only, because it sends an SMS that costs money and links a real-world identifier.
+    ManagePhone,
+    /// Match uploaded contact hashes against discoverable numbers (SDS §14D.3): a person only. API
+    /// keys, mailbox tokens and connectors are the cheapest scraping credentials, so none may.
+    DiscoverContacts,
+    /// Send one SMS invitation (SDS §14D, D-14D-8): a person, on an explicit tap.
+    SendSmsInvite,
+    /// Set or remove the acting mailbox's self-chosen display name. The mailbox's own credential
+    /// or the account's; never a connector acting for the member.
+    SetDisplayName,
+    /// See a mailbox's display name: any credential (never anonymous), subject to the name's
+    /// visibility, decided exactly like a picture's.
+    ViewProfile,
+    /// Stop SMS invitations to a number, holding the invitation code that was texted to it
+    /// (`POST /v1/sms/opt-out`). Anyone, signed in or not: the code is the proof.
+    SmsOptOut,
 }
 
 /// The resource acted on, with bindings resolved from server state.
@@ -166,6 +183,14 @@ pub(crate) enum Resource<'a> {
     GroupStream {
         mailbox: &'a str,
         account: Option<&'a str>,
+    },
+    /// A mailbox's display name, with the facts its visibility is decided on (same rule as a
+    /// picture).
+    Profile {
+        visibility: crate::store::Visibility,
+        owner_account: Option<&'a str>,
+        owner_address: &'a str,
+        viewer_known: bool,
     },
     /// A mailbox's picture, with the facts its visibility is decided on.
     Avatar {
@@ -237,6 +262,12 @@ impl Action {
             Action::ShellView => Requirement::Human,
             Action::ShellAgent => Requirement::Mailbox,
             Action::ShellBroker => Requirement::Service,
+            Action::ManagePhone | Action::DiscoverContacts | Action::SendSmsInvite => {
+                Requirement::Human
+            }
+            Action::SetDisplayName => Requirement::NotConnector,
+            Action::ViewProfile => Requirement::AnyPrincipal,
+            Action::SmsOptOut => Requirement::Anyone,
         }
     }
 }
@@ -416,6 +447,10 @@ pub(crate) fn authorize_with(
     // 3. An action-specific grant on this resource; 4. otherwise deny.
     let granted = match (actor, resource) {
         (Actor::Service(_), Resource::Platform) => true,
+        // The one public platform action: the invitation code was checked by the caller.
+        (Actor::Principal(_) | Actor::Anonymous, Resource::Platform) => {
+            action == Action::SmsOptOut && facts.device_proof
+        }
         (Actor::Principal(p), Resource::Account(id)) => match p {
             Principal::Account(account, _) => account == id,
             Principal::Identity(identity) => identity.account_id.as_deref() == Some(*id),
@@ -464,18 +499,32 @@ pub(crate) fn authorize_with(
                 viewer_known,
             },
         ) => {
-            let own = match actor {
-                Actor::Principal(p) => owns(p, owner_address, *owner_account),
-                _ => false,
-            };
-            match visibility {
-                crate::store::Visibility::Everyone => true,
-                // Being known needs someone to know: never the anonymous.
-                crate::store::Visibility::Known => {
-                    own || (*viewer_known && matches!(actor, Actor::Principal(_)))
-                }
-                crate::store::Visibility::Nobody => own,
-            }
+            action == Action::ViewAvatar
+                && visible_to(
+                    actor,
+                    *visibility,
+                    *owner_account,
+                    owner_address,
+                    *viewer_known,
+                )
+        }
+        (
+            actor,
+            Resource::Profile {
+                visibility,
+                owner_account,
+                owner_address,
+                viewer_known,
+            },
+        ) => {
+            action == Action::ViewProfile
+                && visible_to(
+                    actor,
+                    *visibility,
+                    *owner_account,
+                    owner_address,
+                    *viewer_known,
+                )
         }
         _ => false,
     };
@@ -493,6 +542,28 @@ pub(crate) fn authorize_with(
             );
         }
         Err(DenyReason::NotPermitted)
+    }
+}
+
+/// The picture/name visibility rule (SDS §16.1): everyone; people the owner knows; only the owner.
+fn visible_to(
+    actor: &Actor,
+    visibility: crate::store::Visibility,
+    owner_account: Option<&str>,
+    owner_address: &str,
+    viewer_known: bool,
+) -> bool {
+    let own = match actor {
+        Actor::Principal(p) => owns(p, owner_address, owner_account),
+        _ => false,
+    };
+    match visibility {
+        crate::store::Visibility::Everyone => true,
+        // Being known needs someone to know: never the anonymous.
+        crate::store::Visibility::Known => {
+            own || (viewer_known && matches!(actor, Actor::Principal(_)))
+        }
+        crate::store::Visibility::Nobody => own,
     }
 }
 
@@ -819,6 +890,158 @@ mod tests {
             &Actor::Principal(&other),
             &avatar(Visibility::Nobody, true)
         ));
+    }
+
+    /// SDS §14D: phone, discovery and invites are for a person only; display names for the
+    /// mailbox's own credentials except a connector; a name is seen like a picture, never by the
+    /// anonymous.
+    #[test]
+    fn contacts_phone_and_names_matrix() {
+        use crate::store::Visibility;
+        let me = human("a1", None);
+        let key = Principal::Account("a1".into(), AccountCredential::ApiKey);
+        let connector = Principal::Account(
+            "a1".into(),
+            AccountCredential::Connector { client: "c".into() },
+        );
+        let mb = mailbox(Some("a1"));
+        let service_account = member_principal(
+            "a1",
+            MemberSession {
+                service_account: true,
+                ..MemberSession::default()
+            },
+        );
+        let own = Resource::Account("a1");
+        let own_mailbox = Resource::Mailbox {
+            address: "/k/agent",
+            account: Some("a1"),
+        };
+        for action in [
+            Action::ManagePhone,
+            Action::DiscoverContacts,
+            Action::SendSmsInvite,
+        ] {
+            assert!(authorize(&Actor::Principal(&me), action, &own, &facts()).is_ok());
+            assert!(authorize(&Actor::Principal(&me), action, &own_mailbox, &facts()).is_ok());
+            for no in [&key, &connector, &mb, &service_account] {
+                assert!(
+                    authorize(&Actor::Principal(no), action, &own, &facts()).is_err(),
+                    "{action:?} must refuse automation"
+                );
+            }
+            assert!(authorize(&Actor::Anonymous, action, &own, &facts()).is_err());
+            assert!(authorize(&Actor::Service("ops"), action, &own, &facts()).is_err());
+            // Someone else's account or mailbox: no grant.
+            assert_eq!(
+                authorize(
+                    &Actor::Principal(&me),
+                    action,
+                    &Resource::Account("a2"),
+                    &facts()
+                ),
+                Err(DenyReason::NotPermitted)
+            );
+            // A block or suspension still wins.
+            let mut f = facts();
+            f.account_suspended = true;
+            assert!(authorize(&Actor::Principal(&me), action, &own, &f).is_err());
+        }
+        // Display names: the mailbox's own credentials, not a connector, not someone else's.
+        for ok in [&me, &key, &mb] {
+            assert!(authorize(
+                &Actor::Principal(ok),
+                Action::SetDisplayName,
+                &own_mailbox,
+                &facts()
+            )
+            .is_ok());
+        }
+        assert_eq!(
+            authorize(
+                &Actor::Principal(&connector),
+                Action::SetDisplayName,
+                &own_mailbox,
+                &facts()
+            ),
+            Err(DenyReason::CredentialNotAccepted)
+        );
+        assert_eq!(
+            authorize(
+                &Actor::Principal(&me),
+                Action::SetDisplayName,
+                &Resource::Mailbox {
+                    address: "/k/else",
+                    account: Some("a2")
+                },
+                &facts()
+            ),
+            Err(DenyReason::NotPermitted)
+        );
+        // Seeing a name: visibility like a picture, and never anonymous even when public.
+        let other = Principal::Account("a2".into(), AccountCredential::ApiKey);
+        let name = |visibility, viewer_known| Resource::Profile {
+            visibility,
+            owner_account: Some("a1"),
+            owner_address: "/k/agent",
+            viewer_known,
+        };
+        let can = |actor: &Actor, r: &Resource| {
+            authorize(actor, Action::ViewProfile, r, &facts()).is_ok()
+        };
+        assert!(!can(&Actor::Anonymous, &name(Visibility::Everyone, true)));
+        assert!(can(
+            &Actor::Principal(&other),
+            &name(Visibility::Everyone, false)
+        ));
+        assert!(can(
+            &Actor::Principal(&other),
+            &name(Visibility::Known, true)
+        ));
+        assert!(!can(
+            &Actor::Principal(&other),
+            &name(Visibility::Known, false)
+        ));
+        assert!(!can(
+            &Actor::Principal(&other),
+            &name(Visibility::Nobody, true)
+        ));
+        assert!(can(
+            &Actor::Principal(&key),
+            &name(Visibility::Nobody, false)
+        ));
+        // Opting a number out needs the texted code (checked by the caller), nothing else.
+        let mut proof = facts();
+        proof.device_proof = true;
+        assert!(authorize(
+            &Actor::Anonymous,
+            Action::SmsOptOut,
+            &Resource::Platform,
+            &proof
+        )
+        .is_ok());
+        assert!(authorize(
+            &Actor::Anonymous,
+            Action::SmsOptOut,
+            &Resource::Platform,
+            &facts()
+        )
+        .is_err());
+        assert!(authorize(
+            &Actor::Principal(&me),
+            Action::ManagePhone,
+            &Resource::Platform,
+            &proof
+        )
+        .is_err());
+        // The two visibility resources do not stand in for each other's actions.
+        assert!(authorize(
+            &Actor::Principal(&other),
+            Action::ViewAvatar,
+            &name(Visibility::Everyone, true),
+            &facts()
+        )
+        .is_err());
     }
 
     #[test]

@@ -2730,3 +2730,22 @@ audio.viewer-media { width: min(560px, 100%); background: none; }
   .live-top { padding-left: 16px; padding-right: 16px; }
   .live-pip { right: 12px; width: 34%; }
 }
+
+/* ---- Phase 10: phone numbers, finding people, names ------------------------------------------- */
+
+/* A self-set display name is not a verified identity: secondary colour, never the handle's mono. */
+.is-display-name { color: var(--muted); font-family: inherit; }
+.tr-name.is-display-name, #peer-name.is-display-name { color: var(--muted); font-weight: 500; }
+.profile-subhead { margin: 4px 0 8px; font-size: 13px; font-weight: 600; color: var(--label); }
+.name-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.phone-row { flex-wrap: wrap; }
+.phone-row .phone-toggle { flex-basis: 100%; min-height: 36px; font-size: 13px; }
+.phone-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.phone-actions select { min-height: 36px; max-width: 220px; border: 1px solid var(--edge); border-radius: 8px;
+  background: var(--field); color: var(--ink); font: inherit; font-size: 13px; padding: 0 8px; }
+.discover-privacy { margin-top: 0; }
+.discover-name { display: block; color: var(--ink); font-size: 14px; overflow-wrap: anywhere; }
+.discover-invited { flex: none; }
+#discover-found-section h3, #discover-missing-section h3 { margin: 16px 0 8px; font-size: 13.5px; font-weight: 600; color: var(--label); }
+.invite-text { margin: 0 0 12px; padding: 10px 12px; border-left: 3px solid var(--edge); background: var(--inset);
+  border-radius: 6px; color: var(--ink); font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }

@@ -1,0 +1,26 @@
+meta {
+  name: Turn discoverability on or off, or move the number to another own mailbox
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/v1/phone/:id
+  body: json
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "discoverable": false,
+    "identity": "string"
+  }
+}
