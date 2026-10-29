@@ -75,8 +75,7 @@ Decline declines it without opening the app.
 
 1.0.12 adds no capabilities. The manifest gains a second COM server (Windows App SDK push, class ID
 = the Entra application ID) next to the app-notification activator. Not submitted yet: 1.0.11 is in
-certification, and closed-app rings also need Microsoft's PFN mapping (above), so submit 1.0.12 after
-the mapping is confirmed. Suggested certification note: "Incoming calls use Windows push
+certification; submit 1.0.12 after it. Suggested certification note: "Incoming calls use Windows push
 notifications (Windows App SDK) to show an incoming-call notification while the app is closed. No
 new capabilities."
 
@@ -169,12 +168,14 @@ in Partner Center at all. The pieces:
    `d4a94855-b3f5-41af-8b48-c66d4d7eef73` (the channel request's remote ID,
    `WnsChannel.AzureObjectId`). Client secret `pigeonpost-postbox-wns`, valid until 2028-10-28,
    lives only in the postbox's env.
-2. Microsoft maps the package family name to that application. The account owner sends the
-   request to Win_App_SDK_Push@microsoft.com, subject "Windows App SDK Push Notifications Mapping
-   Request", body `PFN: WodoTeknolojiA.PigeonpostDesktop_80zy2mk5xaxza`, `AppId:
-   6b717f08-17c7-4433-8ea8-25f06ed63e60`, `ObjectId: d4a94855-b3f5-41af-8b48-c66d4d7eef73`.
-   Microsoft processes these weekly. Until then the channel request fails ("Push channel
-   unavailable" in the desktop log) and calls ring only while the app runs.
+2. Microsoft's quickstart says a packaged app's package family name must be mapped to that
+   application by request (Win_App_SDK_Push@microsoft.com, subject "Windows App SDK Push
+   Notifications Mapping Request", body `PFN: WodoTeknolojiA.PigeonpostDesktop_80zy2mk5xaxza`,
+   `AppId: 6b717f08-17c7-4433-8ea8-25f06ed63e60`, `ObjectId:
+   d4a94855-b3f5-41af-8b48-c66d4d7eef73`; processed weekly). On 2026-10-29 no request had been
+   sent, yet a CI install of this package got a channel and received a raw push from the postbox's
+   credentials (`200 received`, logged by the app). Send the request only if channels start
+   failing ("Push channel unavailable" in the desktop log).
 3. The postbox has `PIGEONPOST_WNS_TENANT_ID`, `PIGEONPOST_WNS_CLIENT_ID` and
    `PIGEONPOST_WNS_CLIENT_SECRET` (`deploy/postbox/README.md`).
 4. `CALLS_RING_PUSH=1` in the calls service and the `call_push` flag (`docs/call-alerting.md`). Then

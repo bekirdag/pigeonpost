@@ -67,9 +67,12 @@ and `webcam` device capabilities, so Windows privacy settings govern access.
   registers the channel with `POST /v1/devices {token: <channel URI>, platform: "wns", kind:
   "alert", os: "windows", identity}`; a changed channel replaces the old registration and sign-out
   removes it (`DELETE /v1/devices/{channel}`). Unpackaged and test builds skip this; every failure
-  is logged and calls still ring while the app runs. Channels need Microsoft's mapping of the
-  package family name to the Entra app, and the postbox needs that app's credentials (see STORE.md,
-  "Incoming calls with the app closed").
+  is logged and calls still ring while the app runs. The postbox needs the Entra app's
+  credentials (see STORE.md, "Incoming calls with the app closed").
+- The end of a ring reaches the app as a raw push `{"type":"call_cancel","room":…}` (WNS cannot
+  remove a toast on a desktop channel from the server). Running: the app removes the room's toast.
+  Closed: Windows starts the app in the background for the push; it removes the toast and exits
+  without a window or a notification-area icon.
 
 Code: `Pigeonpost.Core/CallRing.cs` (ring parsing, launch arguments, toast XML, ring state,
 ring-token decline; unit-tested in `Pigeonpost.Core.Tests/CallRingTests.cs`) and

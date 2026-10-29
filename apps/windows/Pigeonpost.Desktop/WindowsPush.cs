@@ -1,3 +1,5 @@
+using Microsoft.Windows.AppLifecycle;
+using Microsoft.Windows.AppNotifications;
 using Microsoft.Windows.PushNotifications;
 using Pigeonpost.Core;
 
@@ -6,19 +8,24 @@ namespace Pigeonpost.Desktop;
 //  Windows App SDK push (Microsoft.Windows.PushNotifications) for incoming calls while the app is
 //  closed (docs/call-alerting.md). The postbox authenticates as the Entra app WnsChannel.AzureAppId
 //  and sends WNS toasts (wns/toast) to the channel created here; Windows shows them and activates
-//  the app through AppNotificationManager, exactly like the app's own call toasts. The postbox
-//  sends no raw pushes: one would only be logged, and a push activation starts the app in the
-//  notification area.
+//  the app through AppNotificationManager, exactly like the app's own call toasts.
+//
+//  The end of a ring is a raw push, {"type":"call_cancel","room":…} (WNS cannot remove a toast on
+//  a desktop channel from the server). While the app runs it arrives on PushReceived; while it is
+//  closed Windows starts the app in the background for it (App.OnLaunched), which removes the
+//  ring's toast by tag and group and exits without a window.
 //
 //  The older PushNotificationChannelManager channel is tied to the Store package SID, whose
 //  login.live.com credentials Microsoft no longer issues for new apps.
 //
-//  Channels need Microsoft's mapping of this package family name to the Entra app. Until it exists
-//  the request fails; that is logged and calls ring only while the app runs.
+//  A failed channel request is logged and calls then ring only while the app runs.
 internal static class WindowsPush
 {
     private static bool Registered { get; set; }
     private static Task<PushNotificationChannel?>? pending;
+
+    // A ring ended by push (the app's ring state follows; the toast is already removed here).
+    public static event Action<string>? RingCancelled;
     private static DateTimeOffset requestedAt;
     private static readonly TimeSpan ReuseFor = TimeSpan.FromHours(1);
 
@@ -30,13 +37,32 @@ internal static class WindowsPush
         {
             if (!PushNotificationManager.IsSupported()) { DesktopLog.Write("Windows push unsupported on this PC"); return; }
             // Handlers must be attached before Register.
-            PushNotificationManager.Default.PushReceived += (_, e) => DesktopLog.Write($"Raw push ignored ({e.Payload.Length} bytes)");
+            PushNotificationManager.Default.PushReceived += (_, e) => _ = HandleRawAsync(e.Payload, "push");
             PushNotificationManager.Default.Register();
             Registered = true;
             DesktopLog.Write("Windows push registered");
         }
         catch (Exception ex) { DesktopLog.Error("Windows push registration failed", ex); }
 #endif
+    }
+
+    // Windows started the app for a raw push while it was closed.
+    public static async Task HandleBackgroundAsync(AppActivationArguments activation)
+    {
+        if (activation.Data is not PushNotificationReceivedEventArgs push) return;
+        var deferral = push.GetDeferral();
+        try { await HandleRawAsync(push.Payload, "background push"); }
+        catch (Exception ex) { DesktopLog.Error("Handling a background push failed", ex); }
+        finally { deferral.Complete(); }
+    }
+
+    private static async Task HandleRawAsync(byte[] payload, string how)
+    {
+        if (CallPush.CancelledRoom(payload) is not { } room) { DesktopLog.Write($"Raw push ignored ({payload.Length} bytes)"); return; }
+        DesktopLog.Write($"Ring ended ({how})");
+        try { await AppNotificationManager.Default.RemoveByTagAndGroupAsync(CallToast.Tag(room), CallToast.Group); }
+        catch (Exception ex) { DesktopLog.Error("Removing the call alert failed", ex); }
+        RingCancelled?.Invoke(room);
     }
 
     // One request at a time. Windows App SDK retries retryable failures by itself for up to 15

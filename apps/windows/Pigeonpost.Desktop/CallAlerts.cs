@@ -24,6 +24,7 @@ namespace Pigeonpost.Desktop;
 //  - App running when a WNS toast arrives: Windows shows it (Windows App SDK channels deliver
 //    toasts to the system, not to the app). The page rings too and the app's toast for the room
 //    replaces the pushed one, since both use the same tag and group.
+//  - The ring's end reaches a closed app as a raw push (WindowsPush.cs), which removes the toast.
 //
 //  The local toast and the WNS toast share the room id as tag and "calls" as group, so either
 //  replaces the other and the end of the ring removes whichever is showing.
@@ -47,6 +48,8 @@ public sealed partial class MainWindow
         if (callAlertsHooked) return;
         callAlertsHooked = true;
         callWindowActive = activeWindow; // The window may have been activated before calls started.
+        // A ring ended by push (WindowsPush.cs has already removed its toast).
+        WindowsPush.RingCancelled += room => DispatcherQueue.TryEnqueue(() => rings.End(room));
         Activated += (sender, e) =>
         {
             callWindowActive = e.WindowActivationState != WindowActivationState.Deactivated;

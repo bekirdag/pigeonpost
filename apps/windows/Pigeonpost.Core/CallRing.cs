@@ -268,6 +268,27 @@ public static class CallRings
     }
 }
 
+// The postbox's raw WNS notification at the end of a ring (crates/pigeonpost-postbox
+// src/call_alerts.rs wns_cancel): {"type":"call_cancel","room":…,"reason":…}. Anything else, or a
+// room that is not a room id, is ignored.
+public static class CallPush
+{
+    public const int MaxPayload = 5000; // WNS's own limit.
+
+    public static string? CancelledRoom(byte[]? payload)
+    {
+        if (payload is null || payload.Length is 0 or > MaxPayload) return null;
+        try
+        {
+            if (JsonNode.Parse(payload) is not JsonObject message) return null;
+            if (message["type"] is not JsonValue type || !type.TryGetValue<string>(out var kind) || kind != "call_cancel") return null;
+            if (message["room"] is not JsonValue room || !room.TryGetValue<string>(out var value)) return null;
+            return CallRing.ValidRoom(value) ? value : null;
+        }
+        catch (System.Text.Json.JsonException) { return null; }
+    }
+}
+
 // A WNS channel URI is only ever registered when it really points at Microsoft's push service,
 // as the postbox also requires.
 public static class WnsChannel
