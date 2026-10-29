@@ -195,6 +195,12 @@ internal static class InboxAuthorizationTests
             Require(await vm.StartConversationAsync("/carol/main", "Answer lost", Alpha.Address));
             Require(vm.SelectedConversation?.Peer == "/carol/main" && vm.Messages.Single().Status == DeliveryStatus.Failed
                 && vm.Messages.Single().DisplayBody == "Answer lost" && vm.Draft == "Answer lost" && vm.Error is not null && vm.CanCompose);
+            // The next refresh brings the server's default thread for the new peer; the kept text follows it.
+            f.DefaultThreadFor = "/carol/main";
+            await vm.RefreshAsync(background: true);
+            Require(vm.SelectedConversation?.Peer == "/carol/main" && vm.SelectedSubject?.Id == "thread_carol" && vm.Draft == "Answer lost");
+            f.FailSend = false; await vm.SendDraftAsync();
+            Require(f.Sends == 2 && vm.Draft == "" && vm.SelectedConversation?.Peer == "/carol/main");
         });
         yield return ("A new conversation never opens or sends in another inbox or a replaced login", async () =>
         {
@@ -247,6 +253,7 @@ internal static class InboxAuthorizationTests
         internal int Loads, Sends, Uploads, FileSends, Acknowledgements;
         internal Action? OnUpload, OnAcknowledge;
         internal bool FailSend;
+        internal string? DefaultThreadFor;
         private bool createdThread;
         private Gate? gate;
         private string? pausedMethod;
@@ -270,7 +277,8 @@ internal static class InboxAuthorizationTests
                 MessageId = "message_" + Label + "_" + i, From = "/k/fixture_peer", SenderHandle = Peer,
                 Body = Label + " fixture " + i, ReceivedAt = 1_789_113_600 + i, Read = false,
             }).ToArray();
-            ServerThread[] threads = createdThread ? [new("thread_fixture", Peer, "New subject", false)] : [];
+            ServerThread[] threads = [.. createdThread ? [new ServerThread("thread_fixture", Peer, "New subject", false)] : Array.Empty<ServerThread>(),
+                .. DefaultThreadFor is { } other ? [new ServerThread("thread_carol", other, null, true)] : Array.Empty<ServerThread>()];
             return Complete("load", new InboxSnapshot(rows, threads, [new Contact(Peer, "Bob", "allow", "review", [])], new HashSet<string>()));
         }
         public Task<SendReceipt> SendAsync(string identity, string peer, string body, string? threadId, CancellationToken ct)

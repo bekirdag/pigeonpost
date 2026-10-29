@@ -685,6 +685,7 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
             MessagesUpdated?.Invoke(this, EventArgs.Empty);
         }
         history = Messages;
+        AdoptLegacyDraft();
         Set(ref draft, DraftKey() is { } key ? drafts.GetValueOrDefault(key, "") : "", nameof(Draft));
         UpdateDraftAttachments();
         if (composerMode is { } mode && ComposerProblem(mode) is not null) mode.Authority.Retire();
@@ -699,6 +700,28 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
         matchIndex = Math.Max(0, matches.ToList().FindIndex(m => m.Id == previous));
         if (reset || previous != CurrentMatch?.Id) Changed(nameof(CurrentMatch));
         Changed(nameof(FindSummary));
+    }
+
+    // A brand-new conversation has no server thread yet, so its first message is drafted (and, if
+    // its answer is lost, kept for recovery) under the unnamed subject. The next refresh brings the
+    // server's default thread, which the subject list merges that unnamed one into; carry the text,
+    // files and recovery ownership along so the kept message does not vanish from the composer.
+    private void AdoptLegacyDraft()
+    {
+        if (SelectedMailbox is not { } mailbox || SelectedConversation is not { } conversation
+            || SelectedSubject is not { IsDefault: true } subject || subject.Id.Length == 0) return;
+        var legacy = (mailbox.Address, conversation.Peer, "");
+        var current = (mailbox.Address, conversation.Peer, subject.Id);
+        var moved = false;
+        if (drafts.TryGetValue(legacy, out var text) && text.Length > 0 && string.IsNullOrEmpty(drafts.GetValueOrDefault(current)))
+        { drafts[current] = text; drafts.Remove(legacy); moved = true; }
+        if (attachmentDrafts.TryGetValue(legacy, out var files) && files.Count > 0
+            && (!attachmentDrafts.TryGetValue(current, out var existing) || existing.Count == 0))
+        { attachmentDrafts[current] = files; attachmentDrafts.Remove(legacy); moved = true; }
+        if (!moved) return;
+        if (draftRevisions.Remove(legacy, out var revision)) draftRevisions[current] = Math.Max(revision, draftRevisions.GetValueOrDefault(current));
+        foreach (var (reference, owner) in deliveryDraftOwners.ToArray())
+            if (owner.Key == legacy) deliveryDraftOwners[reference] = owner with { Key = current, Revision = draftRevisions.GetValueOrDefault(current) };
     }
 
     private (string Mailbox, string Peer, string Subject)? DraftKey() => SelectedMailbox is { } mailbox && SelectedConversation is { } conversation

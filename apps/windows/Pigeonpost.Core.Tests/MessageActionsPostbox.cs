@@ -147,6 +147,8 @@ internal static class MessageActionsPostbox
                     if (lose) Check(model.HasPendingDeliveries);
                     await model.RefreshAsync(background: true);
                     Check(model.SelectedConversation?.Peer == carolAddress && model.Messages.Count(m => m.DisplayBody == text) == 1);
+                    // The server's default thread now exists; an unconfirmed first message stays in the composer.
+                    Check(model.Draft == (lose ? text : ""));
                 }
             }
             finally { Directory.Delete(openFolder, recursive: true); }
