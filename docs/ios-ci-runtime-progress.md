@@ -4,3 +4,5 @@
 - Partitioned all eight existing iPhone UI classes exactly once across three suites, retained native-ios aggregate, failure propagation and per-suite artifacts. Full model suite runs in messaging only. Manual calendar-file diagnostics select the calendar suite.
 - YAML parse, bash syntax, unchanged selection union and git diff checks pass. Exact-root Docdex symbol/impact calls returned index-writer backoff; reviewed workflow dependencies directly. No application source or assertion changes.
 - Fresh exact-head CI is required before merge.
+
+- Combining contacts with the first-message UI test exposed a real discard bug: after removing the only unconfirmed message, the selected thread became Pick a conversation. Kept an empty composer only for the currently read, locally started conversation, without creating a history row; it retires when the user leaves or changes inbox. Updated core regression passes (180 checks); the existing UI assertion remains unchanged and is being requalified.

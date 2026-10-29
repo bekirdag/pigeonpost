@@ -459,8 +459,12 @@ final class ControlledURLProtocol: URLProtocol {
         _ = await again.value
         check(inbox.pending.count == 1, "a retry replaces the unsent row instead of adding one")
         // Discard: the row was never confirmed, so it goes from this device only.
+        inbox.reading = "/test/new"
         await inbox.deleteMessage(id: inbox.pending[0].id)
-        check(inbox.pending.isEmpty && inbox.conversation(with: "/test/new") == nil, "discard removes the unsent message")
+        check(inbox.pending.isEmpty && inbox.conversation(with: "/test/new")?.messages.isEmpty == true, "discard removes the unsent message but keeps the open composer")
+        check(!inbox.conversations.contains(where: { $0.peer == "/test/new" }), "empty local composer creates no history row")
+        inbox.reading = nil
+        check(inbox.conversation(with: "/test/new") == nil, "leaving the empty conversation retires its local placeholder")
         check(inbox.resolvedFirstSends.contains(retry?.reference ?? ""), "discard also retires an already-adopted composer retry")
         check(!ControlledURLProtocol.requests().contains { $0.url?.path == "/v1/messages" || $0.httpMethod == "DELETE" },
               "discarding an unsent message asks the postbox nothing")
