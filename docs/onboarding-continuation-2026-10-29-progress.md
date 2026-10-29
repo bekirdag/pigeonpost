@@ -66,3 +66,11 @@ Updates below record completed work and evidence, not inferred completion from t
 - `turn.pigeonpost.dev` resolves directly to 193.164.5.36. Coturn and LiveKit are active; LiveKit reports zero restarts. Certificate trust/hostname verified externally on TCP 443 and 5349, expiring 23 January 2027; Certbot timer enabled.
 - A small authenticated client-to-client probe on the relay delivered UDP 6/6. Initial fast channel-mode TLS probes received 4/6; repeated paced send-indication probes delivered 40/40 on both TLS ports. This proves authenticated relay operation, not a physical-device call or a packet-loss performance guarantee. No real mailbox was called and no microphone data was used.
 - Stopped this task’s named local Keycloak/Mailpit fixtures after their integration tests; retained logs and staged production candidate. Shared browser and other services preserved.
+
+### Final server review fixes — 29 October, 22:31 UTC
+
+- SSH #185 passed every CI check and merged at `b11c3149`. No installed agent binary was updated; source is ready for the separate CLI/agentd release.
+- Notes processor #186 passed every CI check and merged at `be7d229d`. Deployed only service.js/audio.js on raijin while notes/calls/queue were idle, with source guards and backup `/var/backups/pigeonpost/audio-lifetime-20261029T223110Z`. Health and unchanged signing-key identity verified; public calls health remains healthy.
+- Service SHA256 `66c9ad77efaed83fbb421730798f6b79a2e243c7e7aca6f9a76d10a3179b856e`; audio SHA256 `2d186b050d16a450899adcf5faaf7a1496aed37f0f6f7a5bdc8b2d21c5660cd4`.
+- Live signaling/relay shared secret matches by a one-time HMAC challenge; all four TURN URLs are loaded. Pinned SFU backhaul TLS verifies from raijin. No long-lived secret was copied or printed.
+- Postmark recheck still shows login. Native Apple #180/#184 CI remains in progress; current store submissions are preserved.

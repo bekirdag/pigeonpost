@@ -9,8 +9,8 @@ This is a focused source and regression review of the October 29 handoff and its
 | Discarding the first pending Apple message removed the active composer; a deleted UIKit cell remained in accessibility | Preserve an empty active conversation without inventing history, clear removed cells | 180 Inbox checks and unchanged first-send/discard UI tests pass |
 | Expired phone-discovery quota marks repeatedly spent quota; large/partial imports were misleading | Correct expiry upsert and initial batch size; retain checked/unchecked state | #178 merged/live; 596 postbox +2 avatar +250 web checks |
 | Meeting notes did not pause until a withdrawal write returned; stale acceptance could win | Immediate local pause, serialized/versioned writes and stale-write compensation | #183 merged/live, 91 combined calls/notes tests at that revision |
-| Exact allowlisted commands could run workspace hooks on the host | Run approved argv inside the existing restricted container | #185 pending CI; 21 shell checks +60 real Docker/SSH loopback checks |
-| Notes audio decoded after discard could re-enter capture; failure paths retained mutable PCM | Capture/check generation; finally cleanup and late-decoder-output wiping | #186 pending CI; four failing-before regressions, 95 combined checks and real synthetic ffmpeg pipe test |
+| Exact allowlisted commands could run workspace hooks on the host | Run approved argv inside the existing restricted container | #185 merged after all CI; 21 shell checks +60 real Docker/SSH loopback checks |
+| Notes audio decoded after discard could re-enter capture; failure paths retained mutable PCM | Capture/check generation; finally cleanup and late-decoder-output wiping | #186 merged/live; four failing-before regressions, 95 combined checks and real synthetic ffmpeg pipe test |
 | Compact storage rollback documentation could treat conversion failures as completion | Require undecodable count and remaining compact-row checks before old-reader rollback | Documentation corrected in #183; no production storage rollback attempted |
 
 ## Boundaries checked without a new defect found
