@@ -1498,10 +1498,12 @@ mod ssh_tests {
             r.client.tcpip_forward("127.0.0.1", 0).await.is_err(),
             "remote forwarding"
         );
-        // The allowed command runs, without the environment of agentd or of the request.
-        ch.exec(true, "echo hello").await.unwrap();
-        let (out, _, status, _) = collect(&mut ch).await;
-        assert_eq!((out.trim(), status), ("hello", Some(0)));
+        // The channel still enforces exact commands. Successful confined execution is covered by
+        // the mandatory Docker loopback harness, not a host execution shortcut in this unit test.
+        ch.exec(true, "echo unlisted").await.unwrap();
+        let (out, err, status, _) = collect(&mut ch).await;
+        assert_eq!((out.trim(), status), ("", Some(126)));
+        assert!(err.contains("refused"));
     }
 
     #[tokio::test]

@@ -293,13 +293,19 @@ def main():
                         f'enabled = true\nmode = "{mode}"\nmax_sessions = 2\n')
             if mode == "unconfined":
                 toml.append("unconfined_acknowledged = true\n")
-            if mode == "allowlist":
-                toml.append('[[mailbox.shell.command]]\nargv = ["/bin/cat"]\npaths = 1\n'
-                            '[[mailbox.shell.command]]\nargv = ["/bin/echo", "allowed"]\n')
-            if mode == "container":
-                # The default image (pinned by digest). CI's Docker is rootful: the owner opt-in
-                # is what lets container mode run there (rootless/userns/Desktop need none).
+            if mode in ("container", "allowlist"):
+                # Both confined modes require the same runtime and explicit rootful CI opt-in.
                 toml.append('runtime = "docker"\ndocker_rootful_acknowledged = true\n')
+            if mode == "allowlist":
+                hook = os.path.join(a["ws"], "approved-hook")
+                with open(hook, "w") as out:
+                    out.write('#!/bin/sh\ncat "' + os.path.join(work, 'secret.txt') + '" 2>/dev/null\n'
+                              'printf escaped > "' + os.path.join(work, 'escaped-marker') + '" 2>/dev/null\n'
+                              'printf "confined hook\\n"\n')
+                os.chmod(hook, 0o755)
+                toml.append('[[mailbox.shell.command]]\nargv = ["/bin/cat"]\npaths = 1\n'
+                            '[[mailbox.shell.command]]\nargv = ["/bin/echo", "allowed"]\n'
+                            f'[[mailbox.shell.command]]\nargv = ["{hook}"]\n')
         write_private(os.path.join(machine, "agentd.toml"), "\n".join(toml))
         agent_env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": machine,
                      "PIGEONPOST_HOME": machine, "PIGEONPOST_POSTBOX": base, "PIGEONPOST_TUNNEL_URL": tunnel_url,
@@ -370,8 +376,17 @@ def main():
 
         # --- allowlist mode: escapes over real SSH ------------------------------------------------
         tight = agents["allowlist"]
-        r = ssh(me, tight["address"], "cat", "notes.txt")
-        c.ok(r.returncode == 0 and r.stdout == "workspace notes\n", "allowlist: an allowed command with a workspace path")
+        if use_container:
+            r = ssh(me, tight["address"], "cat", "notes.txt", timeout=300)
+            containers_used = True
+            c.ok(r.returncode == 0 and r.stdout == "workspace notes\n", "allowlist: an allowed command with a mapped workspace path inside a container")
+            r = ssh(me, tight["address"], "echo", "allowed")
+            c.ok(r.returncode == 0 and r.stdout == "allowed\n", "allowlist: exact approved argv executes")
+            r = ssh(me, tight["address"], "approved-hook")
+            c.ok(r.returncode == 0 and r.stdout == "confined hook\n" and not os.path.exists(os.path.join(work, "escaped-marker")),
+                 "allowlist: approved code cannot read host data or execute outside the workspace container")
+        else:
+            print("  SKIPPED allowlist positive execution (container runtime unavailable or disabled)")
         for attempt in (["cat", "../secret.txt"], ["cat", "escape"], ["cat", os.path.join(work, "secret.txt")],
                         ["echo", "allowed;", "id"], ["echo", "allowed", "&&", "id"], ["sh", "-c", "id"],
                         ["cat", "notes.txt", "|", "sh"], ["LD_PRELOAD=/tmp/x.so", "cat", "notes.txt"]):

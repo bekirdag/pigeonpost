@@ -36,16 +36,16 @@ pub struct ShellConfig {
     pub enabled: bool,
     /// Required, with no default: the boundary is the owner's explicit choice.
     pub mode: String,
-    /// `container`: the image each session runs in.
+    /// `container` / `allowlist`: the image each session runs in.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<String>,
-    /// `container`: `podman` or `docker`. Unset: podman if installed, else docker.
+    /// `container` / `allowlist`: `podman` or `docker`. Unset: podman if installed, else docker.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime: Option<String>,
-    /// `container`: `none` (default) or `outbound`.
+    /// `container` / `allowlist`: `none` (default) or `outbound`.
     #[serde(default = "default_network")]
     pub network: String,
-    /// `container`: mount the workspace read-only.
+    /// `container` / `allowlist`: mount the workspace read-only.
     #[serde(default)]
     pub read_only: bool,
     #[serde(default = "default_max_sessions")]
@@ -60,7 +60,7 @@ pub struct ShellConfig {
     /// this machine's user, with everything that user can reach.
     #[serde(default)]
     pub unconfined_acknowledged: bool,
-    /// `container` with Docker: required when the daemon is rootful without user-namespace
+    /// Confined modes with Docker: required when the daemon is rootful without user-namespace
     /// remapping (container root would be host root after an escape). Rootless Podman, rootless
     /// Docker, userns-remap and Docker Desktop's VM need no acknowledgement.
     #[serde(default)]
@@ -178,7 +178,7 @@ impl ShellConfig {
             docker_rootful_ok: self.docker_rootful_acknowledged,
         };
         match mode {
-            Mode::Container => {
+            Mode::Container | Mode::Allowlist => {
                 if !plain_token(&shell.image) || shell.image.starts_with('-') {
                     return Err("image must be a plain image reference".into());
                 }
@@ -196,20 +196,9 @@ impl ShellConfig {
                 let ws = shell.workspace.to_string_lossy();
                 if ws.contains(',') || ws.contains('=') || ws.contains('\n') {
                     return Err(
-                        "the workspace path may not contain ',' or '=' in container mode".into(),
+                        "the workspace path may not contain ',' or '=' in confined modes".into(),
                     );
                 }
-            }
-            Mode::Allowlist => {
-                if self.commands.is_empty() || self.commands.len() > MAX_COMMANDS {
-                    return Err(format!(
-                        "allowlist mode needs 1-{MAX_COMMANDS} [[mailbox.shell.command]] entries"
-                    ));
-                }
-                for c in &self.commands {
-                    check_command(c)?;
-                }
-                shell.commands = self.commands.clone();
             }
             Mode::Unconfined => {
                 if !self.unconfined_acknowledged {
@@ -221,11 +210,22 @@ impl ShellConfig {
                 }
             }
         }
-        if mode != Mode::Container && self.docker_rootful_acknowledged {
-            return Err("docker_rootful_acknowledged applies to container mode only".into());
+        if mode == Mode::Allowlist {
+            if self.commands.is_empty() || self.commands.len() > MAX_COMMANDS {
+                return Err(format!(
+                    "allowlist mode needs 1-{MAX_COMMANDS} [[mailbox.shell.command]] entries"
+                ));
+            }
+            for c in &self.commands {
+                check_command(c)?;
+            }
+            shell.commands = self.commands.clone();
         }
-        if mode != Mode::Container && (self.image.is_some() || self.runtime.is_some()) {
-            return Err("image and runtime apply to container mode only".into());
+        if mode == Mode::Unconfined && self.docker_rootful_acknowledged {
+            return Err("docker_rootful_acknowledged applies to confined modes only".into());
+        }
+        if mode == Mode::Unconfined && (self.image.is_some() || self.runtime.is_some()) {
+            return Err("image and runtime apply to confined modes only".into());
         }
         if mode != Mode::Allowlist && !self.commands.is_empty() {
             return Err("commands apply to allowlist mode only".into());
@@ -391,6 +391,19 @@ mod tests {
             paths: 1,
         }];
         assert!(c.validate(&ws, &home).is_ok());
+        c.runtime = Some("docker".into());
+        c.image = Some(DEFAULT_IMAGE.into());
+        c.docker_rootful_acknowledged = true;
+        assert!(
+            c.validate(&ws, &home).is_ok(),
+            "allowlist uses the confined runtime settings"
+        );
+        let odd = ws.join("bad,mount");
+        std::fs::create_dir_all(&odd).unwrap();
+        assert!(
+            c.validate(&odd, &home).is_err(),
+            "allowlist mount options cannot be injected"
+        );
         for (argv, why) in [
             (vec!["ls"], "relative program"),
             (vec!["/bin/sh", "-c", "id"], "a shell"),
