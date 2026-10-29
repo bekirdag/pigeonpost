@@ -772,7 +772,7 @@
           <label>Currency <select id="ac-plan-currency">
             ${open.map((c) => `<option value="${c}"${c === currency ? " selected" : ""}>${c === "TRY" ? "Turkish lira (TRY)" : "US dollars (USD)"}</option>`).join("")}
           </select></label>
-          <p class="ac-note">Billed yearly by iyzico on behalf of Piyote Bilişim. Cards issued in Türkiye pay in TRY.
+          <p class="ac-note">Sold by Piyote Bilişim and billed yearly through iyzico. Cards issued in Türkiye pay in TRY.
             TRY prices are fixed for ${esc(cloudCfg().pricingYear || "")}. Cancel any time; your names keep working until the end of the paid year.</p>
           <div class="ac-actions ac-left">
             <button class="btn btn-primary" id="ac-plan-go">Continue to secure payment</button>
