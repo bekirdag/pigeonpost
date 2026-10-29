@@ -50,7 +50,7 @@ function fakePostboxInternal({ allowed = new Set(["/k/alice1"]) } = {}) {
   };
 }
 
-async function start({ allowed } = {}) {
+async function start({ allowed, beforePostbox } = {}) {
   const pb = fakePostboxInternal({ allowed });
   const transcribed = [];
   const intel = createIntel({ sttName: "test-stt", llmName: "test-llm" }, {
@@ -69,7 +69,9 @@ async function start({ allowed } = {}) {
     const u = new URL(url);
     if (u.host === "postbox-internal.test") {
       assert.equal(opts.headers.authorization, "Bearer " + SVC);
-      const out = pb.handle(u.pathname, opts.body ? JSON.parse(opts.body) : undefined);
+      const body = opts.body ? JSON.parse(opts.body) : undefined;
+      await beforePostbox?.(u.pathname, body);
+      const out = pb.handle(u.pathname, body);
       const status = out.__status || 200;
       return { ok: status === 200, status, json: async () => out };
     }
@@ -355,4 +357,73 @@ test("without the feature the host is not offered notes and a request is refused
     // Uploads with no notes running are refused.
     assert.equal((await t.req("tok-alice", "POST", `/calls/v1/rooms/${c.room}/summary/audio?session=${c.alice.id}&seq=0`, { v: 1 }, { "x-capture-token": "x" })).body.error, "capture_paused");
   } finally { await t.stop(); }
+});
+
+
+test("withdrawal pauses capture before the postbox answers", async () => {
+  let release, entered;
+  const reached = new Promise((r) => { entered = r; });
+  const gate = new Promise((r) => { release = r; });
+  const t = await start({ beforePostbox: async (path, body) => {
+    if (path.endsWith("/attendees") && body.address === "/k/bob1" && body.consent === "withdrawn") { entered(); await gate; }
+  } });
+  try {
+    const c = await call(t);
+    const on = (await t.req("tok-alice", "POST", `/calls/v1/rooms/${c.room}/summary`, { session: c.alice.id, enabled: true })).body;
+    for (const [auth, session] of [["tok-alice", c.alice], ["tok-bob", c.bob]]) {
+      assert.equal((await t.req(auth, "POST", `/calls/v1/rooms/${c.room}/summary/consent`, { session: session.id, consent: true, version: on.version, disclosure_hash: on.disclosure_hash })).status, 200);
+    }
+    const active = await c.alice.summary((d) => d.state === "active");
+    const withdrawing = t.req("tok-bob", "POST", `/calls/v1/rooms/${c.room}/summary/consent`, { session: c.bob.id, consent: false });
+    await reached;
+    try {
+      assert.equal(t.service.state.rooms.get(c.room).summary.state, "waiting", "network latency must not delay withdrawal");
+      assert.equal((await upload(t, "tok-alice", c.room, c.alice.id, 0, seal(active, c.alicePid, 0, "after withdrawal"), active.capture.token)).body.error, "capture_paused");
+    } finally { release(); await withdrawing; }
+  } finally { release(); await t.stop(); }
+});
+
+test("an older affirmative response cannot undo a later withdrawal", async () => {
+  let release, entered;
+  const reached = new Promise((r) => { entered = r; });
+  const gate = new Promise((r) => { release = r; });
+  const t = await start({ beforePostbox: async (path, body) => {
+    if (path.endsWith("/attendees") && body.address === "/k/bob1" && body.consent === "yes") { entered(); await gate; }
+  } });
+  try {
+    const c = await call(t);
+    const on = (await t.req("tok-alice", "POST", `/calls/v1/rooms/${c.room}/summary`, { session: c.alice.id, enabled: true })).body;
+    await t.req("tok-alice", "POST", `/calls/v1/rooms/${c.room}/summary/consent`, { session: c.alice.id, consent: true, version: on.version, disclosure_hash: on.disclosure_hash });
+    const accepting = t.req("tok-bob", "POST", `/calls/v1/rooms/${c.room}/summary/consent`, { session: c.bob.id, consent: true, version: on.version, disclosure_hash: on.disclosure_hash });
+    await reached;
+    const withdrawing = t.req("tok-bob", "POST", `/calls/v1/rooms/${c.room}/summary/consent`, { session: c.bob.id, consent: false });
+    for (let i = 0; i < 100 && t.service.state.rooms.get(c.room).summary.consents.get(c.bobPid) !== "no"; i++) await settle(5);
+    release();
+    await Promise.all([accepting, withdrawing]);
+    const s = t.service.state.rooms.get(c.room).summary;
+    assert.equal(s.state, "waiting");
+    assert.equal(s.consents.get(c.bobPid), "no");
+    assert.notEqual(t.pb.meetings.get(on.meeting).attendees.get("/k/bob1").consent, "yes");
+  } finally { release(); await t.stop(); }
+});
+
+
+test("an answer cannot activate after its participant leaves during the write", async () => {
+  let release, entered;
+  const reached = new Promise((r) => { entered = r; });
+  const gate = new Promise((r) => { release = r; });
+  const t = await start({ beforePostbox: async (path, body) => {
+    if (path.endsWith("/attendees") && body.address === "/k/bob1" && body.consent === "yes") { entered(); await gate; }
+  } });
+  try {
+    const c = await call(t);
+    const on = (await t.req("tok-alice", "POST", `/calls/v1/rooms/${c.room}/summary`, { session: c.alice.id, enabled: true })).body;
+    const accepting = t.req("tok-bob", "POST", `/calls/v1/rooms/${c.room}/summary/consent`, { session: c.bob.id, consent: true, version: on.version, disclosure_hash: on.disclosure_hash });
+    await reached;
+    const room = t.service.state.rooms.get(c.room);
+    room.participants.delete(c.bobPid);
+    release();
+    assert.equal((await accepting).status, 409);
+    assert.notEqual(room.summary.consents.get(c.bobPid), "yes");
+  } finally { release(); await t.stop(); }
 });
