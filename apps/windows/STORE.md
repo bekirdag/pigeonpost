@@ -169,8 +169,8 @@ in Partner Center at all. The pieces:
    `d4a94855-b3f5-41af-8b48-c66d4d7eef73` (the channel request's remote ID,
    `WnsChannel.AzureObjectId`). Client secret `pigeonpost-postbox-wns`, valid until 2028-10-28,
    lives only in the postbox's env.
-2. Microsoft maps the package family name to that application. This is an email from the account
-   owner to Win_App_SDK_Push@microsoft.com, subject "Windows App SDK Push Notifications Mapping
+2. Microsoft maps the package family name to that application. The account owner sends the
+   request to Win_App_SDK_Push@microsoft.com, subject "Windows App SDK Push Notifications Mapping
    Request", body `PFN: WodoTeknolojiA.PigeonpostDesktop_80zy2mk5xaxza`, `AppId:
    6b717f08-17c7-4433-8ea8-25f06ed63e60`, `ObjectId: d4a94855-b3f5-41af-8b48-c66d4d7eef73`.
    Microsoft processes these weekly. Until then the channel request fails ("Push channel
