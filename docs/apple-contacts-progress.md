@@ -19,3 +19,5 @@
 - Review caught initial Settings reads being skipped during background profile loading. Read-only initial loads now wait for the existing operation with cancellation and scope checks; mutations remain one attempt. Three delayed-read regressions bring the focused suite to **55 passing checks**. Onboarding forms reset on scope change. Rebuild/retest after combining PR #180 remains required.
 
 - Combined PR #180 (`2b27ed98`) into this branch. Resolved first-message constructor/selection and CI conflicts: contact-prefilled recipients now use the scoped `Inbox.started` path; all existing suites plus PeopleUITests remain selected (account shard and iPad). Requalification follows before opening the PR.
+
+- Combined full core script passes (55 People checks and the existing suites). iOS/Mac builds pass. Seven contact UI cases pass. The first-message discard case exposed a real empty-thread/retained accessibility row defect in #180; fixed there and merged back. Both unchanged first-send/discard UI cases now pass. No native version bump or store submission. Phone/iPad/Mac CI remains the merge gate.
