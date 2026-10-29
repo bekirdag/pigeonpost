@@ -105,6 +105,7 @@ public sealed record ServerFeatures(IReadOnlySet<string> Names)
     // Phase 6 live streams in groups (docs/streaming.md) and Phase 7 meeting notes (docs/meeting-summaries.md).
     public const string Streaming = "streaming";
     public const string MeetingSummaries = "meeting_summaries";
+    public const string DisplayNames = "display_names";
 
     public static ServerFeatures None { get; } = new(new HashSet<string>(StringComparer.Ordinal));
     public bool Has(string name) => Names.Contains(name);

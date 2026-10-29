@@ -82,6 +82,7 @@ public sealed partial class MainWindow
         DesktopLog.Write("Features: " + string.Join(",", features.Names.Order(StringComparer.Ordinal)));
         avatars.Enabled = features.Has(ServerFeatures.Avatars);
         ProfileMenuItem.Visibility = ToVisibility(features.Has(ServerFeatures.Avatars));
+        ProfileNameMenuItem.Visibility = LocalNameMenuItem.Visibility = ToVisibility(features.Has(ServerFeatures.DisplayNames));
         PrivacyMenuItem.Visibility = ToVisibility(PrivacySettings.For(features).Count > 0);
         TimerMenuItem.Visibility = ToVisibility(features.Has(ServerFeatures.Disappearing));
         // Meeting notes belong to the signed-in person (the account), not to one inbox.
@@ -93,6 +94,7 @@ public sealed partial class MainWindow
 
     private async Task MailboxChangedForSideViewsAsync()
     {
+        ResetPeopleNames();
         sideBinding = null;
         refreshingSide = null;
         calendarModel.Clear();
@@ -140,6 +142,8 @@ public sealed partial class MainWindow
                 catch (Exception ex) when (ex is not OperationCanceledException) { DesktopLog.Error("Filtered list unavailable", ex); }
             }
             if (!SideCurrent(binding)) return;
+            await RefreshPeopleNamesAsync();
+            if (!SideCurrent(binding)) return;
             if (groupsModel.Enabled) await groupsModel.RefreshAsync();
             if (!SideCurrent(binding)) return;
             await ForwardStageAsync();
@@ -163,6 +167,7 @@ public sealed partial class MainWindow
 
     private void ResetSideViews()
     {
+        ResetPeopleNames(signOut: true);
         approvalStore.Close(); roomStore.Close();
         featureVersion++;
         sideBinding = null;
@@ -179,10 +184,12 @@ public sealed partial class MainWindow
         ShowSideView(SideView.Chats);
         SideNav.Visibility = NewGroupButton.Visibility = FilteredEntry.Visibility = Visibility.Collapsed;
         ProfileMenuItem.Visibility = PrivacyMenuItem.Visibility = TimerMenuItem.Visibility = Visibility.Collapsed;
+        ProfileNameMenuItem.Visibility = LocalNameMenuItem.Visibility = Visibility.Collapsed;
     }
 
     private void SideViewsInboxUpdated()
     {
+        _ = RefreshPeopleNamesAsync();
         groupsModel.SetContacts(ViewModel.Contacts);
         RebuildFiltered();
         RefreshAvatars();

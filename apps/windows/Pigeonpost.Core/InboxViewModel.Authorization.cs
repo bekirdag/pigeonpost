@@ -152,6 +152,7 @@ public sealed partial class InboxViewModel
         Mailboxes = [];
         snapshot = InboxSnapshot.Empty;
         allConversations = [];
+        peerNames = new Dictionary<string, PeerName>();
         callEntries = [];
         pending.Clear(); drafts.Clear(); attachmentDrafts.Clear(); selections.Clear(); opened.Clear(); draftRevisions.Clear();
         deliveryDraftOwners.Clear(); sendingActivity = null; ClearPendingDeliveryViews();
