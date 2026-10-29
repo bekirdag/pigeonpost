@@ -220,9 +220,16 @@ curl -s -X PUT http://127.0.0.1:8991/internal/v1/features/call_push \
   means the App ID's push capability does not cover VoIP.
 - **Mac** gets a time-sensitive alert with category `CALL_RING`; **Android** a high-priority FCM data
   message (`type=call_ring` / `call_cancel`).
-- **Windows** needs WNS credentials from Partner Center (Product management → WNS/MPNS):
-  `PIGEONPOST_WNS_PACKAGE_SID=ms-app://S-1-15-2-…` and `PIGEONPOST_WNS_CLIENT_SECRET` (or
-  `PIGEONPOST_WNS_CLIENT_SECRET_FILE`). Unset, Windows rings only while the app runs.
+- **Windows** needs the Entra app registration that Windows App SDK push uses (not the Partner
+  Center package SID: Microsoft refuses the `login.live.com` flow for new apps):
+  `PIGEONPOST_WNS_TENANT_ID` (directory ID), `PIGEONPOST_WNS_CLIENT_ID` (application ID) and
+  `PIGEONPOST_WNS_CLIENT_SECRET` (or `PIGEONPOST_WNS_CLIENT_SECRET_FILE`). The postbox asks
+  `login.microsoftonline.com/{tenant}/oauth2/v2.0/token` for scope `https://wns.windows.com/.default`
+  and caches the token until five minutes before it expires. The log says `WNS configured
+  (Microsoft identity platform)`; a refusal logs Entra's error code (`AADSTS…`). Unset, Windows
+  rings only while the app runs. Production values: tenant `48477bf1-ca44-4687-a97c-3d39d7ef7572`,
+  app "Pigeonpost Desktop WNS" `6b717f08-17c7-4433-8ea8-25f06ed63e60`; the secret
+  `pigeonpost-postbox-wns` expires 2028-10-28.
 
 ## Android push notifications (FCM)
 

@@ -170,7 +170,7 @@ XML is built with every value escaped.
 | --- | --- |
 | `PIGEONPOST_APNS_*` | unchanged; VoIP uses the same token-based key. Topic defaults to `PIGEONPOST_APNS_TOPIC` + `.voip` (`PIGEONPOST_APNS_VOIP_TOPIC` overrides). |
 | `PIGEONPOST_FCM_SERVICE_ACCOUNT_FILE` | unchanged |
-| `PIGEONPOST_WNS_PACKAGE_SID`, `PIGEONPOST_WNS_CLIENT_SECRET` (or `…_SECRET_FILE`) | WNS; unset = Windows rings in-app only |
+| `PIGEONPOST_WNS_TENANT_ID`, `PIGEONPOST_WNS_CLIENT_ID`, `PIGEONPOST_WNS_CLIENT_SECRET` (or `…_SECRET_FILE`) | WNS through the Microsoft identity platform (Entra client credentials, scope `https://wns.windows.com/.default`); unset = Windows rings in-app only |
 
 ## 5. Clients
 
@@ -244,9 +244,13 @@ arrives, it is answered without another click (the Linux app opens this).
 
 - While the app or its tray icon runs: a ring on the event stream shows a toast with
   `scenario="incomingCall"` (stays on screen, rings, Answer and Decline), bottom right.
-- With the app closed: the same toast from WNS, when the postbox has WNS credentials (Partner Center
-  package SID and secret). Without them the app registers its channel anyway and rings only while
-  running.
+- With the app closed: the same toast from WNS. Windows App SDK push: the app asks
+  `PushNotificationManager` for a channel with the Entra app's object ID, and the postbox
+  authenticates as that Entra app. Microsoft must first map the package family name to the Entra
+  app (an email request to Win_App_SDK_Push@microsoft.com, handled weekly); until then the channel
+  request fails, the app logs it and rings only while running. The package-SID flow against
+  `login.live.com` is refused for new apps ("Client credential flows against login.live.com are no
+  longer supported").
 
 ### Linux
 
