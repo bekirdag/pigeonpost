@@ -248,6 +248,73 @@ final class IOSUXTests: XCTestCase {
         app.webViews.buttons["Leave call"].firstMatch.tap()
     }
 
+    /// iPhone: the inbox stays upright, but a call on screen turns with the phone — WebKit orients
+    /// the camera by the window, so a window that cannot turn sends a sideways room in an upright
+    /// picture. Minimised, the app goes back upright; brought back, the call turns again. Needs the
+    /// call harness (`PP_CALL_HARNESS=1`, page at `PP_CALL_PAGE`, default :8460); skipped otherwise.
+    func testIPhoneCallTurnsWithThePhone() throws {
+        let env = ProcessInfo.processInfo.environment
+        try XCTSkipUnless(env["PP_CALL_HARNESS"] == "1", "needs the call harness")
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .phone, "iPhone only")
+        defer { XCUIDevice.shared.orientation = .portrait }
+        let page = env["PP_CALL_PAGE"] ?? "http://127.0.0.1:8460/native-call.html"
+        let harness = ["-fixtures", "-calls-page", page, "-calls-token", "tok-alice",
+                       "-calls-mailbox", "/k/alice0000000000000000000a", "-calls-handle", "/alice"]
+        func turned(_ orientation: UIDeviceOrientation) {
+            XCUIDevice.shared.orientation = orientation
+            Thread.sleep(forTimeInterval: 1.5)
+        }
+        func landscape() -> Bool { let frame = app.windows.firstMatch.frame; return frame.width > frame.height }
+        func reachable(_ element: XCUIElement, _ state: String) {
+            XCTAssertTrue(element.waitForExistence(timeout: 5), "\(state): \(element) missing")
+            XCTAssertTrue(element.isHittable, "\(state): \(element) cannot be reached")
+            XCTAssertTrue(app.windows.firstMatch.frame.contains(element.frame), "\(state): \(element) runs off the screen")
+        }
+
+        XCUIDevice.shared.orientation = .portrait
+        app.launchArguments = harness
+        app.launch()
+        turned(.landscapeLeft)
+        XCTAssertFalse(landscape(), "the inbox turned with the phone")
+        screenshot("inbox-held-sideways")
+        turned(.portrait)
+
+        app.terminate()
+        app.launchArguments = harness + ["-call", "/bob:video"]
+        app.launch()
+        let leave = app.webViews.buttons["Leave call"].firstMatch
+        XCTAssertTrue(leave.waitForExistence(timeout: 40))
+        let clock = app.webViews.buttons.matching(NSPredicate(format: "label MATCHES %@", ".* [0-9]+:[0-9]{2}$")).firstMatch
+        XCTAssertTrue(clock.waitForExistence(timeout: 40), "the peer never answered")
+        XCTAssertFalse(landscape())
+        screenshot("call-portrait")
+        for orientation in [UIDeviceOrientation.landscapeLeft, .landscapeRight] {
+            turned(orientation)
+            XCTAssertTrue(landscape(), "the call did not turn with the phone (\(orientation.rawValue))")
+            reachable(leave, "call-landscape-\(orientation.rawValue)")
+            reachable(app.webViews.buttons["Back to the inbox (the call keeps going)"].firstMatch, "call-landscape-\(orientation.rawValue)")
+            screenshot("call-landscape-\(orientation.rawValue)")
+        }
+
+        // Minimised while held sideways: the inbox comes back upright, and the call turns again.
+        app.webViews.buttons["Back to the inbox (the call keeps going)"].firstMatch.tap()
+        let back = app.webViews.buttons["Return to the call"].firstMatch
+        XCTAssertTrue(back.waitForExistence(timeout: 5))
+        Thread.sleep(forTimeInterval: 1.5)
+        XCTAssertFalse(landscape(), "the inbox stayed sideways after the call was minimised")
+        screenshot("mini-held-sideways")
+        back.tap()
+        XCTAssertTrue(leave.waitForExistence(timeout: 5))
+        turned(.portrait)
+        turned(.landscapeLeft)
+        XCTAssertTrue(landscape(), "the call did not turn again once brought back")
+        turned(.portrait)
+        XCTAssertFalse(landscape())
+        leave.tap()
+        turned(.landscapeLeft)
+        XCTAssertFalse(landscape(), "the inbox turned after the call ended")
+    }
+
     /// App Store screenshots from the fixture mailbox: `TEST_RUNNER_PP_STORE_SHOTS=<directory>`.
     /// iPad in landscape, iPhone in portrait. Skipped otherwise.
     func testStoreScreenshots() throws {
@@ -429,7 +496,8 @@ final class IPadLayoutTests: XCTestCase {
     /// seconds and rings back once the call ends); skipped otherwise.
     func testIPadCallOverlayHasNoOverlaps() throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["PP_CALL_HARNESS"] == "1", "needs the call harness")
-        let harness = ["-fixtures", "-calls-page", "http://127.0.0.1:8460/native-call.html",
+        let page = ProcessInfo.processInfo.environment["PP_CALL_PAGE"] ?? "http://127.0.0.1:8460/native-call.html"
+        let harness = ["-fixtures", "-calls-page", page,
                        "-calls-token", "tok-alice", "-calls-mailbox", "/k/alice0000000000000000000a",
                        "-calls-handle", "/alice"]
         var problems: [String] = []

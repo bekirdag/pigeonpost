@@ -609,6 +609,7 @@ final class CallHost: NSObject {
             // A call keeps the screen awake.
             #if canImport(UIKit)
             UIApplication.shared.isIdleTimerDisabled = next != .hidden
+            CallRotation.update(inCall: next == .full)
             #else
             if next == .hidden, let awake {
                 ProcessInfo.processInfo.endActivity(awake)
@@ -790,6 +791,32 @@ struct CallOverlay: View {
 }
 
 #if canImport(UIKit)
+/// The iPhone app is upright-only, but a call on screen turns with the phone. WebKit orients the
+/// camera by the window's interface orientation, not the device's: held on its side in an app that
+/// cannot rotate, the phone kept sending upright (portrait) pictures with the room turned sideways in
+/// them. While the call fills the screen the window may turn (Info.plist lists the two landscape
+/// orientations for this), so the picture leaves the phone the way it is held; minimised or ended,
+/// the app goes back upright. The iPad turns anyway.
+@MainActor
+enum CallRotation {
+    private static var inCall = false
+    private static var phone: Bool { UIDevice.current.userInterfaceIdiom == .phone }
+
+    static var mask: UIInterfaceOrientationMask {
+        !phone ? .all : inCall ? .allButUpsideDown : .portrait
+    }
+
+    static func update(inCall now: Bool) {
+        guard now != inCall else { return }
+        inCall = now
+        guard phone else { return }
+        for scene in UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }) {
+            for window in scene.windows { window.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations() }
+            if !now { scene.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait)) }
+        }
+    }
+}
+
 private struct CallWebView: UIViewRepresentable {
     let webView: WKWebView
     func makeUIView(context: Context) -> WKWebView { webView }
