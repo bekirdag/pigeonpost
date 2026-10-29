@@ -373,6 +373,17 @@ final class IPadLayoutTests: XCTestCase {
         var prepare: (XCUIApplication) -> Void = { _ in }
     }
 
+    /// New conversation → Send selects the new conversation in the sidebar with its thread open.
+    func testNewConversationSelectsItsThread() {
+        app.launchArguments = ["-fixtures", "-sheet=new", "-appearance=light"]
+        app.launch()
+        sendFirstMessage(app, to: "test/ipad-fresh", "Hello from the iPad")
+        assertStartedConversationOpen(app, showing: "Hello from the iPad")
+        let row = app.descendants(matching: .any).matching(identifier: "conversation:/test/ipad-fresh").firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 5), "the new conversation is in the sidebar")
+        XCTAssertTrue(row.isSelected, "and selected")
+    }
+
     private var scenes: [Scene] {
         let open = ["-fixtures", "-open=/bekir/agent1"]
         return [

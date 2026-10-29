@@ -150,6 +150,13 @@ struct ConversationsView: View {
             guard mode == .hidden, !Fixtures.enabled else { return }
             Task { await callLog?.refresh() }
         }
+        // A conversation just started from New conversation, in this mailbox: open it. On a phone
+        // that pushes the thread; on an iPad it is the sidebar's selection.
+        .onChange(of: inbox.started) { _, started in
+            guard let next = started?.selection(from: selection, reading: account.me?.address) else { return }
+            if next != selection { subthread = nil }
+            selection = next
+        }
         // A tapped notification names the conversation it was about. Opening anything else would be
         // answering a different question from the one that was asked.
         .onChange(of: push.pendingPeer) { _, peer in
@@ -191,7 +198,7 @@ struct ConversationsView: View {
                 }
             case .filtered:
                 if let filtered { FilteredSheet(filtered: filtered) }
-            case .new: NewConversationSheet { peer in selection = peer }
+            case .new: NewConversationSheet()
             case .newGroup: NewGroupSheet { id in selection = id }
             case .organizationRooms:
                 if account.features.orgs && account.features.groups {

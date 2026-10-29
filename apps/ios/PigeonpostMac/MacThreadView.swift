@@ -177,6 +177,9 @@ struct MacThreadView: View {
                     }
                 }
                 .onChange(of: action?.id) { _, next in if next != nil { sent += 1 } }
+                .onAppear { adoptStartedConversation() }
+                .onChange(of: inbox.started) { _, _ in adoptStartedConversation() }
+                .onChange(of: inbox.unconfirmedFirstSends) { _, _ in adoptStartedConversation() }
             }
             // A different subject needs fresh lazy layout measurements. The composer and its
             // draft stay outside this identity boundary.
@@ -415,6 +418,20 @@ struct MacThreadView: View {
         guard !sendPending && !editing else { return }
         do { staged.append(try MacClipboardFiles.readFile(url)) }
         catch { inbox.toast = error.localizedDescription }
+    }
+
+    /// A conversation just started from New conversation: the composer takes focus, and a first
+    /// message whose delivery was not confirmed comes back into it under its own reference, so Send
+    /// retries that message (Discard is on the message itself).
+    private func adoptStartedConversation() {
+        let key = composerKey
+        if let unconfirmed = inbox.takeUnconfirmedFirstSend(mailbox: key.mailbox, peer: peer),
+           (drafts[key]?.text ?? "").isEmpty {
+            drafts[key, default: ComposerDraft()].text = unconfirmed.text
+            drafts[key, default: ComposerDraft()].attempt = MessageSendAttempt(
+                text: unconfirmed.text, fileIDs: drafts[key]?.files.map(\.id) ?? [], reference: unconfirmed.reference)
+        }
+        if inbox.takeStartedFocus(mailbox: key.mailbox, peer: peer) { sent += 1 }
     }
 
     private func send() {

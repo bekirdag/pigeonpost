@@ -71,6 +71,17 @@ final class ControlledURLProtocol: URLProtocol {
         URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?
             .queryItems?.first { $0.name == "identity" }?.value ?? request.value(forHTTPHeaderField: "x-pigeonpost-identity")
     }
+    /// The connection drops with no answer at all — the postbox may or may not have stored it.
+    @discardableResult
+    static func drop(_ path: String) -> Bool {
+        lock.lock()
+        let index = pending.firstIndex { $0.request.url?.path == path }
+        let call = index.map { pending.remove(at: $0) }
+        lock.unlock()
+        guard let call else { return false }
+        call.client?.urlProtocol(call, didFailWithError: URLError(.networkConnectionLost))
+        return true
+    }
     @discardableResult
     static func complete(_ path: String, identity: String?, body: String, status: Int = 200, poll: Bool? = nil) -> Bool {
         lock.lock()
@@ -153,6 +164,11 @@ final class ControlledURLProtocol: URLProtocol {
         await messageActionWireAndAcknowledgement()
         await editRetryAndMailboxIsolation()
         await attachmentSendRetry()
+        await startedConversationOpensWhereTheServerFiledIt()
+        await unconfirmedFirstSendOpensWithRetryAndDiscard()
+        await unconfirmedFirstSendThatWasStoredIsConfirmed()
+        await refusedFirstSendStaysInTheDialog()
+        await startedConversationStaysWithItsMailbox()
         await initialLoadAndSwitch()
         await oldLoadCannotFinishNewSpinner()
         await rapidReturnToSameMailbox()
@@ -375,6 +391,131 @@ final class ControlledURLProtocol: URLProtocol {
         check(success, "fresh file send succeeds")
         await wait("file send refresh drained") { ControlledURLProtocol.requests().isEmpty }
         inbox.reset()
+    }
+
+    // ---- New conversation: the thread opens with its first message in it ---------------------
+
+    static func startedConversationOpensWhereTheServerFiledIt() async {
+        let (_, inbox) = make()
+        let start = Task { await inbox.startConversation(to: "/test", body: "  first words  ") }
+        let body = await nextSend()
+        let reference = body["msg_ref"] as? String ?? ""
+        check(body["to"] as? String == "/test" && reference.hasPrefix("mref_"), "first send goes to the typed address with a reference")
+        check(inbox.conversation(with: "/test")?.messages.last?.status == .sending,
+              "the first message is in its conversation while the postbox answers")
+        check(inbox.started == nil, "nothing opens before the postbox has answered")
+        check(ControlledURLProtocol.complete("/v1/send", identity: nil, body: "{\"message_id\":\"m1\",\"sent_copy_id\":\"copy1\"}", status: 201),
+              "postbox accepted the first send")
+        await wait("started named") { inbox.started != nil }
+        check(inbox.started?.selection(from: nil, reading: a.address) == "/test", "a successful first send opens its conversation at once")
+        check(inbox.started?.selection(from: nil, reading: b.address) == nil, "another mailbox's window does not open it")
+        check(inbox.takeStartedFocus(mailbox: b.address, peer: "/test") == false, "another mailbox's composer does not take focus")
+        // The server filed it under the mailbox the namespace resolved to.
+        let listing = """
+        {"messages":[{"message_id":"copy1","direction":"out","from":"/k/test-a","peer":"/k/resolved","peer_handle":"/test/agent","body":"first words","msg_ref":"\(reference)","sent_at":5,"read":true}]}
+        """
+        await pending(a.address, count: 1)
+        while ControlledURLProtocol.complete("/v1/inbox", identity: a.address, body: listing, poll: false) {}
+        let outcome = await start.value
+        check(outcome == .opened("/test/agent"), "the conversation is the one the server filed it under")
+        check(inbox.started?.replacing == "/test" && inbox.started?.peer == "/test/agent", "the open conversation moves with it")
+        check(inbox.started?.selection(from: "/test", reading: a.address) == "/test/agent", "a window still on the typed address follows")
+        check(inbox.started?.selection(from: "/test/other", reading: a.address) == nil, "a window that moved on stays where it is")
+        check(inbox.conversation(with: "/test/agent")?.messages.map(\.id) == ["copy1"], "the sent message is in the opened conversation once")
+        check(inbox.takeStartedFocus(mailbox: a.address, peer: "/test/agent"), "its composer takes focus")
+        check(!inbox.takeStartedFocus(mailbox: a.address, peer: "/test/agent"), "only once")
+        await wait("first send drained") { ControlledURLProtocol.requests().isEmpty }
+        inbox.reset()
+    }
+
+    static func unconfirmedFirstSendOpensWithRetryAndDiscard() async {
+        let (_, inbox) = make()
+        let start = Task { await inbox.startConversation(to: "/test/new", body: "lost words") }
+        let body = await nextSend()
+        check(ControlledURLProtocol.drop("/v1/send"), "the answer to the first send was lost")
+        await pending(a.address, count: 1)
+        check(ControlledURLProtocol.complete("/v1/inbox", identity: a.address, body: "{\"messages\":[]}", poll: false),
+              "the listing does not show it stored")
+        let outcome = await start.value
+        check(outcome == .opened("/test/new"), "an unconfirmed first send still opens its conversation")
+        check(inbox.started?.selection(from: nil, reading: a.address) == "/test/new", "and selects it")
+        let row = inbox.conversation(with: "/test/new")?.messages.last
+        check(row?.status == .failed && row?.body.contains("lost words") == true, "the thread shows the message as not sent")
+        check(inbox.takeUnconfirmedFirstSend(mailbox: b.address, peer: "/test/new") == nil, "another mailbox cannot take its words")
+        let retry = inbox.takeUnconfirmedFirstSend(mailbox: a.address, peer: "/test/new")
+        check(retry?.text == "lost words" && retry?.reference == body["msg_ref"] as? String,
+              "its words and reference wait for the composer, so Send retries the same message")
+        check(inbox.takeUnconfirmedFirstSend(mailbox: a.address, peer: "/test/new") == nil, "once")
+        // Retry is the composer's Send with that reference: the same message, replacing the row.
+        let again = Task { await inbox.send("lost words", to: "/test/new", threadId: nil, msgRef: retry?.reference ?? "") }
+        let resent = await nextSend()
+        check(resent["msg_ref"] as? String == body["msg_ref"] as? String && resent["body"] as? String == body["body"] as? String,
+              "retry repeats the exact first message")
+        check(ControlledURLProtocol.drop("/v1/send"), "the retry is lost too")
+        _ = await again.value
+        check(inbox.pending.count == 1, "a retry replaces the unsent row instead of adding one")
+        // Discard: the row was never confirmed, so it goes from this device only.
+        await inbox.deleteMessage(id: inbox.pending[0].id)
+        check(inbox.pending.isEmpty && inbox.conversation(with: "/test/new") == nil, "discard removes the unsent message")
+        check(!ControlledURLProtocol.requests().contains { $0.url?.path == "/v1/messages" || $0.httpMethod == "DELETE" },
+              "discarding an unsent message asks the postbox nothing")
+        inbox.reset()
+    }
+
+    static func unconfirmedFirstSendThatWasStoredIsConfirmed() async {
+        let (_, inbox) = make()
+        let start = Task { await inbox.startConversation(to: "/test/new", body: "stored words") }
+        let body = await nextSend()
+        check(ControlledURLProtocol.drop("/v1/send"), "the answer was lost after the postbox stored it")
+        await pending(a.address, count: 1)
+        let listing = """
+        {"messages":[{"message_id":"copy9","direction":"out","from":"/k/test-a","peer":"/test/new","body":"stored words","msg_ref":"\(body["msg_ref"] as? String ?? "")","sent_at":5,"read":true}]}
+        """
+        check(ControlledURLProtocol.complete("/v1/inbox", identity: a.address, body: listing, poll: false), "the listing shows it stored")
+        let outcome = await start.value
+        check(outcome == .opened("/test/new"), "the conversation opens")
+        check(inbox.conversation(with: "/test/new")?.messages.map(\.id) == ["copy9"] && inbox.pending.isEmpty,
+              "the stored copy replaces the not-sent row")
+        check(inbox.unconfirmedFirstSends.isEmpty, "and nothing waits to be retried")
+        inbox.reset()
+    }
+
+    static func refusedFirstSendStaysInTheDialog() async {
+        let (_, inbox) = make()
+        let start = Task { await inbox.startConversation(to: "/nobody/here", body: "hello?") }
+        _ = await nextSend()
+        check(ControlledURLProtocol.complete("/v1/send", identity: nil, body: "{\"error\":\"recipient_unresolved\"}", status: 404),
+              "the postbox refused the address")
+        let outcome = await start.value
+        check(outcome == .failed("No mailbox at that address."), "a refusal is said in the dialog")
+        check(inbox.started == nil && inbox.conversation(with: "/nobody/here") == nil && inbox.pending.isEmpty,
+              "and leaves no conversation behind")
+        check(inbox.unconfirmedFirstSends.isEmpty, "nothing waits to be retried")
+        inbox.reset()
+    }
+
+    static func startedConversationStaysWithItsMailbox() async {
+        let (account, inbox) = make()
+        let start = Task { await inbox.startConversation(to: "/test/new", body: "from A") }
+        _ = await nextSend()
+        switchTo(b, account: account, inbox: inbox)
+        check(ControlledURLProtocol.complete("/v1/send", identity: nil, body: "{\"message_id\":\"m1\",\"sent_copy_id\":\"copy1\"}", status: 201),
+              "the first send is answered after a switch to another mailbox")
+        let outcome = await start.value
+        check(outcome == .failed(nil) && inbox.started == nil, "the answer opens nothing in the mailbox now on screen")
+        check(inbox.conversation(with: "/test/new") == nil, "and puts nothing in it")
+        // A lost answer after a switch leaves no retry for the other mailbox either.
+        switchTo(a, account: account, inbox: inbox)
+        let lost = Task { await inbox.startConversation(to: "/test/new", body: "from A again") }
+        _ = await nextSend()
+        switchTo(b, account: account, inbox: inbox)
+        check(ControlledURLProtocol.drop("/v1/send"), "the answer was lost after the switch")
+        let lostOutcome = await lost.value
+        check(lostOutcome == .failed(nil) && inbox.unconfirmedFirstSends.isEmpty && inbox.started == nil,
+              "an unconfirmed send is not reopened in another mailbox")
+        await wait("switch drained") { ControlledURLProtocol.requests().allSatisfy { $0.url?.path != "/v1/send" } }
+        inbox.reset()
+        account.me = a
     }
 
     static func initialLoadAndSwitch() async {

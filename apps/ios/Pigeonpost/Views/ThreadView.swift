@@ -216,7 +216,10 @@ struct ThreadView: View {
                 sheet = .block(BlockTarget(peer: peer, name: conversation.name, origin: .thread))
             }
             if Fixtures.sheet == "thread", !embedded { sheet = .newThread }
+            adoptStartedConversation()
         }
+        .onChange(of: inbox.started) { _, _ in adoptStartedConversation() }
+        .onChange(of: inbox.unconfirmedFirstSends) { _, _ in adoptStartedConversation() }
         .onChange(of: action?.id) { _, next in if next != nil { composing = true } }
     }
 
@@ -531,6 +534,20 @@ struct ThreadView: View {
                     mediaType: type?.preferredMIMEType ?? "image/png", data: data))
             }
         }
+    }
+
+    /// A conversation just started from New conversation: the composer takes focus, and a first
+    /// message whose delivery was not confirmed comes back into it under its own reference, so Send
+    /// retries that message (Discard is on the message itself).
+    private func adoptStartedConversation() {
+        let key = composerKey
+        if let unconfirmed = inbox.takeUnconfirmedFirstSend(mailbox: key.mailbox, peer: peer),
+           (drafts[key]?.text ?? "").isEmpty {
+            drafts[key, default: ComposerDraft()].text = unconfirmed.text
+            drafts[key, default: ComposerDraft()].attempt = MessageSendAttempt(
+                text: unconfirmed.text, fileIDs: drafts[key]?.files.map(\.id) ?? [], reference: unconfirmed.reference)
+        }
+        if inbox.takeStartedFocus(mailbox: key.mailbox, peer: peer) { composing = true }
     }
 
     private func clearComposer() {

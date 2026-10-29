@@ -294,3 +294,71 @@ final class ComposerTests: XCTestCase {
         XCTAssertEqual(drafted(app), "second", "the next message types into the composer without a tap")
     }
 }
+
+/// New conversation → Send: the conversation just started opens with its first message in it and
+/// the keyboard in its composer, instead of leaving the person on "Pick a conversation". On a phone
+/// the thread is pushed; on an iPad it is the sidebar's selection (see `IPadLayoutTests`).
+func sendFirstMessage(_ app: XCUIApplication, to address: String, _ text: String) {
+    let peer = app.textFields["newConversationPeer"]
+    XCTAssertTrue(peer.waitForExistence(timeout: 15), "New conversation is open")
+    type(address, into: peer)
+    let body = app.textFields["newConversationBody"].exists ? app.textFields["newConversationBody"] : app.textViews["newConversationBody"]
+    type(text, into: body)
+    app.buttons["newConversationSend"].tap()
+}
+
+/// A form field in a sheet can miss the first tap while the sheet is still settling.
+private func type(_ text: String, into field: XCUIElement) {
+    let focused = NSPredicate(format: "hasKeyboardFocus == true")
+    for _ in 0..<4 {
+        field.tap()
+        if XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: focused, object: field)], timeout: 2) == .completed { break }
+    }
+    field.typeText(text)
+}
+
+func assertStartedConversationOpen(_ app: XCUIApplication, showing text: String, file: StaticString = #filePath, line: UInt = #line) {
+    let composer = app.textViews["messageComposer"]
+    XCTAssertTrue(composer.waitForExistence(timeout: 10), "the new conversation's thread opens", file: file, line: line)
+    XCTAssertFalse(app.staticTexts["Pick a conversation"].exists, "not the empty detail pane", file: file, line: line)
+    XCTAssertFalse(app.textFields["newConversationPeer"].exists, "the dialog is gone", file: file, line: line)
+    let sent = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", text, text)).firstMatch
+    XCTAssertTrue(sent.waitForExistence(timeout: 5), "the first message is visible in it", file: file, line: line)
+    let focused = NSPredicate(format: "hasKeyboardFocus == true")
+    XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: focused, object: composer)], timeout: 5), .completed,
+                   "its composer has focus", file: file, line: line)
+}
+
+extension ComposerTests {
+    private func newConversationApp(_ extra: [String] = []) -> XCUIApplication {
+        let app = XCUIApplication(bundleIdentifier: "dev.pigeonpost.inbox")
+        app.launchArguments = ["-fixtures", "-sheet=new", "-appearance=light"] + extra
+        app.launch()
+        return app
+    }
+
+    func testFirstSendOpensTheNewConversation() {
+        let app = newConversationApp()
+        sendFirstMessage(app, to: "test/fresh", "Hello from a brand new conversation")
+        assertStartedConversationOpen(app, showing: "Hello from a brand new conversation")
+        if UIDevice.current.userInterfaceIdiom == .phone {
+            XCTAssertFalse(app.buttons["composeMenu"].isHittable || app.buttons["New conversation"].isHittable,
+                           "the thread is pushed over the conversation list")
+        }
+    }
+
+    func testUnconfirmedFirstSendOpensWithRetryAndDiscard() {
+        let app = newConversationApp(["-first-send-unconfirmed"])
+        sendFirstMessage(app, to: "test/lost", "Words whose answer was lost")
+        let composer = app.textViews["messageComposer"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 10), "an unconfirmed first send still opens its conversation")
+        XCTAssertFalse(app.staticTexts["Pick a conversation"].exists)
+        let notSent = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "not-sent:local_")).firstMatch
+        XCTAssertTrue(notSent.waitForExistence(timeout: 5), "the message is shown as not sent")
+        XCTAssertEqual(composer.value as? String, "Words whose answer was lost", "its words wait in the composer, so Send retries it")
+        let discard = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "discard:local_")).firstMatch
+        XCTAssertTrue(discard.waitForExistence(timeout: 5), "and it can be discarded")
+        discard.tap()
+        XCTAssertTrue(notSent.waitForNonExistence(timeout: 5), "discard removes the unsent message")
+    }
+}

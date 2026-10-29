@@ -11,6 +11,8 @@ struct MacNewConversationSheet: View {
     @Environment(Inbox.self) private var inbox
     @State private var peer = "/"
     @State private var draft = ""
+    @State private var error: String?
+    @State private var sending = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -42,15 +44,21 @@ struct MacNewConversationSheet: View {
                 .font(.geist(11.5))
                 .foregroundStyle(Theme.muted)
                 .frame(width: 340, alignment: .leading)
+            if let error {
+                Text(error)
+                    .font(.geist(12.5))
+                    .foregroundStyle(Theme.Pill.blockedText)
+                    .frame(width: 340, alignment: .leading)
+            }
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }
                     .keyboardShortcut(.cancelAction)
                 // The button says which of the two things will happen, so nothing is sent by
                 // surprise and nothing written is silently dropped.
-                Button(writing ? "Send" : "Open") { go() }
+                Button(sending ? "Sending…" : writing ? "Send" : "Open") { go() }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(!PeerFace.validConversationAddress(peer))
+                    .disabled(sending || !PeerFace.validConversationAddress(peer))
             }
         }
         .padding(24)
@@ -61,14 +69,25 @@ struct MacNewConversationSheet: View {
 
     private func go() {
         let trimmed = peer.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard PeerFace.validConversationAddress(trimmed) else { return }
+        guard PeerFace.validConversationAddress(trimmed), !sending else { return }
         let text = draft.trimmed
-        // Open first. The send puts an optimistic row in this conversation immediately, and that
-        // row should appear in a conversation already on screen rather than behind the sheet.
-        opened(trimmed)
-        if !text.isEmpty {
-            Task { await inbox.send(text, to: trimmed, threadId: nil) }
+        guard !text.isEmpty else {
+            opened(trimmed)
+            dismiss()
+            return
         }
-        dismiss()
+        // The conversation opens from `inbox.started` in the window reading the mailbox that sent
+        // it, once the postbox has answered — including an answer that never came, which opens it
+        // with the message marked not sent and its words back in the composer. A refusal stays
+        // here, with the words, rather than leaving an empty conversation for a wrong address.
+        sending = true
+        error = nil
+        Task {
+            switch await inbox.startConversation(to: trimmed, body: text) {
+            case .opened: dismiss()
+            case .failed(let message): error = message ?? "Could not send."
+            }
+            sending = false
+        }
     }
 }
