@@ -295,6 +295,14 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
     }
     /** One thing open at a time: a direct conversation or a group. */
     fun openPeer(peer: String?) { groups?.close(); inbox.selectPeer(peer) }
+    /** A new conversation replaces whatever the detail pane showed, a group or the calendar included. */
+    fun startConversation(peer: String) {
+        groups?.close()
+        if (inbox.state.value.leftView == LeftView.CALENDAR) inbox.showView(LeftView.INBOX)
+        inbox.startConversation(peer)
+    }
+    /** The store has already opened the new group in its own mailbox; nothing else may cover it. */
+    fun groupCreated() { inbox.selectPeer(null); if (inbox.state.value.leftView == LeftView.CALENDAR) inbox.showView(LeftView.INBOX) }
     fun openGroup(id: String) { inbox.selectPeer(null); inbox.showView(LeftView.INBOX); groups?.open(id) }
     fun openCalendar() { groups?.close(); inbox.selectPeer(null); inbox.showView(LeftView.CALENDAR) }
     fun joinCalendar(key: CalendarEventKey, video: Boolean, expectedContext: String) {

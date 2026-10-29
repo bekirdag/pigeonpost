@@ -157,6 +157,43 @@ class MessageActionsUiTest {
         }
     }
 
+    private fun startConversation(address: String, words: String) {
+        ui.onNodeWithContentDescription("New conversation").performClick()
+        ui.onNodeWithTag("newConversationAddress").performTextReplacement(address)
+        ui.onNodeWithText("Open conversation").performClick()
+        tag("messageEditor")
+        // The new conversation is open at once, with the message field ready.
+        ui.waitUntil(10_000) { runCatching { ui.onNodeWithTag("messageEditor").assertIsFocused() }.isSuccess }
+        ui.onNodeWithTag("messageEditor").performTextInput(words)
+        ui.onNodeWithContentDescription("Send message").performClick()
+    }
+
+    @Test fun aFirstMessageOpensTheConversationTheServerFiledItUnder() {
+        runCase {
+            startConversation("/demo", "Hello namespace")
+            // `/demo` resolved to `/demo/main`: the selection follows it there, showing the message.
+            ui.waitUntil(20_000) { ui.onAllNodes(hasText("/demo/main") and hasAnyAncestor(hasTestTag("conversation:/demo/main")).not()).fetchSemanticsNodes().isNotEmpty() }
+            ui.waitUntil(20_000) { ui.onAllNodes(hasText("Hello namespace") and hasAnyAncestor(hasTestTag("conversation-history"))).fetchSemanticsNodes().size == 1 }
+            ui.onAllNodesWithText("Start a conversation").assertCountEquals(0)
+            ui.onAllNodesWithText("Choose a conversation or start a new one.").assertCountEquals(0)
+            ui.waitUntil(10_000) { runCatching { ui.onNodeWithTag("messageEditor").assertIsFocused() }.isSuccess }
+            ui.onNodeWithTag("messageEditor").assert(SemanticsMatcher.expectValue(SemanticsProperties.EditableText, AnnotatedString("")))
+        }
+    }
+
+    @Test fun anUnconfirmedFirstMessageStaysOpenWithRetryAndThenFollows() {
+        runCase("actions-lost") {
+            startConversation("/demo", "Was this delivered")
+            tag("unconfirmedSend")
+            // The pending message is shown in the new conversation while Retry is offered.
+            ui.waitUntil(20_000) { ui.onAllNodes(hasText("Was this delivered") and hasAnyAncestor(hasTestTag("conversation-history"))).fetchSemanticsNodes().size == 1 }
+            ui.onNodeWithText("Retry", useUnmergedTree = true).performClick()
+            ui.waitUntil(20_000) { ui.onAllNodesWithTag("unconfirmedSend").fetchSemanticsNodes().isEmpty() }
+            ui.waitUntil(20_000) { ui.onAllNodes(hasText("/demo/main") and hasAnyAncestor(hasTestTag("conversation:/demo/main")).not()).fetchSemanticsNodes().isNotEmpty() }
+            ui.onAllNodes(hasText("Was this delivered") and hasAnyAncestor(hasTestTag("conversation-history"))).assertCountEquals(1)
+        }
+    }
+
     @Test fun disabledCapabilitiesKeepCopyWithoutReplyEditOrReceipts() {
         runCase("actions-off") {
             open(); scrollMessage("actions_failed")

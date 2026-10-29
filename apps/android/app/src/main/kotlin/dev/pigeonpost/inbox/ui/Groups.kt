@@ -156,7 +156,7 @@ private fun GroupRow(g: Group, groups: GroupsState, inbox: InboxState, phone: Bo
 
 /** New group: who, name, and settings with sensible defaults (SDS §4.2). */
 @Composable
-fun NewGroupDialog(inbox: InboxState, groups: GroupsState, store: GroupStore, dismiss: () -> Unit) {
+fun NewGroupDialog(inbox: InboxState, groups: GroupsState, store: GroupStore, opened: (String) -> Unit = {}, dismiss: () -> Unit) {
     val p = Pp.colors
     var who by rememberSaveable { mutableStateOf("") }
     var chips by rememberSaveable { mutableStateOf(listOf<String>()) }
@@ -202,7 +202,7 @@ fun NewGroupDialog(inbox: InboxState, groups: GroupsState, store: GroupStore, di
         Button({
             if (!addChip()) return@Button
             if (name.isBlank()) { error = "Give the group a name."; return@Button }
-            store.create(name, description, chips, join, post, timer) { id -> if (id != null) dismiss() }
+            store.create(name, description, chips, join, post, timer) { id -> if (id != null) { opened(id); dismiss() } }
         }, Modifier.fillMaxWidth().testTag("createGroup"), enabled = !groups.busy) { Text(if (groups.busy) "Creating…" else "Create group") }
     }
 }

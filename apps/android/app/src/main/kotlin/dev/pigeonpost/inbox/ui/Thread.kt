@@ -73,6 +73,8 @@ fun ConversationPane(state: InboxState, store: InboxStore, model: InboxViewModel
     var latestRequest by remember(state.acting?.address, peer, subject?.id) { mutableIntStateOf(0) }
     val editorFocus = remember { FocusRequester() }
     LaunchedEffect(state.composerAction?.id) { if (state.composerAction != null) runCatching { editorFocus.requestFocus() } }
+    // A conversation just started, or followed to where the server filed it: the field is ready for the next words.
+    LaunchedEffect(state.composerFocus, state.draftKey) { if (state.composerFocus) { runCatching { editorFocus.requestFocus() }; store.composerFocused() } }
     var editorFocused by remember { mutableStateOf(false) }
     val calling = callMode != CallHost.Mode.HIDDEN
     val calls = model.calls

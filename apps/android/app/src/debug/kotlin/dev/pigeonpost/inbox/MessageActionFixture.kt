@@ -20,6 +20,8 @@ internal class MessageActionFixture(private val mode: String, private val base: 
     private val receipts = mutableMapOf<String, Pair<Attempt, SendResponse>>()
     private data class Attempt(val identity: String, val to: String, val body: String, val thread: String?, val action: MessageSendAction, val files: List<String>)
     private fun ref(letter: Char) = "mref_" + letter.toString().repeat(26)
+    /** Like the postbox: a namespace resolves to its main mailbox, and the sent copy is filed under that mailbox's key and handle. */
+    private fun filed(to: String) = if (to == "/demo") "/k/fixture-demo-main" to "/demo/main" else to to to
     private val messages = mutableListOf(
         Message("actions_parent", "The release plan is ready.\nPlease review the details.", from = peer, peer = peer, peerHandle = peer,
             direction = "in", receivedAt = now - 400, read = false, msgRef = ref('a'), threadId = "actions_earlier"),
@@ -71,7 +73,8 @@ internal class MessageActionFixture(private val mode: String, private val base: 
     override suspend fun send(identity: String, to: String, body: String, threadId: String?, attachments: List<String>): SendResponse {
         owned(identity)
         val id = "actions_new_" + UUID.randomUUID()
-        messages += Message(id, body, from = identity, to = to, peer = to, peerHandle = to, direction = "out", sentAt = System.currentTimeMillis() / 1000,
+        val (key, handle) = filed(to)
+        messages += Message(id, body, from = identity, to = key, peer = key, peerHandle = handle, direction = "out", sentAt = System.currentTimeMillis() / 1000,
             threadId = threadId ?: general, attachments = attachments.mapNotNull(fileMetadata::get))
         versions[id] = mutableListOf(MessageVersion(id, body, messages.last().at))
         return SendResponse("received_" + id, id)
@@ -98,7 +101,8 @@ internal class MessageActionFixture(private val mode: String, private val base: 
         } else {
             val parent = action.replyTo?.let { reference -> messages.firstOrNull { it.id == reference || it.msgRef == reference }
                 ?: throw ApiException(404, "reference_not_found") }
-            messages += Message(id, body, from = identity, to = to, peer = to, peerHandle = to, direction = "out", sentAt = at,
+            val (key, handle) = filed(to)
+            messages += Message(id, body, from = identity, to = key, peer = key, peerHandle = handle, direction = "out", sentAt = at,
                 threadId = threadId ?: general, msgRef = action.msgRef, attachments = attachments.mapNotNull(fileMetadata::get), receipt = MessageReceipt("sent"),
                 replyTo = parent?.let { MessageReply(it.msgRef, it.id, it.from, it.direction, quote = action.quote) })
             versions[id] = mutableListOf(MessageVersion(id, body, at))

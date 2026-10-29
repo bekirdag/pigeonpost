@@ -72,7 +72,7 @@ fun MailboxDialog(state: InboxState, select: (Mailbox) -> Unit, dismiss: () -> U
 fun NewConversationDialog(state: InboxState, select: (String) -> Unit, dismiss: () -> Unit) {
     var address by rememberSaveable { mutableStateOf("/") }
     PageDialog("New conversation", dismiss) {
-        OutlinedTextField(address, { address = conversationAddressInput(it).take(512) }, Modifier.fillMaxWidth(), label = { Text("Pigeonpost address") }, placeholder = { Text("/your-team/agent") }, singleLine = true,
+        OutlinedTextField(address, { address = conversationAddressInput(it).take(512) }, Modifier.fillMaxWidth().testTag("newConversationAddress"), label = { Text("Pigeonpost address") }, placeholder = { Text("/your-team/agent") }, singleLine = true,
             isError = address.length > 1 && !validAddress(address), supportingText = { Text("Enter a handle or an inbox address, such as /bekir.") })
         Button({ select(address) }, enabled = validAddress(address), modifier = Modifier.fillMaxWidth()) { Text("Open conversation") }
         val own = state.mailboxes.filter { it.address != state.acting?.address }

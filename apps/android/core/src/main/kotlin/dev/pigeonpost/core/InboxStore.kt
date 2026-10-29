@@ -77,6 +77,8 @@ data class InboxState(
     val policyError: String? = null,
     val blocked: List<Contact>? = null,
     val blockedError: String? = null,
+    /** The open conversation's message field should take focus once: a conversation was just started or followed. */
+    val composerFocus: Boolean = false,
 ) {
     fun has(feature: String) = feature in features
     val filteredGroups: List<FilteredGroup> get() {
@@ -132,6 +134,17 @@ class InboxStore(
     private val actions = mutableSetOf<Job>()
     private val acknowledged = mutableMapOf<Pair<String, String>, ReadVersion>()
     private val sendRequests = mutableMapOf<String, FrozenSend>()
+    /**
+     * A sent message whose conversation may be filed under another name than the one typed: a
+     * namespace (`/bekir`) resolves to one of its mailboxes, and a key address to its handle. Until
+     * the server copy arrives the thread is shown under the typed address. When it does, that
+     * mailbox's composer state for the typed address (draft, files, an unconfirmed send's Retry)
+     * moves to where the copy was filed, and the selection follows if the typed conversation is still
+     * the one open. Only in the same session, and only while that mailbox is the one in use. A
+     * confirmed send is found by its sent copy; an unconfirmed protected one by its message reference.
+     */
+    private data class Follow(val epoch: Long, val mailbox: String, val typed: String, val copyId: String?, val msgRef: String?)
+    private val follows = mutableMapOf<String, Follow>()
     private var infoVersion = 0L
     private var infoJob: Job? = null
 
@@ -188,7 +201,7 @@ class InboxStore(
         accountJob?.cancel(); loadJob?.cancel(); pollJob?.cancel(); expiryJob?.cancel()
         actions.toList().forEach { it.cancel() }; actions.clear()
         state.value.staged.values.flatten().forEach { it.file.delete() }
-        acknowledged.clear(); sendRequests.clear(); clearMessageInfo(); mutable.value = InboxState(); rememberMailbox(null)
+        acknowledged.clear(); sendRequests.clear(); follows.clear(); clearMessageInfo(); mutable.value = InboxState(); rememberMailbox(null)
     }
 
     fun setActive(value: Boolean) {
@@ -200,6 +213,14 @@ class InboxStore(
     fun filter(value: String) { mutable.update { it.copy(filter = value) } }
     fun showArchive(value: Boolean) { clearMessageInfo(); mutable.update { it.copy(viewingArchive = value, selectedPeer = null, selectedSubject = null, filter = "") } }
     fun selectPeer(peer: String?) { if (peer != state.value.selectedPeer) clearMessageInfo(); mutable.update { it.copy(selectedPeer = peer, selectedSubject = null) } }
+    /** New conversation: open it at once, in this mailbox, with the message field ready. */
+    fun startConversation(peer: String) {
+        if (state.value.acting == null) return
+        if (state.value.viewingArchive) mutable.update { it.copy(viewingArchive = false, filter = "") }
+        selectPeer(peer)
+        mutable.update { it.copy(composerFocus = true) }
+    }
+    fun composerFocused() { mutable.update { it.copy(composerFocus = false) } }
     fun showView(view: LeftView) {
         val allowed = when (view) { LeftView.CALLS -> state.value.has(Features.CALL_HISTORY); LeftView.FILTERED -> state.value.has(Features.MESSAGE_FILTERING); LeftView.CALENDAR -> "calendar" in state.value.features; LeftView.INBOX -> true }
         mutable.update { it.copy(leftView = if (allowed) view else LeftView.INBOX, viewingArchive = if (view != LeftView.INBOX) false else it.viewingArchive) }
@@ -431,12 +452,13 @@ class InboxStore(
                 if (epoch != sessionVersion) return@action
                 val uploaded = request.uploaded.orEmpty()
                 deliveryAttempted = true
-                val sent = if (request.action == null) api.send(key.mailbox, key.peer, request.wire, key.subject, uploaded.map { it.id })
-                    else api.sendWithActions(key.mailbox, key.peer, request.wire, key.subject, request.action, uploaded.map { it.id })
+                val sent = if (request.action == null) api.send(key.mailbox, request.to, request.wire, request.thread, uploaded.map { it.id })
+                    else api.sendWithActions(key.mailbox, request.to, request.wire, request.thread, request.action, uploaded.map { it.id })
                 if (epoch != sessionVersion) return@action
                 if (request.action != null && (sent.msgRef != request.action.msgRef || sent.sentCopyId.isNullOrBlank()))
                     throw ApiException(200, "bad_response", "Delivery could not be confirmed. Retry the original message.")
                 sendRequests.remove(request.id)
+                if (request.mode?.editing != true) sent.sentCopyId?.takeIf(String::isNotBlank)?.let { follows[request.id] = Follow(epoch, key.mailbox, key.peer, it, request.action?.msgRef) }
                 content { old ->
                     val sameMode = old.composerActions[key]?.id == request.mode?.id
                     val drafts = if (!sameMode) old.drafts else if (request.mode?.editing == true) {
@@ -454,6 +476,7 @@ class InboxStore(
                 val uncertain = deliveryAttempted && (failure !is ApiException || failure.status >= 500 || failure.status == 200)
                 if (epoch == sessionVersion) content { old -> old.copy(pending = old.pending.map { if (it.id == request.id) it.copy(status = Delivery.FAILED) else it },
                     unconfirmedSends = if (uncertain && request.action != null) old.unconfirmedSends + (key to request.id) else old.unconfirmedSends) }
+                if (uncertain && epoch == sessionVersion && request.mode?.editing != true && key.subject == null) request.action?.msgRef?.let { follows[request.id] = Follow(epoch, key.mailbox, key.peer, null, it) }
                 if (uncertain && failure !is SessionExpired && failure !is CancellationException)
                     throw IOException(if (request.action == null) "Delivery could not be confirmed. Check the conversation before sending again." else "Delivery could not be confirmed. Retry the original message safely.", failure)
                 throw failure
@@ -494,6 +517,9 @@ class InboxStore(
         val id: String, val epoch: Long, val key: DraftKey, val text: String, val wire: String, val at: Long,
         val mode: MessageComposerAction?, val action: MessageSendAction?, val files: List<StagedAttachment>, val expiresAt: Long?,
         var uploaded: List<Attachment>? = null,
+        /** The address the request was made to. A retry repeats it exactly, wherever its conversation is shown. */
+        val to: String = key.peer,
+        val thread: String? = key.subject,
     ) {
         fun pending(status: Delivery) = PendingMessage(id, key.mailbox, key.peer, wire, at, key.subject, status,
             attachments = uploaded.orEmpty(), action = action,
@@ -800,6 +826,8 @@ class InboxStore(
     private fun normalizeArchive(peers: Set<String>, messages: List<Message>): Set<String> { val aliases = Conversations.aliases(messages); return peers.map { aliases[it] ?: it }.toSet() }
     private fun content(change: (InboxState) -> InboxState) {
         val now = clock()
+        val before = state.value.selectedPeer
+        var moved = emptyList<Pair<String, Pair<DraftKey, DraftKey>>>()
         mutable.update { old ->
             val changed = change(old)
             val next = if (changed.messages.any { (it.expiresAt ?: Long.MAX_VALUE) <= now } || changed.filtered.any { (it.expiresAt ?: Long.MAX_VALUE) <= now })
@@ -807,9 +835,51 @@ class InboxStore(
                 else changed
             val ids = next.messages.mapTo(mutableSetOf()) { it.id }
             val pending = next.pending.filterNot { it.mailbox == next.acting?.address && (it.sentCopyId in ids || it.id in ids) }
-            next.copy(pending = pending, conversations = Conversations.build(next.messages, pending, next.contacts, next.mailboxes, next.acting?.address))
+            val (followed, settled) = followSent(next.copy(pending = pending, conversations = Conversations.build(next.messages, pending, next.contacts, next.mailboxes, next.acting?.address)))
+            moved = settled
+            followed
         }
+        val after = state.value
+        follows.values.removeAll { it.epoch != sessionVersion }
+        for ((id, keys) in moved) {
+            follows.remove(id)
+            val (from, to) = keys
+            // A frozen send moves with its Retry; one whose Retry could not move stays where it is.
+            if (from != to) sendRequests.replaceAll { _, request -> if (request.key == from && after.unconfirmedSends[from] != request.id) request.copy(key = to) else request }
+        }
+        if (after.selectedPeer != before) clearMessageInfo()
         scheduleExpiry()
+    }
+
+    /**
+     * Pure, so it is safe inside a retried state update. Returns the state and the follows it settled,
+     * each with the composer key it moved from and to; [content] then forgets them and moves the
+     * matching frozen sends.
+     */
+    private fun followSent(state: InboxState): Pair<InboxState, List<Pair<String, Pair<DraftKey, DraftKey>>>> {
+        if (follows.isEmpty()) return state to emptyList()
+        val mailbox = state.acting?.address ?: return state to emptyList()
+        val aliases by lazy { Conversations.aliases(state.messages) }
+        var next = state
+        val settled = mutableListOf<Pair<String, Pair<DraftKey, DraftKey>>>()
+        for ((id, follow) in follows) {
+            if (follow.epoch != sessionVersion || follow.mailbox != mailbox) continue
+            val copy = state.messages.firstOrNull { it.outgoing && (it.id == follow.copyId || follow.msgRef != null && it.msgRef == follow.msgRef) } ?: continue
+            val filed = aliases[copy.peerKey] ?: copy.peerKey
+            val from = DraftKey(mailbox, follow.typed, null)
+            if (filed == follow.typed) { settled += id to (from to from); continue }
+            // The key the composer has once the filed conversation is open on the copy's subject.
+            val to = next.copy(selectedPeer = filed, selectedSubject = copy.threadId).draftKey ?: continue
+            // Another message to the typed address is still on its way; wait for it to finish.
+            if (from in next.sending || next.conversations.none { it.peer == filed }) continue
+            fun <V> Map<DraftKey, V>.move() = if (from !in this || to in this) this else (this - from) + (to to getValue(from))
+            next = next.copy(drafts = next.drafts.move(), staged = next.staged.move(), composerActions = next.composerActions.move(),
+                unconfirmedSends = next.unconfirmedSends.move())
+            if (next.selectedPeer == follow.typed)
+                next = next.copy(selectedPeer = filed, selectedSubject = copy.threadId, messageInfo = null, composerFocus = true)
+            settled += id to (from to to)
+        }
+        return next to settled
     }
 
     /** Wake when the next message runs out, so it leaves the screen on time. */
