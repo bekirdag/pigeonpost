@@ -24,6 +24,6 @@ This is a focused source and regression review of the October 29 handoff and its
 ## Remaining acceptance gates
 
 - Postmark authenticated access, dedicated Pigeonpost transactional SMTP/no tracking, one authorized real delivery check, then enable code sign-in and calendar/company invitations.
-- Native CI qualification and the next coordinated store batch; current submissions remain intact. Apple privacy labels must include meeting audio before the next owner-approved review submission.
+- Native CI qualification and the next coordinated store batch; current submissions remain intact. Apple privacy labels must include meeting audio plus the new Phone Number/Contacts declarations before the next owner-approved review submission. Android's next-release checklist now explicitly covers Phone number, Contacts and free Name data; existing submissions are unchanged.
 - Owner checks on physical iPhone lock-screen answering/call orientation and Windows/Linux strong sign-in. No real users were called and no real contacts were invited during this review.
 - The prior handoff's unrelated roadmap items (native agent SSH screens, Windows operated-agent inboxes, per-org notes policy, delta sync and external cryptography review) remain distinct work.

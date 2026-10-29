@@ -1,4 +1,29 @@
-# Google Play: Data safety and app content for Android 0.4.1
+# Google Play: Data safety and app content
+
+## Next native contact release (after 0.4.2)
+
+Android contact support is merged in #182. Preserve the submitted 0.4.2 build; apply these
+answers when preparing the next coordinated release. Reconcile them with the live
+[phone/contact privacy disclosure](https://pigeonpost.dev/privacy.html#phone) and
+`docs/contacts-and-phone.md` before saving the console form.
+
+| Data type | Collection and purpose | Implementation evidence |
+| --- | --- | --- |
+| Personal info → Phone number | Collected, optional, not ephemeral; App functionality, Account management, Fraud prevention/security | Verified numbers are encrypted on the server. Explicit SMS invitations submit a recipient number through Novu/Twilio; verification/invitation budgets prevent abuse. |
+| Contacts | Collected, optional, not ephemeral; App functionality, Fraud prevention/security | Discovery sends phone hashes only after the user asks. Per-account abuse marks persist for seven days; daily counts for 31 days. Hashing does not make the data anonymous. |
+| Personal info → Name | Collected, optional, not ephemeral; App functionality | The optional free display name is stored with the inbox. Device address-book names and private aliases stay on the device. |
+
+- [ ] Review service-provider handling before selecting **Shared: No** for SMS numbers. Novu/Twilio must process them solely to deliver the requested message on Pigeonpost's behalf. The live policy names the providers; do not infer that no third party receives a number.
+- [ ] Verify `READ_CONTACTS` is requested only after the prominent disclosure and a user action. Denial still permits normal messaging; Settings provides a recovery path. No `READ_SMS` or `SEND_SMS` permission is requested.
+- [ ] Demonstrate phone unlinking, discovery opt-out, single-recipient invitation confirmation, and local-alias cleanup at sign-out. Keep names and avatars separate from paid handles.
+- [ ] Select the actual next signed artifact/version in the release ledger. The historical 0.4.1 path below is not the next upload target.
+
+Google requires disclosure of pseudonymous data and distinguishes local processing from data
+sent off-device. Seven-day abuse marks prevent classifying this discovery flow as ephemeral.
+Service-provider transfers have a specific sharing exception; check the actual provider use
+against [Google's Data safety guidance](https://support.google.com/googleplay/android-developer/answer/10787469?hl=en).
+
+## Historical 0.4.1 meeting-notes and live-stream release
 
 A checklist for the Play Console when Android 0.4.1 (versionCode 13) is submitted. Releases are batched,
 so it is filled in with that submission, not before. The answers follow `site/privacy.html` (including
