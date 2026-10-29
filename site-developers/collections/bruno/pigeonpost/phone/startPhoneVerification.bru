@@ -1,0 +1,29 @@
+meta {
+  name: Text a 6-digit code to a number for one of the person's mailboxes
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/v1/phone/verify
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "phone": "string",
+    "identity": "string"
+  }
+}
+
+docs {
+  The answer is the same for every acceptable number, whether or not it is on Pigeonpost. The
+  code is valid for 10 minutes and 5 tries. Resend limits: 1 per 60 s and 5 per 24 h per
+  number, 10 per 24 h and 3 pending per account, 20 per 24 h per IP, plus the platform SMS
+  budget (docs/contacts-and-phone.md §4).
+}

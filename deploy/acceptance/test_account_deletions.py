@@ -43,6 +43,15 @@ class AccountDeletionTests(unittest.TestCase):
             "test_handle_claims": "account_id TEXT, namespace TEXT",
             "spam_reports": "reporter TEXT, sender TEXT",
             "reputation": "subject TEXT",
+            "phone_numbers": "id TEXT, account_id TEXT, identity TEXT, tag BLOB",
+            "phone_challenges": "id TEXT, account_id TEXT, identity TEXT",
+            "sms_invites": "id TEXT, sender_account TEXT, tag BLOB",
+            "sms_ledger": "id TEXT, account_id TEXT, tag BLOB",
+            "sms_optouts": "tag BLOB, created_at INTEGER",
+            "discovery_usage": "account_id TEXT, day INTEGER, new_hashes INTEGER",
+            "discovery_marks": "account_id TEXT, mark BLOB, expires_at INTEGER",
+            "discovery_lockouts": "account_id TEXT, until INTEGER",
+            "profile_names": "address TEXT, account_id TEXT, display_name TEXT",
         }
         for table, cols in schemas.items():
             self.db.execute("CREATE TABLE " + table + " (" + cols + ")")
@@ -60,6 +69,15 @@ class AccountDeletionTests(unittest.TestCase):
             self.db.execute("INSERT INTO apple_handle_plans VALUES (?,?)", (who, "plan-" + who))
             self.db.execute("INSERT INTO apple_plan_names VALUES (?,1,?)", (who, "name-" + who))
             self.db.execute("INSERT INTO namespaces VALUES (?,?,?)", ("name-" + who, who, "plan:" + who))
+            self.db.execute("INSERT INTO phone_numbers VALUES (?,?,?,?)", ("ph-" + who, who, address, b"t" + who.encode()))
+            self.db.execute("INSERT INTO phone_challenges VALUES (?,?,?)", ("pvc-" + who, who, address))
+            self.db.execute("INSERT INTO sms_invites VALUES (?,?,?)", ("inv-" + who, who, b"x"))
+            self.db.execute("INSERT INTO sms_ledger VALUES (?,?,?)", ("sms-" + who, who, b"x"))
+            self.db.execute("INSERT INTO discovery_usage VALUES (?,1,5)", (who,))
+            self.db.execute("INSERT INTO discovery_marks VALUES (?,?,9)", (who, b"m"))
+            self.db.execute("INSERT INTO discovery_lockouts VALUES (?,9)", (who,))
+            self.db.execute("INSERT INTO profile_names VALUES (?,?,?)", (address, who, "Name " + who))
+        self.db.execute("INSERT INTO sms_optouts VALUES (?,1)", (b"opted",))
         self.shared = "a" * 64
         self.private = "b" * 64
         for sha in (self.shared, self.private):
@@ -91,6 +109,15 @@ class AccountDeletionTests(unittest.TestCase):
         self.assertEqual(ops.pending(self.db), [])
         row = self.db.execute("SELECT oidc_sub,contact_address FROM account_deletion_requests").fetchone()
         self.assertEqual(tuple(row), ("", None))
+        # Phase 10: the erased account's numbers, codes, invitations, discovery state and names
+        # are gone; the other account's are untouched; the SMS ledger keeps an anonymous row.
+        for table, column in (("phone_numbers", "account_id"), ("phone_challenges", "account_id"),
+                              ("sms_invites", "sender_account"), ("discovery_usage", "account_id"),
+                              ("discovery_marks", "account_id"), ("discovery_lockouts", "account_id"),
+                              ("profile_names", "account_id")):
+            self.assertEqual([r[0] for r in self.db.execute("SELECT " + column + " FROM " + table)], ["b"], table)
+        self.assertEqual(sorted(str(r[0]) for r in self.db.execute("SELECT account_id FROM sms_ledger")), ["None", "b"])
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM sms_optouts").fetchone()[0], 1)
         with self.assertRaises(ValueError):
             ops.erase(self.db, self.request, self.root, self.evidence)
 

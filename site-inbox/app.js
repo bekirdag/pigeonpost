@@ -212,10 +212,12 @@
     }
   }
 
-  // A contact's alias wins over the name derived from the handle, in text and on the face alike.
+  // Which name a peer goes by (docs/contacts-and-phone.md §6.3): your local alias, then the contact
+  // alias, then their own display name as "~Name", then the name derived from the handle. The same
+  // rule in text and on the face alike.
   function peerName(peer) {
     const contact = peer && state.contacts ? contactFor(peer) : null;
-    return (contact && contact.alias) || displayName(peer);
+    return nameInfo(peer, contact && contact.alias).text;
   }
 
   function initials(peer, name) {
@@ -982,7 +984,13 @@
         signal,
       });
       const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new ApiError(res.status, body.error, body.detail);
+      if (!res.ok) {
+        const error = new ApiError(res.status, body.error, body.detail);
+        // Phase 10: the fields a refusal carries (`attempts_left`, `limit`, `until`) and when to try again.
+        error.body = body;
+        error.retryAfter = Number(res.headers?.get?.("retry-after")) || null;
+        throw error;
+      }
       return body;
     };
     try {
@@ -1316,8 +1324,18 @@
   }
 
   function threadName(t) {
-    if (t.mine && t.identity) return identityName(t.identity);
-    return (t.contact && t.contact.alias) || displayName(t.peer);
+    return threadNameInfo(t).text;
+  }
+
+  function threadNameInfo(t) {
+    if (t.mine && t.identity) return { text: identityName(t.identity), kind: "derived" };
+    return nameInfo(t.peer, t.contact && t.contact.alias);
+  }
+
+  // A self-set display name is not a verified identity: it reads as "~Name" in the secondary colour,
+  // never in the handle's style and never with a badge.
+  function markDisplayName(el, info) {
+    el.classList.toggle("is-display-name", info.kind === "display");
   }
 
   // ---- rendering ----------------------------------------------------------------------------
@@ -1566,7 +1584,9 @@
     top.className = "tr-top";
     const name = document.createElement("span");
     name.className = "tr-name";
-    name.textContent = threadName(t);
+    const named = threadNameInfo(t);
+    name.textContent = named.text;
+    markDisplayName(name, named);
     const time = document.createElement("span");
     time.className = "tr-time";
     time.textContent = t.last ? listTime(t.last) : "";
@@ -1678,6 +1698,7 @@
     renderBlockedBanner(conversation);
 
     $("peer-name").textContent = threadName(thread);
+    markDisplayName($("peer-name"), threadNameInfo(thread));
     $("peer-name-btn").setAttribute("aria-label", "About " + threadName(thread));
     $("peer-sub").textContent = thread.mine ? thread.peer + " · your mailbox" : thread.peer;
     paintAvatar($("peer-avatar"), thread.peer, threadName(thread));
@@ -2726,6 +2747,8 @@
       dl.append(dt, dd);
     };
     $("peer-info-title").textContent = threadName(thread);
+    $("peer-alias-section").hidden = Boolean(thread.mine) || !aliasStore();
+    $("peer-alias-remove").hidden = !aliasStore()?.get(thread.peer);
     paintAvatar($("peer-info-avatar"), thread.peer);
     add(addresses, "Address", thread.identity?.address || lastIn?.address || thread.peer, true);
     if (thread.peer.startsWith("/") && !thread.peer.startsWith("/k/")) add(addresses, "Handle", thread.peer, true);
@@ -2775,6 +2798,7 @@
     peerInfoTrigger = trigger;
     state.showInfo = true;
     renderThread();
+    resetAliasEditor(state.openPeer);
     openSheet("peer-info-sheet");
     $("peer-info-close").focus();
   }
@@ -3756,6 +3780,9 @@
       blockingPeer = null;
       if (state.showInfo) $("peer-block").focus();
     } else if (id === "contact-sheet" && state.showInfo) $("peer-requests").focus();
+    else if (id === "phone-sheet") stopPhoneSheet();
+    else if (id === "discover-sheet") forgetDiscovery();
+    else if (id === "invite-sheet") inviting = null;
   }
   function wireSheet(id, onBackdrop) {
     const wrap = $(id);
@@ -3869,7 +3896,7 @@
   let settingsPage = "root";
   const settingsTitles = { root: "Settings", account: "Account", handles: "Handles",
     inbox: "Inbox and appearance", contacts: "Contacts and permissions", help: "Help and about",
-    profile: "Profile picture", privacy: "Privacy and filtering", blocked: "Blocked" };
+    profile: "Profile", phone: "Phone number", privacy: "Privacy and filtering", blocked: "Blocked" };
   function showSettingsPage(next, focus = true) {
     if (!Object.hasOwn(settingsTitles, next)) return;
     const previous = settingsPage;
@@ -3877,6 +3904,7 @@
     document.querySelectorAll("[data-settings-page]").forEach(el => { el.hidden = el.dataset.settingsPage !== next; });
     $("settings-title").textContent = settingsTitles[next];
     if (next === "profile") openProfilePage();
+    if (next === "phone") loadPhones();
     if (next === "privacy") openPrivacyPage();
     if (next === "blocked") openBlockedPage();
     $("settings-back").hidden = next === "root";
@@ -4152,7 +4180,8 @@
       if (e.key === "Escape" && viewerState) { e.preventDefault(); e.stopPropagation(); closeViewer(); }
     }, true);
     $("signin-btn").onclick = () => login();
-    $("signout-btn").onclick = () => signOut();
+    // Signing out removes this browser's local aliases (§6.2); a session that merely expires keeps them.
+    $("signout-btn").onclick = () => { window.PigeonpostContacts?.clearAllAliases(); signOut(); };
 
     $("new-btn").onclick = () => openNewConversation();
     $("new-close").onclick = () => closeSheet("new-sheet");
@@ -4165,7 +4194,7 @@
     $("settings-btn").onclick = () => openSettings();
     document.querySelectorAll("[data-settings-open]").forEach(el => { el.onclick = () => showSettingsPage(el.dataset.settingsOpen); });
     $("settings-back").onclick = () => showSettingsPage("root");
-    $("settings-signout").onclick = () => signOut();
+    $("settings-signout").onclick = () => { window.PigeonpostContacts?.clearAllAliases(); signOut(); };
     $("settings-close").onclick = () => closeSheet("settings-sheet");
     $("settings-done").onclick = () => closeSheet("settings-sheet");
     wireSheet("settings-sheet");
@@ -4490,6 +4519,7 @@
   function resetPhase1b() {
     features = new Set();
     Avatars.reset();
+    resetPhase10();
     blockTarget = null;
     ownAvatar = null;
     crop = null;
@@ -4533,6 +4563,13 @@
       }, 200);
     } else if (event === "thread.settings") {
       loadThreads().then(render).catch(() => {});
+    } else if (event === "profile.name") {
+      // Phase 10: somebody's display name changed (or yours did, on another device).
+      Profiles.learn(data);
+      render();
+      if (settingsPage === "profile" && !$("settings-sheet").hidden && meKeys().some((k) => k === data.address || k === data.handle)) loadOwnName();
+    } else if (/^phone\./.test(event)) {
+      if (settingsPage === "phone" && !$("settings-sheet").hidden) loadPhones();
     }
     if (/^(group\.|mls\.|message\.expired|thread\.settings)/.test(event)) window.PigeonpostGroups?.onEvent(event, frame); // Phase 3a
     if (/^event\./.test(event)) window.PigeonpostCalendar?.onEvent(event, frame); // Phase 3B
@@ -4661,13 +4698,20 @@
   const meKeys = () => (state.me ? [state.me.handle, state.me.address].filter(Boolean) : []);
 
   function syncSettingsRows() {
-    $("settings-nav-profile").hidden = !has("avatars");
+    // Profile holds the picture and, with Phase 10, the display name; either flag opens it.
+    $("settings-nav-profile").hidden = !(has("avatars") || has("display_names"));
+    $("settings-nav-phone").hidden = !has("phone_numbers");
+    $("discover-section").hidden = !(has("contact_discovery") && window.PigeonpostContacts);
     $("settings-nav-privacy").hidden = !(has("call_admission") || has("message_filtering") || has("call_history") || has("receipts"));
   }
 
   function openProfilePage() {
+    $("profile-picture-section").hidden = !has("avatars");
+    $("profile-picture-visibility").hidden = !has("avatars");
+    $("profile-name-section").hidden = !has("display_names");
     renderProfile();
     loadOwnAvatar();
+    loadOwnName();
   }
 
   async function loadOwnAvatar() {
@@ -5750,6 +5794,905 @@
     });
   }
 
+  // ---- Phase 10: contacts, phone numbers, names and SMS invites ---------------------------------
+  //
+  // docs/contacts-and-phone.md is the contract; the rules themselves (E.164, the hash, file parsing,
+  // name precedence, the alias store) live in contacts.js so they can be tested without a page. Every
+  // surface here waits for its flag, and nothing read from a contacts file is kept or sent: only
+  // hashes leave, in batches, and the list is dropped when the sheet closes.
+
+  const PC = () => window.PigeonpostContacts || null;
+
+  // Which account the local aliases belong to: the token's subject. Not a security check — an
+  // unreadable token just files aliases under "local".
+  function accountKey() {
+    try {
+      const payload = (getToken() || "").split(".")[1];
+      const sub = JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/"))).sub;
+      return sub ? String(sub) : "local";
+    } catch (_) {
+      return "local";
+    }
+  }
+
+  let aliasCache = null;
+  function aliasStore() {
+    const C = PC();
+    if (!C) return null;
+    const key = accountKey();
+    if (!aliasCache || aliasCache.account !== key) aliasCache = { account: key, store: C.aliases(key) };
+    return aliasCache.store;
+  }
+
+  function nameInfo(peer, contactAlias) {
+    const derived = displayName(peer);
+    const C = PC();
+    if (!C) return { text: contactAlias || derived, kind: contactAlias ? "contact" : "derived" };
+    let alias = null;
+    try { alias = peer ? aliasStore()?.get(peer) : null; } catch (_) { alias = null; }
+    return C.pickName({ alias, contactAlias, displayName: has("display_names") ? Profiles.name(peer) : null, derived });
+  }
+
+  // Other people's display names, looked up 100 at a time and kept for the session. A name is never
+  // used to address anything; it only labels a peer the app already knows by address.
+  const Profiles = {
+    names: new Map(),   // peer key → display name or null
+    queue: new Set(),
+    timer: null,
+    generation: 0,
+    controller: new AbortController(),
+    reset() {
+      this.names.clear(); this.queue.clear();
+      clearTimeout(this.timer); this.timer = null;
+      this.controller.abort(); this.controller = new AbortController();
+      this.generation += 1;
+    },
+    name(peer) {
+      if (!peer || !peer.startsWith("/") || peer.endsWith("/*")) return null;
+      if (!this.names.has(peer)) { this.want(peer); return null; }
+      return this.names.get(peer);
+    },
+    want(peer) {
+      if (this.queue.has(peer)) return;
+      this.queue.add(peer);
+      if (!this.timer) this.timer = setTimeout(() => this.flush(), 30);
+    },
+    learn(data) {
+      if (!data || typeof data !== "object") return;
+      const value = typeof data.display_name === "string" && data.display_name ? data.display_name : null;
+      for (const key of [data.address, data.handle]) if (key) this.names.set(key, value);
+    },
+    async flush() {
+      this.timer = null;
+      const keys = [...this.queue].slice(0, 100);
+      keys.forEach((k) => { this.queue.delete(k); this.names.set(k, null); });
+      if (this.queue.size) this.timer = setTimeout(() => this.flush(), 30);
+      if (!keys.length || !getToken() || !has("display_names")) return;
+      const generation = this.generation;
+      let body;
+      try {
+        body = await api("/v1/profiles?addresses=" + keys.map(encodeURIComponent).join(","), { signal: this.controller.signal });
+      } catch (_) { return; }
+      if (generation !== this.generation) return;
+      const found = body && typeof body.profiles === "object" && body.profiles ? body.profiles : {};
+      let changed = false;
+      for (const key of keys) {
+        const p = found[key];
+        const value = p && typeof p.display_name === "string" && p.display_name ? p.display_name : null;
+        if (value !== this.names.get(key)) changed = true;
+        this.names.set(key, value);
+      }
+      if (changed) render();
+    },
+  };
+
+  function resetPhase10() {
+    Profiles.reset();
+    aliasCache = null;
+    ownName = undefined;
+    namePrompted = false;
+    stopPhoneSheet();
+    forgetDiscovery();
+    inviting = null;
+  }
+
+  // How long until something may be tried again, in words.
+  function waitWords(seconds) {
+    const s = Math.max(1, Math.round(Number(seconds) || 0));
+    if (s < 90) return s + " seconds";
+    if (s < 5400) return Math.round(s / 60) + " minutes";
+    if (s < 129600) return Math.round(s / 3600) + " hours";
+    return Math.round(s / 86400) + " days";
+  }
+
+  function fillCountries(select, chosen) {
+    const C = PC();
+    select.textContent = "";
+    for (const [, label, code] of C.COUNTRIES) {
+      const o = document.createElement("option");
+      o.value = code;
+      o.textContent = label + " (+" + code + ")";
+      select.append(o);
+    }
+    const other = document.createElement("option");
+    other.value = "other";
+    other.textContent = "Other: type +code";
+    select.append(other);
+    select.value = chosen || C.guessCallingCode(navigator.languages || [navigator.language]);
+  }
+
+  const showError = (id, message) => {
+    $(id).textContent = message || "";
+    $(id).hidden = !message;
+  };
+
+  // ---- own display name (Settings → Profile, and the one-time prompt) -------------------------
+
+  let ownName;            // undefined: not loaded; null: none set; otherwise { display_name, visibility }
+  let pendingNameVisibility = "known";
+  let namePrompted = false;
+
+  function nameError(e) {
+    if (e instanceof ApiError && e.status === 429) return "You can change your name 10 times a day. Try again tomorrow.";
+    if (e instanceof ApiError && e.status === 400 && e.message) return e.message.charAt(0).toUpperCase() + e.message.slice(1) + ".";
+    return "Could not save your name. Please try again.";
+  }
+
+  async function fetchOwnName(context) {
+    const body = await api(withIdentity("/v1/profile/name", context.address), { signal: context.signal });
+    return body && body.name ? body.name : null;
+  }
+
+  async function loadOwnName() {
+    const context = mailboxContext();
+    if (!context.address || !has("display_names")) return;
+    $("profile-name-note").textContent = "Loading…";
+    showError("profile-name-error", "");
+    try {
+      const name = await fetchOwnName(context);
+      if (!context.current()) return;
+      ownName = name;
+      pendingNameVisibility = name?.visibility || "known";
+      $("profile-name-input").value = name?.display_name || "";
+      $("profile-name-note").textContent = name ? "This name belongs to the mailbox you are using now." : "No name yet. People see your address.";
+    } catch (_) {
+      if (context.current()) $("profile-name-note").textContent = "Could not load your name. Try again later.";
+    }
+    if (context.current()) renderOwnName();
+  }
+
+  function renderOwnName() {
+    $("profile-name-remove").hidden = !ownName;
+    for (const input of document.querySelectorAll('#profile-name-visibility input')) input.checked = input.value === pendingNameVisibility;
+  }
+
+  async function putOwnName(raw, visibility, context) {
+    const checked = PC().validateDisplayName(raw);
+    if (!checked.ok) throw Object.assign(new Error(checked.error), { local: true });
+    const body = await api(withIdentity("/v1/profile/name", context.address), {
+      method: "PUT", body: { display_name: checked.value, visibility }, signal: context.signal,
+    });
+    for (const key of meKeys()) Profiles.names.set(key, checked.value);
+    return body && body.name ? body.name : { display_name: checked.value, visibility };
+  }
+
+  async function saveOwnName() {
+    if ($("profile-name-save").disabled) return;
+    const context = mailboxContext();
+    $("profile-name-save").disabled = true;
+    showError("profile-name-error", "");
+    try {
+      const saved = await putOwnName($("profile-name-input").value, pendingNameVisibility, context);
+      if (!context.current()) return;
+      ownName = saved;
+      $("profile-name-input").value = saved.display_name;
+      $("profile-name-note").textContent = "Saved.";
+      toast("Saved.");
+    } catch (e) {
+      if (context.current()) showError("profile-name-error", e.local ? e.message : nameError(e));
+    } finally {
+      if (context.current()) { $("profile-name-save").disabled = false; renderOwnName(); }
+    }
+  }
+
+  async function setNameVisibility(value) {
+    const previous = pendingNameVisibility;
+    pendingNameVisibility = value;
+    if (!ownName) return; // applied with the next save
+    const context = mailboxContext();
+    try {
+      ownName = await putOwnName(ownName.display_name, value, context);
+      if (context.current()) toast("Saved.");
+    } catch (e) {
+      if (!context.current()) return;
+      pendingNameVisibility = previous;
+      toast(e.local ? e.message : "Could not change who can see your name.");
+    }
+    if (context.current()) renderOwnName();
+  }
+
+  async function removeOwnName() {
+    const context = mailboxContext();
+    $("profile-name-remove").disabled = true;
+    try {
+      await api(withIdentity("/v1/profile/name", context.address), { method: "DELETE", signal: context.signal });
+      if (!context.current()) return;
+      ownName = null;
+      for (const key of meKeys()) Profiles.names.set(key, null);
+      $("profile-name-input").value = "";
+      $("profile-name-note").textContent = "Name removed. People see your address.";
+    } catch (_) {
+      if (context.current()) toast("Could not remove your name.");
+    } finally {
+      if (context.current()) { $("profile-name-remove").disabled = false; renderOwnName(); }
+    }
+  }
+
+  const skipKey = (address) => "ppi_name_prompt_skipped:" + address;
+  function promptSkipped(address) {
+    try { return LS.getItem(skipKey(address)) === "1"; } catch (_) { return false; }
+  }
+
+  // Once, after the inbox opens, for a mailbox that has no name and was never told "Skip".
+  async function maybePromptName() {
+    const context = mailboxContext();
+    if (namePrompted || !context.address || !has("display_names") || !PC() || promptSkipped(context.address)) return;
+    namePrompted = true;
+    let name;
+    try { name = await fetchOwnName(context); } catch (_) { return; }
+    if (!context.current() || name) return;
+    $("name-prompt-input").value = "";
+    showError("name-prompt-error", "");
+    $("name-prompt-save").disabled = false;
+    openSheet("name-prompt-sheet");
+    $("name-prompt-input").focus();
+  }
+
+  function skipNamePrompt() {
+    const address = state.me?.address;
+    if (address) { try { LS.setItem(skipKey(address), "1"); } catch (_) { /* asked again next time */ } }
+    closeSheet("name-prompt-sheet");
+  }
+
+  async function saveNamePrompt() {
+    if ($("name-prompt-save").disabled) return;
+    const context = mailboxContext();
+    $("name-prompt-save").disabled = true;
+    showError("name-prompt-error", "");
+    try {
+      ownName = await putOwnName($("name-prompt-input").value, "known", context);
+      if (!context.current()) return;
+      closeSheet("name-prompt-sheet");
+      toast("Saved.");
+    } catch (e) {
+      if (context.current()) showError("name-prompt-error", e.local ? e.message : nameError(e));
+    } finally {
+      if (context.current()) $("name-prompt-save").disabled = false;
+    }
+  }
+
+  // ---- local alias: "Edit name" on a conversation ------------------------------------------------
+
+  function resetAliasEditor(peer) {
+    const store = aliasStore();
+    $("peer-alias-input").value = (peer && store?.get(peer)) || "";
+    showError("peer-alias-error", "");
+  }
+
+  // Stored on this device only. Never `PUT /v1/contacts`: that alias is server-visible and belongs to
+  // the trust rules.
+  function saveAlias() {
+    const peer = state.openPeer, store = aliasStore();
+    if (!peer || !store) return;
+    try {
+      const value = store.set(peer, $("peer-alias-input").value);
+      $("peer-alias-input").value = value;
+      showError("peer-alias-error", "");
+      toast("Name saved on this device.");
+    } catch (e) {
+      showError("peer-alias-error", e.message);
+      return;
+    }
+    renderContactList();
+    render();
+  }
+
+  function removeAlias() {
+    const peer = state.openPeer, store = aliasStore();
+    if (!peer || !store) return;
+    store.remove(peer);
+    resetAliasEditor(peer);
+    renderContactList();
+    render();
+    $("peer-alias-input").focus();
+  }
+
+  // ---- Settings → Phone number -------------------------------------------------------------------
+
+  const phone = { numbers: [], max: 3, request: 0, challenge: null, number: null, timer: null, otp: null, unlinking: null };
+
+  function identityLabel(address) {
+    const id = state.identities.find((i) => i.address === address);
+    return id ? (id.handle || id.label || id.address) : address;
+  }
+
+  async function loadPhones() {
+    if (!has("phone_numbers")) return;
+    const context = mailboxContext(), request = ++phone.request;
+    $("phone-note").textContent = "Loading…";
+    showError("phone-list-error", "");
+    try {
+      const body = await api("/v1/phone", { signal: context.signal });
+      if (!context.current() || request !== phone.request) return;
+      phone.numbers = Array.isArray(body.numbers) ? body.numbers : [];
+      phone.max = Number(body.max_numbers) || 3;
+      $("phone-note").textContent = "";
+    } catch (_) {
+      if (context.current() && request === phone.request) $("phone-note").textContent = "Could not load your numbers. Try again later.";
+    }
+    if (context.current() && request === phone.request) renderPhones();
+  }
+
+  function renderPhones() {
+    const list = $("phone-list");
+    list.textContent = "";
+    if (!phone.numbers.length) {
+      const li = document.createElement("li");
+      li.className = "cl-empty";
+      li.textContent = "No phone number yet.";
+      list.append(li);
+    }
+    for (const n of phone.numbers) {
+      const li = document.createElement("li");
+      li.className = "phone-row";
+      const who = document.createElement("div");
+      who.className = "cl-who";
+      const masked = document.createElement("span");
+      masked.className = "cl-peer";
+      masked.textContent = n.masked || "Phone number";
+      const where = document.createElement("span");
+      where.className = "cl-terms";
+      where.textContent = "On " + identityLabel(n.identity);
+      who.append(masked, where);
+
+      const toggle = document.createElement("label");
+      toggle.className = "peer-toggle phone-toggle";
+      const text = document.createElement("span");
+      text.textContent = "People who have this number can find me";
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.setAttribute("role", "switch");
+      box.checked = Boolean(n.discoverable);
+      box.dataset.phoneId = n.id;
+      box.onchange = () => patchPhone(n, { discoverable: box.checked });
+      toggle.append(text, box);
+
+      const actions = document.createElement("div");
+      actions.className = "phone-actions";
+      if (state.identities.length > 1) {
+        const move = document.createElement("select");
+        move.setAttribute("aria-label", "Mailbox for " + (n.masked || "this number"));
+        for (const id of state.identities) {
+          const o = document.createElement("option");
+          o.value = id.address;
+          o.textContent = id.handle || id.label || id.address;
+          move.append(o);
+        }
+        move.value = n.identity;
+        move.onchange = () => patchPhone(n, { identity: move.value });
+        actions.append(move);
+      }
+      const unlink = document.createElement("button");
+      unlink.type = "button";
+      unlink.className = "btn-danger";
+      unlink.textContent = "Unlink";
+      unlink.dataset.phoneId = n.id;
+      unlink.onclick = () => askUnlink(n);
+      actions.append(unlink);
+
+      li.append(who, toggle, actions);
+      list.append(li);
+    }
+    const here = state.me && phone.numbers.some((n) => n.identity === state.me.address);
+    $("phone-add").hidden = phone.numbers.length >= phone.max || Boolean(here);
+    if (here && phone.numbers.length < phone.max) $("phone-note").textContent = "This mailbox has a number. Switch mailbox to add one for another.";
+    else if (phone.numbers.length >= phone.max) $("phone-note").textContent = "An account can have " + phone.max + " numbers. Unlink one to add another.";
+  }
+
+  async function patchPhone(n, change) {
+    const context = mailboxContext();
+    const before = { ...n };
+    Object.assign(n, change); // optimistic, as the privacy page does
+    try {
+      const body = await api("/v1/phone/" + encodeURIComponent(n.id), { method: "PATCH", body: change, signal: context.signal });
+      if (!context.current()) return;
+      if (body && body.number) Object.assign(n, body.number);
+      toast("Saved.");
+    } catch (e) {
+      if (!context.current()) return;
+      Object.assign(n, before);
+      toast(e instanceof ApiError && e.code === "mailbox_has_number" ? "That mailbox already has a number." : "Could not save. Please try again.");
+    }
+    renderPhones();
+  }
+
+  function askUnlink(n) {
+    phone.unlinking = n;
+    $("phone-unlink-detail").textContent = "Unlink " + (n.masked || "this number") + " from " + identityLabel(n.identity)
+      + "? People will no longer find you by it, and you can add it again later.";
+    showError("phone-unlink-error", "");
+    $("phone-unlink-confirm").disabled = false;
+    openSheet("phone-unlink-sheet");
+    $("phone-unlink-cancel").focus();
+  }
+
+  async function confirmUnlink() {
+    const n = phone.unlinking;
+    if (!n || $("phone-unlink-confirm").disabled) return;
+    const context = mailboxContext();
+    $("phone-unlink-confirm").disabled = true;
+    try {
+      await api("/v1/phone/" + encodeURIComponent(n.id), { method: "DELETE", signal: context.signal });
+      if (!context.current()) return;
+      phone.numbers = phone.numbers.filter((x) => x.id !== n.id);
+      phone.unlinking = null;
+      closeSheet("phone-unlink-sheet");
+      renderPhones();
+      toast("Number unlinked.");
+    } catch (_) {
+      if (context.current()) { showError("phone-unlink-error", "Could not unlink the number. Please try again."); $("phone-unlink-confirm").disabled = false; }
+    }
+  }
+
+  function phoneError(e) {
+    if (!(e instanceof ApiError)) return "Could not reach Pigeonpost. Please try again.";
+    const body = e.body || {};
+    switch (e.code) {
+      case "invalid_code": {
+        const left = Number(body.attempts_left);
+        return "That code isn’t right." + (Number.isFinite(left) ? " " + left + (left === 1 ? " try" : " tries") + " left." : "");
+      }
+      case "challenge_expired": return "That code has expired. Send a new one.";
+      case "rate_limited": return "Too many codes for now. Try again in " + waitWords(e.retryAfter || 60) + ".";
+      case "phone_not_supported": return "This number can’t be used with Pigeonpost. Premium-rate and satellite numbers aren’t supported.";
+      case "invalid_phone": return "That doesn’t look like a phone number. Check the country and the number.";
+      case "sms_unavailable": return "We can’t send text messages right now. Try again later.";
+      case "phone_limit": return "You already have as many numbers as you can. Unlink one first, or use another mailbox.";
+      case "mailbox_has_number": return "This mailbox already has a number.";
+      default: return e.status === 403 ? "Only you, signed in, can add a number." : "Could not send the code. Please try again.";
+    }
+  }
+
+  function phoneCallingCode() {
+    const v = $("phone-country").value;
+    return v === "other" ? $("phone-country-other").value.replace(/\D/g, "") : v;
+  }
+
+  function openPhoneSheet() {
+    if (!has("phone_numbers") || !PC()) return;
+    stopPhoneSheet();
+    fillCountries($("phone-country"), phone.lastCountry);
+    $("phone-country-other-field").hidden = $("phone-country").value !== "other";
+    $("phone-number").value = "";
+    $("phone-code").value = "";
+    $("phone-discoverable").checked = false; // off unless the person turns it on
+    $("phone-step-number").hidden = false;
+    $("phone-step-code").hidden = true;
+    $("phone-send").hidden = false;
+    $("phone-send").disabled = false;
+    $("phone-verify").hidden = true;
+    showError("phone-error", "");
+    openSheet("phone-sheet");
+    $("phone-number").focus();
+  }
+
+  // Closing the sheet ends the countdown and any pending WebOTP request.
+  function stopPhoneSheet() {
+    clearInterval(phone.timer);
+    phone.timer = null;
+    if (phone.otp) { try { phone.otp.abort(); } catch (_) { /* already settled */ } }
+    phone.otp = null;
+    phone.challenge = null;
+    phone.number = null;
+  }
+
+  async function sendPhoneCode(resend = false) {
+    const button = resend ? $("phone-resend") : $("phone-send");
+    if (button.disabled) return;
+    const context = mailboxContext();
+    const cc = phoneCallingCode();
+    const e164 = resend ? phone.number : PC().normalizeE164($("phone-number").value, cc);
+    if (!e164) {
+      showError("phone-error", cc ? "That doesn’t look like a phone number. Check the country and the number." : "Type the country calling code, such as +358.");
+      return;
+    }
+    showError("phone-error", "");
+    button.disabled = true;
+    try {
+      const body = await api("/v1/phone/verify", { method: "POST", body: { phone: e164, identity: context.address }, signal: context.signal });
+      if (!context.current() || $("phone-sheet").hidden) return;
+      phone.lastCountry = $("phone-country").value;
+      phone.number = e164;
+      phone.challenge = { id: body.challenge_id, expires_at: body.expires_at, resend_after: body.resend_after };
+      $("phone-step-number").hidden = true;
+      $("phone-step-code").hidden = false;
+      $("phone-send").hidden = true;
+      $("phone-verify").hidden = false;
+      $("phone-verify").disabled = false;
+      $("phone-code").value = "";
+      $("phone-code-sent").textContent = "We sent a " + (body.code_length || 6) + "-digit code to " + e164 + ". It expires in 10 minutes.";
+      startResendCountdown();
+      startWebOtp();
+      $("phone-code").focus();
+    } catch (e) {
+      if (context.current()) showError("phone-error", phoneError(e));
+    } finally {
+      if (context.current() && !resend) button.disabled = false;
+    }
+  }
+
+  function startResendCountdown() {
+    clearInterval(phone.timer);
+    const tick = () => {
+      const left = Math.ceil((phone.challenge?.resend_after || 0) - Date.now() / 1000);
+      const button = $("phone-resend");
+      if (left > 0) {
+        button.disabled = true;
+        button.textContent = "Resend code in " + Math.floor(left / 60) + ":" + String(left % 60).padStart(2, "0");
+      } else {
+        button.disabled = false;
+        button.textContent = "Resend code";
+        clearInterval(phone.timer);
+        phone.timer = null;
+      }
+    };
+    tick();
+    if (phone.challenge) phone.timer = setInterval(tick, 1000);
+  }
+
+  // The SMS ends with "@inbox.pigeonpost.dev #123456", so a browser with WebOTP can offer the code.
+  function startWebOtp() {
+    if (!("OTPCredential" in window) || !navigator.credentials?.get) return;
+    if (phone.otp) { try { phone.otp.abort(); } catch (_) { /* settled */ } }
+    const controller = new AbortController();
+    phone.otp = controller;
+    navigator.credentials.get({ otp: { transport: ["sms"] }, signal: controller.signal }).then((cred) => {
+      if (phone.otp !== controller || !cred || !cred.code || $("phone-sheet").hidden) return;
+      $("phone-code").value = String(cred.code).replace(/\D/g, "").slice(0, 6);
+      verifyPhoneCode();
+    }).catch(() => { /* dismissed, aborted or unsupported: type it */ });
+  }
+
+  async function verifyPhoneCode() {
+    if ($("phone-verify").disabled || !phone.challenge) return;
+    const code = $("phone-code").value.replace(/\s/g, "");
+    if (!/^\d{6}$/.test(code)) { showError("phone-error", "Enter the 6-digit code from the text message."); return; }
+    const context = mailboxContext();
+    $("phone-verify").disabled = true;
+    showError("phone-error", "");
+    try {
+      await api("/v1/phone/verify/" + encodeURIComponent(phone.challenge.id), {
+        method: "POST", body: { code, discoverable: $("phone-discoverable").checked }, signal: context.signal,
+      });
+      if (!context.current()) return;
+      closeSheet("phone-sheet");
+      toast("Number verified.");
+      loadPhones();
+    } catch (e) {
+      if (!context.current()) return;
+      showError("phone-error", phoneError(e));
+      if (e instanceof ApiError && e.code === "challenge_expired") { phone.challenge.resend_after = 0; startResendCountdown(); }
+      $("phone-verify").disabled = false;
+    }
+  }
+
+  // ---- Contacts → Find people I know ------------------------------------------------------------
+
+  // In memory only, and only while the sheet is open.
+  let discovery = null;
+  let inviting = null;
+
+  function forgetDiscovery() {
+    if (discovery) discovery.cancelled = true;
+    discovery = null;
+    if (!$("discover-file")) return;
+    $("discover-file").value = "";
+    $("discover-found").textContent = "";
+    $("discover-missing").textContent = "";
+    $("discover-found-section").hidden = true;
+    $("discover-missing-section").hidden = true;
+    $("discover-status").textContent = "";
+    showError("discover-error", "");
+  }
+
+  function openDiscover() {
+    if (!has("contact_discovery") || !PC()) return;
+    forgetDiscovery();
+    fillCountries($("discover-country"), phone.lastCountry);
+    openSheet("discover-sheet");
+    $("discover-title").focus();
+  }
+
+  function readFileText(file) {
+    if (typeof file.text === "function") return file.text();
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.onerror = () => reject(reader.error);
+      reader.readAsText(file);
+    });
+  }
+
+  function discoverError(e) {
+    if (!(e instanceof ApiError)) return "Could not reach Pigeonpost. Please try again.";
+    const body = e.body || {};
+    if (e.status === 429) {
+      const wait = waitWords(e.retryAfter || 3600);
+      if (body.limit === "daily") return "You’ve checked as many new numbers as you can today. Try again in " + wait + ".";
+      if (body.limit === "monthly") return "You’ve checked as many new numbers as you can this month. Try again in " + wait + ".";
+      return "Too many checks for now. Try again in " + wait + ".";
+    }
+    if (e.code === "discovery_locked") {
+      const until = Number(body.until);
+      return "Finding people is paused for this account" + (until ? " until " + new Date(until * 1000).toLocaleDateString() : "") + ".";
+    }
+    if (e.status === 403) return "Only you, signed in, can do this.";
+    if (e.code === "discovery_busy" || e.status === 503) return "Lots of people are doing this right now. Try again in " + waitWords(e.retryAfter || 300) + ".";
+    if (e.code === "feature_disabled") return "Finding people isn’t available yet.";
+    return "Could not check your contacts. Please try again.";
+  }
+
+  async function discoverFromFile(file) {
+    if (!file) return;
+    forgetDiscovery();
+    const C = PC(), context = mailboxContext();
+    const run = discovery = { cancelled: false, entries: [], byHash: new Map(), checked: new Set(), matches: new Map() };
+    const live = () => discovery === run && !run.cancelled && context.current();
+    $("discover-status").textContent = "Reading the file…";
+    let text;
+    try { text = await readFileText(file); } catch (_) {
+      if (live()) { $("discover-status").textContent = ""; showError("discover-error", "That file could not be read."); }
+      return;
+    }
+    if (!live()) return;
+    const people = /BEGIN:VCARD/i.test(text) ? C.parseVcard(text) : C.parseCsv(text);
+    const cc = $("discover-country").value === "other" ? "" : $("discover-country").value;
+    const seen = new Map();
+    let unreadable = 0;
+    for (const person of people) {
+      for (const raw of person.phones) {
+        const e164 = C.normalizeE164(raw, cc);
+        if (!e164) { unreadable++; continue; }
+        if (!seen.has(e164)) seen.set(e164, { name: person.name || "", e164, invite: null });
+        else if (!seen.get(e164).name && person.name) seen.get(e164).name = person.name;
+      }
+    }
+    run.entries = [...seen.values()];
+    run.unreadable = unreadable;
+    if (!run.entries.length) {
+      $("discover-status").textContent = "";
+      showError("discover-error", "No phone numbers found in that file." + (unreadable ? " " + unreadable + " couldn’t be read." : ""));
+      return;
+    }
+    $("discover-status").textContent = "Checking " + run.entries.length + " numbers…";
+    for (const entry of run.entries) {
+      entry.hash = await C.hashPhone(entry.e164);
+      run.byHash.set(entry.hash, entry);
+    }
+    if (!live()) return;
+    const hashes = [...run.byHash.keys()];
+    for (let i = 0; i < hashes.length; i += 500) {
+      const batch = hashes.slice(i, i + 500);
+      let body;
+      try {
+        body = await api("/v1/contacts/discover", { method: "POST", body: { hashes: batch }, signal: context.signal });
+      } catch (e) {
+        if (!live()) return;
+        showError("discover-error", discoverError(e));
+        break;
+      }
+      if (!live()) return;
+      batch.forEach((h) => run.checked.add(h));
+      for (const m of Array.isArray(body.matches) ? body.matches : []) {
+        if (m && run.byHash.has(m.hash) && typeof m.address === "string") run.matches.set(m.hash, m);
+      }
+      if (Number.isFinite(Number(body.remaining_today))) run.remaining = Number(body.remaining_today);
+      renderDiscovery();
+    }
+    if (live()) renderDiscovery();
+  }
+
+  function renderDiscovery() {
+    const run = discovery;
+    if (!run) return;
+    const found = $("discover-found"), missing = $("discover-missing");
+    found.textContent = "";
+    missing.textContent = "";
+    const matched = run.entries.filter((e) => run.matches.has(e.hash));
+    const notYet = run.entries.filter((e) => run.checked.has(e.hash) && !run.matches.has(e.hash));
+    for (const entry of matched) {
+      const m = run.matches.get(entry.hash);
+      const li = document.createElement("li");
+      const who = document.createElement("div");
+      who.className = "cl-who";
+      const name = document.createElement("span");
+      name.className = "discover-name";
+      name.textContent = entry.name || (m.display_name ? "~" + m.display_name : displayName(m.handle || m.address));
+      who.append(name);
+      if (m.display_name && entry.name) {
+        const shown = document.createElement("span");
+        shown.className = "cl-terms is-display-name";
+        shown.textContent = "~" + m.display_name;
+        who.append(shown);
+      }
+      const where = document.createElement("span");
+      where.className = "cl-peer";
+      where.textContent = m.handle || m.address;
+      who.append(where);
+      const start = document.createElement("button");
+      start.type = "button";
+      start.className = "btn-primary";
+      start.textContent = "Start chat";
+      start.onclick = () => startChat(m.handle || m.address);
+      li.append(who, start);
+      found.append(li);
+    }
+    $("discover-found-section").hidden = !matched.length;
+    const invites = has("sms_invites");
+    for (const entry of invites ? notYet : []) {
+      const li = document.createElement("li");
+      const who = document.createElement("div");
+      who.className = "cl-who";
+      const name = document.createElement("span");
+      name.className = "discover-name";
+      name.textContent = entry.name || entry.e164;
+      const number = document.createElement("span");
+      number.className = "cl-terms";
+      number.textContent = entry.name ? entry.e164 : "";
+      who.append(name, number);
+      li.append(who);
+      if (entry.invite) {
+        const done = document.createElement("span");
+        done.className = "cl-terms discover-invited";
+        done.textContent = entry.invite;
+        li.append(done);
+      } else {
+        const invite = document.createElement("button");
+        invite.type = "button";
+        invite.className = "btn-ghost";
+        invite.textContent = "Invite";
+        invite.setAttribute("aria-label", "Invite " + (entry.name || entry.e164) + " by text message");
+        invite.onclick = () => openInvite(entry);
+        li.append(invite);
+      }
+      missing.append(li);
+    }
+    $("discover-missing-section").hidden = !(invites && notYet.length);
+    const parts = ["Checked " + run.checked.size + " of " + run.entries.length + " numbers.",
+      matched.length === 1 ? "1 person is on Pigeonpost." : matched.length + " people are on Pigeonpost."];
+    if (run.unreadable) parts.push(run.unreadable + " couldn’t be read.");
+    if (run.remaining !== undefined) parts.push(run.remaining + " new checks left today.");
+    $("discover-status").textContent = parts.join(" ");
+  }
+
+  // Opens a conversation exactly as a calendar link does: the thread opens empty and the composer
+  // addresses the peer by its address or handle, never by a display name.
+  function startChat(peer) {
+    if (!peer) return;
+    closeSheet("discover-sheet");
+    if (!$("settings-sheet").hidden) closeSheet("settings-sheet");
+    setLeftView("inbox");
+    openThread(peer);
+  }
+
+  async function openInvite(entry) {
+    if (!has("sms_invites") || !entry) return;
+    inviting = entry;
+    const context = mailboxContext();
+    if (has("display_names") && ownName === undefined) {
+      try { ownName = await fetchOwnName(context); } catch (_) { ownName = null; }
+      if (!context.current() || inviting !== entry) return;
+    }
+    $("invite-to").textContent = "To " + (entry.name ? entry.name + " (" + entry.e164 + ")" : entry.e164);
+    $("invite-text").textContent = PC().inviteText(has("display_names") ? ownName?.display_name : null);
+    showError("invite-error", "");
+    $("invite-verify").hidden = true;
+    $("invite-send").disabled = false;
+    openSheet("invite-sheet");
+    $("invite-cancel").focus();
+  }
+
+  // Sent only from this button: `confirm: true` records that a person tapped it.
+  async function sendInvite() {
+    const entry = inviting;
+    if (!entry || $("invite-send").disabled) return;
+    const context = mailboxContext();
+    $("invite-send").disabled = true;
+    showError("invite-error", "");
+    try {
+      const body = await api("/v1/contacts/invites", {
+        method: "POST", body: { phone: entry.e164, confirm: true, identity: context.address }, signal: context.signal,
+      });
+      if (!context.current()) return;
+      if (body.status === "sent") {
+        entry.invite = "Invited";
+        closeSheet("invite-sheet");
+        toast("Invitation sent.");
+      } else {
+        entry.invite = body.reason === "already_invited" ? "Already invited" : "Can’t be invited right now";
+        closeSheet("invite-sheet");
+        toast(body.reason === "already_invited" ? "You invited this number recently." : "This number can’t get an invitation right now.");
+      }
+      renderDiscovery();
+    } catch (e) {
+      if (!context.current()) return;
+      if (e instanceof ApiError && e.code === "phone_required") {
+        showError("invite-error", "Verify your own number first.");
+        $("invite-verify").hidden = !has("phone_numbers");
+      } else if (e instanceof ApiError && e.status === 429) {
+        showError("invite-error", "You can send 5 invitations a day and 20 a month. Try again in " + waitWords(e.retryAfter || 86400) + ".");
+      } else if (e instanceof ApiError && e.code === "sms_unavailable") {
+        showError("invite-error", "We can’t send text messages right now. Try again later.");
+      } else {
+        showError("invite-error", "Could not send the invitation. Please try again.");
+      }
+      $("invite-send").disabled = false;
+    }
+  }
+
+  function verifyFromInvite() {
+    closeSheet("invite-sheet");
+    closeSheet("discover-sheet");
+    if ($("settings-sheet").hidden) { syncSettingsRows(); openSheet("settings-sheet"); }
+    showSettingsPage("phone");
+  }
+
+  function wirePhase10() {
+    $("phone-add").onclick = () => openPhoneSheet();
+    $("phone-sheet-close").onclick = () => closeSheet("phone-sheet");
+    $("phone-cancel").onclick = () => closeSheet("phone-sheet");
+    $("phone-send").onclick = () => sendPhoneCode(false);
+    $("phone-resend").onclick = () => sendPhoneCode(true);
+    $("phone-verify").onclick = () => verifyPhoneCode();
+    $("phone-country").addEventListener("change", () => {
+      $("phone-country-other-field").hidden = $("phone-country").value !== "other";
+    });
+    $("phone-number").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); sendPhoneCode(false); } });
+    $("phone-code").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); verifyPhoneCode(); } });
+    wireSheet("phone-sheet", () => {});
+    $("phone-unlink-cancel").onclick = () => closeSheet("phone-unlink-sheet");
+    $("phone-unlink-confirm").onclick = () => confirmUnlink();
+    wireSheet("phone-unlink-sheet");
+
+    $("discover-open").onclick = () => openDiscover();
+    $("discover-close").onclick = () => closeSheet("discover-sheet");
+    $("discover-done").onclick = () => closeSheet("discover-sheet");
+    $("discover-file").addEventListener("change", () => {
+      const file = $("discover-file").files && $("discover-file").files[0];
+      discoverFromFile(file);
+    });
+    wireSheet("discover-sheet");
+    $("invite-cancel").onclick = () => closeSheet("invite-sheet");
+    $("invite-send").onclick = () => sendInvite();
+    $("invite-verify").onclick = () => verifyFromInvite();
+    wireSheet("invite-sheet");
+
+    $("profile-name-save").onclick = () => saveOwnName();
+    $("profile-name-remove").onclick = () => removeOwnName();
+    $("profile-name-input").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); saveOwnName(); } });
+    for (const input of document.querySelectorAll('#profile-name-visibility input')) {
+      input.addEventListener("change", () => { if (input.checked) setNameVisibility(input.value); });
+    }
+    $("name-prompt-skip").onclick = () => skipNamePrompt();
+    $("name-prompt-save").onclick = () => saveNamePrompt();
+    $("name-prompt-input").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); saveNamePrompt(); } });
+    wireSheet("name-prompt-sheet", () => {});
+
+    $("peer-alias-save").onclick = () => saveAlias();
+    $("peer-alias-remove").onclick = () => removeAlias();
+    $("peer-alias-input").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); saveAlias(); } });
+  }
+
   // ---- boot ---------------------------------------------------------------------------------
 
   async function openInbox(createIfMissing = false) {
@@ -5782,6 +6725,7 @@
       create.hidden = true;
       await loadCapabilities();
       render();
+      maybePromptName();
       // Resume setup without wiring the page twice. Mail loading has its own recovery loop.
       try { await loadAll(); } finally { startLive(); }
     } catch (e) {
@@ -5894,6 +6838,7 @@
 
   async function boot() {
     wire();
+    wirePhase10();
     await completeLoginIfReturning();
 
     if (!getToken()) {

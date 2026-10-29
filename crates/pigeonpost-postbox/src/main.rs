@@ -72,6 +72,9 @@ mod call_alerts_tests;
 mod calllog;
 mod capabilities;
 mod chatgpt;
+mod contacts;
+#[cfg(test)]
+mod contacts_tests;
 mod ephemeral;
 mod fcm;
 mod filtering;
@@ -114,6 +117,7 @@ mod p1b_tests;
 mod policy;
 mod pow;
 mod principal;
+mod profile_names;
 mod push;
 mod recipients;
 mod reputation;
@@ -216,6 +220,8 @@ struct AppState {
     webhook_egress: Arc<webhooks::Egress>,
     /// Agent SSH: the CA, the broker URL and the agents' control streams (SDS §11).
     shell: Arc<shell::Runtime>,
+    /// Phone numbers, discovery and SMS invitations (SDS §14D): limits, budgets, SMS transport.
+    contacts: Arc<contacts::Runtime>,
 }
 
 /// Namespaces where a name is authorised by proving control of it at an identity provider, rather
@@ -650,6 +656,7 @@ fn build_state(cfg: &Config, master_key: [u8; 32]) -> Result<AppState, store::St
         calendar: Arc::new(calendar::Runtime::from_env(&cfg.public_url)),
         webhook_egress: Arc::new(webhooks::Egress::system()),
         shell: Arc::new(shell::Runtime::from_env()),
+        contacts: Arc::new(contacts::Runtime::from_env()),
     })
 }
 
@@ -846,6 +853,40 @@ fn build_router(state: AppState) -> Router {
         .route("/v1/avatars/{address}", get(avatars::lookup_one))
         .route("/v1/avatar-blobs/{id}/{version}/{file}", get(avatars::blob))
         .route("/v1/report-avatar", post(avatars::report))
+        // Phase 10: display names, phone numbers, contact discovery, SMS invitations (SDS §14D,
+        // docs/contacts-and-phone.md).
+        .route(
+            "/v1/profile/name",
+            get(profile_names::get_own_name)
+                .put(profile_names::put_name)
+                .delete(profile_names::remove_name),
+        )
+        .route("/v1/profiles", get(profile_names::lookup_names))
+        .route("/v1/phone", get(contacts::list_numbers))
+        .route(
+            "/v1/phone/verify",
+            post(contacts::verify_start).layer(axum::extract::DefaultBodyLimit::max(4 * 1024)),
+        )
+        .route(
+            "/v1/phone/verify/{challenge_id}",
+            post(contacts::verify_check).layer(axum::extract::DefaultBodyLimit::max(4 * 1024)),
+        )
+        .route(
+            "/v1/phone/{id}",
+            axum::routing::patch(contacts::update_number).delete(contacts::remove_number),
+        )
+        .route(
+            "/v1/contacts/discover",
+            post(contacts::discover).layer(axum::extract::DefaultBodyLimit::max(64 * 1024)),
+        )
+        .route(
+            "/v1/contacts/invites",
+            post(contacts::invite).layer(axum::extract::DefaultBodyLimit::max(4 * 1024)),
+        )
+        .route(
+            "/v1/sms/opt-out",
+            post(contacts::opt_out).layer(axum::extract::DefaultBodyLimit::max(1024)),
+        )
         // Phase 3a: groups (SDS §4.5, docs/groups.md) and the MLS delivery service (P-2 §7).
         .route("/v1/groups", get(groups::list).post(groups::create))
         .route("/v1/groups/resolve", post(groups::resolve))
@@ -6964,6 +7005,7 @@ async fn reaper(cfg: Config) {
                     Ok((purged, timed_out)) => tracing::info!(purged, timed_out, "meeting notes past retention purged"),
                     Err(e) => tracing::error!(code = e.code, "meeting notes retention failed"),
                 }
+                contacts::purge(&store, now_unix()).await;
                 match store.reap_call_log(now_unix()).await {
                     Ok(0) => {}
                     Ok(n) => tracing::info!(purged = n, "call history past retention purged"),
@@ -7244,6 +7286,7 @@ mod tests {
             calendar: Arc::new(calendar::Runtime::for_test()),
             webhook_egress: Arc::new(webhooks::Egress::system()),
             shell: Arc::new(shell::Runtime::default()),
+            contacts: Arc::new(contacts::Runtime::for_test()),
         }
     }
 
@@ -10087,6 +10130,7 @@ mod tests {
             calendar: Arc::new(calendar::Runtime::for_test()),
             webhook_egress: Arc::new(webhooks::Egress::system()),
             shell: Arc::new(shell::Runtime::default()),
+            contacts: Arc::new(contacts::Runtime::for_test()),
         };
         let _ = build_router(state);
     }

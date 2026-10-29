@@ -1,0 +1,19 @@
+meta {
+  name: Unlink a number (works with the flag off too)
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{baseUrl}}/v1/phone/:id
+  body: none
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}

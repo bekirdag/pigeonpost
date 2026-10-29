@@ -1,0 +1,15 @@
+meta {
+  name: The acting mailbox's own display name (feature `display_names`)
+  type: http
+  seq: 9
+}
+
+get {
+  url: {{baseUrl}}/v1/profile/name
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}

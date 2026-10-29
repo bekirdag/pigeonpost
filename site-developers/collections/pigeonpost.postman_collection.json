@@ -2975,7 +2975,7 @@
     },
     {
       "name": "profile",
-      "description": "Profile pictures.",
+      "description": "Profile pictures and self-set display names.",
       "item": [
         {
           "name": "The acting mailbox's own picture (feature `avatars`)",
@@ -3239,6 +3239,399 @@
                   "language": "json"
                 }
               }
+            }
+          }
+        },
+        {
+          "name": "The acting mailbox's own display name (feature `display_names`)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/profile/name",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "profile",
+                "name"
+              ],
+              "query": [
+                {
+                  "key": "identity",
+                  "value": "",
+                  "disabled": true,
+                  "description": "Which of the account's mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used."
+                }
+              ]
+            },
+            "description": "The acting mailbox's own display name (feature `display_names`)"
+          }
+        },
+        {
+          "name": "Set the acting mailbox's self-chosen display name",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/profile/name",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "profile",
+                "name"
+              ],
+              "query": [
+                {
+                  "key": "identity",
+                  "value": "",
+                  "disabled": true,
+                  "description": "Which of the account's mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used."
+                }
+              ]
+            },
+            "description": "Free for everyone and **not** a verified identity: clients show it as `~Name` and keep the\naddress or handle one tap away (docs/contacts-and-phone.md §6). 1–40 characters; no `/`, `@`,\ncontrol, format, bidi or invisible characters; reserved words and anything containing\n\"pigeonpost\" are refused. Ten changes per mailbox per day. A connector acting for the member\nmay not set it.\n",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"display_name\": \"string\",\n  \"visibility\": \"everyone\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Remove the acting mailbox's display name",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/profile/name",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "profile",
+                "name"
+              ],
+              "query": [
+                {
+                  "key": "identity",
+                  "value": "",
+                  "disabled": true,
+                  "description": "Which of the account's mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used."
+                }
+              ]
+            },
+            "description": "Remove the acting mailbox's display name"
+          }
+        },
+        {
+          "name": "Display names of up to 100 addresses, as the caller may see them",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/profiles",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "profiles"
+              ],
+              "query": [
+                {
+                  "key": "addresses",
+                  "value": "",
+                  "disabled": true,
+                  "description": "Comma-separated addresses or handles (at most 100)."
+                }
+              ]
+            },
+            "description": "Each requested address maps to `{address, handle, display_name}` or `null` (no such mailbox).\n`display_name` is `null` when there is none, it is not visible to the caller (same rules as\nprofile pictures), or the owner's account does not have `display_names`. A credential is\nrequired.\n"
+          }
+        }
+      ]
+    },
+    {
+      "name": "phone",
+      "description": "SMS-verified phone numbers on mailboxes, opt-in discoverable (Phase 10, docs/contacts-and-phone.md).",
+      "item": [
+        {
+          "name": "The account's verified numbers, masked (feature `phone_numbers`)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/phone",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "phone"
+              ]
+            },
+            "description": "The account's verified numbers, masked (feature `phone_numbers`)"
+          }
+        },
+        {
+          "name": "Text a 6-digit code to a number for one of the person's mailboxes",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/phone/verify",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "phone",
+                "verify"
+              ]
+            },
+            "description": "The answer is the same for every acceptable number, whether or not it is on Pigeonpost. The\ncode is valid for 10 minutes and 5 tries. Resend limits: 1 per 60 s and 5 per 24 h per\nnumber, 10 per 24 h and 3 pending per account, 20 per 24 h per IP, plus the platform SMS\nbudget (docs/contacts-and-phone.md §4).\n",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"string\",\n  \"identity\": \"string\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Prove the code and link the number",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/phone/verify/:challenge_id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "phone",
+                "verify",
+                ":challenge_id"
+              ],
+              "variable": [
+                {
+                  "key": "challenge_id",
+                  "value": "",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "`discoverable` is false unless the person ticked \"Let people who have my number find me\".\nIf another account had this number, it moves here and that account receives\n`phone.unlinked {reason: verified_elsewhere}`.\n",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"string\",\n  \"discoverable\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Turn discoverability on or off, or move the number to another own mailbox",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/phone/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "phone",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Turn discoverability on or off, or move the number to another own mailbox",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"discoverable\": false,\n  \"identity\": \"string\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Unlink a number (works with the flag off too)",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/phone/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "phone",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Unlink a number (works with the flag off too)"
+          }
+        }
+      ]
+    },
+    {
+      "name": "contacts",
+      "description": "Find people I know by hashed phone number, and SMS invitations (Phase 10, docs/contacts-and-phone.md).",
+      "item": [
+        {
+          "name": "Which hashed numbers belong to people who chose to be found (feature `contact_discovery`)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/contacts/discover",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "contacts",
+                "discover"
+              ]
+            },
+            "description": "Each hash is the first 16 bytes of `SHA-256(\"pigeonpost:phone:v1:\" || E.164)` as 32 lowercase\nhex characters (docs/contacts-and-phone.md §3). Nothing of the upload is stored. Only\nverified, discoverable, existing mailboxes are returned, never the caller's own numbers or\nanyone who blocked one of the caller's mailboxes. A person only. Limits: 500 hashes per\nrequest, 20 requests per hour per account and 30 per IP, 1,000 new hashes per day (200 for\naccounts under a day old) and 5,000 per 30 days.\n",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"hashes\": [\n    \"string\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Invite one contact by SMS, on the person's explicit tap (feature `sms_invites`)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/contacts/invites",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "contacts",
+                "invites"
+              ]
+            },
+            "description": "The sender must have a verified number. `confirm` must be true. Per sender: 5 a day, 20 per\n30 days. Per receiving number (all senders): 1 per 7 days, 3 per 30 days; never after an\nopt-out. `not_sent.reason` is `already_invited` (you, within 30 days) or `unavailable`\n(deliberately merged: opted out, invited recently by others, or not supported).\n",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"string\",\n  \"confirm\": false,\n  \"identity\": \"string\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Stop SMS invitations to the number an invitation code was texted to (public)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/sms/opt-out",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "sms",
+                "opt-out"
+              ]
+            },
+            "description": "Always answers `{\"ok\": true}`, so a code reveals nothing. Rate-limited per IP.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"string\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
             }
           }
         }

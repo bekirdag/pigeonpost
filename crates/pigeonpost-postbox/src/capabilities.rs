@@ -108,7 +108,32 @@ pub(crate) const KNOWN_FEATURES: &[(&str, &str)] = &[
         CALENDAR_EMAIL,
         "Calendar invitations, updates, reminders and codes sent to contact addresses (SDS §14B.6)",
     ),
+    (
+        PHONE_NUMBERS,
+        "Phone numbers on mailboxes: SMS-verified, opt-in discoverable (/v1/phone, SDS §14D)",
+    ),
+    (
+        CONTACT_DISCOVERY,
+        "Find people I know: hashed contact matching against discoverable numbers (/v1/contacts/discover)",
+    ),
+    (
+        SMS_INVITES,
+        "Invite a contact by SMS through saas_be/Novu (/v1/contacts/invites, SDS §14D)",
+    ),
+    (
+        DISPLAY_NAMES,
+        "Self-set display names per mailbox (/v1/profile/name, /v1/profiles, profile.name events)",
+    ),
 ];
+
+/// Phone numbers on mailboxes (SDS §14D).
+pub(crate) const PHONE_NUMBERS: &str = "phone_numbers";
+/// Contact discovery by hashed phone number (SDS §14D).
+pub(crate) const CONTACT_DISCOVERY: &str = "contact_discovery";
+/// SMS invitations (SDS §14D).
+pub(crate) const SMS_INVITES: &str = "sms_invites";
+/// Self-set display names (SDS §14D).
+pub(crate) const DISPLAY_NAMES: &str = "display_names";
 
 /// Incoming-call pushes (Phase 1c, docs/call-alerting.md).
 pub(crate) const CALL_PUSH: &str = "call_push";

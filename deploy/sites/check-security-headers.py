@@ -17,6 +17,8 @@ HTML = {
     # pigeonpost.dev and developers have no object-src; default-src 'self' already confines plugins.
     "https://pigeonpost.dev/": ["frame-ancestors 'none'", "base-uri 'none'"],
     "https://pigeonpost.dev/privacy.html": ["script-src 'none'", "frame-ancestors 'none'"],
+    # The SMS invitation page may run its own script and reach only the postbox (opt-out).
+    "https://pigeonpost.dev/invite": ["script-src 'self'", "connect-src https://postbox.pigeonpost.dev", "form-action 'none'"],
     "https://inbox.pigeonpost.dev/": ["frame-ancestors 'none'", "base-uri 'none'", "object-src 'none'"],
     "https://inbox.pigeonpost.dev/join.html": ["frame-ancestors 'none'", "object-src 'none'"],
     "https://developers.pigeonpost.dev/": ["frame-ancestors 'none'", "base-uri 'none'"],

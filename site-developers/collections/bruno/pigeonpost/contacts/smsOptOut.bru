@@ -1,0 +1,21 @@
+meta {
+  name: Stop SMS invitations to the number an invitation code was texted to (public)
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/v1/sms/opt-out
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "code": "string"
+  }
+}
+
+docs {
+  Always answers `{"ok": true}`, so a code reveals nothing. Rate-limited per IP.
+}

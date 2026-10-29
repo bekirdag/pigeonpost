@@ -22,7 +22,7 @@
 
   <h1>Privacy Policy</h1>
   <p class="note">For the hosted Pigeonpost mobile and desktop app, read the <a href="/app-privacy.html">Pigeonpost app privacy policy</a>. You can <a href="/delete-account.html">request account deletion here</a>. The protocol operator policy below covers separate Pigeonpost nodes.</p>
-  <p class="updated">Last updated 27 October 2026</p>
+  <p class="updated">Last updated 29 October 2026</p>
 
   <p>
     This states the policy a Pigeonpost operator must apply to lofts, the name registry, the node
@@ -118,6 +118,25 @@
   <h3>Profile pictures</h3>
   <p>
     If you add a profile picture, the image you upload is processed on our server: metadata such as location and camera (EXIF) details is removed, and the picture is re-encoded into several sizes. The resulting images are stored with your mailbox and shown according to your visibility setting: Everyone, People I know, or Nobody. You can change the visibility or remove the picture at any time; we then stop serving it. Copies that people have already downloaded, or that were cached publicly while the picture was visible to Everyone, cannot be recalled. Pictures can be reported by other users, and we may remove a picture that breaks our terms. Profile pictures do not count against your storage quota.
+  </p>
+
+  <h3 id="phone">Phone numbers, finding people you know, and SMS invitations</h3>
+  <p>
+    <strong>Your phone number (optional).</strong> You can add a phone number to one of your mailboxes. We text it a 6-digit code to check that it is yours; the code expires after 10 minutes. We store the verified number encrypted, together with a keyed fingerprint used to recognise it; we never show the full number to anyone, including you (you see a masked form such as +90 ••• ••• ••12). Other people can find you by your number <strong>only if you turn on</strong> <em>Let people who have my number find me</em>; it is off unless you choose it, and you can turn it off or remove the number at any time. If someone else later proves they hold the same number (for example after a number is recycled), it moves to them and is removed from your mailbox.
+  </p>
+  <p>
+    <strong>Finding people you know.</strong> If you choose <em>Find people I know</em>, the app reads your contacts on your device (in the web inbox, a contacts file you pick, which never leaves your browser). Names and other details stay on your device. Each phone number is turned into a short scrambled form (a hash) on your device, and only those are sent. Our server compares them, in memory, with the numbers of people who chose to be findable, and answers with the matching mailboxes. We do not store the scrambled numbers you send. To prevent abuse we keep, for 7 days, a separate per-account marker for each number you checked (it cannot be compared with other accounts or with our list of numbers) and a daily count for 31 days. Because there are relatively few possible phone numbers, a scrambled number could in principle be reversed by whoever receives it, including us; that is why we keep nothing of it, why only people who opted in can be found, and why the number of checks per account and per network is limited.
+  </p>
+  <p>
+    <strong>SMS invitations.</strong> If you tap <em>Invite</em> on a contact who is not on Pigeonpost, we send that one number a text message saying that you invited them, with a link to pigeonpost.dev and how to opt out. You must have verified your own number first, and the number of invitations is limited. We keep the invitation, the inviter and a keyed fingerprint of the invited number for 30 days, to avoid sending repeats. Anyone who receives an invitation can stop further invitations from the link in it or by replying STOP; we then keep only a keyed fingerprint of the number, so that we never text it an invitation again.
+  </p>
+  <p>
+    <strong>Who handles the text messages.</strong> Codes and invitations are sent through our notification service (saas_be, with Novu run on our own servers) and the SMS provider Twilio, which receive the destination number and the message text to deliver it and keep delivery records under their own terms. A short record of each text sent (when, which purpose, the country calling code and a keyed fingerprint of the number) is kept for 35 days to enforce cost and abuse limits.
+  </p>
+
+  <h3 id="names">Display names and nicknames</h3>
+  <p>
+    You can give each mailbox a display name, so people see a name instead of an address. It is shown according to your setting: People I know (the default), Everyone, or Nobody. A display name is your own description and is not verified; the apps show it with a ~ sign and always keep the real address or handle one tap away. Names you give your contacts on your device (nicknames) are stored only on that device and are never sent to us.
   </p>
 
   <h3>Groups</h3>
@@ -359,6 +378,30 @@
       <td>To show your picture to the people your visibility setting allows</td>
       <td>Performance of the service you requested (Art. 6(1)(b)); you choose to upload one</td>
       <td>Until you remove or replace it, or it is removed after a report</td>
+    </tr>
+    <tr>
+      <td>Verified phone numbers (encrypted, with a keyed fingerprint)</td>
+      <td>To let people who have your number find you, if you turn that on</td>
+      <td>Consent (Art. 6(1)(a)); you add the number and choose whether you can be found, and can withdraw either at any time</td>
+      <td>Until you remove it, someone else verifies the same number, or you delete your account; unconfirmed codes <strong>10 minutes</strong></td>
+    </tr>
+    <tr>
+      <td>Contact-matching uploads (hashed phone numbers)</td>
+      <td>To show which of your contacts are on Pigeonpost</td>
+      <td>Performance of the service you requested (Art. 6(1)(b)); and legitimate interests in preventing scraping (Art. 6(1)(f)) for the limits</td>
+      <td>Not stored; per-account check markers <strong>7 days</strong>, daily counts <strong>31 days</strong></td>
+    </tr>
+    <tr>
+      <td>SMS invitations and opt-outs (keyed fingerprints of the invited number)</td>
+      <td>To send an invitation you asked for, avoid repeats and honour opt-outs</td>
+      <td>Legitimate interests (Art. 6(1)(f)) of the inviter and the invitee in a single, stoppable invitation</td>
+      <td>Invitations <strong>30 days</strong>; SMS cost records <strong>35 days</strong>; opt-outs while the service runs</td>
+    </tr>
+    <tr>
+      <td>Display names</td>
+      <td>To show a name instead of an address to the people your setting allows</td>
+      <td>Performance of the service you requested (Art. 6(1)(b)); you choose to set one</td>
+      <td>Until you remove or change it, or delete your account</td>
     </tr>
     <tr>
       <td>Name registry entries</td>
