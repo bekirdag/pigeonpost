@@ -10,12 +10,20 @@ test("the display price copy equals the catalog's current enterprise editions", 
   const { window } = load(t, "index.html");
   const prices = window.PPE_CONFIG.prices;
   let n = 0;
+  // The edition on sale now: the latest year that has started in Istanbul (the bridge's rule).
+  const istanbulYear = Number(new Intl.DateTimeFormat("en-US", { year: "numeric", timeZone: "Europe/Istanbul" }).format(new Date()));
   for (const [code, plan] of Object.entries(catalog.plans)) {
     if (plan.family !== "ent") continue;
-    const year = Object.keys(plan.editions).sort().pop();
+    const years = Object.keys(plan.editions).map(Number).sort((a, b) => a - b);
+    const year = years.filter((y) => y <= istanbulYear).pop() || years[0];
     const interval = plan.interval === "year" ? "yearly" : "monthly";
     assert.equal(prices[plan.currency][interval][plan.seats], plan.editions[year].amount, code);
     assert.equal(window.PPE.pricing.amount(plan.seats, interval, plan.currency), plan.editions[year].amount);
+    if (plan.currency === "TRY") {
+      const copy = window.PPE_CONFIG.tryByYear;
+      assert.deepEqual(Object.keys(copy).sort(), years.map(String), `${code} TRY years`);
+      for (const y of years) assert.equal(copy[y][interval][plan.seats], plan.editions[y].amount, `${code} ${y}`);
+    }
     n++;
   }
   assert.equal(n, 36);
