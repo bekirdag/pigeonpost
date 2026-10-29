@@ -31,3 +31,9 @@
 - Fresh Mac CI exposed the standalone inbox harness missing the new People types (the full app built correctly). Split free-name and contact-label views from phone/permission views, and include the real People model/API/store/name/label sources in the harness. This keeps its actual Inbox and native view assertions intact without stubbing the new labels or adding PhoneNumberKit to an unrelated harness.
 
 - Mac harness now compiles with real People sources and the updated `initialPeer` dialog test double; local UI execution stops at its existing locked-desktop guard (exit 69), so no local UI pass is claimed. Fresh full iOS and macOS app builds pass after the view extraction. CI will execute the unchanged Mac UI assertions on an unlocked runner.
+
+## Mac welcome sheet follow-up
+
+- The free-name welcome sheet used a flexible List without a Mac sheet size. Set the same 520-point width as the adjacent Settings sheet and a 560-point height so the name, visibility, save and skip controls have room.
+- Separate stacked branch preserves the ongoing iPhone/iPad qualification. Docdex symbols/impact returned writer backoff; inspected the adjacent sheet cases and sheetSurface directly. A small local-model draft was validated and used.
+- Full PigeonpostMac build passes locally. Native Mac CI pending; no app version or store submission changed.

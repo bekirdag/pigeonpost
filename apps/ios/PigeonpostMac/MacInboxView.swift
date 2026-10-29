@@ -214,7 +214,7 @@ struct MacInboxView: View {
         }
         .sheet(item: $sheet, onDismiss: finishMailboxVisit) { which in
             switch which {
-            case .freeName: NavigationStack { DisplayNamePage(onboarding: true).id(people?.scope) }.interactiveDismissDisabled()
+            case .freeName: NavigationStack { DisplayNamePage(onboarding: true).id(people?.scope) }.frame(width: 520, height: 560).interactiveDismissDisabled()
             case .settings:
                 // The phone's, now shared. A Mac sheet takes its size from its content, and a Form
                 // with no width asks for the narrowest one that fits its longest label.
