@@ -6,7 +6,7 @@
 //!   `outbound`, and never the container runtime's socket. Named after the session, so teardown
 //!   removes it even when the client process is already gone.
 //! * `allowlist`: no shell at all. One exact command per request, executed directly (never through
-//!   a shell) with a fixed environment, in the workspace; trailing path arguments only when the
+//!   a shell) inside the same restricted container as `container` mode; trailing paths only when the
 //!   entry allows them, and only paths that resolve — symlinks included — inside the workspace.
 //! * `unconfined`: the machine user's own login shell in the workspace. Explicitly acknowledged in
 //!   the config; it is the current `full` tier's risk, said out loud.
@@ -125,7 +125,7 @@ pub fn runtime(shell: &Shell) -> Result<(PathBuf, bool), String> {
         Some(n) => pick(n).ok_or_else(|| format!("container runtime {n} is not installed")),
         None => pick("podman")
             .or_else(|| pick("docker"))
-            .ok_or_else(|| "container mode needs podman or docker installed".to_string()),
+            .ok_or_else(|| "confined modes need podman or docker installed".to_string()),
     }
 }
 
@@ -143,52 +143,28 @@ pub fn launch(
             let Some(line) = command else {
                 return Err(allowlist_help(shell));
             };
-            let argv = match_allowlist(shell, line)?;
-            Ok(Launch {
-                program: PathBuf::from(&argv[0]),
-                args: argv[1..].to_vec(),
-                env: vec![
-                    ("PATH".into(), SAFE_PATH.into()),
-                    ("HOME".into(), shell.workspace.to_string_lossy().into()),
-                    ("LANG".into(), "C.UTF-8".into()),
-                    ("TERM".into(), term),
-                ],
-                cwd: shell.workspace.clone(),
-                // Commands, not a terminal: no pty, so nothing can be driven interactively.
-                pty: false,
-                container: None,
-            })
+            let argv = match_allowlist(shell, line)?
+                .into_iter()
+                .map(|arg| match Path::new(&arg).strip_prefix(&shell.workspace) {
+                    Ok(relative) => Path::new("/workspace")
+                        .join(relative)
+                        .to_string_lossy()
+                        .into_owned(),
+                    Err(_) => arg,
+                })
+                .collect::<Vec<_>>();
+            confined_launch(shell, sid, &term, false, &argv)
         }
         Mode::Container => {
-            let (rt, podman) = runtime(shell)?;
-            if !podman {
-                check_docker(shell, &rt)?;
-            }
-            let name = container_name(sid);
-            let mut args = vec!["run".to_string(), "--rm".into(), "-i".into()];
-            if pty {
-                args.push("-t".into());
-            }
-            args.extend(container_args(shell, &name, &term, podman));
-            args.push(shell.image.clone());
-            args.push("/bin/sh".into());
+            let mut argv = vec!["/bin/sh".to_string()];
             match command {
                 Some(c) => {
-                    args.push("-c".into());
-                    args.push(c.to_string());
+                    argv.push("-c".into());
+                    argv.push(c.to_string());
                 }
-                None => args.push("-l".into()),
+                None => argv.push("-l".into()),
             }
-            Ok(Launch {
-                program: rt.clone(),
-                args,
-                // The runtime client itself needs very little, and nothing of the person's: where
-                // this machine's runtime listens, from agentd's own environment, never the request.
-                env: runtime_env(),
-                cwd: shell.workspace.clone(),
-                pty,
-                container: Some((rt, name)),
-            })
+            confined_launch(shell, sid, &term, pty, &argv)
         }
         Mode::Unconfined => {
             let sh = std::env::var("SHELL")
@@ -223,6 +199,51 @@ pub fn launch(
                 container: None,
             })
         }
+    }
+}
+
+/// Both confined modes share the same runtime checks and isolation. Exact argv matching alone
+/// is not a sandbox: otherwise an approved tool can execute workspace hooks on the host.
+fn confined_launch(
+    shell: &Shell,
+    sid: &str,
+    term: &str,
+    pty: bool,
+    argv: &[String],
+) -> Result<Launch, String> {
+    let (rt, podman) = runtime(shell)?;
+    if !podman {
+        check_docker(shell, &rt)?;
+    }
+    Ok(confined_plan(shell, sid, term, pty, argv, rt, podman))
+}
+
+fn confined_plan(
+    shell: &Shell,
+    sid: &str,
+    term: &str,
+    pty: bool,
+    argv: &[String],
+    rt: PathBuf,
+    podman: bool,
+) -> Launch {
+    let name = container_name(sid);
+    let mut args = vec!["run".to_string(), "--rm".into(), "-i".into()];
+    if pty {
+        args.push("-t".into());
+    }
+    args.extend(container_args(shell, &name, term, podman));
+    // Override image ENTRYPOINT too: an allowlisted program is the actual executable, never a
+    // shell string or an image-provided wrapper. No host program runs on a missing runtime/image.
+    args.extend(["--entrypoint".into(), argv[0].clone(), shell.image.clone()]);
+    args.extend_from_slice(&argv[1..]);
+    Launch {
+        program: rt.clone(),
+        args,
+        env: runtime_env(),
+        cwd: shell.workspace.clone(),
+        pty,
+        container: Some((rt, name)),
     }
 }
 
@@ -497,22 +518,50 @@ mod tests {
     }
 
     #[test]
+    fn an_allowed_command_never_falls_back_to_host_execution() {
+        let t = tempfile::tempdir().unwrap();
+        let mut s = shell(Mode::Allowlist, t.path());
+        // A missing configured runtime must not select another runtime or the approved host tool.
+        s.runtime = Some("pp-runtime-that-is-not-installed-6df9d5".into());
+        let result = launch(
+            &s,
+            "ssh_abcdefghijklmnopqrstuvwxyz",
+            "xterm",
+            false,
+            Some("ls -la"),
+        );
+        assert!(result.unwrap_err().contains("is not installed"));
+    }
+
+    #[test]
     fn environments_are_built_from_nothing() {
         let t = tempfile::tempdir().unwrap();
         let s = shell(Mode::Allowlist, t.path());
         std::env::set_var("PP_TEST_SECRET", "leak");
-        let l = launch(
+        let l = confined_plan(
             &s,
             "ssh_abcdefghijklmnopqrstuvwxyz",
-            "xterm; rm -rf /",
+            &term("xterm; rm -rf /"),
             false,
-            Some("ls -la"),
-        )
-        .unwrap();
+            &["/bin/ls".into(), "-la".into()],
+            PathBuf::from("/usr/bin/docker"),
+            false,
+        );
         let keys: Vec<&str> = l.env.iter().map(|(k, _)| k.as_str()).collect();
-        assert_eq!(keys, ["PATH", "HOME", "LANG", "TERM"]);
+        assert!(!keys.contains(&"PP_TEST_SECRET"));
         assert!(l.env.iter().all(|(_, v)| !v.contains("leak")));
-        assert_eq!(l.env[3].1, "xterm-256color", "a hostile TERM is replaced");
+        assert!(
+            l.args.contains(&"TERM=xterm-256color".into()),
+            "a hostile TERM is replaced"
+        );
+        assert_eq!(l.program, PathBuf::from("/usr/bin/docker"));
+        assert!(l.container.is_some());
+        assert!(l.args.ends_with(&[
+            "--entrypoint".into(),
+            "/bin/ls".into(),
+            s.image.clone(),
+            "-la".into()
+        ]));
         assert!(!l.pty);
         assert_eq!(l.cwd, s.workspace);
         // A shell request in allowlist mode is a refusal that lists what is allowed.
