@@ -51,6 +51,10 @@ import dev.pigeonpost.core.enterprise.OrganizationRoomClient
 import dev.pigeonpost.core.enterprise.OrganizationRoomIdentity
 import dev.pigeonpost.core.enterprise.OrganizationRoomOpening
 import dev.pigeonpost.core.enterprise.OrganizationRoomStore
+import dev.pigeonpost.core.contacts.PeopleApi
+import dev.pigeonpost.core.contacts.PeopleClient
+import dev.pigeonpost.core.contacts.PeopleIdentity
+import dev.pigeonpost.core.contacts.PeopleStore
 import dev.pigeonpost.inbox.calendar.KeystoreCalendarAttempts
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -84,6 +88,7 @@ data class AppGraph(
     val meetingApi: CalendarMeetingApi? = api as? CalendarMeetingApi,
     val pairingApi: DevicePairingApi? = api as? DevicePairingApi,
     val organizationRoomApi: OrganizationRoomApi? = groupTransport?.let(::OrganizationRoomClient),
+    val peopleApi: PeopleApi? = groupTransport?.let(::PeopleClient),
     /** How often a live stream on screen is reread for stage invitations and its end (Phase 6). */
     val streamPollMillis: Long = 4000,
 ) {
@@ -187,12 +192,19 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
     private val stagedForGroups = MutableStateFlow<Map<GroupDraftKey, List<StagedAttachment>>>(emptyMap())
     val groupStaged = stagedForGroups.asStateFlow()
     val profile = ProfileStore(graph.api, storeScope) { keys -> avatars.forget(keys + inbox.state.value.mailboxes.filter { it.address in keys }.mapNotNull { it.handle }) }
+    val people = graph.peopleApi?.let { api -> PeopleStore(api, viewModelScope, identity = {
+        val state = session.state.value; val grant = session.authorizationLease; val inboxState = inbox.state.value
+        val subject = state.subject; val mailbox = inboxState.acting?.address
+        if (!state.loading && state.signedIn && state.termsAccepted && !subject.isNullOrEmpty() && mailbox != null &&
+            grant?.isValid == true && grant.id == state.authorizationId && activation.value?.authorizationId == state.authorizationId)
+            PeopleIdentity(subject, grant, mailbox, inboxState.features) else null
+    }, aliases = AndroidLocalAliases(app, graph.fixtures), expired = { expected -> viewModelScope.launch { if (session.authorizationLease === expected) signOut() } }) }
     val pictureForAll = MutableStateFlow(false)
     private val cropping = MutableStateFlow<android.graphics.Bitmap?>(null)
     val crop = cropping.asStateFlow()
     init {
         graph.start(viewModelScope)
-        viewModelScope.launch { session.state.collect { deviceApproval?.synchronize(); organizationRooms?.synchronize() } }
+        viewModelScope.launch { session.state.collect { deviceApproval?.synchronize(); organizationRooms?.synchronize(); people?.synchronize() } }
         dev.pigeonpost.inbox.push.PushNotifications.groupPoke = { groups?.poke() }
         PushNotifications.calendarPoke = { viewModelScope.launch { calendar?.refresh() } }
         viewModelScope.launch {
@@ -207,6 +219,7 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
                 if (meetingNotes?.state?.value?.enabled != true) notesPage.value = false
                 meetingLookup?.onMailbox(target?.address)
                 organizationRooms?.synchronize()
+                people?.synchronize()
                 if (roomPage.value && organizationRooms?.isCurrent() == true && organizationRooms.state.value.catalog == null)
                     organizationRooms.loadOrganizations()
             }
@@ -273,6 +286,7 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
         viewModelScope.launch(Dispatchers.IO) { runCatching { notesKeys.destroy() } }
         val authorization = session.authorizationLease
         val token = push?.clear()
+        people?.reset(clearAliases = true)
         resetStores()
         val cleanup = authorization?.takeIf { it.isValid }?.child()
         viewModelScope.launch(AuthorizationContext(cleanup)) {
@@ -281,6 +295,7 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
         }
     }
     private fun resetStores() {
+        people?.reset()
         roomPage.value = false; cancelRoomPreparation(); organizationRooms?.reset()
         storeScope.retire()
         activation.value = null

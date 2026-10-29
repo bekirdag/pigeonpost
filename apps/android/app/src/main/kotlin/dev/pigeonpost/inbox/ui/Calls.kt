@@ -80,9 +80,9 @@ fun BlockedBanner(name: String, busy: Boolean, unblock: () -> Unit) {
     }
 }
 
-private fun callName(entry: CallLogEntry, contacts: List<Contact>): String {
+@Composable private fun callName(entry: CallLogEntry, contacts: List<Contact>): String {
     val key = entry.key ?: return entry.participants.orEmpty().size.let { if (it > 0) "$it people" else "Call" }
-    return Conversations.contact(key, contacts)?.alias?.takeIf { it.isNotBlank() } ?: displayName(key)
+    return peerLabel(key, Conversations.contact(key, contacts)?.alias)
 }
 
 /**

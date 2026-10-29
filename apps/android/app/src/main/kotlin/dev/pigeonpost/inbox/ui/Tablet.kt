@@ -221,7 +221,7 @@ private fun SubjectsColumn(state: InboxState, store: InboxStore, modifier: Modif
         Row(Modifier.fillMaxWidth().height(60.dp).padding(start = 18.dp, end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("THREADS", style = geist(11.sp).copy(letterSpacing = 0.66.sp), color = p.muted)
-                Text(conversation.name, style = geistMono(12.5.sp), color = p.quiet, maxLines = 1, overflow = TextOverflow.MiddleEllipsis)
+                Text(peerLabel(conversation.peer, conversation.identity?.name ?: conversation.contact?.alias, conversation.name), style = geist(12.5.sp), color = p.quiet, maxLines = 1, overflow = TextOverflow.MiddleEllipsis)
             }
             Box(Modifier.size(32.dp).clip(RoundedCornerShape(8.dp)).background(p.field).border(1.dp, p.strokeStrong, RoundedCornerShape(8.dp))
                 .clickable(role = Role.Button, onClickLabel = "New subject", onClick = newSubject), contentAlignment = Alignment.Center) {

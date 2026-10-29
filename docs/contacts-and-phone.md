@@ -225,7 +225,7 @@ What *you* call someone. Stored on the device only, never sent to the server. Th
 Pigeonpost yet; when it exists, aliases move into it end-to-end encrypted. Until then an alias set on the phone does not
 appear on the laptop. Storage: web `localStorage` key `ppi_aliases_v1:<sign-in subject>` (JSON `{peer: alias}`; the browser does not know the account id, so it uses the token's `sub`, cleared on sign-out), iOS/macOS
 the app's sandboxed `UserDefaults` suite or a file in Application Support (excluded from iCloud backup is not required),
-Android `DataStore` in app-private storage, Windows `ApplicationData.Current.LocalSettings`, Linux
+Android app-private `SharedPreferences` (subject + inbox scoped, backup disabled), Windows `ApplicationData.Current.LocalSettings`, Linux
 `$XDG_DATA_HOME/pigeonpost/aliases.json` (mode 600). Up to 64 characters, same character rules as display names minus the
 reserved words. Removing a conversation does not remove its alias; signing out does.
 
@@ -310,7 +310,7 @@ locally (§6.2); add `phone.*` and `profile.name` event handling; update the sto
    from `TelephonyManager.networkCountryIso`/`simCountryIso`/`Locale`.
 4. **Hash:** `MessageDigest.getInstance("SHA-256")`, first 16 bytes, hex.
 5. **Code entry:** SMS User Consent API (`play-services-auth-api-phone`), `autofillHints = SMS_OTP`. Never `READ_SMS`.
-6. **Invites, names, aliases:** as iOS 7–8 (aliases in Preferences DataStore).
+6. **Invites, names, aliases:** as iOS 7–8 (aliases in app-private SharedPreferences, subject + inbox scoped).
 7. **Play Data safety:** add *Contacts* (collected, not processed ephemerally, not shared, optional, App functionality —
    the per-account abuse-prevention marks persist for seven days) and
    *Phone number* (collected, not shared, optional, App functionality, Account management). Update
