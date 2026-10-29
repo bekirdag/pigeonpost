@@ -13,7 +13,7 @@ async function until(predicate) {
   assert.fail("UI did not settle");
 }
 
-async function app(t, configure = () => {}) {
+async function app(t, configure = () => {}, { phone = false } = {}) {
   const server = fixtureServer();
   configure(server);
   const errors = [], console = new VirtualConsole();
@@ -21,7 +21,7 @@ async function app(t, configure = () => {}) {
   const dom = new JSDOM(read("index.html"), { url: "https://inbox.pigeonpost.dev/", runScripts: "outside-only", pretendToBeVisual: true, virtualConsole: console });
   const w = dom.window, $ = id => w.document.getElementById(id);
   Object.defineProperty(w, "crypto", { value: webcrypto });
-  w.matchMedia = query => ({ matches: query.includes("min-width"), addEventListener() {} });
+  w.matchMedia = query => ({ matches: phone ? query.includes("max-width") : query.includes("min-width"), addEventListener() {} });
   w.fetch = server.fetch;
   w.localStorage.setItem("ppi_token", "fixture_account");
   w.eval(read("names.js"));
@@ -524,4 +524,105 @@ test("switching mailboxes discards a late attachment preview", async t => {
   late.resolve(new Blob(["previous mailbox secret"]));
   await tick();
   assert.doesNotMatch(a.$("messages").textContent, /previous mailbox secret/);
+});
+
+// ---- a first message opens the conversation it started ----------------------------------------
+
+const FRESH = "/fresh/main";
+const selectedPeer = a => a.$("threads").querySelector('.thread-row[aria-current="true"]')?.textContent || "";
+async function startConversation(a, text = "Hello, first message") {
+  a.$("new-btn").click(); a.input("new-peer", FRESH); a.input("new-body", text);
+  a.$("new-send").click();
+}
+
+for (const phone of [false, true]) {
+  test(`a first message opens and selects its new conversation with the composer focused (${phone ? "phone" : "desktop"})`, async t => {
+    const a = await app(t, () => {}, { phone });
+    assert.equal(a.$("thread-empty").hidden, false);
+    await startConversation(a);
+    await until(() => a.$("new-sheet").hidden && a.$("messages").textContent.includes("Hello, first message"));
+    await tick();
+    assert.equal(a.$("thread-head").hidden, false);
+    assert.equal(a.$("pane-thread").dataset.open, "true");
+    assert.equal(a.$("peer-name").textContent, "Fresh");
+    assert.match(selectedPeer(a), /Fresh/);
+    assert.equal(a.w.document.activeElement.id, "compose");
+    assert.equal(a.$("messages").textContent.match(/Hello, first message/g).length, 1);
+  });
+}
+
+test("a first message still opens its conversation when the inbox reload after it is refused", async t => {
+  const a = await app(t);
+  let sent = false;
+  a.server.intercept = call => {
+    if (call.path === "/v1/send") sent = true;
+    else if (sent && call.path === "/v1/inbox" && !call.query.has("wait")) return response({ error: "busy" }, 429);
+  };
+  await startConversation(a);
+  await until(() => a.$("new-sheet").hidden);
+  await tick();
+  assert.equal(a.$("peer-name").textContent, "Fresh");
+  assert.match(a.$("messages").textContent, /Hello, first message/);
+  assert.equal(a.$("new-error").hidden, true);
+});
+
+test("an unconfirmed first message opens its conversation with Retry and Discard, and Retry resends it unchanged", async t => {
+  const a = await app(t);
+  let lose = true;
+  a.server.intercept = call => {
+    if (call.path === "/v1/send" && lose) { lose = false; return Promise.reject(new TypeError("network")); }
+  };
+  await startConversation(a, "Did this arrive?");
+  await until(() => a.$("new-sheet").hidden);
+  await tick();
+  assert.equal(a.$("peer-name").textContent, "Fresh");
+  assert.match(selectedPeer(a), /Fresh/);
+  assert.equal(a.w.document.activeElement.id, "compose");
+  const row = a.$("messages").lastElementChild;
+  assert.match(row.textContent, /Did this arrive\?/);
+  assert.match(row.textContent, /not confirmed/);
+  assert.ok(row.querySelector(".send-discard"));
+  row.querySelector(".send-retry").click();
+  await until(() => !a.$("messages").textContent.includes("not confirmed"));
+  const sends = a.server.calls.filter(c => c.path === "/v1/send");
+  assert.equal(sends.length, 2);
+  assert.deepEqual(sends[1].body, sends[0].body, "the retry is the same request, from the same mailbox");
+  assert.equal(sends[1].body.from, OWNER);
+  await tick(80);
+  assert.equal(a.$("messages").textContent.match(/Did this arrive\?/g).length, 1);
+});
+
+test("Discard drops an unconfirmed first message without sending it again", async t => {
+  const a = await app(t);
+  a.server.intercept = call => call.path === "/v1/send" ? Promise.reject(new TypeError("network")) : undefined;
+  await startConversation(a, "Never mind");
+  await until(() => a.$("messages").querySelector(".send-discard"));
+  a.$("messages").querySelector(".send-discard").click();
+  await tick();
+  assert.doesNotMatch(a.$("messages").textContent, /Never mind/);
+  assert.equal(a.server.calls.filter(c => c.path === "/v1/send").length, 1);
+});
+
+test("a refused first message keeps the sheet and opens nothing", async t => {
+  const a = await app(t);
+  a.server.intercept = call => call.path === "/v1/send" ? response({ error: "not_admitted", detail: "no" }, 403) : undefined;
+  await startConversation(a);
+  await until(() => !a.$("new-error").hidden);
+  assert.equal(a.$("new-sheet").hidden, false);
+  assert.equal(a.$("thread-head").hidden, true);
+  assert.equal(a.$("thread-empty").hidden, false);
+});
+
+test("a first message that settles after a mailbox switch opens nothing in the other mailbox", async t => {
+  const send = deferred();
+  const a = await app(t);
+  a.server.intercept = call => call.path === "/v1/send" ? send.promise : undefined;
+  await startConversation(a);
+  await until(() => a.server.calls.some(c => c.path === "/v1/send"));
+  await a.switchTo("/garden/main");
+  send.resolve(response({ message_id: "late", sent_copy_id: "late-copy" }, 201));
+  await tick(80);
+  assert.equal(a.$("me-name").textContent, "Garden");
+  assert.equal(a.$("thread-head").hidden, true);
+  assert.doesNotMatch(a.$("threads").textContent, /Fresh/);
 });

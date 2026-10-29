@@ -1021,10 +1021,19 @@
 
     // Drop optimistic rows the server has now confirmed. Matched on the id the send call returned,
     // so a repeated message is never mistaken for its own echo.
-    reconcile(serverIds) {
-      this.rows = this.rows.filter(
-        (r) => r.status === "failed" || !(r.sent_copy_id && serverIds.has(r.sent_copy_id)),
-      );
+    //
+    // A send whose answer was lost has no id to match, but it has the `msg_ref` it was sent under,
+    // and that reference names exactly one message in this mailbox. When the listing shows a copy
+    // of ours carrying it, the send did commit: the "not confirmed" row is answered and goes.
+    reconcile(serverIds, serverRefs = new Set()) {
+      this.rows = this.rows.filter((r) => {
+        if (r.status !== "sending" && r.msg_ref && serverRefs.has(r.mailbox + "\n" + r.msg_ref)) return false;
+        return r.status === "failed" || !(r.sent_copy_id && serverIds.has(r.sent_copy_id));
+      });
+    },
+
+    find(localId) {
+      return this.rows.find((r) => r.local_id === localId) || null;
     },
 
     forMailbox(address) {
@@ -1250,6 +1259,7 @@
         attachments: m.attachments,
         msg_ref: m.msg_ref || null, // Phase 1e: a reply or edit can name it before the poll
         reply_to: m.reply_to || null,
+        uncertain: Boolean(m.uncertain),
       });
     }
 
@@ -2106,8 +2116,24 @@
     if (m.kind === "out" && m.status === "failed") {
       const failed = document.createElement("span");
       failed.className = "failed";
-      failed.textContent = "not sent";
+      // Two different facts. Refused means the postbox answered no; not confirmed means the answer
+      // never arrived, and the message may well be with them already — so the row says which, and
+      // offers the same two ways out either way: send it again, or let it go.
+      failed.textContent = m.uncertain ? "not confirmed" : "not sent";
       meta.append(failed);
+      if (Pending.find(m.id)) {
+        const retry = document.createElement("button");
+        retry.type = "button";
+        retry.className = "linkish send-retry";
+        retry.textContent = "Retry";
+        retry.addEventListener("click", (e) => { e.stopPropagation(); retrySend(m.id); });
+        const discard = document.createElement("button");
+        discard.type = "button";
+        discard.className = "linkish send-discard";
+        discard.textContent = "Discard";
+        discard.addEventListener("click", (e) => { e.stopPropagation(); discardSend(m.id); });
+        meta.append(retry, discard);
+      }
     }
     if (m.kind === "in") meta.append(blockSenderButton(m));
     // Phase 1e: "edited", the time and the ticks sit together at the bubble's bottom right.
@@ -3087,23 +3113,17 @@
       status: "sending",
       thread_id: threadId,
       attachments: files.map((file, i) => ({ id: attachments[i], filename: file.name, media_type: file.type, bytes: file.size })),
+      request: {
+        to, body: text, from: context.address, attachments,
+        ...(threadId ? { thread_id: threadId } : {}),
+        ...(msgRef ? { msg_ref: msgRef } : {}),
+        ...(replyFields || {}),
+      },
     });
     render();
 
     try {
-      const sent = await api("/v1/send", {
-        method: "POST",
-        body: {
-          to, body: text, from: context.address, attachments,
-          ...(threadId ? { thread_id: threadId } : {}),
-          ...(msgRef ? { msg_ref: msgRef } : {}),
-          ...(replyFields || {}),
-        },
-      });
-      // The id of the server's own copy. Holding it is what lets the optimistic row retire the
-      // moment that copy comes back, instead of the message appearing twice for a poll.
-      record.sent_copy_id = sent.sent_copy_id || null;
-      record.status = "sent";
+      await deliver(record);
       drafts.delete(draftKey);
       if (context.current() && composerKey() === draftKey) {
         if ($("compose").value.trim() === originalText) $("compose").value = "";
@@ -3121,10 +3141,61 @@
       if (!record.sent_copy_id) Pending.reconcile(new Set());
       if (context.current()) loadInbox().then(render).catch(() => {});
     } catch (e) {
-      record.status = "failed";
       if (context.current()) toast(sendFailure(e));
     }
     if (context.current()) render();
+  }
+
+  // One attempt at a pending record's send, exactly as it was first made: same sender, recipient,
+  // body, thread and `msg_ref`. The record keeps the request it was born with, so a retry can never
+  // pick up a different mailbox, a different conversation or a different reference — with the
+  // reference, a retry of a send that did commit is answered as that same message, not a second.
+  //
+  // A refusal is the postbox's answer and final. Anything else — the network, a lost response, a
+  // gateway in between — leaves the outcome unknown, and the record says so.
+  async function deliver(record) {
+    record.status = "sending";
+    record.uncertain = false;
+    try {
+      const sent = await api("/v1/send", { method: "POST", body: record.request });
+      // The id of the server's own copy. Holding it is what lets the optimistic row retire the
+      // moment that copy comes back, instead of the message appearing twice for a poll.
+      record.sent_copy_id = sent.sent_copy_id || null;
+      record.status = "sent";
+      return sent;
+    } catch (e) {
+      record.status = "failed";
+      record.uncertain = isUncertain(e);
+      throw e;
+    }
+  }
+
+  // Whether a failed send might nonetheless have been delivered.
+  const isUncertain = (e) => !(e instanceof ApiError) || e.status >= 500;
+
+  async function retrySend(localId) {
+    const record = Pending.find(localId);
+    const context = mailboxContext();
+    // Only from the mailbox it was written in: the rows are listed per mailbox, so this is a guard
+    // against a stale button rather than a choice anyone can make.
+    if (!record || record.status !== "failed" || record.mailbox !== context.address) return;
+    const promise = deliver(record);
+    render();
+    try {
+      await promise;
+      if (!record.sent_copy_id) Pending.rows = Pending.rows.filter((r) => r !== record);
+      if (context.current()) loadInbox().then(render).catch(() => {});
+    } catch (e) {
+      if (context.current()) toast(sendFailure(e));
+    }
+    if (context.current()) render();
+  }
+
+  function discardSend(localId) {
+    const record = Pending.find(localId);
+    if (!record || record.status !== "failed" || record.mailbox !== mailboxContext().address) return;
+    Pending.rows = Pending.rows.filter((r) => r !== record);
+    render();
   }
 
   function sendFailure(e) {
@@ -3305,7 +3376,11 @@
     }
     state.inbound = incoming;
     state.policy = body.policy || null;
-    Pending.reconcile(new Set(state.inbound.map((m) => m.message_id)));
+    const mailbox = state.me ? state.me.address : "";
+    Pending.reconcile(
+      new Set(state.inbound.map((m) => m.message_id)),
+      new Set(state.inbound.filter((m) => m.direction === "out" && m.msg_ref).map((m) => mailbox + "\n" + m.msg_ref)),
+    );
   }
 
   // A server that answered is a fact; a request that never arrived is weather.
@@ -3716,29 +3791,77 @@
     if (!body) return fail("Write something to send.");
 
     $("new-send").disabled = true;
+    // Through `composeBody` for the same reason the composer is: the first message to a peer is
+    // still a message from this app, and sending it as prose is what left it classified
+    // `not_a_request` and parked for a human. That the *opening* message was the one going out
+    // bare is what made this look like the recipient was broken rather than the sender — every
+    // reply after it was already an envelope, so nothing further in the thread showed it.
+    //
+    // Sent as a pending record, like the composer's, so the opening message has the same answer to
+    // a lost response: its own `msg_ref`, a row in the new conversation, and Retry or Discard.
+    const msgRef = actionsOn() ? newMsgRef() : null;
+    const record = {
+      msg_ref: msgRef,
+      reply_to: null,
+      local_id: "local_" + randomString(8),
+      mailbox: context.address,
+      to,
+      body: composeBody(body),
+      at: Math.floor(Date.now() / 1000),
+      status: "sending",
+      thread_id: null,
+      attachments: [],
+    };
+    record.request = { to, body: record.body, from: context.address, ...(msgRef ? { msg_ref: msgRef } : {}) };
+    let sent;
     try {
-      // Through `composeBody` for the same reason the composer is: the first message to a peer is
-      // still a message from this app, and sending it as prose is what left it classified
-      // `not_a_request` and parked for a human. That the *opening* message was the one going out
-      // bare is what made this look like the recipient was broken rather than the sender — every
-      // reply after it was already an envelope, so nothing further in the thread showed it.
-      const sent = await api("/v1/send", { method: "POST", body: { to, body: composeBody(body), from: context.address } });
-      if (!context.current()) return;
-      closeSheet("new-sheet");
-      await loadAll();
-      if (!context.current()) return;
-      // A conversation started with a namespace or a `/k/` address is filed by the server under
-      // whatever peer it resolved to, so open by what came back rather than by what was typed.
-      const copy = state.inbound.find(m => m.message_id === sent.sent_copy_id);
-      const resolved = copy ? peerKeyOf(copy) : normalisePeer(to);
-      const started = buildThreads().find((t) => t.peer === resolved || t.peer === to);
-      if (started) openThread(started.peer);
-      else render();
+      sent = await deliver(record);
     } catch (e) {
-      if (context.current()) fail(sendFailure(e));
-    } finally {
-      if (context.current()) $("new-send").disabled = false;
+      if (!context.current()) return;
+      $("new-send").disabled = false;
+      // Refused: nothing was started, and what to fix is in this sheet.
+      if (!record.uncertain) return fail(sendFailure(e));
+      // Not confirmed: the conversation may well exist on their side already. Open it here, in the
+      // mailbox it was written from, with the message waiting on Retry or Discard — leaving it in a
+      // sheet that says "could not reach" invites typing it all again as a second message.
+      Pending.add(record);
+      closeSheet("new-sheet");
+      openStarted(normalisePeer(to));
+      return;
     }
+    if (!context.current()) return;
+    if (sent.sent_copy_id) Pending.add(record);
+    closeSheet("new-sheet");
+    $("new-send").disabled = false;
+    // Shown at once from the record, then from the server's listing. A reload that fails is the
+    // live loop's to retry; it must not leave the conversation that was just started unopened.
+    const first = normalisePeer(to);
+    openStarted(first);
+    try {
+      await loadAll();
+    } catch {
+      /* the optimistic row is already on screen */
+    }
+    // Somebody who has moved on to another conversation in the meantime keeps it.
+    if (!context.current() || state.openPeer !== first) return;
+    // A conversation started with a namespace or a `/k/` address is filed by the server under
+    // whatever peer it resolved to, so open by what came back rather than by what was typed. Opened
+    // again even when it is the same peer: its thread list has only just arrived, and that is what
+    // selects the conversation's thread rather than the list of them.
+    const copy = state.inbound.find(m => m.message_id === sent.sent_copy_id);
+    const resolved = copy ? peerKeyOf(copy) : first;
+    const started = buildThreads().find((t) => t.peer === resolved || t.peer === to);
+    openStarted(started ? started.peer : first);
+  }
+
+  // The conversation a first message just started, opened and selected with its composer ready:
+  // the next thing anyone does after "hello" is wait for the answer in that conversation, not pick
+  // it out of the list. Focus goes to the composer on a phone too — the keyboard is already up from
+  // writing the first message, so this keeps it rather than raising it.
+  function openStarted(peer) {
+    if (!peer) return render();
+    openThread(peer);
+    $("compose").focus({ preventScroll: true });
   }
 
   // ---- settings --------------------------------------------------------------------------------
