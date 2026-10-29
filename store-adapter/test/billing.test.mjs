@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { ACCOUNT, OIDC_SUB, fixtureCatalog, json, readBody, spawnBridge, uuid } from "./harness.mjs";
+import { currentEdition, pricingYear } from "../src/catalog.js";
 
 const MEMBER = "Bearer member-token";
 const SVC = "Bearer svc_fixture_billing_token_0123456789abcdef";
@@ -421,11 +422,30 @@ test("the account page's displayed Cloud prices are the catalog's", () => {
   const source = readFileSync(new URL("../../site/account-config.js", import.meta.url), "utf8");
   const window = {};
   new Function("window", source)(window);
+  const cloud = window.PIGEONPOST_ACCOUNT.cloud;
   const catalog = JSON.parse(readFileSync(new URL("../catalog/pigeonpost-catalog.json", import.meta.url), "utf8"));
   for (let n = 1; n <= 10; n++) {
     for (const currency of ["USD", "TRY"]) {
-      const edition = catalog.plans[`cloud-${n}names-yearly-${currency.toLowerCase()}`].editions[String(window.PIGEONPOST_ACCOUNT.cloud.pricingYear)];
-      assert.equal(window.PIGEONPOST_ACCOUNT.cloud.plans[n][currency], edition.amount, `${n} ${currency}`);
+      const { edition } = currentEdition(catalog.plans[`cloud-${n}names-yearly-${currency.toLowerCase()}`].editions);
+      assert.equal(cloud.plans[n][currency], edition.amount, `${n} ${currency}`);
     }
+    // Every TRY year the page knows matches the catalog, and the catalog lists no TRY year the
+    // page would not switch to on January 1.
+    const tryEditions = catalog.plans[`cloud-${n}names-yearly-try`].editions;
+    assert.deepEqual(Object.keys(cloud.tryByYear).sort(), Object.keys(tryEditions).sort(), `${n} TRY years`);
+    for (const [year, prices] of Object.entries(cloud.tryByYear)) assert.equal(prices[n], tryEditions[year].amount, `${n} TRY ${year}`);
   }
+});
+
+test("a TRY edition provisioned ahead is announced, never sold before January 1 (Istanbul)", () => {
+  const editions = { 2026: { amount: "409.00", plan_id: uuid(1) }, 2027: { amount: "449.00", plan_id: uuid(2) } };
+  const dec31 = currentEdition(editions, new Date("2026-12-31T20:59:59Z"));
+  assert.equal(dec31.year, 2026);
+  assert.equal(dec31.edition.amount, "409.00");
+  assert.deepEqual(dec31.next, { year: 2027, edition: editions[2027] });
+  const jan1 = currentEdition(editions, new Date("2026-12-31T21:00:00Z"));
+  assert.equal(jan1.year, 2027);
+  assert.equal(jan1.next, null);
+  assert.equal(pricingYear(new Date("2026-12-31T21:00:00Z")), 2027);
+  assert.equal(currentEdition({ 2026: editions[2026] }, new Date("2027-06-01T00:00:00Z")).year, 2026);
 });
