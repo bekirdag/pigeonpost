@@ -93,6 +93,33 @@ try {
     $state = State
     Check ($state.posts -eq 3 -and $state.committed -eq 2) 'Discard neither sends again nor deletes the already committed fixture copy'
     Capture 'delivery-discarded.png'
+    # A first message to a new recipient opens that conversation at once, here with an unconfirmed
+    # answer: the thread, its pending row and recovery are in view and the caret is in its box.
+    Invoke-Control 'New conversation'
+    Set-ControlText 'Pigeonpost address' '/fixture/newpeer'
+    Set-ControlText 'First message' 'Native first message fixture'
+    $sendCondition = [System.Windows.Automation.AndCondition]::new(
+        [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::AutomationIdProperty, 'PrimaryButton'),
+        [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, 'Send'))
+    $dialogSend = $null
+    for ($n = 0; $n -lt 40 -and -not $dialogSend; $n++) { $dialogSend = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $sendCondition); if (-not $dialogSend) { Start-Sleep -Milliseconds 250 } }
+    Check ($null -ne $dialogSend) 'New conversation dialog offers Send for a first message'
+    $dialogSend.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    Wait-Check { $s = State; $s -and $s.posts -eq 4 } 'The first message is sent once from the new conversation'
+    Wait-Check {
+        $address = Control 'Sender address details'
+        $address -and $address.FindFirst([System.Windows.Automation.TreeScope]::Descendants,
+            [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, '/fixture/newpeer'))
+    } 'The new conversation is selected and open after its first send'
+    $null = Wait-Control 'Review pending deliveries'
+    Check ((Read-ControlText 'Message') -eq 'Native first message fixture') 'An unconfirmed first message stays in the new conversation with its text kept'
+    Wait-Check { (Wait-Control 'Message').Current.HasKeyboardFocus } 'Focus is in the new conversation''s message box'
+    Capture 'delivery-new-conversation.png'
+    Invoke-Control 'Review pending deliveries'
+    $null = Wait-Control 'Saved delivery content'
+    Check ((Read-ControlText 'Saved delivery content') -eq 'Native first message fixture') 'The new conversation''s unconfirmed first message has Retry and Discard'
+    Invoke-Control 'Discard recovery'
+    Wait-Check { @(Get-ChildItem $pendingFolder -Filter '*.pending' -File -Recurse).Count -eq 0 } 'Discarding the first message removes only its recovery'
     @{ passed = $true; checks = $checks } | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $directory 'delivery-ui.json')
     Write-Host "Native delivery UI: $($checks.Count) checks passed."
 } catch {

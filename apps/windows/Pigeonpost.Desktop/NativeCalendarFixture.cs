@@ -43,7 +43,7 @@ internal sealed class NativeCalendarFixture : ICalendarActionsService, IProtecte
         var state = new { today, posts, edits, answers, cancels, reminderSaves, settingsSaves, requests = requests.Select(p => new { key = p.Key, sha = p.Value.Hash }),
             events = events.Values.Select(v => new { id = v.Event.Id, title = v.Event.Title, revision = v.Event.Revision, status = v.Event.Status, rsvp = v.Event.My?.Rsvp }),
             settings = new { timezone = settings.Timezone, previews = settings.Previews, week_start = settings.WeekStart } };
-        var temporary = statePath + ".new"; File.WriteAllText(temporary, JsonSerializer.Serialize(state)); File.Move(temporary, statePath, overwrite: true);
+        var temporary = statePath + ".new"; File.WriteAllText(temporary, JsonSerializer.Serialize(state)); FixtureState.Replace(temporary, statePath);
     }
     public async Task<IReadOnlyList<Mailbox>> GetMailboxesAsync(CancellationToken ct)
     { Check(ct); var mailboxes = await inbox.GetMailboxesAsync(ct); own = mailboxes[0].Address; return mailboxes; }
@@ -124,5 +124,20 @@ internal sealed class NativeCalendarFixture : ICalendarActionsService, IProtecte
     public Task SetContactAsync(string identity, Contact contact, CancellationToken ct) => throw new NotSupportedException();
     public Task RemoveContactAsync(string identity, string peer, CancellationToken ct) => throw new NotSupportedException();
     public Task DeleteThreadAsync(string identity, string thread, CancellationToken ct) => throw new NotSupportedException();
+}
+
+// The UI scripts poll these state files while the app rewrites them. On Windows replacing a file
+// that a reader has open fails with a sharing violation, which used to surface as the fixture's
+// action failing after its in-memory change (the page said "Cancelled", the file never did).
+internal static class FixtureState
+{
+    internal static void Replace(string temporary, string path)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try { File.Move(temporary, path, overwrite: true); return; }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException && attempt < 100) { Thread.Sleep(20); }
+        }
+    }
 }
 #endif

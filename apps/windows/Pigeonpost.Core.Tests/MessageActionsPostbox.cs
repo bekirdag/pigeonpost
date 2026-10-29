@@ -124,6 +124,35 @@ internal static class MessageActionsPostbox
                 restartTokens.AcceptedAuthorization?.Retire();
             }
             finally { Directory.Delete(custodyFolder, recursive: true); }
+            stage = "new conversation opens after its first send";
+            var carolAddress = carol.GetProperty("address").GetString()!;
+            var openFolder = Path.Combine(Path.GetTempPath(), "pp-windows-open-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(openFolder);
+            try
+            {
+                using var protector = new MessageAttemptStoreTests.Protector();
+                using var bobLoss = new PostboxClient(http, new Tokens(bob.GetProperty("token").GetString()!, 'b'), proxy);
+                foreach (var (client, owner, lose) in new[] { (a, from, false), (bobLoss, to, true) })
+                {
+                    var coordinator = new MessageDeliveryCoordinator(client, new FileMessageAttemptStore(Path.Combine(openFolder, owner.Replace('/', '_')), protector));
+                    using var model = new InboxViewModel(client, deliveryCoordinator: coordinator);
+                    await model.InitializeAsync();
+                    Check(model.SelectedMailbox?.Address == owner);
+                    var text = lose ? "First message, answer lost" : "First message to a new recipient";
+                    if (lose) await Control(http, proxy, "after");
+                    await model.StartConversationAsync(carolAddress, text);
+                    if (lose) await Control(http, proxy, "off");
+                    Check(model.SelectedConversation?.Peer == carolAddress && model.SelectedMailbox?.Address == owner);
+                    Check(model.Messages.Count(m => m.DisplayBody == text) == 1 && model.CanCompose);
+                    if (lose) Check(model.HasPendingDeliveries);
+                    await model.RefreshAsync(background: true);
+                    Check(model.SelectedConversation?.Peer == carolAddress && model.Messages.Count(m => m.DisplayBody == text) == 1);
+                    // The server's default thread now exists; an unconfirmed first message stays in the composer.
+                    Check(model.Draft == (lose ? text : ""));
+                }
+            }
+            finally { Directory.Delete(openFolder, recursive: true); }
+
             stage = "normal protected composer response loss";
             var composerFolder = Path.Combine(Path.GetTempPath(), "pp-windows-composer-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(composerFolder);
@@ -182,7 +211,7 @@ internal static class MessageActionsPostbox
                     && model.Draft == "" && !model.HasComposerAction && !model.HasPendingDeliveries && !model.IsSending);
             }
             finally { Directory.Delete(composerFolder, recursive: true); }
-            Console.WriteLine("PASS Windows postbox interoperability: canonical lookup, folded edits, replies, receipt privacy, owned copies, exact committed-loss, protected restart, normal/reply/edit composer recovery, owned version info and version deletion.");
+            Console.WriteLine("PASS Windows postbox interoperability: canonical lookup, folded edits, replies, receipt privacy, owned copies, exact committed-loss, protected restart, new conversation opened after a confirmed or unconfirmed first send, normal/reply/edit composer recovery, owned version info and version deletion.");
             return 0;
         }
         catch (Exception ex)

@@ -1,5 +1,26 @@
 namespace Pigeonpost.Core;
 
+// A dialog belongs to the login and mailbox that opened it, even if a later login lists the same
+// address. Capturing the address alone lets an old dialog submit under that replacement login.
+public sealed class NewConversationTarget
+{
+    internal readonly InboxViewModel Owner;
+    private readonly Func<bool> current;
+    private readonly Func<AuthorizationContext> bind;
+    public string Mailbox { get; }
+    public bool IsCurrent => current();
+    internal NewConversationTarget(InboxViewModel owner, string mailbox, Func<bool> current, Func<AuthorizationContext> bind)
+    { Owner = owner; Mailbox = mailbox; this.current = current; this.bind = bind; }
+    internal AuthorizationContext Bind()
+    {
+        if (!IsCurrent) throw new AuthorizationRetiredException();
+        var context = bind();
+        try { if (!IsCurrent) throw new AuthorizationRetiredException(); return context; }
+        catch { context.Dispose(); throw; }
+    }
+    public override string ToString() => "NewConversationTarget(redacted)";
+}
+
 public sealed partial class InboxViewModel
 {
     private sealed class InboxActor(AuthorizationLease? accepted, string? owner)
@@ -74,6 +95,25 @@ public sealed partial class InboxViewModel
     {
         if (ActiveAccount is not { } owner) return null;
         try { return new InboxOperation(this, owner); } catch (AuthorizationRetiredException) { return null; }
+    }
+
+    public NewConversationTarget? CaptureNewConversationTarget()
+    {
+        using var operation = BeginOperation();
+        if (operation is null || SelectedMailbox is not { } mailbox) return null;
+        var generation = mailboxVersion;
+        return new(this, mailbox.Address, () => operation.IsMailbox(generation), AuthorizationContext.CaptureBinding());
+    }
+
+    public async Task<bool> StartConversationAsync(NewConversationTarget target, string peer, string firstMessage)
+    {
+        if (!ReferenceEquals(target.Owner, this) || !target.IsCurrent) return false;
+        try
+        {
+            using var context = target.Bind();
+            return await StartConversationAsync(peer, firstMessage, target.Mailbox) && target.IsCurrent;
+        }
+        catch (AuthorizationRetiredException) { return false; }
     }
 
     private bool PrepareAccount(bool allowReplacement)

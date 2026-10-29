@@ -167,6 +167,104 @@ internal static class InboxAuthorizationTests
             Require(await vm.MarkConversationReadAsync(Alpha.Address, Peer) == 0 && f.Sends == 0 && f.Loads == 1);
             inner.Retire();
         });
+        yield return ("A new conversation's first send selects it in place of the open one, with the message shown", async () =>
+        {
+            using var f = new Service(); using var vm = new InboxViewModel(f); await vm.InitializeAsync();
+            Require(vm.SelectedConversation?.Peer == Peer);
+            Require(await vm.StartConversationAsync("/carol/main", "Hello Carol", Alpha.Address));
+            Require(vm.SelectedMailbox?.Address == Alpha.Address && vm.SelectedConversation?.Peer == "/carol/main" && vm.HasConversation);
+            Require(vm.Messages.Count == 1 && vm.Messages[0].DisplayBody == "Hello Carol" && vm.Messages[0].Status == DeliveryStatus.Sent);
+            Require(f.Sends == 1 && vm.Draft == "" && vm.CanCompose);
+            await vm.RefreshAsync(background: true);
+            Require(vm.SelectedConversation?.Peer == "/carol/main");
+        });
+        yield return ("Starting a conversation while the inbox refreshes waits for it instead of dropping the message", async () =>
+        {
+            using var f = new Service(); using var vm = new InboxViewModel(f); await vm.InitializeAsync();
+            var gate = f.Pause("load"); var refresh = vm.RefreshAsync(); await gate.Wait();
+            Require(vm.IsBusy);
+            var start = vm.StartConversationAsync("/carol/main", "Sent after the refresh", Alpha.Address);
+            await Task.Delay(100); Require(!start.IsCompleted && f.Sends == 0);
+            gate.Release.TrySetResult(); await refresh;
+            Require(await start && f.Sends == 1 && vm.SelectedConversation?.Peer == "/carol/main"
+                && vm.Messages.Single().DisplayBody == "Sent after the refresh");
+        });
+        yield return ("An unconfirmed first send still opens the new conversation with its failed row and the text kept", async () =>
+        {
+            using var f = new Service { FailSend = true }; using var vm = new InboxViewModel(f); await vm.InitializeAsync();
+            Require(await vm.StartConversationAsync("/carol/main", "Answer lost", Alpha.Address));
+            Require(vm.SelectedConversation?.Peer == "/carol/main" && vm.Messages.Single().Status == DeliveryStatus.Failed
+                && vm.Messages.Single().DisplayBody == "Answer lost" && vm.Draft == "Answer lost" && vm.Error is not null && vm.CanCompose);
+            // The next refresh brings the server's default thread for the new peer; the kept text follows it.
+            f.DefaultThreadFor = "/carol/main";
+            await vm.RefreshAsync(background: true);
+            Require(vm.SelectedConversation?.Peer == "/carol/main" && vm.SelectedSubject?.Id == "thread_carol" && vm.Draft == "Answer lost");
+            f.FailSend = false; await vm.SendDraftAsync();
+            Require(f.Sends == 2 && vm.Draft == "" && vm.SelectedConversation?.Peer == "/carol/main");
+        });
+        yield return ("A new-conversation dialog cannot submit after a replacement login to the same mailbox", async () =>
+        {
+            using var f = new Service(); using var vm = new InboxViewModel(f); await vm.InitializeAsync();
+            var target = vm.CaptureNewConversationTarget()!;
+            Require(target.IsCurrent && target.Mailbox == Alpha.Address);
+            f.Rotate(); await vm.InitializeAsync();
+            Require(vm.SelectedMailbox?.Address == Alpha.Address && !target.IsCurrent);
+            Require(!await vm.StartConversationAsync(target, "/carol/main", "Old dialog"));
+            Require(f.Sends == 0 && vm.SelectedConversation?.Peer == Peer && vm.Draft == "");
+        });
+        yield return ("A new-conversation dialog cannot revive after switching away and back to its mailbox", async () =>
+        {
+            using var f = new Service(); using var vm = new InboxViewModel(f); await vm.InitializeAsync();
+            var target = vm.CaptureNewConversationTarget()!;
+            await vm.SwitchMailboxAsync(Beta); await vm.SwitchMailboxAsync(Alpha);
+            Require(!target.IsCurrent && !await vm.StartConversationAsync(target, "/carol/main", "Old dialog"));
+            Require(f.Sends == 0 && vm.SelectedConversation?.Peer == Peer && vm.Draft == "");
+        });
+        yield return ("A new-conversation dialog retains the caller that opened it", async () =>
+        {
+            using var f = new Service(); using var vm = new InboxViewModel(f); await vm.InitializeAsync();
+            var caller = f.Root.Child();
+            NewConversationTarget target;
+            using (new AuthorizationContext(caller)) target = vm.CaptureNewConversationTarget()!;
+            caller.Retire();
+            Require(!target.IsCurrent && !await vm.StartConversationAsync(target, "/carol/main", "Old caller"));
+            Require(f.Sends == 0 && vm.SelectedConversation?.Peer == Peer);
+        });
+        yield return ("A current new-conversation dialog submits once and opens the thread", async () =>
+        {
+            using var f = new Service(); using var vm = new InboxViewModel(f); await vm.InitializeAsync();
+            var target = vm.CaptureNewConversationTarget()!;
+            Require(await vm.StartConversationAsync(target, "/carol/main", "Current dialog"));
+            Require(f.Sends == 1 && vm.SelectedConversation?.Peer == "/carol/main"
+                && vm.Messages.Single().DisplayBody == "Current dialog" && vm.Draft == "");
+        });
+        yield return ("A new conversation never opens or sends in another inbox or a replaced login", async () =>
+        {
+            using (var f = new Service())
+            {
+                using var vm = new InboxViewModel(f); await vm.InitializeAsync();
+                Require(!await vm.StartConversationAsync("/carol/main", "Wrong inbox", Beta.Address));
+                Require(f.Sends == 0 && vm.SelectedConversation?.Peer == Peer && vm.Conversations.All(c => c.Peer != "/carol/main"));
+            }
+            using (var f = new Service())
+            {
+                using var vm = new InboxViewModel(f); await vm.InitializeAsync();
+                var gate = f.Pause("load"); var refresh = vm.RefreshAsync(); await gate.Wait();
+                var start = vm.StartConversationAsync("/carol/main", "Old login", Alpha.Address);
+                f.Rotate(); f.Label = "replacement"; await vm.InitializeAsync();
+                gate.Release.TrySetResult(); await refresh;
+                Require(!await start && f.Sends == 0 && vm.Conversations.All(c => c.Peer != "/carol/main") && vm.Draft == "");
+            }
+            using (var f = new Service())
+            {
+                using var vm = new InboxViewModel(f); await vm.InitializeAsync();
+                var gate = f.Pause("load"); var refresh = vm.RefreshAsync(); await gate.Wait();
+                var start = vm.StartConversationAsync("/carol/main", "Old inbox", Alpha.Address);
+                var switching = vm.SwitchMailboxAsync(Beta);
+                gate.Release.TrySetResult(); await refresh; await switching;
+                Require(!await start && f.Sends == 0 && vm.SelectedMailbox?.Address == Beta.Address && vm.Conversations.All(c => c.Peer != "/carol/main"));
+            }
+        });
     }
     private static readonly Mailbox Alpha = new("/k/inbox_alpha", "/alpha/main");
     private static readonly Mailbox Beta = new("/k/inbox_beta", "/beta/main");
@@ -190,6 +288,8 @@ internal static class InboxAuthorizationTests
         internal string Label = "original";
         internal int Loads, Sends, Uploads, FileSends, Acknowledgements;
         internal Action? OnUpload, OnAcknowledge;
+        internal bool FailSend;
+        internal string? DefaultThreadFor;
         private bool createdThread;
         private Gate? gate;
         private string? pausedMethod;
@@ -213,12 +313,15 @@ internal static class InboxAuthorizationTests
                 MessageId = "message_" + Label + "_" + i, From = "/k/fixture_peer", SenderHandle = Peer,
                 Body = Label + " fixture " + i, ReceivedAt = 1_789_113_600 + i, Read = false,
             }).ToArray();
-            ServerThread[] threads = createdThread ? [new("thread_fixture", Peer, "New subject", false)] : [];
+            ServerThread[] threads = [.. createdThread ? [new ServerThread("thread_fixture", Peer, "New subject", false)] : Array.Empty<ServerThread>(),
+                .. DefaultThreadFor is { } other ? [new ServerThread("thread_carol", other, null, true)] : Array.Empty<ServerThread>()];
             return Complete("load", new InboxSnapshot(rows, threads, [new Contact(Peer, "Bob", "allow", "review", [])], new HashSet<string>()));
         }
         public Task<SendReceipt> SendAsync(string identity, string peer, string body, string? threadId, CancellationToken ct)
         {
-            Sends++; return Complete("send", new SendReceipt("recipient_fixture", "sender_fixture"));
+            Sends++;
+            if (FailSend) throw new HttpRequestException("Synthetic lost answer.");
+            return Complete("send", new SendReceipt("recipient_fixture", "sender_fixture"));
         }
         public Task<MessageAttachment> UploadAsync(string identity, string filename, byte[] bytes, CancellationToken ct)
         {

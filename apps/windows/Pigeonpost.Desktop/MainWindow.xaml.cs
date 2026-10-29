@@ -262,7 +262,10 @@ public sealed partial class MainWindow : Window
 
     private async Task NewConversationAsync()
     {
-        if (dialogOpen || ViewModel.SelectedMailbox is null || ViewModel.IsBusy || ViewModel.IsSending) return;
+        // Not gated on a refresh in progress: the model waits for it, and a shortcut that silently
+        // does nothing during every refresh reads as broken.
+        var model = ViewModel;
+        if (dialogOpen || model.CaptureNewConversationTarget() is not { } target) return;
         dialogOpen = true;
         try
         {
@@ -294,13 +297,33 @@ public sealed partial class MainWindow : Window
             };
             peer.TextChanged += Validate;
             message.TextChanged += Validate;
-            if (await dialog.ShowAsync() == ContentDialogResult.Primary)
-            {
-                await ViewModel.StartConversationAsync(peer.Text, message.Text);
-                ShowConversation();
-            }
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+            dialogOpen = false;
+            await OpenStartedConversationAsync(model, target, peer.Text, message.Text);
         }
         finally { dialogOpen = false; }
+    }
+
+    // The new conversation replaces whatever page was showing (Calls, Calendar, Groups …) and is
+    // selected in the list, with its first message (sent, or pending with recovery) in view and the
+    // caret in its message box. Bound to the inbox the dialog was opened from: if the account or
+    // inbox changed meanwhile the model refuses, and nothing here moves the window.
+    private async Task<bool> OpenStartedConversationAsync(InboxViewModel model, NewConversationTarget target, string peer, string message)
+    {
+        if (!ReferenceEquals(model, ViewModel) || !target.IsCurrent) return false;
+        if (sideView != SideView.Chats) ShowSideView(SideView.Chats);
+        if (!await model.StartConversationAsync(target, peer, message) || !ReferenceEquals(model, ViewModel) || !target.IsCurrent) return false;
+        if (sideView != SideView.Chats) ShowSideView(SideView.Chats);
+        ShowConversation();
+        if (ViewModel.Messages.LastOrDefault() is { } last) QueueScroll(last);
+        var selected = ViewModel.SelectedConversation?.Peer;
+        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
+        {
+            if (!dialogOpen && ReferenceEquals(model, ViewModel) && target.IsCurrent && ViewModel.CanCompose
+                && MessagingArea.Visibility == Visibility.Visible && ViewModel.SelectedConversation?.Peer == selected)
+                Composer.Focus(FocusState.Programmatic);
+        });
+        return true;
     }
 
     private async Task NewSubjectAsync()

@@ -70,7 +70,7 @@ internal sealed class NativeApprovalFixture(NativeApprovalAccount account, strin
     private void Save()
     {
         var state = new { resolves, approves, denies, verifications, foreignActors, rotations = account.Rotations, states };
-        var temporary = statePath + ".new"; File.WriteAllText(temporary, JsonSerializer.Serialize(state)); File.Move(temporary, statePath, overwrite: true);
+        var temporary = statePath + ".new"; File.WriteAllText(temporary, JsonSerializer.Serialize(state)); FixtureState.Replace(temporary, statePath);
     }
 }
 #endif
