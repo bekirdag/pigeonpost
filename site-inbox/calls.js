@@ -679,33 +679,55 @@
   const NOISE_BASE = "/vendor/web-noise-suppressor/";
   const noise = { mode: store.get("ppi_call_noise") || "strong", ctx: null, node: null, src: null, wasm: null, active: false };
 
+  // Strong noise removal never holds up a call. WebKit leaves AudioContext.resume() pending, neither
+  // resolved nor rejected, while the page may not start audio — an iPhone answering from CallKit,
+  // with no tap in the page and the phone locked, is exactly that — and awaiting it there left the
+  // answer unsent: the caller rang out and the callee sat on "Connecting…". So the audio graph gets
+  // NOISE_RESUME_MS to start and the whole setup NOISE_SETUP_MS; past either, the call goes ahead
+  // with the plain microphone (the browser's standard suppression), as it does when RNNoise fails.
+  const NOISE_RESUME_MS = 1500, NOISE_SETUP_MS = 8000;
+  const within = (promise, ms) => {
+    let timer;
+    return Promise.race([promise, new Promise((resolve) => { timer = setTimeout(resolve, ms, "timeout"); })]).finally(() => clearTimeout(timer));
+  };
+
   async function processMic(raw, isCurrent = () => true) {
     if (!isCurrent()) return raw;
     teardownNoise();
     if (noise.mode !== "strong" || !canStrongNoise) return raw;
-    let ctx, src, node;
+    let ctx, src, node, abandoned = false;
+    const live = () => !abandoned && isCurrent();
     const dispose = () => {
       try { src?.disconnect(); node?.disconnect(); node?.destroy?.(); ctx?.close().catch(() => {}); } catch (_) { /* closed */ }
     };
-    try {
+    const setup = (async () => {
       const lib = await import(NOISE_BASE + "index.js");
-      if (!isCurrent()) return raw;
+      if (!live()) return null;
       ctx = new AudioContext({ sampleRate: 48_000 });
       noise.wasm ||= await lib.loadRnnoise({ url: NOISE_BASE + "rnnoise.wasm", simdUrl: NOISE_BASE + "rnnoise_simd.wasm" });
-      if (!isCurrent()) { dispose(); return raw; }
+      if (!live()) return null;
       await ctx.audioWorklet.addModule(NOISE_BASE + "rnnoise/workletProcessor.js");
-      if (!isCurrent()) { dispose(); return raw; }
+      if (!live()) return null;
       src = ctx.createMediaStreamSource(new MediaStream([raw]));
       node = new lib.RnnoiseWorkletNode(ctx, { maxChannels: 1, wasmBinary: noise.wasm });
       const dest = ctx.createMediaStreamDestination();
       src.connect(node).connect(dest);
-      await ctx.resume().catch(() => {});
-      if (!isCurrent()) { dispose(); return raw; }
+      if (ctx.state !== "running") await within(ctx.resume().catch(() => {}), NOISE_RESUME_MS);
+      if (!live()) return null;
+      // A graph that is not running sends silence: better the microphone as it comes.
+      if (ctx.state !== "running") throw Object.assign(new Error("audio not running"), { name: "NotRunning" });
+      return dest.stream.getAudioTracks()[0];
+    })();
+    try {
+      const out = await within(setup, NOISE_SETUP_MS);
+      if (out === "timeout") throw Object.assign(new Error("noise setup timed out"), { name: "TimeoutError" });
+      if (!out || !isCurrent()) { dispose(); return raw; }
       Object.assign(noise, { ctx, node, src, active: true });
-      const out = dest.stream.getAudioTracks()[0];
       out.contentHint = "speech";
       return out;
     } catch (err) {
+      abandoned = true;
+      setup.catch(() => {}).finally(dispose); // a setup still running is closed when it ends
       dispose();
       console.warn("calls: strong noise removal unavailable", err && err.name);
       if (isCurrent()) teardownNoise();

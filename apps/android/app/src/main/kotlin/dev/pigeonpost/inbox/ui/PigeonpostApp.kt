@@ -177,7 +177,7 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
         }
         when (sheet) {
             "mailbox" -> MailboxDialog(state, { store.switchMailbox(it); sheet = null }, { sheet = null }, session.username)
-            "new" -> NewConversationDialog(state, { store.selectPeer(it); sheet = null }, { sheet = null })
+            "new" -> NewConversationDialog(state, { model.startConversation(it); sheet = null }, { sheet = null })
             "subject" -> SubjectDialog(state.actionBusy, { store.openThread(it) { sheet = null } }, { sheet = null })
             "settings" -> SettingsDialog(state, session, model.graph.fixtures, handleState, model.handles,
                 paidHandles = model.paidHandles,
@@ -191,7 +191,7 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
             "contact" -> ContactDialog(state, editContact, { store.saveContact(it) { sheet = "contacts" } },
                 { peer -> store.removeContact(peer) { sheet = "contacts" } }, { sheet = "contacts" })
             "peer" -> PeerDialog(state, store, { sheet = null }, { contact -> editContact = contact; sheet = "contact" })
-            "newGroup" -> if (groupStore != null) NewGroupDialog(state, groups, groupStore) { sheet = null }
+            "newGroup" -> if (groupStore != null) NewGroupDialog(state, groups, groupStore, opened = { model.groupCreated() }) { sheet = null }
             "groupInfo" -> if (groupStore != null) GroupInfoDialog(groups, state, groupStore) { sheet = null }
             "signout" -> Confirm("Sign out?", "Your session and local drafts will be removed from this device.", "Sign out",
                 { sheet = null; model.signOut() }, { sheet = "settings" })
