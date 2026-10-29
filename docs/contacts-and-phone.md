@@ -310,7 +310,7 @@ locally (§6.2); add `phone.*` and `profile.name` event handling; update the sto
    from `TelephonyManager.networkCountryIso`/`simCountryIso`/`Locale`.
 4. **Hash:** `MessageDigest.getInstance("SHA-256")`, first 16 bytes, hex.
 5. **Code entry:** SMS User Consent API (`play-services-auth-api-phone`), `autofillHints = SMS_OTP`. Never `READ_SMS`.
-6. **Invites, names, aliases:** as iOS 7–8 (aliases in Preferences DataStore).
+6. **Invites, names, aliases:** as iOS 7–8 (aliases in app-private SharedPreferences, subject + inbox scoped).
 7. **Play Data safety:** add *Contacts* (collected, not processed ephemerally, not shared, optional, App functionality —
    the per-account abuse-prevention marks persist for seven days) and
    *Phone number* (collected, not shared, optional, App functionality, Account management). Update

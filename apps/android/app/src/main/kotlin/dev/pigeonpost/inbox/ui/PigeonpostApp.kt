@@ -59,6 +59,7 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
     val cropping by model.crop.collectAsStateWithLifecycle()
     val profileState by model.profile.state.collectAsStateWithLifecycle()
     val people by (model.people?.state ?: remember { kotlinx.coroutines.flow.MutableStateFlow(dev.pigeonpost.core.contacts.PeopleState()) }).collectAsStateWithLifecycle()
+    LaunchedEffect(people.context) { model.people?.loadName(people.context) }
     val peoplePeers = (state.conversations.map { it.peer } + state.calls.entries.mapNotNull { it.key }).distinct()
     LaunchedEffect(people.context, peoplePeers, people.profiles.keys) { model.people?.loadProfiles(people.context, peoplePeers) }
     var blockTarget by remember { mutableStateOf<BlockTarget?>(null) }
@@ -140,6 +141,10 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
     }
     PigeonpostTheme(dark) {
       CompositionLocalProvider(LocalAvatars provides model.pictures, LocalPeople provides people, LocalPeopleStore provides model.people, LocalAskBlock provides { target -> blockTarget = target }) {
+        if (session.signedIn && session.termsAccepted && state.accountLoaded && sheet == null && callMode == CallHost.Mode.HIDDEN &&
+            Features.DISPLAY_NAMES in people.features && people.nameLoaded && people.ownName == null && !people.namePromptSeen) {
+            model.people?.let { DisplayNamePrompt(it) }
+        }
         val p = Pp.colors
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val wide = maxWidth >= WideLayoutWidth

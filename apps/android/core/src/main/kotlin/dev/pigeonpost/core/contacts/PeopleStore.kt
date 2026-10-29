@@ -23,11 +23,13 @@ interface LocalAliases {
     fun read(subject: String, mailbox: String): Map<String, String>
     fun write(subject: String, mailbox: String, values: Map<String, String>)
     fun clear()
+    fun namePromptSeen(subject: String, mailbox: String): Boolean = false
+    fun namePromptSeen(subject: String, mailbox: String, seen: Boolean) {}
 }
 data class PeopleState(
     val context: String = UUID.randomUUID().toString(), val mailbox: String? = null, val features: Set<String> = emptySet(),
     val busy: Boolean = false, val message: String? = null, val phones: List<VerifiedPhone> = emptyList(),
-    val challenge: PhoneChallenge? = null, val ownName: ProfileName? = null, val nameLoaded: Boolean = false,
+    val challenge: PhoneChallenge? = null, val ownName: ProfileName? = null, val nameLoaded: Boolean = false, val namePromptSeen: Boolean = false,
     val imported: List<DeviceContact> = emptyList(), val checked: Set<String> = emptySet(), val matches: Map<String, DiscoveryMatch> = emptyMap(),
     val remaining: Int? = null, val invite: InviteReview? = null, val invited: Set<String> = emptySet(),
     val aliases: Map<String, String> = emptyMap(), val profiles: Map<String, PeerProfile?> = emptyMap(),
@@ -61,7 +63,8 @@ class PeopleStore(private val api: PeopleApi, private val scope: CoroutineScope,
             val child = try { next.authorization.child() } catch (_: AuthorizationRetired) { return }
             bound = next; actor = child
             val local = aliases.read(next.subject, next.mailbox).filter { (key, value) -> validAddress(key) && runCatching { PeopleInput.name(value, alias = true) }.getOrNull() == value }
-            mutable.value = PeopleState(context = child.id, mailbox = next.mailbox, features = next.features, aliases = local)
+            mutable.value = PeopleState(context = child.id, mailbox = next.mailbox, features = next.features, aliases = local,
+                namePromptSeen = aliases.namePromptSeen(next.subject, next.mailbox))
         }
     }
     fun reset(clearAliases: Boolean = false) {
@@ -165,6 +168,14 @@ class PeopleStore(private val api: PeopleApi, private val scope: CoroutineScope,
     }
     fun loadName(context: String) = start(context, Features.DISPLAY_NAMES) { c, mailbox ->
         val result = api.ownName(mailbox); if (isCurrent(c)) mutable.update { it.copy(ownName = result, nameLoaded = true) }
+    }
+    fun dismissNamePrompt(context: String) {
+        val owner = bound ?: return
+        if (!isCurrent(context)) return
+        actor!!.withActive {
+            aliases.namePromptSeen(owner.subject, owner.mailbox, true)
+            mutable.update { it.copy(namePromptSeen = true) }
+        }
     }
     fun saveName(context: String, name: String, visibility: String) = start(context, Features.DISPLAY_NAMES) { c, mailbox ->
         val result = api.saveName(mailbox, name, visibility)

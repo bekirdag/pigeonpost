@@ -12,9 +12,12 @@ import org.junit.Test
 class PeopleTest {
     private class Aliases : LocalAliases {
         val entries = mutableMapOf<String, Map<String, String>>()
+        val prompts = mutableSetOf<String>()
         override fun read(subject: String, mailbox: String) = entries["$subject:$mailbox"].orEmpty()
         override fun write(subject: String, mailbox: String, values: Map<String, String>) { entries["$subject:$mailbox"] = values }
-        override fun clear() { entries.clear() }
+        override fun clear() { entries.clear(); prompts.clear() }
+        override fun namePromptSeen(subject: String, mailbox: String) = "$subject:$mailbox" in prompts
+        override fun namePromptSeen(subject: String, mailbox: String, seen: Boolean) { if (seen) prompts += "$subject:$mailbox" else prompts -= "$subject:$mailbox" }
     }
     private class Api : PeopleApi {
         val batches = mutableListOf<List<String>>()
@@ -110,6 +113,14 @@ class PeopleTest {
         val s = PeopleState(aliases = mapOf("/k/peer" to "Local"), profiles = mapOf("/k/peer" to PeerProfile("/k/peer", "/marina/main", "Marina")))
         assertEquals("Local", s.label("/k/peer", "Legacy")); assertEquals("Legacy", s.copy(aliases = emptyMap()).label("/k/peer", "Legacy"))
         assertEquals("~Marina", s.copy(aliases = emptyMap()).label("/k/peer"))
+    }
+    @Test fun skippedNamePromptIsLocalAndBoundToTheInbox() = runTest {
+        val w = World(this); val old = w.context
+        w.store.dismissNamePrompt(old); assertTrue(w.store.state.value.namePromptSeen)
+        w.replace("/k/other"); assertFalse(w.store.state.value.namePromptSeen)
+        w.store.dismissNamePrompt(old); assertFalse(w.store.state.value.namePromptSeen)
+        w.replace(); assertTrue(w.store.state.value.namePromptSeen)
+        w.store.reset(clearAliases = true); assertTrue(w.local.prompts.isEmpty())
     }
     private class Transport(var response: String) : GroupTransport {
         var body: JsonElement? = null; var method: String? = null

@@ -59,4 +59,8 @@ class AndroidLocalAliases(context: Context, fixtures: Boolean) : LocalAliases {
         check(prefs.edit().putString(key(subject, mailbox), JSONObject(values).toString()).commit()) { "Could not save the local name." }
     }
     override fun clear() { check(prefs.edit().clear().commit()) { "Could not clear local names." } }
+    override fun namePromptSeen(subject: String, mailbox: String) = prefs.getBoolean("prompt:" + key(subject, mailbox), false)
+    override fun namePromptSeen(subject: String, mailbox: String, seen: Boolean) {
+        check(prefs.edit().putBoolean("prompt:" + key(subject, mailbox), seen).commit()) { "Could not save the prompt preference." }
+    }
 }

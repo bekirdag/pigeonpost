@@ -1,7 +1,10 @@
 package dev.pigeonpost.inbox.ui
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
@@ -43,6 +46,7 @@ fun PeopleSettings(mode: String, store: PeopleStore, openPeer: (String) -> Unit)
     var disclosure by remember(context) { mutableStateOf(false) }
     var pendingPermission by remember { mutableStateOf<Pair<String, String>?>(null) }
     var reading by remember(context) { mutableStateOf(false) }
+    var permissionDenied by remember(context) { mutableStateOf(false) }
     var localError by remember(context) { mutableStateOf<String?>(null) }
     var unlink by remember(context) { mutableStateOf<VerifiedPhone?>(null) }
     val name = state.ownName
@@ -66,6 +70,7 @@ fun PeopleSettings(mode: String, store: PeopleStore, openPeer: (String) -> Unit)
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         val target = pendingPermission; pendingPermission = null
         if (target != null && store.isCurrent(target.first)) {
+            permissionDenied = !granted
             if (granted) read(target.first, target.second)
             else localError = "Contact access was not allowed. Nothing was imported. You can enable Contacts in Android settings when you want to try again."
         }
@@ -111,6 +116,9 @@ fun PeopleSettings(mode: String, store: PeopleStore, openPeer: (String) -> Unit)
             Text("Find people who verified their number and chose to be found. No match does not prove someone has no Pigeonpost account.")
             OutlinedTextField(region, { region = it.uppercase().take(2) }, label = { Text("Country for local numbers (TR, US, GB…)") }, singleLine = true, enabled = enabled)
             Button({ disclosure = true }, enabled = enabled && region.length == 2, modifier = Modifier.testTag("findPeople")) { Text("Find people I know") }
+            if (permissionDenied) TextButton({
+                android.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${android.packageName}")))
+            }) { Text("Open contact permission settings") }
             val matched = state.imported.filter { it.hash in state.matches }
             val unmatched = state.imported.filter { it.hash in state.checked && it.hash !in state.matches }
             LazyColumn(Modifier.fillMaxWidth().heightIn(max = 420.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -154,4 +162,25 @@ fun PeopleSettings(mode: String, store: PeopleStore, openPeer: (String) -> Unit)
     }, confirmButton = { TextButton({ store.invite(review) }, enabled = enabled) { Text("Send invitation") } }, dismissButton = { TextButton(store::cancelInvite) { Text("Cancel") } }) }
     unlink?.let { number -> AlertDialog(onDismissRequest = { unlink = null }, title = { Text("Unlink this number?") }, text = { Text("${number.masked} will no longer identify this inbox in contact discovery.") },
         confirmButton = { TextButton({ store.unlink(context, number.id); unlink = null }) { Text("Unlink") } }, dismissButton = { TextButton({ unlink = null }) { Text("Cancel") } }) }
+}
+
+@Composable
+fun DisplayNamePrompt(store: PeopleStore) {
+    val state by store.state.collectAsStateWithLifecycle()
+    val context = state.context
+    var name by remember(context) { mutableStateOf("") }
+    var error by remember(context) { mutableStateOf<String?>(null) }
+    AlertDialog(onDismissRequest = { store.dismissNamePrompt(context) }, title = { Text("What should people call you?") }, text = {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("Choose a free display name for this inbox. People you write to see ~Name beside your address. You can change it later in Settings.")
+            OutlinedTextField(name, { name = it.take(100) }, label = { Text("Display name") }, singleLine = true, enabled = !state.busy,
+                modifier = Modifier.testTag("onboardingDisplayName").semantics { contentType = ContentType.PersonFullName })
+            (error ?: state.message)?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        }
+    }, confirmButton = { TextButton({
+        if (runCatching { PeopleInput.name(name) }.isFailure) error = "Use 1–40 characters without addresses, invisible characters or reserved names."
+        else { error = null; store.saveName(context, name, "known") }
+    }, enabled = !state.busy && name.isNotBlank()) { Text("Save name") } }, dismissButton = {
+        TextButton({ store.dismissNamePrompt(context) }, enabled = !state.busy) { Text("Skip for now") }
+    })
 }

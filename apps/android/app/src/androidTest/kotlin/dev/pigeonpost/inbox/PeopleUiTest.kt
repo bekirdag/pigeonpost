@@ -2,6 +2,9 @@ package dev.pigeonpost.inbox
 
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import android.os.SystemClock
@@ -31,7 +34,13 @@ class PeopleUiTest {
     private val store = PeopleStore(api, scope, { identity }, aliases)
     private fun launch(mode: String) {
         store.synchronize()
-        ui.setContent { PigeonpostTheme(false) { PageDialog("People", {}) { PeopleSettings(mode, store) {} } } }
+        ui.setContent { PigeonpostTheme(false) {
+            if (mode == "onboarding") {
+                val state by store.state.collectAsState()
+                LaunchedEffect(state.context) { store.loadName(state.context) }
+                if (state.nameLoaded && state.ownName == null && !state.namePromptSeen) DisplayNamePrompt(store)
+            } else PageDialog("People", {}) { PeopleSettings(mode, store) {} }
+        } }
     }
     @After fun cleanup() { identity.authorization.retire(); scope.cancel() }
     @Test fun permissionDisclosureCanBeCancelledWithoutImportOrSms() {
@@ -74,7 +83,15 @@ class PeopleUiTest {
         assertNotNull("Android Contacts permission prompt was not shown", deny)
         assertTrue(deny!!.performAction(AccessibilityNodeInfo.ACTION_CLICK))
         ui.waitUntil { ui.onAllNodesWithText("Contact access was not allowed.", substring = true).fetchSemanticsNodes().isNotEmpty() }
+        ui.onNodeWithText("Open contact permission settings").assertExists()
         assertEquals(0, api.discoveries); assertEquals(0, api.invites); assertTrue(store.state.value.imported.isEmpty())
+    }
+    @Test fun firstInboxNamePromptCanBeSkippedWithoutSavingAName() {
+        launch("onboarding"); ui.waitUntil { store.state.value.nameLoaded }
+        ui.onNodeWithText("What should people call you?").assertIsDisplayed()
+        ui.onNodeWithText("Skip for now").performClick()
+        ui.onNodeWithText("What should people call you?").assertDoesNotExist()
+        assertTrue(store.state.value.namePromptSeen); assertEquals(0, api.names)
     }
     @Test fun phoneNormalizationUsesChosenCountryAndRejectsShortCodes() {
         assertEquals("+905321234567", PhoneContacts.normalize("0532 123 45 67", "TR"))
