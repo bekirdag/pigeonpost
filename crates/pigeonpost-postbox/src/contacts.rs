@@ -1531,7 +1531,8 @@ async fn discover_inner(
             }
             for m in &fresh {
                 tx.execute(
-                    "INSERT OR IGNORE INTO discovery_marks (account_id, mark, expires_at) VALUES (?1, ?2, ?3)",
+                    "INSERT INTO discovery_marks (account_id, mark, expires_at) VALUES (?1, ?2, ?3)
+                     ON CONFLICT(account_id, mark) DO UPDATE SET expires_at = excluded.expires_at",
                     params![acct, m, n + MARK_TTL as i64],
                 )?;
             }

@@ -383,7 +383,7 @@ test("finding people: only 32-hex hashes leave the page, never a number or a nam
   assert.equal(a.visible("discover-open"), true);
   a.$("discover-open").click();
   assert.equal(a.visible("discover-sheet"), true);
-  assert.match(a.$("discover-sheet").textContent, /Your contacts file never leaves this browser\. Only scrambled numbers are checked, and nothing is kept\./);
+  assert.match(a.$("discover-sheet").textContent, /Your contact names stay in this browser\. Scrambled phone numbers are sent to find matches\. Temporary records help prevent abuse\./);
   assert.equal(a.$("discover-file").getAttribute("accept"), ".vcf,.csv,text/vcard,text/csv");
   a.pick("discover-country", "1");
   const before = a.server.raw.length;
@@ -425,7 +425,7 @@ test("finding people: only 32-hex hashes leave the page, never a number or a nam
   assert.equal(a.$("discover-file").value, "");
 });
 
-test("discovery sends at most 500 hashes per request and stops on a rate limit", async t => {
+test("discovery uses batches suitable for new accounts and stops on a rate limit", async t => {
   let batches = 0;
   const a = await app(t, { features: ["contact_discovery"], configure(server) {
     server.intercept = call => {
@@ -444,9 +444,32 @@ test("discovery sends at most 500 hashes per request and stops on a rate limit",
   await until(() => !a.$("discover-error").hidden, "rate limit shown");
   const posts = a.server.calls.filter(c => c.path === "/v1/contacts/discover");
   assert.equal(posts.length, 2, "stopped after the refusal");
-  assert.equal(posts[0].body.hashes.length, 500);
+  assert.equal(posts[0].body.hashes.length, 200);
   assert.match(a.$("discover-error").textContent, /today\. Try again in 2 hours\./);
   assert.equal(a.$("discover-missing-section").hidden, true, "no invite list without sms_invites");
+});
+
+test("large imports keep partial results and stop at the returned daily allowance", async t => {
+  const sizes = [];
+  const a = await app(t, { features: ["contact_discovery", "sms_invites"], configure(server) {
+    server.intercept = call => {
+      if (call.path !== "/v1/contacts/discover") return null;
+      sizes.push(call.body.hashes.length);
+      return response({ matches: [], checked: call.body.hashes.length, new: call.body.hashes.length,
+        remaining_today: sizes.length === 1 ? 50 : 0 });
+    };
+  } });
+  const rows = ["Name,Mobile Phone"];
+  for (let i = 0; i < 300; i++) rows.push(`Person ${i},+1555555${String(i).padStart(4, "0")}`);
+  a.openSettingsPage("contacts");
+  a.$("discover-open").click();
+  a.chooseFile("discover-file", rows.join("\n"), "large.csv");
+  await until(() => !a.$("discover-error").hidden);
+  assert.deepEqual(sizes, [200, 50]);
+  assert.match(a.$("discover-status").textContent, /Checked 250 of 300 numbers/);
+  assert.equal(a.$("discover-missing").querySelectorAll("li").length, 250,
+    "unchecked contacts must not be offered as unmatched contacts");
+  assert.match(a.$("discover-error").textContent, /remaining numbers haven’t been checked/);
 });
 
 test("inviting needs a confirmation that shows the text, then sends confirm:true", async t => {

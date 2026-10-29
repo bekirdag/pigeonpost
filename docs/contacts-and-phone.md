@@ -261,7 +261,7 @@ Free accounts can upload. The flag is on globally in production (checked 2026-10
 - **Settings → Contacts → Find people I know** (`contact_discovery`): the browser cannot read an address book, so the person
   picks a `.vcf` or `.csv` export (Google Contacts, iCloud, Outlook). The file is parsed in the page, numbers normalised
   and hashed with WebCrypto, and only hashes are sent. Results: **On Pigeonpost** (Start chat) and, when `sms_invites` is
-  on, **Not on Pigeonpost yet** (Invite by SMS, one tap per person, with a confirmation that shows the exact text). The
+  on, **No match found** (Invite by SMS, one tap per person, with a confirmation that shows the exact text). The
   file and the list stay in memory and are gone when the sheet closes.
 - **Display name** (`display_names`): a one-time prompt after the inbox opens ("What should people call you?", skippable),
   and Settings → Profile → Display name with visibility.
@@ -311,7 +311,8 @@ locally (§6.2); add `phone.*` and `profile.name` event handling; update the sto
 4. **Hash:** `MessageDigest.getInstance("SHA-256")`, first 16 bytes, hex.
 5. **Code entry:** SMS User Consent API (`play-services-auth-api-phone`), `autofillHints = SMS_OTP`. Never `READ_SMS`.
 6. **Invites, names, aliases:** as iOS 7–8 (aliases in Preferences DataStore).
-7. **Play Data safety:** add *Contacts* (collected, processed ephemerally, not shared, optional, App functionality) and
+7. **Play Data safety:** add *Contacts* (collected, not processed ephemerally, not shared, optional, App functionality —
+   the per-account abuse-prevention marks persist for seven days) and
    *Phone number* (collected, not shared, optional, App functionality, Account management). Update
    `docs/android-play-data-safety.md`.
 
@@ -343,3 +344,10 @@ locally (§6.2); add `phone.*` and `profile.name` event handling; update the sto
 `deploy/account-deletions.py` removes the account's phone numbers, pending codes, invites it sent, discovery counters and
 marks, and its display names. SMS budget rows are kept for cost accounting without the account id. Opt-outs are not linked
 to any account and stay.
+
+## Review corrections — 29 October 2026
+
+- Discovery marks are renewed when they expire, even before the reaper removes the old row; repeated checks do not repeatedly spend the daily allowance.
+- Web imports use batches of at most 200 numbers and stop at the returned remaining allowance, retaining partial results. Unchecked numbers are never listed as unmatched.
+- A missing match may mean a person has not opted into discovery. The UI says “No match found”; it does not claim that person has no account.
+- Import disclosure and Play Data safety guidance acknowledge temporary abuse-prevention records. Contact names stay on the device.

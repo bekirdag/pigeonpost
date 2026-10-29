@@ -6481,8 +6481,15 @@
     }
     if (!live()) return;
     const hashes = [...run.byHash.keys()];
-    for (let i = 0; i < hashes.length; i += 500) {
-      const batch = hashes.slice(i, i + 500);
+    for (let i = 0; i < hashes.length;) {
+      // New accounts may check 200 fresh numbers per day. A 500-number first batch would be
+      // refused in its entirety, leaving a new person with no matches from a normal address book.
+      const available = Number.isFinite(run.remaining) ? Math.max(0, run.remaining) : 200;
+      if (available === 0) {
+        showError("discover-error", "Your daily allowance is used. The remaining numbers haven’t been checked. Try again tomorrow.");
+        break;
+      }
+      const batch = hashes.slice(i, i + Math.min(200, available));
       let body;
       try {
         body = await api("/v1/contacts/discover", { method: "POST", body: { hashes: batch }, signal: context.signal });
@@ -6497,6 +6504,7 @@
         if (m && run.byHash.has(m.hash) && typeof m.address === "string") run.matches.set(m.hash, m);
       }
       if (Number.isFinite(Number(body.remaining_today))) run.remaining = Number(body.remaining_today);
+      i += batch.length;
       renderDiscovery();
     }
     if (live()) renderDiscovery();

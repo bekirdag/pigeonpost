@@ -1113,6 +1113,31 @@ async fn display_names_follow_their_visibility() {
 }
 
 #[tokio::test]
+async fn expired_discovery_marks_are_renewed_before_the_sweep() {
+    let srv = serve().await;
+    let a = person(&srv, "renew_mark").await;
+    let body = json!({ "hashes": [h("+15555550189")] });
+    let (status, first) = srv
+        .post("/v1/contacts/discover", Some(&a.token), body.clone())
+        .await;
+    assert_eq!((status, first["new"].as_i64()), (200, Some(1)));
+    srv.sql("UPDATE discovery_marks SET expires_at = 1", vec![])
+        .await;
+    let (status, renewed) = srv
+        .post("/v1/contacts/discover", Some(&a.token), body.clone())
+        .await;
+    assert_eq!((status, renewed["new"].as_i64()), (200, Some(1)));
+    let (status, repeated) = srv
+        .post("/v1/contacts/discover", Some(&a.token), body)
+        .await;
+    assert_eq!(
+        (status, repeated["new"].as_i64()),
+        (200, Some(0)),
+        "rechecking a renewed mark must not repeatedly spend the daily quota"
+    );
+}
+
+#[tokio::test]
 async fn retention_sweep() {
     let srv = serve().await;
     let a = person(&srv, "sweep").await;
