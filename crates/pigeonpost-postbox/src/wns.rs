@@ -246,6 +246,41 @@ impl Wns {
 
     /// Show a toast on one channel. Returns `true` when the channel is gone for good.
     pub async fn toast(&self, channel: &str, xml: String, tag: &str, ttl: u64) -> bool {
+        self.post(
+            channel,
+            &[
+                ("content-type", "text/xml".to_string()),
+                ("x-wns-type", "wns/toast".to_string()),
+                ("x-wns-tag", tag.to_string()),
+                ("x-wns-group", CALL_GROUP.to_string()),
+                ("x-wns-ttl", ttl.max(1).to_string()),
+            ],
+            xml.into_bytes(),
+        )
+        .await
+    }
+
+    /// A raw notification for the app itself (a ring that ended: the app removes its toast).
+    /// Not cached for an offline PC: a late one has nothing left to do. Returns `true` when the
+    /// channel is gone for good.
+    ///
+    /// Desktop channels cannot have a toast removed from the server: WNS answers an `X-WNS-Match`
+    /// DELETE with 400 "Invalid filter value" (Microsoft documents it for Windows Phone only).
+    pub async fn raw(&self, channel: &str, payload: Vec<u8>, ttl: u64) -> bool {
+        self.post(
+            channel,
+            &[
+                ("content-type", "application/octet-stream".to_string()),
+                ("x-wns-type", "wns/raw".to_string()),
+                ("x-wns-cache-policy", "no-cache".to_string()),
+                ("x-wns-ttl", ttl.max(1).to_string()),
+            ],
+            payload,
+        )
+        .await
+    }
+
+    async fn post(&self, channel: &str, headers: &[(&str, String)], body: Vec<u8>) -> bool {
         if !valid_channel_uri(channel) {
             return true;
         }
@@ -253,19 +288,11 @@ impl Wns {
             let Some(token) = self.access_token(attempt == 1).await else {
                 return false;
             };
-            let sent = self
-                .http
-                .post(self.target(channel))
-                .bearer_auth(token)
-                .header("content-type", "text/xml")
-                .header("x-wns-type", "wns/toast")
-                .header("x-wns-tag", tag)
-                .header("x-wns-group", CALL_GROUP)
-                .header("x-wns-ttl", ttl.max(1).to_string())
-                .body(xml.clone())
-                .send()
-                .await;
-            match sent {
+            let mut request = self.http.post(self.target(channel)).bearer_auth(token);
+            for (name, value) in headers {
+                request = request.header(*name, value);
+            }
+            match request.body(body.clone()).send().await {
                 Ok(r) if r.status().is_success() => return false,
                 Ok(r) if r.status().as_u16() == 401 && attempt == 0 => continue,
                 Ok(r) => return channel_gone(&r),
@@ -273,35 +300,6 @@ impl Wns {
                     tracing::warn!("WNS unreachable");
                     return false;
                 }
-            }
-        }
-        false
-    }
-
-    /// Remove an earlier toast (a ring that ended) from the screen and the notification centre.
-    pub async fn remove(&self, channel: &str, tag: &str) -> bool {
-        if !valid_channel_uri(channel) {
-            return true;
-        }
-        for attempt in 0..2 {
-            let Some(token) = self.access_token(attempt == 1).await else {
-                return false;
-            };
-            let sent = self
-                .http
-                .delete(self.target(channel))
-                .bearer_auth(token)
-                .header(
-                    "x-wns-match",
-                    format!("type:wns/toast;group={CALL_GROUP};tag={tag}"),
-                )
-                .send()
-                .await;
-            match sent {
-                Ok(r) if r.status().is_success() => return false,
-                Ok(r) if r.status().as_u16() == 401 && attempt == 0 => continue,
-                Ok(r) => return channel_gone(&r),
-                Err(_) => return false,
             }
         }
         false
@@ -533,7 +531,7 @@ mod tests {
         *mock.wns_status.lock().unwrap() = 200;
         let app = Router::new()
             .route("/tenant-guid/oauth2/v2.0/token", post(token))
-            .route("/w/", post(push).delete(push))
+            .route("/w/", post(push))
             .with_state(mock.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -592,7 +590,7 @@ mod tests {
         for _ in 0..3 {
             assert!(!wns.toast(CHANNEL, "<toast/>".into(), "t", 45).await);
         }
-        assert!(!wns.remove(CHANNEL, "t").await);
+        assert!(!wns.raw(CHANNEL, b"{}".to_vec(), 60).await);
         assert_eq!(
             mock.token_calls.load(Ordering::SeqCst),
             1,
@@ -642,16 +640,22 @@ mod tests {
         assert_eq!(pushes[2].1["authorization"], "Bearer token-2");
         assert_eq!(mock.token_calls.load(Ordering::SeqCst), 2);
 
-        // The same for removing a toast.
+        // The same for a raw notification.
         *mock.accepted.lock().unwrap() = "rotated".into();
-        assert!(!wns.remove(CHANNEL, "t").await);
-        let pushes = mock.pushes.lock().unwrap().clone();
-        assert_eq!(pushes.last().unwrap().0, "DELETE");
-        assert_eq!(
-            pushes.last().unwrap().1["x-wns-match"],
-            "type:wns/toast;group=calls;tag=t"
+        assert!(
+            !wns.raw(CHANNEL, b"{\"type\":\"call_cancel\"}".to_vec(), 60)
+                .await
         );
-        assert_eq!(pushes.last().unwrap().1["authorization"], "Bearer token-3");
+        let pushes = mock.pushes.lock().unwrap().clone();
+        let (method, headers, body) = pushes.last().unwrap();
+        assert_eq!(method, "POST");
+        assert_eq!(headers["authorization"], "Bearer token-3");
+        assert_eq!(headers["x-wns-type"], "wns/raw");
+        assert_eq!(headers["content-type"], "application/octet-stream");
+        assert_eq!(headers["x-wns-cache-policy"], "no-cache");
+        assert_eq!(headers["x-wns-ttl"], "60");
+        assert!(!headers.contains_key("x-wns-match"));
+        assert_eq!(body, "{\"type\":\"call_cancel\"}");
     }
 
     #[tokio::test]
@@ -660,7 +664,7 @@ mod tests {
         *mock.wns_status.lock().unwrap() = 410;
         assert!(wns.toast(CHANNEL, "<toast/>".into(), "t", 45).await);
         *mock.wns_status.lock().unwrap() = 404;
-        assert!(wns.remove(CHANNEL, "t").await);
+        assert!(wns.raw(CHANNEL, b"{}".to_vec(), 60).await);
         for status in [400, 403, 406, 413, 500, 503] {
             *mock.wns_status.lock().unwrap() = status;
             assert!(
@@ -688,7 +692,7 @@ mod tests {
         mock.refuse_token.store(true, Ordering::SeqCst);
         assert!(!wns.toast(CHANNEL, "<toast/>".into(), "t", 45).await);
         assert!(!wns.toast(CHANNEL, "<toast/>".into(), "t", 45).await);
-        assert!(!wns.remove(CHANNEL, "t").await);
+        assert!(!wns.raw(CHANNEL, b"{}".to_vec(), 60).await);
         assert_eq!(
             mock.token_calls.load(Ordering::SeqCst),
             1,

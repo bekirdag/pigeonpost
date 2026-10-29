@@ -344,6 +344,15 @@ pub fn wns_toast(ring: &Ring) -> String {
     )
 }
 
+/// The end of a ring on Windows: a raw notification. The app (running, or started in the
+/// background by Windows for it) removes the ring's toast by its tag and group, like Android's
+/// `call_cancel`. Room ids are `[A-Za-z0-9_-]`; `reason` is one of the calls service's fixed words.
+pub fn wns_cancel(end: &RingEnd) -> Vec<u8> {
+    json!({"type": "call_cancel", "room": end.room, "reason": end.reason})
+        .to_string()
+        .into_bytes()
+}
+
 /// What the callee's own rules say about this caller.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Decision {
@@ -675,10 +684,7 @@ async fn deliver_end(state: AppState, devices: Vec<Device>, end: RingEnd) {
                 None => false,
             },
             Route::Wns => match &state.wns {
-                Some(wns) => {
-                    wns.remove(&device.token, &crate::wns::tag_for(&end.room))
-                        .await
-                }
+                Some(wns) => wns.raw(&device.token, wns_cancel(&end), 60).await,
                 None => false,
             },
             _ => false,
@@ -800,6 +806,24 @@ mod tests {
             "t".repeat(43)
         )));
         assert!(xml.contains("Notification.Looping.Call"));
+    }
+
+    #[test]
+    fn the_windows_ring_end_is_a_small_raw_cancel() {
+        let payload = wns_cancel(&RingEnd {
+            room: "R".repeat(22),
+            reason: "answered_elsewhere",
+            kind: "audio",
+            caller: "Alp <b>".into(),
+            identity: "/k/callee".into(),
+        });
+        let v: Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(v["type"], "call_cancel");
+        assert_eq!(v["room"], "R".repeat(22));
+        assert_eq!(v["reason"], "answered_elsewhere");
+        // Nothing about the people involved: Microsoft carries it, the app needs only the room.
+        assert_eq!(v.as_object().unwrap().len(), 3);
+        assert!(payload.len() < 5000);
     }
 
     #[test]
