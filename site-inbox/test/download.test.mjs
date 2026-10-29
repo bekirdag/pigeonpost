@@ -11,7 +11,7 @@ const windowsStore = "https://apps.microsoft.com/detail/9N0NWJ9L8XDP";
 const appStore = "https://apps.apple.com/tr/app/pigeonpost-inbox/id6803521541";
 const googlePlay = "https://play.google.com/store/apps/details?id=dev.pigeonpost.inbox&hl=en";
 const webInbox = "https://inbox.pigeonpost.dev/";
-const linuxArchive = "https://github.com/bekirdag/pigeonpost/releases/download/linux-desktop-1.0.9/Pigeonpost-Desktop-1.0.9-x86_64.flatpak";
+const linuxArchive = "https://github.com/bekirdag/pigeonpost/releases/download/linux-desktop-1.0.11/Pigeonpost-Desktop-1.0.11-x86_64.flatpak";
 const linuxArmArchive = linuxArchive.replace("x86_64", "aarch64");
 
 function page(t, navigator = {}, runScript = true) {
