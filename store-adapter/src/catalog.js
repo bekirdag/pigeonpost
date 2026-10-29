@@ -63,16 +63,31 @@ export function limitsForPackage(slug) {
     : { family: "ent", seats: entry.seats, agent_limit: entry.agent_limit, storage_gb: entry.storage_gb, interval: entry.interval };
 }
 
+/// The commercial calendar year (Europe/Istanbul), as saas_be's regional pricing uses it.
+export function pricingYear(now = new Date()) {
+  return Number(new Intl.DateTimeFormat("en-US", { year: "numeric", timeZone: "Europe/Istanbul" }).format(now));
+}
+
+/// The edition on sale now: the latest year that has started. A later year (the next TRY
+/// edition, provisioned ahead of January 1) is announced as `next`, never sold early.
+export function currentEdition(editions, now = new Date()) {
+  const years = Object.keys(editions).map(Number).sort((a, b) => a - b);
+  const started = years.filter((y) => y <= pricingYear(now));
+  const year = started.length ? started[started.length - 1] : years[0];
+  const next = years.find((y) => y > year);
+  return { year, edition: editions[String(year)], next: next ? { year: next, edition: editions[String(next)] } : null };
+}
+
 /// The public price list (for the site and the enterprise portal).
-export function publicCatalog() {
+export function publicCatalog(now = new Date()) {
   const plans = Object.entries(catalog.plans).map(([code, p]) => {
-    const years = Object.keys(p.editions).sort();
-    const current = p.editions[years[years.length - 1]];
+    const { year, edition: current, next } = currentEdition(p.editions, now);
     return {
       code, family: p.family, currency: p.currency, interval: p.interval,
       ...(p.family === "cloud" ? { names: p.names } : { seats: p.seats, agent_limit: p.agent_limit, storage_gb: p.storage_gb }),
-      amount: current.amount, pricing_year: Number(years[years.length - 1]),
+      amount: current.amount, pricing_year: year,
       available: Boolean(current.plan_id),
+      ...(next ? { next_amount: next.edition.amount, next_pricing_year: next.year } : {}),
     };
   });
   return { catalog_version: catalog.catalog_version, trial_period_days: catalog.trial_period_days,
