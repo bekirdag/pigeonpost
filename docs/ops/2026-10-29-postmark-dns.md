@@ -33,7 +33,7 @@ Postmark is now set up to send for `pigeonpost.dev`. The outstanding Cloudflare 
 - Backup: `~/Documents/releases/pigeonpost/dns-backup-20261029/` on the owner's Mac, as JSON and a BIND export.
 - SPF is unchanged (`v=spf1 include:_spf.mx.cloudflare.net ~all`). Postmark needs no SPF include, because
   the custom Return-Path carries SPF alignment.
-- DMARC `rua` is `info@pigeonpost.dev`, an existing Email Routing rule that forwards to the owner's info@wodo.io.
+- DMARC `rua` is `info@pigeonpost.dev`, an existing Cloudflare routing rule that forwards to the owner's info@wodo.io.
   No `dmarc@` address exists, because the catch-all drops it.
 - `turn.pigeonpost.dev` already existed (A `193.164.5.36`, DNS only) and was left as it was.
 - Before this change, `enterprise` resolved only through the proxied wildcard. The explicit record keeps the
@@ -63,7 +63,7 @@ Postmark is now set up to send for `pigeonpost.dev`. The outstanding Cloudflare 
 - `https://enterprise.pigeonpost.dev/` returns 200 with a valid Google Trust Services edge certificate
   (`*.pigeonpost.dev`).
 - One real test message took the production path: postbox host (its own notify key) → saas_be
-  `POST /v1/internal/notifications/email` → Novu `pigeonpost-meeting-verify` → Postmark `wodo.io`.
+  the internal notification route (`POST /v1/internal/notifications/…`) → Novu `pigeonpost-meeting-verify` → Postmark `wodo.io`.
   - Response: 202, and Novu reported "Message sent".
   - Postmark message `69addf77-8c25-453a-b9eb-28be69b11570` showed `From: "Pigeonpost" <invites@pigeonpost.dev>`,
     `X-dkim-options: s=20261029053605pm;d=pigeonpost.dev`, and **Delivered** (Gmail `250 2.0.0 OK`).
