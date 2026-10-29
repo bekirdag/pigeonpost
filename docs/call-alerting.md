@@ -247,7 +247,7 @@ arrives, it is answered without another click (the Linux app opens this).
 - With the app closed: the same toast from WNS. Windows App SDK push: the app asks
   `PushNotificationManager` for a channel with the Entra app's object ID, and the postbox
   authenticates as that Entra app. Microsoft must first map the package family name to the Entra
-  app (an email request to Win_App_SDK_Push@microsoft.com, handled weekly); until then the channel
+  app (a mapping request sent to Win_App_SDK_Push@microsoft.com, handled weekly); until then the channel
   request fails, the app logs it and rings only while running. The package-SID flow against
   `login.live.com` is refused for new apps ("Client credential flows against login.live.com are no
   longer supported").
