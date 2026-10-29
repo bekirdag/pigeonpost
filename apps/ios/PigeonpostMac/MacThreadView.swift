@@ -18,7 +18,12 @@ struct MacThreadView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(CallLog.self) private var callLog: CallLog?
     @State private var blocking: BlockTarget?
-    private struct ComposerDraft { var text = ""; var files: [StagedFile] = []; var attempt: MessageSendAttempt? }
+    private struct ComposerDraft {
+        var text = ""
+        var files: [StagedFile] = []
+        var attempt: MessageSendAttempt?
+        var firstReference: String?
+    }
     @State private var drafts: [ScrollContext: ComposerDraft] = [:]
     @State private var sending: Set<ScrollContext> = []
     private var composerKey: ScrollContext { ScrollContext(mailbox: account.me?.address, peer: peer, subject: subthread) }
@@ -180,6 +185,7 @@ struct MacThreadView: View {
                 .onAppear { adoptStartedConversation() }
                 .onChange(of: inbox.started) { _, _ in adoptStartedConversation() }
                 .onChange(of: inbox.unconfirmedFirstSends) { _, _ in adoptStartedConversation() }
+                .onChange(of: inbox.resolvedFirstSends) { _, _ in retireResolvedFirstSends() }
             }
             // A different subject needs fresh lazy layout measurements. The composer and its
             // draft stay outside this identity boundary.
@@ -423,13 +429,29 @@ struct MacThreadView: View {
     /// A conversation just started from New conversation: the composer takes focus, and a first
     /// message whose delivery was not confirmed comes back into it under its own reference, so Send
     /// retries that message (Discard is on the message itself).
+    private func retireResolvedFirstSends() {
+        for (key, value) in drafts {
+            guard let reference = value.firstReference, inbox.resolvedFirstSends.contains(reference) else { continue }
+            if value.attempt?.reference == reference && value.attempt?.text == value.text && value.files.isEmpty {
+                drafts[key] = nil
+            } else {
+                // Keep anything the person has written or attached since adopting the retry.
+                drafts[key]?.firstReference = nil
+                if value.attempt?.reference == reference { drafts[key]?.attempt = nil }
+            }
+        }
+    }
+
     private func adoptStartedConversation() {
+        retireResolvedFirstSends()
         let key = composerKey
-        if let unconfirmed = inbox.takeUnconfirmedFirstSend(mailbox: key.mailbox, peer: peer),
-           (drafts[key]?.text ?? "").isEmpty {
+        let empty = (drafts[key]?.text ?? "").isEmpty && (drafts[key]?.files ?? []).isEmpty
+            && action == nil && !sendPending
+        if let unconfirmed = inbox.takeUnconfirmedFirstSend(mailbox: key.mailbox, peer: peer, intoEmptyComposer: empty) {
             drafts[key, default: ComposerDraft()].text = unconfirmed.text
+            drafts[key, default: ComposerDraft()].firstReference = unconfirmed.reference
             drafts[key, default: ComposerDraft()].attempt = MessageSendAttempt(
-                text: unconfirmed.text, fileIDs: drafts[key]?.files.map(\.id) ?? [], reference: unconfirmed.reference)
+                text: unconfirmed.text, fileIDs: [], reference: unconfirmed.reference)
         }
         if inbox.takeStartedFocus(mailbox: key.mailbox, peer: peer) { sent += 1 }
     }
@@ -459,10 +481,11 @@ struct MacThreadView: View {
         // Whichever subject is on screen, including the single one a quiet peer has where no strip
         // is drawn. A reply that leaves the thread it answers is the only outcome nobody wants.
         let threadId = ConversationBuilder.targetThread(subthreads: subthreads, selected: subthread)
+        let retryThread = drafts[key]?.firstReference == attempt.reference ? nil : threadId
         Task {
             defer { sending.remove(key) }
             guard account.me?.address == key.mailbox else { return }
-            if await inbox.send(text, to: peer, threadId: threadId, files: files, msgRef: attempt.reference, reply: reply) {
+            if await inbox.send(text, to: peer, threadId: retryThread, files: files, msgRef: attempt.reference, reply: reply) {
                 drafts[key] = nil
             }
             // The keyboard goes back to the field after Send or Return, sent or not (a failed

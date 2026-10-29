@@ -169,6 +169,7 @@ final class ControlledURLProtocol: URLProtocol {
         await unconfirmedFirstSendThatWasStoredIsConfirmed()
         await refusedFirstSendStaysInTheDialog()
         await startedConversationStaysWithItsMailbox()
+        await newConversationTargetCannotFollowAChangedLogin()
         await initialLoadAndSwitch()
         await oldLoadCannotFinishNewSpinner()
         await rapidReturnToSameMailbox()
@@ -442,6 +443,9 @@ final class ControlledURLProtocol: URLProtocol {
         let row = inbox.conversation(with: "/test/new")?.messages.last
         check(row?.status == .failed && row?.body.contains("lost words") == true, "the thread shows the message as not sent")
         check(inbox.takeUnconfirmedFirstSend(mailbox: b.address, peer: "/test/new") == nil, "another mailbox cannot take its words")
+        check(inbox.takeUnconfirmedFirstSend(mailbox: a.address, peer: "/test/new", intoEmptyComposer: false) == nil,
+              "an occupied composer cannot consume the recovery record")
+        check(inbox.unconfirmedFirstSends.count == 1, "the first send remains available after a draft collision")
         let retry = inbox.takeUnconfirmedFirstSend(mailbox: a.address, peer: "/test/new")
         check(retry?.text == "lost words" && retry?.reference == body["msg_ref"] as? String,
               "its words and reference wait for the composer, so Send retries the same message")
@@ -457,6 +461,7 @@ final class ControlledURLProtocol: URLProtocol {
         // Discard: the row was never confirmed, so it goes from this device only.
         await inbox.deleteMessage(id: inbox.pending[0].id)
         check(inbox.pending.isEmpty && inbox.conversation(with: "/test/new") == nil, "discard removes the unsent message")
+        check(inbox.resolvedFirstSends.contains(retry?.reference ?? ""), "discard also retires an already-adopted composer retry")
         check(!ControlledURLProtocol.requests().contains { $0.url?.path == "/v1/messages" || $0.httpMethod == "DELETE" },
               "discarding an unsent message asks the postbox nothing")
         inbox.reset()
@@ -477,6 +482,7 @@ final class ControlledURLProtocol: URLProtocol {
         check(inbox.conversation(with: "/test/new")?.messages.map(\.id) == ["copy9"] && inbox.pending.isEmpty,
               "the stored copy replaces the not-sent row")
         check(inbox.unconfirmedFirstSends.isEmpty, "and nothing waits to be retried")
+        check(inbox.resolvedFirstSends.contains(body["msg_ref"] as? String ?? ""), "server confirmation retires any adopted retry")
         inbox.reset()
     }
 
@@ -516,6 +522,28 @@ final class ControlledURLProtocol: URLProtocol {
         await wait("switch drained") { ControlledURLProtocol.requests().allSatisfy { $0.url?.path != "/v1/send" } }
         inbox.reset()
         account.me = a
+    }
+
+    static func newConversationTargetCannotFollowAChangedLogin() async {
+        let (account, inbox) = make()
+        let beforeLogin = inbox.captureNewConversationTarget()!
+        account.session.authorizationId = UUID()
+        let loginResult = await inbox.startConversation(target: beforeLogin, to: "/test/new", body: "private draft")
+        if case .opened = loginResult { check(false, "a prior login must not send") }
+        check(!inbox.isCurrent(beforeLogin) && ControlledURLProtocol.requests().isEmpty,
+              "same-mailbox replacement login cannot submit a retained dialog")
+        let beforeSwitch = inbox.captureNewConversationTarget()!
+        account.act(as: b)
+        account.act(as: a)
+        _ = await inbox.startConversation(target: beforeSwitch, to: "/test/new", body: "private draft")
+        check(!inbox.isCurrent(beforeSwitch) && ControlledURLProtocol.requests().isEmpty,
+              "a mailbox round trip invalidates the dialog even before inbox reset runs")
+        let beforeReset = inbox.captureNewConversationTarget()!
+        inbox.reset()
+        check(!inbox.isCurrent(beforeReset), "reset invalidates the dialog")
+        let current = inbox.captureNewConversationTarget()!
+        check(inbox.isCurrent(current), "a freshly opened dialog is usable")
+        check(!Inbox(account: account).isCurrent(current), "another inbox cannot adopt the dialog")
     }
 
     static func initialLoadAndSwitch() async {

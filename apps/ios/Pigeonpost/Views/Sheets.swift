@@ -92,6 +92,7 @@ struct NewConversationSheet: View {
     @State private var body_ = ""
     @State private var error: String?
     @State private var sending = false
+    @State private var target: Inbox.NewConversationTarget?
 
     var body: some View {
         NavigationStack {
@@ -139,16 +140,23 @@ struct NewConversationSheet: View {
                 }
             }
         }
+        .onAppear { if target == nil { target = inbox.captureNewConversationTarget() } }
     }
 
     private func send() {
         guard PeerFace.validConversationAddress(peer), !body_.trimmed.isEmpty, !sending else { return }
+        guard let target, inbox.isCurrent(target) else {
+            error = "Your inbox changed. Close this sheet and start again."
+            return
+        }
+        let recipient = peer.trimmed
+        let text = body_.trimmed
         sending = true
         error = nil
         Task {
             // The conversation opens from `inbox.started`, in the window that owns the mailbox —
             // not from here, so a dialog outliving a mailbox switch cannot open it in another.
-            switch await inbox.startConversation(to: peer.trimmed, body: body_.trimmed) {
+            switch await inbox.startConversation(target: target, to: recipient, body: text) {
             case .opened: dismiss()
             case .failed(let message): error = message
             }

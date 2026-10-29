@@ -380,6 +380,13 @@ final class IPadLayoutTests: XCTestCase {
         sendFirstMessage(app, to: "test/ipad-fresh", "Hello from the iPad")
         assertStartedConversationOpen(app, showing: "Hello from the iPad")
         let row = app.descendants(matching: .any).matching(identifier: "conversation:/test/ipad-fresh").firstMatch
+        // Portrait iPad can collapse the first column while keeping the selected thread open.
+        // The failure snapshot contains Show conversations and the sent text in that layout.
+        if !row.exists {
+            let show = app.buttons["showSidebar"].firstMatch
+            XCTAssertTrue(show.waitForExistence(timeout: 5))
+            show.tap()
+        }
         XCTAssertTrue(row.waitForExistence(timeout: 5), "the new conversation is in the sidebar")
         XCTAssertTrue(row.isSelected, "and selected")
     }

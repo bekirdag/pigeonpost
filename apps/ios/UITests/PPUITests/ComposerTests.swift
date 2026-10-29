@@ -360,5 +360,8 @@ extension ComposerTests {
         XCTAssertTrue(discard.waitForExistence(timeout: 5), "and it can be discarded")
         discard.tap()
         XCTAssertTrue(notSent.waitForNonExistence(timeout: 5), "discard removes the unsent message")
+        let cleared = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", ""), object: composer)
+        XCTAssertEqual(XCTWaiter.wait(for: [cleared], timeout: 5), .completed,
+                       "discard also removes its unmodified retry from the composer")
     }
 }

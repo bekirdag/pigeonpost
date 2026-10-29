@@ -67,6 +67,8 @@ final class Inbox {
     private(set) var started: StartedConversation?
     /// First messages the postbox did not confirm, waiting for their conversation's composer.
     private(set) var unconfirmedFirstSends: [UnconfirmedFirstSend] = []
+    /// Composers retire an adopted retry when it is confirmed or explicitly discarded.
+    private(set) var resolvedFirstSends: Set<String> = []
     /// Whether that composer should take focus once the conversation is on screen.
     @ObservationIgnored private var startedFocus: (mailbox: String, peer: String)?
     /// The message reference of the send that started `started`, to find where the server filed it.
@@ -129,6 +131,28 @@ final class Inbox {
 
     private func isCurrent(_ request: MailboxRequest) -> Bool {
         !Task.isCancelled && request == mailboxRequest
+    }
+
+    /// A sheet belongs to the mailbox and login that opened it, including A → B → A.
+    struct NewConversationTarget {
+        fileprivate let owner: ObjectIdentifier
+        fileprivate let identity: String
+        fileprivate let generation: UUID
+        fileprivate let authorization: UUID
+        fileprivate let actor: UUID
+    }
+
+    func captureNewConversationTarget() -> NewConversationTarget? {
+        guard let request = mailboxRequest else { return nil }
+        return NewConversationTarget(owner: ObjectIdentifier(self), identity: request.identity,
+            generation: request.generation, authorization: account.session.authorizationId,
+            actor: account.actingGeneration)
+    }
+
+    func isCurrent(_ target: NewConversationTarget) -> Bool {
+        !Task.isCancelled && target.owner == ObjectIdentifier(self)
+            && target.identity == mailboxRequest?.identity && target.generation == mailboxGeneration
+            && target.authorization == account.session.authorizationId && target.actor == account.actingGeneration
     }
 
     private func isCancellation(_ error: Error) -> Bool {
@@ -246,6 +270,7 @@ final class Inbox {
         // A send whose answer was lost, that the postbox's own listing now shows it stored, was
         // delivered after all: the listing's copy is the message, and retrying it is moot.
         let stored = Set(messages.filter(\.isOutgoing).compactMap(\.msgRef))
+        resolvedFirstSends.formUnion(pending.filter { $0.status == .failed }.compactMap(\.msgRef).filter(stored.contains))
         pending.removeAll { row in
             if row.status == .failed { return row.msgRef.map(stored.contains) ?? false }
             return row.sentCopyId.map(known.contains) ?? false
@@ -343,6 +368,7 @@ final class Inbox {
         pending = []
         started = nil
         unconfirmedFirstSends = []
+        resolvedFirstSends = []
         startedFocus = nil
         startedReference = nil
         conversations = []
@@ -543,6 +569,7 @@ final class Inbox {
         // A message that never reached the postbox exists only here: discarding it is local.
         if let row = pending.first(where: { $0.id == id && $0.mailbox == me.address && $0.status == .failed }) {
             pending.removeAll { $0.id == row.id }
+            if let reference = row.msgRef { resolvedFirstSends.insert(reference) }
             if let reference = row.msgRef { abandonSend(reference: reference, mailbox: row.mailbox) }
             unconfirmedFirstSends.removeAll { $0.mailbox == row.mailbox && $0.reference == row.msgRef }
             rebuild()
@@ -747,7 +774,8 @@ final class Inbox {
 
     private func deliver(_ text: String, to peer: String, threadId: String?, files: [StagedFile] = [],
                          msgRef: String = MessageReference.make(), reply: MessageComposerAction? = nil,
-                         announce: Bool = true) async -> SendOutcome {
+                         announce: Bool = true, using scopedClient: PostboxClient? = nil) async -> SendOutcome {
+        let client = scopedClient ?? self.client
         guard let me, let request = mailboxRequest,
               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !files.isEmpty else { return .refused }
         if let reply {
@@ -971,13 +999,21 @@ final class Inbox {
     /// than sending a second one. Only an outright refusal stays in the dialog, and leaves nothing
     /// behind. Switching mailbox or account while this is in flight drops the result.
     func startConversation(to typed: String, body text: String) async -> StartOutcome {
+        guard let target = captureNewConversationTarget() else { return .failed(nil) }
+        return await startConversation(target: target, to: typed, body: text)
+    }
+
+    func startConversation(target: NewConversationTarget, to typed: String, body text: String) async -> StartOutcome {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let me, let request = mailboxRequest, !text.isEmpty else { return .failed(nil) }
+        guard isCurrent(target), let me, let request = mailboxRequest, !text.isEmpty else {
+            return .failed("Your inbox changed. Close this sheet and start again.")
+        }
         let reference = MessageReference.make()
         let key = ConversationBuilder.normalise(typed, against: messages)
-        let outcome = await deliver(text, to: typed, threadId: nil, msgRef: reference, announce: false)
+        let scopedClient = account.scopedClient(acting: true)
+        let outcome = await deliver(text, to: typed, threadId: nil, msgRef: reference, announce: false, using: scopedClient)
         // The answer belongs to the mailbox that asked. Another one on screen now opens nothing.
-        guard request == mailboxRequest else { return .failed(nil) }
+        guard isCurrent(target), request == mailboxRequest else { return .failed(nil) }
         switch outcome {
         case .sent:
             break
@@ -1002,7 +1038,7 @@ final class Inbox {
         // Also after an unconfirmed send: the listing may show it was stored after all. Whichever
         // listing brings the sent copy back — this one or the send's own — moves `started` to it.
         await loadInbox(for: request)
-        guard request == mailboxRequest, let started, started.mailbox == me.address else { return .opened(key) }
+        guard isCurrent(target), request == mailboxRequest, let started, started.mailbox == me.address else { return .failed(nil) }
         return .opened(started.peer)
     }
 
@@ -1030,8 +1066,8 @@ final class Inbox {
     }
 
     /// The unconfirmed first message for this conversation, once, for its composer.
-    func takeUnconfirmedFirstSend(mailbox: String?, peer: String) -> UnconfirmedFirstSend? {
-        guard let mailbox, mailbox == me?.address,
+    func takeUnconfirmedFirstSend(mailbox: String?, peer: String, intoEmptyComposer: Bool = true) -> UnconfirmedFirstSend? {
+        guard intoEmptyComposer, let mailbox, mailbox == me?.address,
               let index = unconfirmedFirstSends.firstIndex(where: { $0.mailbox == mailbox && $0.peer == peer }) else { return nil }
         return unconfirmedFirstSends.remove(at: index)
     }

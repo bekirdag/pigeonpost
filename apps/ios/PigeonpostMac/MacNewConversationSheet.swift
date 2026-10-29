@@ -13,6 +13,7 @@ struct MacNewConversationSheet: View {
     @State private var draft = ""
     @State private var error: String?
     @State private var sending = false
+    @State private var target: Inbox.NewConversationTarget?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -63,6 +64,7 @@ struct MacNewConversationSheet: View {
         }
         .padding(24)
         .background(Theme.ground)
+        .onAppear { if target == nil { target = inbox.captureNewConversationTarget() } }
     }
 
     private var writing: Bool { !draft.trimmed.isEmpty }
@@ -70,6 +72,10 @@ struct MacNewConversationSheet: View {
     private func go() {
         let trimmed = peer.trimmingCharacters(in: .whitespacesAndNewlines)
         guard PeerFace.validConversationAddress(trimmed), !sending else { return }
+        guard let target, inbox.isCurrent(target) else {
+            error = "Your inbox changed. Close this sheet and start again."
+            return
+        }
         let text = draft.trimmed
         guard !text.isEmpty else {
             opened(trimmed)
@@ -83,7 +89,7 @@ struct MacNewConversationSheet: View {
         sending = true
         error = nil
         Task {
-            switch await inbox.startConversation(to: trimmed, body: text) {
+            switch await inbox.startConversation(target: target, to: trimmed, body: text) {
             case .opened: dismiss()
             case .failed(let message): error = message ?? "Could not send."
             }
