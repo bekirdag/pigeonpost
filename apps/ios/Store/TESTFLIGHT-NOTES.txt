@@ -1,5 +1,9 @@
-Handle subscriptions now use one plan with 1–10 names. Open Settings > Get a handle to see every yearly plan and its total local price. Change plans through Apple, register additional included names without paying again, and restore the plan on the same Pigeonpost account. Upgrades take effect immediately; downgrades take effect at renewal. Existing handle ownership and mailbox history are preserved.
+Pigeonpost 1.1 (50) for iPhone, iPad and Mac.
 
-Purchases and restores now explain when an Apple subscription belongs to another Pigeonpost account. Failed verification no longer appears as a scheduled plan change.
+Live streams in groups: when someone is live, the group shows a red LIVE banner; tap Watch to open the stream full screen. Admins (or everyone, if the group allows it) can Go live with the camera; the streamer can invite a viewer onto the stage, and nothing is opened on the viewer's device until they accept. Streams are end-to-end encrypted and are not recorded. On iPhone and iPad, streaming and speaking on stage show as a call in progress.
 
-Please test purchase, plan upgrade, included-name registration and Restore purchases on a physical iPhone. TestFlight purchases use Apple's sandbox. For the App Review demo account, use a fresh sandbox tester that has not purchased a subscription under another Pigeonpost account. A new physical-device recording is required for App Review.
+Meeting notes: open Meeting notes from the top of the inbox list (or the sidebar on iPad and Mac) to read the summaries and transcripts of calls where you agreed to notes. They are decrypted on this device with its own notes key. During a call, the host can ask for notes; everyone sees the disclosure and must agree before any audio is captured, and only your own microphone is ever captured.
+
+The message box keeps the keyboard after Send, so the next message can be typed at once.
+
+Please test on a physical device: watching a stream with the ring switch on silent, going live and ending the stream from the lock screen call controls, accepting a stage invitation, and opening meeting notes from a call taken in this app.

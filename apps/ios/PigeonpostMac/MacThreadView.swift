@@ -426,7 +426,9 @@ struct MacThreadView: View {
         if let action, editing {
             Task { @MainActor in
                 defer { sending.remove(key) }
-                if await inbox.saveMessageEdit(action), composerKey == key { sent += 1 }
+                _ = await inbox.saveMessageEdit(action)
+                // Back to the field whether or not it worked: a failed save keeps its text there.
+                if composerKey == key { sent += 1 }
             }
             return
         }
@@ -445,8 +447,10 @@ struct MacThreadView: View {
             guard account.me?.address == key.mailbox else { return }
             if await inbox.send(text, to: peer, threadId: threadId, files: files, msgRef: attempt.reference, reply: reply) {
                 drafts[key] = nil
-                if composerKey == key { sent += 1 }
             }
+            // The keyboard goes back to the field after Send or Return, sent or not (a failed
+            // send keeps its draft there, ready to retry), as on the web.
+            if composerKey == key { sent += 1 }
         }
     }
 }

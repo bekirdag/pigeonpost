@@ -22,10 +22,12 @@
 	     reading the sign-in QR that `pigeonpost login` prints on another machine. Nothing is
 	     recorded or kept. -->
 	<key>NSCameraUsageDescription</key>
-	<string>For video calls, taking a profile picture, and scanning the sign-in code shown by the pigeonpost command line.</string>
-	<!-- Calls only. Audio goes straight to the people in the call, encrypted end to end. -->
+	<string>For video calls, going live in your groups, taking a profile picture, and scanning the sign-in code shown by the pigeonpost command line.</string>
+	<!-- Calls and live streams: audio goes to the people in the call or stream, encrypted end to end.
+	     Meeting notes (only after everyone in the call agrees) encrypt the device's own microphone to
+	     the notes service; see docs/apple-privacy-labels.md. -->
 	<key>NSMicrophoneUsageDescription</key>
-	<string>So the people you call can hear you.</string>
+	<string>So the people you call or stream to can hear you. Meeting notes use your own microphone only when everyone in the call has agreed.</string>
 	<!-- Geist and Geist Mono (SIL OFL 1.1, Shared/Fonts/Geist-OFL.txt), the conversation design's type. -->
 	<key>UIAppFonts</key>
 	<array>

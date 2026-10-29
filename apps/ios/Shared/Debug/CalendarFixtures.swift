@@ -196,7 +196,7 @@ private final class CalendarFixtureTransport: URLProtocol {
             return (200, ["url": url, "expires_at": 1824465600])
         }
         if path == "/v1/calendar/import/preview", method == "POST" {
-            let picker = CommandLine.arguments.contains("-calendar-picker-fixture")
+            let picker = CommandLine.arguments.contains("-calendar-picker-fixture") || CommandLine.arguments.contains("-calendar-import-fixture-file")
             if picker && !String(decoding: bytes, as: UTF8.self).contains("SUMMARY:Local picker interview\r\n") {
                 return (400, ["error": "bad_request"])
             }

@@ -23,7 +23,16 @@ final class CalendarUITests: XCTestCase {
     }
     private func element(_ id: String) -> XCUIElement { app.descendants(matching: .any).matching(identifier: id).firstMatch }
     private func tap(_ item: XCUIElement, file: StaticString = #filePath, line: UInt = #line) {
-        for _ in 0..<6 where !item.isHittable { app.swipeUp() }
+        // Ask about hittability only once the element exists: asking a list row that is being
+        // replaced (a reload after a save) fails the test outright ("Failed to determine
+        // hittability"). A lazy row offscreen does not exist until scrolled to, hence the swipes.
+        _ = item.waitForExistence(timeout: 3)
+        app.settle(item)
+        for _ in 0..<6 where !(item.exists && item.isHittable) {
+            app.swipeUp()
+            _ = item.waitForExistence(timeout: 1)
+            app.settle(item)
+        }
         XCTAssertTrue(item.waitForExistence(timeout: 5), file: file, line: line)
         XCTAssertTrue(item.isHittable, file: file, line: line)
         item.tap()
@@ -60,20 +69,13 @@ final class CalendarUITests: XCTestCase {
     private func tapRow(_ item: XCUIElement, in formID: String) { revealRow(item, in: formID); item.tap() }
     private func typeRow(_ text: String, into field: XCUIElement, in formID: String) { revealRow(field, in: formID); type(text, into: field) }
 
-    private func tapPopup(_ item: XCUIElement) {
-        XCTAssertTrue(item.waitForExistence(timeout: 5))
-        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: item)
-        // Swiping to find a popup item can dismiss or move its presentation on iPad.
-        if XCTWaiter.wait(for: [ready], timeout: 5) == .completed {
-            item.tap()
-        } else {
-            // iPadOS 26 can report false for a visibly open native menu action.
-            // Use only its observed, enabled control inside this app's frame. The caller
-            // still requires the resulting editor, settings or selection to appear.
-            XCTAssertTrue(item.isEnabled && item.frame.width > 0 && item.frame.height > 0 && app.frame.contains(item.frame))
-            item.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-        }
+    /// A menu, picker or confirmation item. `until` is what choosing it must show; `reopen`
+    /// presents the menu again if a tap was swallowed with it (see `XCUIApplication.choose`).
+    private func tapPopup(_ item: XCUIElement, until done: XCUIElement? = nil, reopen: (() -> Void)? = nil,
+                          file: StaticString = #filePath, line: UInt = #line) {
+        app.choose(item, until: done, reopen: reopen, file: file, line: line)
     }
+    private func openOptions() { tap(element("calendar-options")) }
     private func openReview() {
         XCTAssertTrue(app.navigationBars["Calendar"].waitForExistence(timeout: 10))
         tap(element(review))
@@ -88,8 +90,8 @@ final class CalendarUITests: XCTestCase {
         app.buttons.matching(identifier: "calendar-confirm-reload").allElementsBoundByIndex.first { $0.isHittable }
     }
     private func edit(_ choice: String) {
-        tap(element("calendar-edit")); tapPopup(app.buttons[choice].firstMatch)
-        XCTAssertTrue(element("calendar-title").waitForExistence(timeout: 5))
+        tap(element("calendar-edit"))
+        tapPopup(app.buttons[choice].firstMatch, until: element("calendar-title")) { self.tap(self.element("calendar-edit")) }
     }
 
     func testCalendarEntryRespectsCapabilities() {
@@ -263,9 +265,8 @@ final class CalendarUITests: XCTestCase {
     }
     func testCalendarPrivacySaveKeepsTimezone() {
         launch()
-        tap(element("calendar-options")); tapPopup(app.buttons["Calendar settings"].firstMatch)
         let previews = element("calendar-notification-previews")
-        XCTAssertTrue(previews.waitForExistence(timeout: 5))
+        openOptions(); tapPopup(app.buttons["Calendar settings"].firstMatch, until: previews, reopen: openOptions)
         // SwiftUI exposes a labeled switch row and its actual UISwitch. Tapping the row's
         // text center does not operate the native control on every supported runtime.
         let control = previews.switches.firstMatch
@@ -273,7 +274,11 @@ final class CalendarUITests: XCTestCase {
         XCTAssertEqual(previews.value as? String, "1", "operate the actual switch before testing its persistence")
         tap(app.buttons["Save"].firstMatch)
         XCTAssertTrue(app.navigationBars["Calendar"].waitForExistence(timeout: 10))
-        tap(element("calendar-options")); tapPopup(app.buttons["Calendar settings"].firstMatch)
+        // The settings sheet must be gone before the menu behind it is opened again: a menu opened
+        // during the dismissal animation closes without acting on the chosen item.
+        let closed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: previews)
+        XCTAssertEqual(XCTWaiter.wait(for: [closed], timeout: 10), .completed)
+        openOptions(); tapPopup(app.buttons["Calendar settings"].firstMatch, until: previews, reopen: openOptions)
         XCTAssertEqual(element("calendar-notification-previews").value as? String, "1")
         XCTAssertTrue(app.textFields.matching(NSPredicate(format: "value == %@", "Europe/Istanbul")).firstMatch.exists)
     }
@@ -362,7 +367,7 @@ final class CalendarUITests: XCTestCase {
     }
     func testSubscriptionLinkIsShownOnlyOnCreationAndCanBeRevoked() {
         launch()
-        tap(element("calendar-options")); tapPopup(app.buttons["Manage calendars"].firstMatch)
+        openOptions(); tapPopup(app.buttons["Manage calendars"].firstMatch, until: element("calendar-folder:cal_work"), reopen: openOptions)
         tap(element("calendar-folder:cal_work")); tap(element("calendar-subscription"))
         XCTAssertTrue(app.navigationBars["Calendar subscription"].waitForExistence(timeout: 5))
         XCTAssertFalse(element("calendar-feed-issued-link").exists)
@@ -377,13 +382,11 @@ final class CalendarUITests: XCTestCase {
         XCTAssertFalse(element("calendar-feed-issued-link").exists, "status reads cannot recover a subscription capability")
         tapRow(app.buttons["calendar-feed-disable"], in: "calendar-feed-form")
         let disable = app.buttons.matching(NSPredicate(format: "label == %@", "Disable subscription"))
-        tapPopup(disable.allElementsBoundByIndex.first { $0.isHittable } ?? disable.firstMatch)
-        XCTAssertTrue(app.staticTexts["Subscription off"].waitForExistence(timeout: 5))
+        tapPopup(disable.allElementsBoundByIndex.first { $0.isHittable } ?? disable.firstMatch, until: app.staticTexts["Subscription off"])
     }
     func testImportConfirmationKeepsSelectionAfterLostResponse() {
         launch(["-calendar-import-preview-fixture", "-calendar-import-loss-once"])
-        tap(element("calendar-options")); tapPopup(app.buttons["Import calendar file"].firstMatch)
-        XCTAssertTrue(app.staticTexts["Imported planning"].waitForExistence(timeout: 5))
+        openOptions(); tapPopup(app.buttons["Import calendar file"].firstMatch, until: app.staticTexts["Imported planning"], reopen: openOptions)
         XCTAssertFalse(app.switches["calendar-import-entry:2"].firstMatch.isEnabled)
         tapRow(app.buttons["calendar-import-confirm"], in: "calendar-import-form")
         XCTAssertTrue(element("calendar-import-error").waitForExistence(timeout: 5))
@@ -395,37 +398,37 @@ final class CalendarUITests: XCTestCase {
         tap(app.navigationBars["Import calendar"].buttons["Done"])
         XCTAssertTrue(app.navigationBars["Calendar"].waitForExistence(timeout: 5))
     }
+    /// A chosen .ics goes through the app's own reader and preview, end to end. The file is handed
+    /// over by the DEBUG `-calendar-import-fixture-file` argument where a person would pick it in
+    /// the system's Files picker: that picker runs out of process and its tap targets are not
+    /// stable across simulators (an iPad runner showed the file and never delivered the choice).
+    /// The fixture transport refuses a preview whose bytes are not the file's (`CalendarFixtures`).
+    /// The picker itself is checked separately below.
     func testLocalCalendarFileCanBeSelectedAndPreviewed() {
-        launch(["-calendar-picker-fixture"])
-        tap(element("calendar-options")); tapPopup(app.buttons["Import calendar file"].firstMatch)
+        launch(["-calendar-import-fixture-file"])
+        openOptions(); tapPopup(app.buttons["Import calendar file"].firstMatch, until: app.buttons["calendar-import-choose-file"], reopen: openOptions)
         tap(app.buttons["calendar-import-choose-file"])
-        let browse = app.buttons["Browse"].firstMatch
-        // A cold document service can appear after the app's sheet is already visible.
-        if browse.waitForExistence(timeout: 10) { browse.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
-        let local = app.staticTexts.matching(NSPredicate(format: "label == %@ OR label == %@", "On My iPhone", "On My iPad")).firstMatch
-        if local.waitForExistence(timeout: 10) { local.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
-        let folder = app.cells.matching(NSPredicate(format: "identifier BEGINSWITH %@", "Pigeonpost calendar tests,")).firstMatch
-        XCTAssertTrue(folder.waitForExistence(timeout: 10))
-        folder.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25)).tap()
-        let file = app.cells.matching(NSPredicate(format: "identifier BEGINSWITH %@", "Pigeonpost import fixture")).firstMatch
-        XCTAssertTrue(file.waitForExistence(timeout: 5))
-        // The grid cell's centre is its name, not its document thumbnail. Touch the thumbnail
-        // on both devices; the remote Files activation point can select the name instead.
-        XCTAssertGreaterThan(file.frame.width, 0)
-        XCTAssertGreaterThan(file.frame.height, 0)
-        file.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25)).tap()
-        let imported = app.staticTexts["Local picker interview"].firstMatch
-        let open = app.buttons["Open"].firstMatch
-        if !imported.waitForExistence(timeout: 3), open.waitForExistence(timeout: 3), open.isEnabled {
-            open.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-        }
-        if !imported.waitForExistence(timeout: 3), file.exists {
-            file.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25)).doubleTap()
-            if open.waitForExistence(timeout: 2), open.isEnabled {
-                open.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-            }
-        }
-        XCTAssertTrue(imported.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Local picker interview"].firstMatch.waitForExistence(timeout: 10), "the file's own event is previewed")
+        XCTAssertFalse(element("calendar-import-error").exists)
+        XCTAssertTrue(app.switches["calendar-import-entry:0"].firstMatch.exists, "importable events are offered for selection")
+        tapRow(app.buttons["calendar-import-confirm"], in: "calendar-import-form")
+        XCTAssertTrue(app.staticTexts["Imported 2 events"].waitForExistence(timeout: 10), "confirming imports the selection")
+    }
+    /// Choosing a file opens the system's document picker, which can be dismissed back to the
+    /// import screen unchanged.
+    func testCalendarFilePickerOpensAndCancels() {
+        launch()
+        openOptions(); tapPopup(app.buttons["Import calendar file"].firstMatch, until: app.buttons["calendar-import-choose-file"], reopen: openOptions)
+        tap(app.buttons["calendar-import-choose-file"])
+        // A cold document service can take a while to draw; any of its own controls shows it.
+        let picker = app.descendants(matching: .any).matching(NSPredicate(format: "label IN %@ OR identifier IN %@",
+            ["Browse", "Recents", "On My iPhone", "On My iPad", "Shared"], ["Browse", "Recents"])).firstMatch
+        XCTAssertTrue(picker.waitForExistence(timeout: 30), "the system document picker opens")
+        let cancel = app.buttons.matching(NSPredicate(format: "label IN %@ OR identifier IN %@", ["Cancel", "Close"], ["Cancel", "Close"])).firstMatch
+        if cancel.waitForExistence(timeout: 10) { cancel.tap() } else { app.swipeDown(velocity: .fast) }
+        let back = app.buttons["calendar-import-choose-file"]
+        let shown = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND hittable == true"), object: back)
+        XCTAssertEqual(XCTWaiter.wait(for: [shown], timeout: 15), .completed, "dismissing the picker returns to the import screen")
         XCTAssertFalse(element("calendar-import-error").exists)
     }
     func testEventExportChooserCanBeCancelled() {
@@ -435,7 +438,7 @@ final class CalendarUITests: XCTestCase {
         let readyToSave = app.buttons.matching(NSPredicate(format: "label IN %@", ["Save", "Move"])).firstMatch
         // Saving need not be enabled to cancel. Remote Files toolbars can also lack an AX
         // activation point while visibly present; the assertions below require actual dismissal.
-        XCTAssertTrue(readyToSave.waitForExistence(timeout: 10))
+        XCTAssertTrue(readyToSave.waitForExistence(timeout: 30))
         // The phone picker can restore a nested folder, where Back replaces Cancel. Return to
         // locations; a tablet already keeps Cancel in its outer toolbar.
         for _ in 0..<4 where !cancel.exists {
@@ -463,5 +466,48 @@ final class CalendarUITests: XCTestCase {
         XCTAssertFalse(app.navigationBars["Calendar"].exists)
         revealConversations()
         XCTAssertTrue(element("calendarButton").exists)
+    }
+}
+
+extension XCUIApplication {
+    /// Waits until an element stops moving: a menu, popover or sheet animating in reports frames
+    /// that the next tap may no longer hit.
+    func settle(_ item: XCUIElement, timeout: TimeInterval = 2) {
+        let end = Date().addingTimeInterval(timeout)
+        var last = item.exists ? item.frame : .null
+        while Date() < end {
+            Thread.sleep(forTimeInterval: 0.15)
+            let now = item.exists ? item.frame : .null
+            if now == last && !now.isNull { return }
+            last = now
+        }
+    }
+
+    /// Choose a menu, picker or confirmation item and require what it opens (`until`).
+    ///
+    /// Why this is not a plain tap: on iPad (iPadOS 26 most of all) a menu item tapped while the
+    /// menu is still animating in, or a menu opened while an earlier sheet is still dismissing, can
+    /// close without acting, and an open menu's actions can report themselves not hittable. Each
+    /// attempt waits for the item to settle and taps it (by its observed frame when it says it is
+    /// not hittable). If the destination does not appear and the menu has closed, `reopen` opens it
+    /// again — at most three times. The destination is still required: nothing is waived.
+    func choose(_ item: XCUIElement, until done: XCUIElement?, reopen: (() -> Void)?,
+                file: StaticString = #filePath, line: UInt = #line) {
+        for attempt in 0..<3 {
+            if attempt > 0, !item.exists, let reopen { reopen() }
+            XCTAssertTrue(item.waitForExistence(timeout: 5), "menu item never appeared", file: file, line: line)
+            settle(item)
+            if item.isHittable {
+                item.tap()
+            } else {
+                XCTAssertTrue(item.isEnabled && item.frame.width > 0 && item.frame.height > 0 && frame.contains(item.frame),
+                              file: file, line: line)
+                item.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            }
+            guard let done else { return }
+            if done.waitForExistence(timeout: 5) { return }
+            if reopen == nil && !item.exists { break }
+        }
+        if let done { XCTAssertTrue(done.exists, "choosing the menu item did not open what it should", file: file, line: line) }
     }
 }

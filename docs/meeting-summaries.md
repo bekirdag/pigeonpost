@@ -139,5 +139,13 @@ Verified with synthetic media only: headless Chrome (inbox, native-call and join
 chunks) and the Android app's WebView on an Android 14 emulator (WebView 113, Opus/WebM chunks)
 (`tests/e2e-meeting-summaries/native.mjs`).
 Android (0.4.1) has a native Meeting notes reader with an Android Keystore-held notes key
-(`apps/android/README.md`); the other native apps read notes in the inbox web app for now. Guests on the join
+(`apps/android/README.md`). The iPhone, iPad and Mac app (1.1) has its own **Meeting notes** reader (an entry at the top of the
+inbox list, and in the sidebar on iPad and Mac): it lists `GET /v1/meetings` with the native client,
+and opens each brief with the call page's own notes key (`PigeonpostNotesKeys.get`/`open` in the
+call web view, the same key a member's Agree registers in calls taken in the app); only ciphertext
+and this account's wraps go to the page, and the plaintext JSON comes back. Opening the reader
+registers that key (`PUT /v1/meetings/keys/{key_id}`), as the web inbox does. Copy as text and
+Delete my copy as on the web. Consent and capture in the app's calls were re-verified on the iOS
+18.3 simulator with synthetic media (`native.mjs`, 2026-10-28). Store privacy labels:
+`docs/apple-privacy-labels.md`. Guests on the join
 page see the disclosure and can agree or decline. Linux opens calls in the browser.

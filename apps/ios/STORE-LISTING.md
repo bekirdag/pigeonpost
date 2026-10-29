@@ -35,11 +35,14 @@ no medical or drug references. The result should come out **4+**.
 | Field | Value |
 | --- | --- |
 | Price | **Free** |
-| Availability | All territories |
+| Availability | All territories **except China mainland** before any build with CallKit (1.1 and later; see `APP-STORE.md`) |
 
 ## App Privacy — left sidebar
 
 Privacy Policy URL: `https://pigeonpost.dev/privacy`
+
+**Current answers: `docs/apple-privacy-labels.md`** (1.1 adds meeting audio). The table below is the
+1.0 listing's history and no longer matches the manifest; follow the checklist instead.
 
 **Data collected — exactly two types.** Both are *linked to the user* and neither is used for
 tracking. When asked "Do you or your third-party partners use data for tracking?" the answer is

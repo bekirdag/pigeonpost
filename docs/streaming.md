@@ -184,8 +184,23 @@ sheet, the `stream` notice and the "Who can go live" setting). Android (0.4.1) h
 Watch, Go live, the policy setting and stage forwarding (`apps/android/README.md`). Native apps reuse the same page in
 their call web view: `PigeonpostNative.watchStream({id, name}, streamId)` and
 `PigeonpostNative.goLive({id, name}, {title, camera, screen})` return `{ok, code?}`; the page asks for
-full screen while the stream is shown. The native group screens still need a LIVE banner and Watch /
-Go live buttons calling these (a native-client follow-up).
+full screen while the stream is shown.
+
+**iPhone, iPad and Mac (1.1):** the group screen polls `GET /v1/groups/{id}/streams` (the app holds no
+event stream) and shows the LIVE banner with Watch / Open / Return; Go live (camera, and a screen
+only where the web view offers `getDisplayMedia`, i.e. never on iPhone/iPad) is shown to members the
+group's `stream_policy` allows; "Who can go live" is in group info. The app asks for camera and
+microphone permission itself before going live. Stage invitations: the app watches
+`PigeonpostLive.current()` and, when the calls service moves the viewer to `invited`, hands the page
+the same `onGroupStream` event groups.js would (`CallHost.watchLive`). On iPhone/iPad a device that
+talks in a stream (streamer, speaker) reports it to CallKit as an outgoing call, so the system shows
+it as a call, keeps audio running with the screen off, offers "End & Accept" for an incoming call and
+ends the stream from the call screen; a viewer uses a playback audio session (sound with the ring
+switch on silent) and is not a call. Answering a call leaves the stream. The page's
+`window.confirm` ("End your stream for everyone?") is a native alert. Verified in the iOS 18.3
+simulator app with synthetic media (`apps/ios/Tests/streams-native.mjs`: watch, decode with 0
+errors, stage invite → accept → the app's encrypted audio reaches the streamer, go live from the app
+and decode in Chrome).
 
 Browser and app engines, watching a stream with synthetic media (2026-10-27, `tests/e2e-streams`):
 
@@ -196,9 +211,9 @@ Browser and app engines, watching a stream with synthetic media (2026-10-27, `te
 | Android 14 emulator, Chrome 113 (the same engine as the Android app's WebView) | Pass, same checks. |
 | macOS 14, a bare `WKWebView` (the Mac app's engine) | Pass, same checks. |
 
-Not run here: the iOS app's own WKWebView (Safari in the Simulator is the same WebKit; the
-CryptoKey-into-worker problem it had is handled by `calls-e2ee-worker.js` for every WebKit), Windows
-WebView2 (Chromium), Linux WebKitGTK (no WebRTC, see the calls notes).
+The iOS app's own WKWebView (iOS 18.3 simulator, 2026-10-28): pass, watching and streaming
+(`apps/ios/Tests/streams-native.mjs`). Not run here: Windows WebView2 (Chromium), Linux WebKitGTK
+(no WebRTC, see the calls notes).
 
 ## 7. Operations
 

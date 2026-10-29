@@ -36,6 +36,9 @@ check(notice("settings_changed", meta: NoticeMeta(changed: ["post_policy"], post
 check(notice("timer_changed", meta: NoticeMeta(ephemeralSecs: 3600)) == "Alp set messages to disappear after 1 hour", "timer notice")
 check(notice("timer_changed") == "Alp turned off disappearing messages", "timer off notice")
 check(notice("call_ended", meta: NoticeMeta(duration: 125)) == "Call ended · 2 min", "call ended notice")
+check(notice("stream", meta: NoticeMeta(duration: 2040, viewers: 18)) == "Alp streamed for 34 min · 18 viewers", "stream notice, as the web words it")
+check(notice("stream", meta: NoticeMeta(duration: 5, viewers: 1)) == "Alp streamed for 1 min · 1 viewer", "a short stream to one viewer")
+check(notice("settings_changed", meta: NoticeMeta(changed: ["stream_policy"], streamPolicy: "everyone")) == "Alp let everyone go live", "stream policy notice")
 check(notice("member_joined") == nil && notice("device_added") == nil, "joins and devices come from verified commits, not notices")
 
 // ---- verified commits ------------------------------------------------------------------------------

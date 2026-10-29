@@ -27,6 +27,18 @@ private struct GroupConversation: View {
     @Environment(GroupStore.self) private var groups
     @Environment(Account.self) private var account
     @Environment(CallHost.self) private var calls
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    #endif
+    /// A phone's group bar holds three buttons before iOS drops the title for them; Go live moves
+    /// into group info there.
+    private var roomyBar: Bool {
+        #if os(iOS)
+        return sizeClass == .regular
+        #else
+        return true
+        #endif
+    }
 
     @State private var draft = ""
     @State private var staged: [StagedFile] = []
@@ -65,9 +77,12 @@ private struct GroupConversation: View {
 
     private struct Jump: Equatable { let id = UUID(); let seq: Int }
     private enum GroupSheet: Identifiable {
-        case group, block(BlockTarget), message(Int)
+        case group, block(BlockTarget), message(Int), goLive
         var id: String {
-            switch self { case .group: return "group"; case .block: return "block"; case let .message(seq): return "message:\(seq)" }
+            switch self {
+            case .group: return "group"; case .block: return "block"; case let .message(seq): return "message:\(seq)"
+            case .goLive: return "go-live"
+            }
         }
     }
     private enum Confirmation {
@@ -97,6 +112,9 @@ private struct GroupConversation: View {
     @ViewBuilder
     private func content(_ group: GroupSummary) -> some View {
         VStack(spacing: 0) {
+            if account.features.streaming, group.isActive, let stream = groups.streams[group.id] {
+                GroupLiveBanner(group: group, stream: stream)
+            }
             history(group)
             bars(group)
             if group.canPost, groups.inGroup.contains(group.id) {
@@ -112,9 +130,11 @@ private struct GroupConversation: View {
         #endif
         .sheet(item: $sheet) { selected in
             switch selected {
-            case .group: GroupInfoSheet(groupId: group.id).environment(groups)
+            case .group:
+                GroupInfoSheet(groupId: group.id, goLive: roomyBar ? nil : { sheet = .goLive }).environment(groups)
             case let .block(target): BlockSheet(target: target)
             case let .message(seq): GroupMessageInfo(groupId: group.id, seq: seq).environment(groups)
+            case .goLive: GoLiveSheet(group: group).environment(groups).environment(calls)
             }
         }
         .confirmationDialog(confirmation?.title ?? "",
@@ -186,6 +206,13 @@ private struct GroupConversation: View {
                 Button("Join call") { calls.callGroup(group.id, name: group.name, video: groups.calls[group.id]?.kind == "video", join: true) }
                     .accessibilityLabel("Call in progress — Join")
                     .accessibilityIdentifier("groupCallJoin")
+            }
+            if roomyBar, account.features.streaming, group.canGoLive, groups.streams[group.id] == nil {
+                Button { sheet = .goLive } label: { Image(systemName: "dot.radiowaves.left.and.right") }
+                    .accessibilityLabel("Go live")
+                    .accessibilityIdentifier("groupGoLive")
+                    .help("Go live")
+                    .disabled(calls.mode != .hidden || calls.live != nil)
             }
             Button { calls.callGroup(group.id, name: group.name, video: false, join: false) } label: { Image(systemName: "phone") }
                 .accessibilityLabel("Group voice call")
@@ -378,7 +405,9 @@ private struct GroupConversation: View {
                     .padding(.horizontal, 6)
                     .padding(.vertical, 8)
                     .accessibilityIdentifier("groupComposer")
-                    .disabled(sending)
+                    // Not disabled while sending: a disabled field gives up the keyboard, and the
+                    // next message should be typed straight away (the binding ignores edits until
+                    // the send settles, so nothing typed meanwhile is lost into the old draft).
                     #if os(macOS)
                     .onSubmit(send)
                     #endif

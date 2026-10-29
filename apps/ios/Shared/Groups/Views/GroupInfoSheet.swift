@@ -9,6 +9,8 @@ import SwiftUI
 
 struct GroupInfoSheet: View {
     let groupId: String
+    /// Phase 6: where a phone offers Go live (its group bar has no room for a fourth button).
+    var goLive: (() -> Void)? = nil
 
     @Environment(GroupStore.self) private var groups
     @Environment(Account.self) private var account
@@ -87,6 +89,15 @@ struct GroupInfoSheet: View {
                                                                "description": about.isEmpty ? NSNull() : about as Any]) }
                     }
                     .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+
+            if let goLive, account.features.streaming, group.canGoLive, groups.streams[group.id] == nil {
+                Section {
+                    Button { goLive() } label: { Label("Go live", systemImage: "dot.radiowaves.left.and.right") }
+                        .accessibilityIdentifier("groupInfoGoLive")
+                } footer: {
+                    Text("Stream your camera to everyone in the group, end-to-end encrypted.")
                 }
             }
 
@@ -277,6 +288,15 @@ struct GroupInfoSheet: View {
                 Text("Only admins").tag("admins")
             }
             .accessibilityIdentifier("groupPostPolicy")
+            if account.features.streaming {
+                Picker("Who can go live", selection: Binding(get: { group.streamPolicy ?? "admins" }, set: { value in
+                    Task { _ = await groups.update(group, ["stream_policy": value]) }
+                })) {
+                    Text("Only admins").tag("admins")
+                    Text("Everyone").tag("everyone")
+                }
+                .accessibilityIdentifier("groupStreamPolicy")
+            }
             Toggle("Members can add people", isOn: Binding(get: { group.membersCanInvite == true }, set: { on in
                 Task { _ = await groups.update(group, ["members_can_invite": on]) }
             }))

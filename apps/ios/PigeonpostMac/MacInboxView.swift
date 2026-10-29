@@ -30,7 +30,7 @@ struct MacInboxView: View {
         case settings
         case filtered
         case peer(Conversation)
-        case newGroup, joinLink, calendar, organizationRooms
+        case newGroup, joinLink, calendar, organizationRooms, meetingNotes
         case join(GroupStore.JoinLink)
         case meetingLink(CalendarLinkRequest)
         case deviceApproval(DeviceApprovalRequest)
@@ -44,6 +44,7 @@ struct MacInboxView: View {
             case .filtered: return "filtered"
             case .calendar: return "calendar"
             case .organizationRooms: return "org-rooms"
+            case .meetingNotes: return "meeting-notes"
             case .peer(let conversation): return "peer:\(conversation.peer)"
             case .meetingLink(let request): return "meeting-link:" + request.id.uuidString
             case .deviceApproval(let request): return "device-approval:" + request.id.uuidString
@@ -65,7 +66,8 @@ struct MacInboxView: View {
             joinLink: { sheet = .joinLink },
             openFiltered: { sheet = .filtered },
             openCalendar: { sheet = .calendar },
-            openRooms: { sheet = .organizationRooms }
+            openRooms: { sheet = .organizationRooms },
+            openNotes: { sheet = .meetingNotes }
         )
         // Groups keep their own cadence: the app holds no event stream (see GroupStore).
         .task(id: "\(account.me?.address ?? "")|\(account.features.groups)|\(account.session.authorizationId)|\(account.actingGeneration)") {
@@ -225,6 +227,8 @@ struct MacInboxView: View {
                 if account.features.orgs && account.features.groups {
                     OrganizationRoomsScreen(account: account, visit: visit) { id in peer = id; subthread = nil }
                 }
+            case .meetingNotes:
+                if account.features.meetingSummaries { MeetingNotesScreen() }
             case .joinLink:
                 JoinLinkSheet { link in sheet = .join(link) }
                     .frame(width: 460, height: 240)

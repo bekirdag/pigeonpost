@@ -34,6 +34,7 @@ struct DesktopInboxView: View {
     var openFiltered: () -> Void = {}
     var openCalendar: (() -> Void)? = nil
     var openRooms: (() -> Void)? = nil
+    var openNotes: (() -> Void)? = nil
 
     @Environment(Account.self) private var account
     @Environment(Inbox.self) private var inbox
@@ -166,6 +167,9 @@ struct DesktopInboxView: View {
             if switchingMailbox { mailboxList }
             if let calendar, account.features.calendar, let openCalendar {
                 CalendarEntry(count: calendar.pendingCount, open: openCalendar).padding(.horizontal, 16)
+            }
+            if account.features.meetingSummaries, let openNotes {
+                MeetingNotesEntry(open: openNotes).padding(.horizontal, 16)
             }
             if callLog != nil, account.features.callHistory { sideSwitch }
             if inbox.loading {

@@ -58,6 +58,29 @@ final class CallHost: NSObject {
 
     private(set) var mode: Mode = .hidden
     private(set) var preparingScheduled = false
+
+    /// Phase 6: the live stream this device is in, as the page reports it (`PigeonpostLive.current()`).
+    struct LiveState: Equatable {
+        let stream: String
+        let group: String
+        /// host, speaker, invited or viewer.
+        let role: String
+        /// Publishing this device's microphone (and camera): the streamer, or a speaker on the stage.
+        var publishing: Bool { role == "host" || role == "speaker" }
+    }
+    private(set) var live: LiveState?
+    /// Group names for the streams this device opened, for whoever shows the stream outside the page.
+    @ObservationIgnored private(set) var liveGroupName: String?
+    @ObservationIgnored private var liveWatch: Task<Void, Never>?
+
+    /// A `window.confirm` from the page (live.js asks before ending a stream for everyone), shown as
+    /// a native alert. WebKit answers `false` to every confirm an app does not handle.
+    struct Confirmation: Identifiable {
+        let id = UUID()
+        let message: String
+        fileprivate let answer: (Bool) -> Void
+    }
+    var confirmation: Confirmation?
     @ObservationIgnored private var scheduledOperation: UUID?
 
     @ObservationIgnored private weak var session: Session?
@@ -90,8 +113,9 @@ final class CallHost: NSObject {
     #endif
 
     // The version names the bridge this build expects (Phase 1c: answer, decline, setMuted, hangUp,
-    // nativeRing; Phase 1b: avatars); a new value keeps a cached older page from being used.
-    static let production = URL(string: "https://inbox.pigeonpost.dev/native-call.html?v=20261025-scheduled1")!
+    // nativeRing; Phase 1b: avatars; Phase 6: watchStream, goLive, stopStream; Phase 7: the notes
+    // key); a new value keeps a cached older page from being used.
+    static let production = URL(string: "https://inbox.pigeonpost.dev/native-call.html?v=20261027-live1")!
 
     #if DEBUG
     /// Local call tests only: `-calls-page URL -calls-token T -calls-mailbox ADDRESS [-calls-handle H]
@@ -149,6 +173,7 @@ final class CallHost: NSObject {
                 queued = []
                 pending = nil
                 mode = .hidden
+                endLive()
             }
         }
         self.session = session
@@ -173,6 +198,7 @@ final class CallHost: NSObject {
         account = nil
         inbox = nil
         mode = .hidden
+        endLive()
     }
 
     /// Accept this ring as soon as the page has a session. With a ring token it works even if the
@@ -282,6 +308,189 @@ final class CallHost: NSObject {
         }
     }
 
+    // ---- Phase 6: live streams in groups (docs/streaming.md) -----------------------------------
+
+    /// Watch a group's live stream in the call view. Answers nil when the page took it (the stream
+    /// view is on screen, or explains itself there), otherwise a refusal code for `LiveStreams.explain`.
+    func watchStream(group: String, name: String, stream: String) async -> String? {
+        if let live, live.stream == stream {
+            evaluate("window.PigeonpostLive && PigeonpostLive.show()")
+            return nil
+        }
+        return await liveCall("""
+            if (!window.PigeonpostNative || typeof PigeonpostNative.watchStream !== 'function') return {ok:false, code:'bridge_unavailable'};
+            return await PigeonpostNative.watchStream(group, stream);
+            """, arguments: ["group": ["id": group, "name": String(name.prefix(80))], "stream": stream], group: group, name: name)
+    }
+
+    /// Go live in a group. The page opens the camera and microphone itself (the system asks first,
+    /// in the app's own words); `screen` is offered only where the web view can share one.
+    func goLive(group: String, name: String, title: String, camera: Bool, screen: Bool) async -> String? {
+        await liveCall("""
+            if (!window.PigeonpostNative || typeof PigeonpostNative.goLive !== 'function') return {ok:false, code:'bridge_unavailable'};
+            return await PigeonpostNative.goLive(group, options);
+            """, arguments: ["group": ["id": group, "name": String(name.prefix(80))],
+                             "options": ["title": String(title.prefix(100)), "camera": camera, "screen": screen]],
+            group: group, name: name)
+    }
+
+    /// End this device's part in the stream: the streamer's ends it for everyone, anyone else leaves.
+    func stopStream() {
+        evaluate("window.PigeonpostNative && typeof PigeonpostNative.stopStream === 'function' && PigeonpostNative.stopStream()")
+    }
+
+    /// Whether this web view can share a screen (never on iPhone or iPad; a Mac's may).
+    func canShareScreen() async -> Bool {
+        guard ready else { return false }
+        let answer = try? await webView.evaluateJavaScript("Boolean(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia)")
+        return answer as? Bool == true
+    }
+
+    private func liveCall(_ script: String, arguments: [String: Any], group: String, name: String) async -> String? {
+        // Not attached yet (the app is still opening the call view) reads as not ready, not signed out.
+        guard session != nil else { return "not_ready" }
+        guard identityIsCurrent else { return "signed_out" }
+        guard ready, configured else { return "not_ready" }
+        guard mode == .hidden, !preparingScheduled, live == nil else { return "busy" }
+        let currentBinding = binding, currentPage = pageGeneration
+        guard let address = mailbox else { return "signed_out" }
+        liveGroupName = name
+        let result: Any?
+        do {
+            result = try await webView.callAsyncJavaScript(script, arguments: arguments, in: nil, contentWorld: .page)
+        } catch {
+            return current(currentBinding, page: currentPage, address: address) ? "bridge_unavailable" : nil
+        }
+        guard current(currentBinding, page: currentPage, address: address) else { return nil }
+        let response = result as? [String: Any]
+        if response?["ok"] as? Bool == true {
+            watchLive()
+            return nil
+        }
+        // A stream view the page already closed with its own explanation; anything else is ours.
+        let code = (response?["code"] as? String).map { String($0.prefix(64)) } ?? "error"
+        return code
+    }
+
+    /// While a stream is on: follow the page's own state. The app has no group event stream, so a
+    /// stage invitation (the calls service moves the viewer's role to `invited` within its 10 s
+    /// check) is handed to the page here, once per invitation, as groups.js hands it the event.
+    private func watchLive() {
+        liveWatch?.cancel()
+        let currentBinding = binding, currentPage = pageGeneration
+        guard let address = mailbox else { return }
+        liveWatch = Task { [weak self] in
+            var lastRole: String?
+            var misses = 0
+            while !Task.isCancelled {
+                guard let self, self.current(currentBinding, page: currentPage, address: address) else { break }
+                let answer = try? await self.webView.evaluateJavaScript(
+                    "JSON.stringify(window.PigeonpostLive ? PigeonpostLive.current() : null)") as? String
+                guard !Task.isCancelled, self.current(currentBinding, page: currentPage, address: address) else { break }
+                let now = answer.flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) } as? [String: Any]
+                if let id = now?["id"] as? String, let group = now?["groupId"] as? String, let role = now?["role"] as? String {
+                    misses = 0
+                    if role == "invited", lastRole != "invited" {
+                        // Addressed to the mailbox the page itself is signed in as.
+                        _ = try? await self.webView.callAsyncJavaScript("""
+                            const me = window.PigeonpostCallsHost && PigeonpostCallsHost.mailbox();
+                            if (me && window.PigeonpostLive && PigeonpostLive.onGroupStream)
+                              PigeonpostLive.onGroupStream({stream_id: stream, stage: {address: me.address, state: "invited"}});
+                            """, arguments: ["stream": id], in: nil, contentWorld: .page)
+                    }
+                    lastRole = role
+                    self.setLive(LiveState(stream: id, group: group, role: role))
+                } else {
+                    // A stream still joining has no id yet on the page; give it a moment.
+                    misses += 1
+                    if self.live != nil || misses > 20 { break }
+                }
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+            }
+            self?.endLive()
+        }
+    }
+
+    private func setLive(_ next: LiveState?) {
+        guard live != next else { return }
+        live = next
+        var message: [String: Any] = ["state": next == nil ? "off" : "on"]
+        if let next {
+            message["stream"] = next.stream
+            message["group"] = next.group
+            message["role"] = next.role
+            message["name"] = liveGroupName ?? "Group"
+        }
+        events?.callPage("live", message)
+    }
+
+    private func endLive() {
+        liveWatch?.cancel()
+        liveWatch = nil
+        setLive(nil)
+    }
+
+    // ---- Phase 7: this device's meeting notes key (docs/meeting-summaries.md §3) ------------------
+
+    struct NotesKey: Equatable {
+        let id: String
+        let publicKey: String
+        let label: String
+    }
+
+    enum BridgeError: Error, Equatable {
+        case unavailable
+        case refused(String)
+    }
+
+    /// The call page's notes key: the same key the page's consent sheet sends with a member's
+    /// Agree, kept in the page's own storage on this device. Only its public half leaves the page.
+    func notesKey() async throws -> NotesKey {
+        try await waitForPage()
+        let result = try? await webView.callAsyncJavaScript("""
+            if (!window.PigeonpostNotesKeys) return {error:'bridge_unavailable'};
+            try {
+              const k = await PigeonpostNotesKeys.get();
+              return {key_id: k.key_id, public_key: k.public_key, label: PigeonpostNotesKeys.label()};
+            } catch (e) { return {error: String((e && (e.code || e.message)) || 'key_unavailable').slice(0, 64)}; }
+            """, arguments: [:], in: nil, contentWorld: .page)
+        guard let answer = result as? [String: Any] else { throw BridgeError.unavailable }
+        if let error = answer["error"] as? String { throw error == "bridge_unavailable" ? BridgeError.unavailable : BridgeError.refused(error) }
+        guard let id = answer["key_id"] as? String, let key = answer["public_key"] as? String else { throw BridgeError.unavailable }
+        return NotesKey(id: id, publicKey: key, label: answer["label"] as? String ?? "App")
+    }
+
+    /// Open a stored brief with this device's notes key, inside the page; the plaintext JSON comes
+    /// back. `meeting` is `GET /v1/meetings/{id}` (id, iv, ciphertext, keys).
+    func openBrief(_ meeting: [String: Any]) async throws -> Data {
+        try await waitForPage()
+        let result = try? await webView.callAsyncJavaScript("""
+            if (!window.PigeonpostNotesKeys || typeof PigeonpostNotesKeys.open !== 'function') return {error:'bridge_unavailable'};
+            try { return {brief: JSON.stringify(await PigeonpostNotesKeys.open(meeting))}; }
+            catch (e) { return {error: String((e && e.code) || 'decrypt_failed').slice(0, 64)}; }
+            """, arguments: ["meeting": meeting], in: nil, contentWorld: .page)
+        guard let answer = result as? [String: Any] else { throw BridgeError.unavailable }
+        if let error = answer["error"] as? String { throw error == "bridge_unavailable" ? BridgeError.unavailable : BridgeError.refused(error) }
+        guard let brief = answer["brief"] as? String else { throw BridgeError.unavailable }
+        return Data(brief.utf8)
+    }
+
+    /// The page loaded (signed in or not: the notes key belongs to this device, not a mailbox).
+    private func waitForPage() async throws {
+        if webView.url == nil, session != nil { webView.load(URLRequest(url: Self.page)) }
+        let deadline = Date().addingTimeInterval(15)
+        while !ready {
+            guard Date() < deadline, !Task.isCancelled else { throw BridgeError.unavailable }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+    }
+
+    func answerConfirmation(_ yes: Bool) {
+        let pending = confirmation
+        confirmation = nil
+        pending?.answer(yes)
+    }
+
     func cancelScheduledJoin() {
         guard scheduledOperation != nil else { return }
         scheduledOperation = nil
@@ -369,6 +578,20 @@ final class CallHost: NSObject {
                 // `-calls-report YES`: the call client's own `inspect()` on standard output every few
                 // seconds, so a local test can see this side's connection and what it receives.
                 if Self.debug.bool(forKey: "calls-report") { report() }
+                // `-calls-live watch:GROUP:STREAM` or `-calls-live golive:GROUP:TITLE`: the group
+                // screen's Watch and Go live buttons, through the same bridge calls, for the local
+                // stream harness (apps/ios/Tests/streams-native.mjs).
+                if let auto = Self.debug.string(forKey: "calls-live") {
+                    let parts = auto.split(separator: ":", maxSplits: 2).map(String.init)
+                    try? await Task.sleep(nanoseconds: 1_500_000_000)
+                    if parts.count == 3 {
+                        let code = parts[0] == "watch"
+                            ? await watchStream(group: parts[1], name: "Crew", stream: parts[2])
+                            : await goLive(group: parts[1], name: "Crew", title: parts[2], camera: true, screen: false)
+                        FileHandle.standardOutput.write(Data("calls-live \(parts[0]) \(code ?? "ok")\n".utf8))
+                        NSLog("pigeonpost: calls-live \(parts[0]) \(code ?? "ok")")
+                    }
+                }
                 if let auto = Self.debug.string(forKey: "call"), let colon = auto.lastIndex(of: ":") {
                     try? await Task.sleep(nanoseconds: 1_500_000_000)
                     call(String(auto[..<colon]), video: auto[auto.index(after: colon)...] == "video")
@@ -413,7 +636,7 @@ final class CallHost: NSObject {
         reporting = true
         Task { @MainActor in
             while true {
-                let script = "JSON.stringify({share: Boolean(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia), mode: \(Self.json(mode.rawValue)), calls: window.PigeonpostCalls && PigeonpostCalls.inspect()})"
+                let script = "JSON.stringify({share: Boolean(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia), mode: \(Self.json(mode.rawValue)), calls: window.PigeonpostCalls && PigeonpostCalls.inspect(), live: window.PigeonpostLive ? PigeonpostLive.inspect() : null})"
                 if let line = try? await webView.evaluateJavaScript(script) as? String {
                     FileHandle.standardOutput.write(Data("calls-report \(line)\n".utf8))
                 }
@@ -461,12 +684,16 @@ extension CallHost: WKNavigationDelegate, WKUIDelegate {
         pageGeneration = UUID()
         ready = false
         configured = false
+        endLive()
+        answerConfirmation(false)
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         pageGeneration = UUID()
         ready = false
         configured = false
+        endLive()
+        answerConfirmation(false)
         mode = .hidden
         webView.load(URLRequest(url: Self.page))
     }
@@ -477,6 +704,22 @@ extension CallHost: WKNavigationDelegate, WKUIDelegate {
                  initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType,
                  decisionHandler: @escaping @MainActor (WKPermissionDecision) -> Void) {
         decisionHandler(Self.trusted(origin) ? .grant : .deny)
+    }
+
+    /// `window.confirm` from the call page itself: a native alert. One at a time; anything else is a no.
+    func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
+                 initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping @MainActor (Bool) -> Void) {
+        guard frame.isMainFrame, Self.trusted(frame.securityOrigin), confirmation == nil, mode != .hidden else {
+            return completionHandler(false)
+        }
+        confirmation = Confirmation(message: String(message.prefix(300)), answer: completionHandler)
+    }
+
+    /// `window.alert`: said as the app's own toast; the page goes on at once.
+    func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
+                 initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping @MainActor () -> Void) {
+        if frame.isMainFrame, Self.trusted(frame.securityOrigin), !message.isEmpty { inbox?.toast = String(message.prefix(300)) }
+        completionHandler()
     }
 
     /// The call page's origin — scheme, host and port — and nothing else.
@@ -531,6 +774,12 @@ struct CallOverlay: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity).background(Theme.ground)
                     .accessibilityIdentifier("scheduled-call-preparing")
                 }
+            }
+            .alert(calls.confirmation?.message ?? "",
+                   isPresented: Binding(get: { calls.confirmation != nil }, set: { if !$0 { calls.answerConfirmation(false) } })) {
+                Button("OK", role: .destructive) { calls.answerConfirmation(true) }
+                    .accessibilityIdentifier("call-confirm-ok")
+                Button("Cancel", role: .cancel) { calls.answerConfirmation(false) }
             }
             #if os(iOS)
             // The call itself runs edge to edge and keeps clear of the notch and the home indicator

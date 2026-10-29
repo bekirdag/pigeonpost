@@ -46,6 +46,9 @@ struct CallConversation { let peer: String; let name: String }
         await detachedRenewal()
         await joinsAndCompatibility()
         await cancelBeforeReady()
+        await liveStreams()
+        await notesKeys()
+        await confirmPanel()
         print("Call host: \(checks) checks, \(failures) failures")
         exit(failures == 0 ? 0 : 1)
     }
@@ -159,4 +162,109 @@ struct CallConversation { let peer: String; let name: String }
         check(!host.preparingScheduled, "cancel restores the native inbox")
         host.detach()
     }
+    static let group = "grp_" + String(repeating: "g", count: 26)
+    static let stream = "str_" + String(repeating: "t", count: 26)
+    static var keep: [AnyObject] = []
+    static func signedIn() async -> (CallHost, Session, Inbox) {
+        let host = CallHost(), session = Session(), account = Account(), inbox = Inbox()
+        account.me = a
+        keep += [session, account, inbox]
+        host.attach(session: session, account: account, inbox: inbox)
+        await wait("live token") { session.tokens.count == 1 }
+        session.tokens[0].resume(returning: "synthetic-a")
+        await wait("live configured") { await records(host).contains { $0["kind"] as? String == "configure" } }
+        await settle()
+        return (host, session, inbox)
+    }
+    static func liveStreams() async {
+        let (host, _, _) = await signedIn()
+        let events = Events()
+        host.events = events
+        let refused = { () async -> String? in
+            _ = try? await host.webView.evaluateJavaScript("window.liveRefusal={ok:false,code:'needs_e2ee'}")
+            return await host.watchStream(group: group, name: "Crew", stream: stream)
+        }
+        check(await refused() == "needs_e2ee", "a refusal from the page comes back as its code")
+        check(host.live == nil, "a refused watch leaves no stream behind")
+        _ = try? await host.webView.evaluateJavaScript("delete window.liveRefusal")
+        check(await host.watchStream(group: group, name: "Crew", stream: stream) == nil, "watching a stream is handed to the page")
+        let watched = await records(host).last { $0["kind"] as? String == "watch" }
+        check(watched?["group"] as? String == group && watched?["stream"] as? String == stream && watched?["name"] as? String == "Crew",
+              "the group and stream reach watchStream")
+        await wait("live state") { host.live?.stream == stream }
+        check(host.live?.role == "viewer" && events.live.last?["state"] as? String == "on" && events.live.last?["name"] as? String == "Crew",
+              "the stream's state and role are reported outside the page")
+        check(await host.watchStream(group: group, name: "Crew", stream: stream) == nil, "watching the same stream again only shows it")
+        check(await records(host).contains { $0["kind"] as? String == "show" }, "the page shows the stream it already has")
+        check(await host.goLive(group: group, name: "Crew", title: "Demo", camera: true, screen: false) == "busy",
+              "going live is refused while another stream is on")
+        // The calls service moves an invited viewer's role; the page is told once.
+        _ = try? await host.webView.evaluateJavaScript("window.liveNow.role='invited'")
+        await wait("stage invite forwarded") { await records(host).contains { $0["kind"] as? String == "groupStream" } }
+        await wait("invited role") { host.live?.role == "invited" }
+        try? await Task.sleep(for: .milliseconds(3_400))
+        let invites = await records(host).filter { $0["kind"] as? String == "groupStream" }
+        check(invites.count == 1 && invites.first?["address"] as? String == a.address && invites.first?["state"] as? String == "invited",
+              "a stage invitation reaches the page once, for this mailbox")
+        _ = try? await host.webView.evaluateJavaScript("window.liveNow.role='speaker'")
+        await wait("speaker") { host.live?.publishing == true }
+        check(events.live.last?["role"] as? String == "speaker", "joining the stage is reported (the microphone is now on)")
+        host.stopStream()
+        await wait("stream over") { host.live == nil }
+        check(await records(host).contains { $0["kind"] as? String == "stopStream" } && events.live.last?["state"] as? String == "off",
+              "stopping ends the stream state")
+        check(await host.goLive(group: group, name: "Crew", title: String(repeating: "t", count: 140), camera: true, screen: true) == nil,
+              "going live is handed to the page")
+        let live = await records(host).last { $0["kind"] as? String == "goLive" }
+        check((live?["title"] as? String)?.count == 100 && live?["camera"] as? Bool == true && live?["screen"] as? Bool == true,
+              "the title is bounded and the chosen sources pass through")
+        await wait("hosting") { host.live?.role == "host" }
+        host.detach()
+        check(host.live == nil && events.live.last?["state"] as? String == "off", "signing out ends the stream state")
+        let (fresh, _, _) = await signedIn()
+        _ = try? await fresh.webView.evaluateJavaScript("delete window.PigeonpostNative.watchStream")
+        check(await fresh.watchStream(group: group, name: "Crew", stream: stream) == "bridge_unavailable", "an older page answers bridge_unavailable")
+        fresh.detach()
+        let idle = CallHost()
+        check(await idle.watchStream(group: group, name: "Crew", stream: stream) == "not_ready", "nothing is sent before the call view is attached")
+    }
+    static func notesKeys() async {
+        let (host, _, _) = await signedIn()
+        let key = try? await host.notesKey()
+        check(key == CallHost.NotesKey(id: "nkSYNTHETIC0000000000", publicKey: "BPUB", label: "Desktop app"),
+              "the page's notes key (public half and label) reaches the app")
+        let meeting: [String: Any] = ["id": "mtg_ok", "iv": "aXY=", "ciphertext": "Y3Q=", "keys": [["key_id": "nkSYNTHETIC0000000000", "epk": "e", "iv": "i", "wrapped": "w"]]]
+        let data = try? await host.openBrief(meeting)
+        let brief = data.flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]
+        check(brief?["title"] as? String == "Synthetic" && (brief?["decisions"] as? [String]) == ["Ship"], "a brief is opened in the page and its JSON comes back")
+        do {
+            _ = try await host.openBrief(["id": "mtg_nokey", "keys": [] as [Any]])
+            check(false, "a brief for other devices is refused")
+        } catch {
+            check(error as? CallHost.BridgeError == .refused("no_key_for_device"), "a brief for other devices is refused with its code")
+        }
+        host.detach()
+    }
+    static func confirmPanel() async {
+        let (host, _, _) = await signedIn()
+        _ = try? await host.webView.evaluateJavaScript("window.webkit.messageHandlers.pigeonpost.postMessage({type:'mode',mode:'full'})")
+        await wait("full") { host.mode == .full }
+        _ = try? await host.webView.evaluateJavaScript("setTimeout(()=>{window.confirmAnswer=confirm('End your stream for everyone?')},0)")
+        await wait("confirmation shown") { host.confirmation != nil }
+        check(host.confirmation?.message == "End your stream for everyone?", "the page's confirm is shown natively")
+        host.answerConfirmation(true)
+        await wait("answered") { (try? await host.webView.evaluateJavaScript("window.confirmAnswer")) as? Bool == true }
+        check(host.confirmation == nil, "a native yes reaches the page")
+        _ = try? await host.webView.evaluateJavaScript("window.webkit.messageHandlers.pigeonpost.postMessage({type:'mode',mode:'hidden'})")
+        await wait("hidden") { host.mode == .hidden }
+        _ = try? await host.webView.evaluateJavaScript("window.confirmAnswer=confirm('Hidden?')")
+        check((try? await host.webView.evaluateJavaScript("window.confirmAnswer")) as? Bool == false && host.confirmation == nil,
+              "nothing is asked while the call view is hidden")
+        host.detach()
+    }
+}
+
+@MainActor final class Events: CallPageEvents {
+    var live: [[String: Any]] = []
+    func callPage(_ type: String, _ message: [String: Any]) { if type == "live" { live.append(message) } }
 }
