@@ -21,3 +21,13 @@
 - Combined PR #180 (`2b27ed98`) into this branch. Resolved first-message constructor/selection and CI conflicts: contact-prefilled recipients now use the scoped `Inbox.started` path; all existing suites plus PeopleUITests remain selected (account shard and iPad). Requalification follows before opening the PR.
 
 - Combined full core script passes (55 People checks and the existing suites). iOS/Mac builds pass. Seven contact UI cases pass. The first-message discard case exposed a real empty-thread/retained accessibility row defect in #180; fixed there and merged back. Both unchanged first-send/discard UI cases now pass. No native version bump or store submission. Phone/iPad/Mac CI remains the merge gate.
+
+## iPad confirmation qualification
+
+- iPad baseline: 8 selected tests, 2 failures because native confirmation popovers omit a visible Cancel action. Both contact disclosure and SMS confirmation now use explicit alerts; action binding and one-use send guard are unchanged.
+- Unchanged iPad tests: 8/8 pass (7 People tests plus first-conversation navigation). Unchanged iPhone confirmation tests: 2/2 pass after the change. Logs: `apple-contacts-ipad-alert.log` and `apple-contacts-iphone-alert.log` in the private continuation evidence directory. No real contacts, SMS or messages were used.
+- Docdex symbols resolved the view; impact graph returned no edges, so the Settings/onboarding call sites and shared iOS/macOS usage were checked directly. Local delegation returned an invalid alert signature; it was rejected and corrected before compilation.
+
+- Fresh Mac CI exposed the standalone inbox harness missing the new People types (the full app built correctly). Split free-name and contact-label views from phone/permission views, and include the real People model/API/store/name/label sources in the harness. This keeps its actual Inbox and native view assertions intact without stubbing the new labels or adding PhoneNumberKit to an unrelated harness.
+
+- Mac harness now compiles with real People sources and the updated `initialPeer` dialog test double; local UI execution stops at its existing locked-desktop guard (exit 69), so no local UI pass is claimed. Fresh full iOS and macOS app builds pass after the view extraction. CI will execute the unchanged Mac UI assertions on an unlocked runner.

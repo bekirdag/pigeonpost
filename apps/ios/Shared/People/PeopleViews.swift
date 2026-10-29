@@ -4,60 +4,6 @@ import Contacts
 import ContactsUI
 #endif
 
-struct PeopleNotice: View {
-    @Environment(PeopleStore.self) private var people
-    var body: some View {
-        if let error = people.state.error { Text(error).foregroundStyle(.red).accessibilityIdentifier("people-error") }
-        if let notice = people.state.notice { Text(notice).foregroundStyle(.secondary).accessibilityIdentifier("people-notice") }
-        if people.state.busy { ProgressView().accessibilityLabel("Updating people") }
-    }
-}
-
-struct DisplayNamePage: View {
-    var onboarding = false
-    @Environment(PeopleStore.self) private var people
-    @Environment(\.dismiss) private var dismiss
-    @State private var name = ""
-    @State private var visibility = "known"
-    @State private var loaded = false
-    var body: some View {
-        let scope = people.scope
-        List {
-            Section {
-                Text("Give your inbox a name").font(.title2.bold())
-                Text("Your name and profile picture are free. A name is a label, not a reserved handle or a verified identity.").foregroundStyle(.secondary)
-                #if os(iOS)
-                TextField("Your name", text: $name).textContentType(.name).autocorrectionDisabled().accessibilityIdentifier("people-name")
-                #else
-                TextField("Your name", text: $name).accessibilityIdentifier("people-name")
-                #endif
-                Picker("Who can see your name", selection: $visibility) {
-                    Text("People you know").tag("known")
-                    Text("Everyone").tag("everyone")
-                    Text("Only you").tag("nobody")
-                }
-                Button("Save name") {
-                    Task { await people.saveName(scope, name: name, visibility: visibility)
-                        if onboarding, people.scope == scope, people.state.ownName != nil, people.state.error == nil { people.dismissPrompt(scope); dismiss() }
-                    }
-                }.disabled(people.state.busy || (try? PeopleInput.name(name)) == nil).accessibilityIdentifier("people-save-name")
-                if onboarding {
-                    Button("Skip for now") { people.dismissPrompt(scope); dismiss() }.accessibilityIdentifier("people-skip-name")
-                } else if people.state.ownName != nil {
-                    Button("Remove name", role: .destructive) { Task { await people.removeName(scope); if people.scope == scope, people.state.error == nil { name = "" } } }
-                }
-            }
-            Section { PeopleNotice() }
-            Section { Text("Self-set names appear with ~. Paid handles remain unique addresses such as /yourname. You can also give a contact a private name that only this device uses.").font(.footnote).foregroundStyle(.secondary) }
-        }.sheetSurface().navigationTitle(onboarding ? "Welcome to Pigeonpost" : "Your name")
-            .task(id: scope) {
-                await people.loadName(scope)
-                guard people.scope == scope, !loaded, people.state.nameLoaded else { return }
-                name = people.state.ownName?.displayName ?? ""; visibility = people.state.ownName?.visibility ?? "known"; loaded = true
-            }
-    }
-}
-
 struct PhoneNumbersPage: View {
     @Environment(PeopleStore.self) private var people
     @State private var phone = ""
@@ -206,11 +152,11 @@ struct FindPeoplePage: View {
             .onReceive(NotificationCenter.default.publisher(for: .CNContactStoreDidChange)) { _ in
                 people.clearContacts(scope); localNotice = "Contacts changed. Choose contacts again to refresh."
             }
-            .confirmationDialog("Find your contacts", isPresented: $disclosure, titleVisibility: .visible) {
+            .alert("Find your contacts", isPresented: $disclosure) {
                 Button("Continue to contacts") { read(scope) }.accessibilityIdentifier("contacts-disclosure-continue")
                 Button("Cancel", role: .cancel) { }
             } message: { Text("Pigeonpost reads only contacts you allow. Their names and numbers stay in memory on this device. Press Find on Pigeonpost to send phone-number hashes for matching; abuse-prevention marks expire after 7 days. No SMS is sent without a separate confirmation.") }
-            .confirmationDialog("Send an invitation by SMS?", isPresented: Binding(get: { people.state.invitation != nil }, set: { if !$0 { people.cancelInvite() } }), titleVisibility: .visible) {
+            .alert("Send an invitation by SMS?", isPresented: Binding(get: { people.state.invitation != nil }, set: { if !$0 { people.cancelInvite() } })) {
                 if let review = people.state.invitation {
                     Button("Send one SMS invitation") {
                         if let confirmed = people.prepareInviteConfirmation(review) { Task { await people.confirmInvite(confirmed) } }
@@ -260,23 +206,6 @@ struct LocalAliasSection: View {
         } header: { Text("Private contact name") } footer: { Text("Only this device and inbox use this name. It does not grant permissions or change their handle. Leave it empty to remove it.") }
             .task(id: scope) { name = people.localName(peer) ?? "" }
     }
-}
-
-/// Shared labels observe profile/local changes without changing the message/permission model.
-struct ContactTitle: View {
-    let peer: String
-    let fallback: String
-    var legacyName: String? = nil
-    @Environment(PeopleStore.self) private var people: PeopleStore?
-    var body: some View {
-        let name = people?.displayName(peer, legacyName: legacyName) ?? fallback
-        if name.hasPrefix("~") { Text(name).foregroundStyle(.secondary) }
-        else { Text(name.hasPrefix("/") ? PeerFace.displayName(name) : name) }
-    }
-}
-
-extension Conversation {
-    var peopleLegacyName: String? { mine ? name : contact?.alias }
 }
 
 private struct PhoneRegionPicker: View {

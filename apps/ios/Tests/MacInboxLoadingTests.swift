@@ -50,6 +50,7 @@ struct PeerInfoSheet: View {
     }
 }
 struct MacNewConversationSheet: View {
+    var initialPeer: String? = nil
     let started: (String) -> Void
     var body: some View { Text("New conversation") }
 }
