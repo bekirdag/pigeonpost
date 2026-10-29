@@ -73,7 +73,7 @@ public sealed partial class MainWindow
                 replies = requests.Values.Count(r => r.ReplyTo is not null), edits = requests.Values.Count(r => r.EditOf is not null),
                 originalReplyParent = requests.Values.Any(r => r.ReplyTo == "design-3" && r.Quote == "Thanks. Let's keep the conversation easy to follow and make files simple to share."),
                 originalEditParent = requests.Values.Any(r => r.EditOf == "design-2" && r.Attachments is null), infoReads }));
-            File.Move(staging, diagnosticFile, overwrite: true);
+            FixtureState.Replace(staging, diagnosticFile);
         }
         internal void Rotate(char key) { Root.Retire(); Root = new(); owner = key; }
         public Task<IReadOnlyList<Mailbox>> GetMailboxesAsync(CancellationToken ct) => preview?.GetMailboxesAsync(ct) ?? Task.FromResult<IReadOnlyList<Mailbox>>([new(Own)]);
