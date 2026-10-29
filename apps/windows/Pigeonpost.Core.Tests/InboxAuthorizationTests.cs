@@ -202,6 +202,42 @@ internal static class InboxAuthorizationTests
             f.FailSend = false; await vm.SendDraftAsync();
             Require(f.Sends == 2 && vm.Draft == "" && vm.SelectedConversation?.Peer == "/carol/main");
         });
+        yield return ("A new-conversation dialog cannot submit after a replacement login to the same mailbox", async () =>
+        {
+            using var f = new Service(); using var vm = new InboxViewModel(f); await vm.InitializeAsync();
+            var target = vm.CaptureNewConversationTarget()!;
+            Require(target.IsCurrent && target.Mailbox == Alpha.Address);
+            f.Rotate(); await vm.InitializeAsync();
+            Require(vm.SelectedMailbox?.Address == Alpha.Address && !target.IsCurrent);
+            Require(!await vm.StartConversationAsync(target, "/carol/main", "Old dialog"));
+            Require(f.Sends == 0 && vm.SelectedConversation?.Peer == Peer && vm.Draft == "");
+        });
+        yield return ("A new-conversation dialog cannot revive after switching away and back to its mailbox", async () =>
+        {
+            using var f = new Service(); using var vm = new InboxViewModel(f); await vm.InitializeAsync();
+            var target = vm.CaptureNewConversationTarget()!;
+            await vm.SwitchMailboxAsync(Beta); await vm.SwitchMailboxAsync(Alpha);
+            Require(!target.IsCurrent && !await vm.StartConversationAsync(target, "/carol/main", "Old dialog"));
+            Require(f.Sends == 0 && vm.SelectedConversation?.Peer == Peer && vm.Draft == "");
+        });
+        yield return ("A new-conversation dialog retains the caller that opened it", async () =>
+        {
+            using var f = new Service(); using var vm = new InboxViewModel(f); await vm.InitializeAsync();
+            var caller = f.Root.Child();
+            NewConversationTarget target;
+            using (new AuthorizationContext(caller)) target = vm.CaptureNewConversationTarget()!;
+            caller.Retire();
+            Require(!target.IsCurrent && !await vm.StartConversationAsync(target, "/carol/main", "Old caller"));
+            Require(f.Sends == 0 && vm.SelectedConversation?.Peer == Peer);
+        });
+        yield return ("A current new-conversation dialog submits once and opens the thread", async () =>
+        {
+            using var f = new Service(); using var vm = new InboxViewModel(f); await vm.InitializeAsync();
+            var target = vm.CaptureNewConversationTarget()!;
+            Require(await vm.StartConversationAsync(target, "/carol/main", "Current dialog"));
+            Require(f.Sends == 1 && vm.SelectedConversation?.Peer == "/carol/main"
+                && vm.Messages.Single().DisplayBody == "Current dialog" && vm.Draft == "");
+        });
         yield return ("A new conversation never opens or sends in another inbox or a replaced login", async () =>
         {
             using (var f = new Service())

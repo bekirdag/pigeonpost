@@ -264,7 +264,8 @@ public sealed partial class MainWindow : Window
     {
         // Not gated on a refresh in progress: the model waits for it, and a shortcut that silently
         // does nothing during every refresh reads as broken.
-        if (dialogOpen || ViewModel.SelectedMailbox is not { } mailbox) return;
+        var model = ViewModel;
+        if (dialogOpen || model.CaptureNewConversationTarget() is not { } target) return;
         dialogOpen = true;
         try
         {
@@ -298,7 +299,7 @@ public sealed partial class MainWindow : Window
             message.TextChanged += Validate;
             if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
             dialogOpen = false;
-            await OpenStartedConversationAsync(mailbox.Address, peer.Text, message.Text);
+            await OpenStartedConversationAsync(model, target, peer.Text, message.Text);
         }
         finally { dialogOpen = false; }
     }
@@ -307,16 +308,19 @@ public sealed partial class MainWindow : Window
     // selected in the list, with its first message (sent, or pending with recovery) in view and the
     // caret in its message box. Bound to the inbox the dialog was opened from: if the account or
     // inbox changed meanwhile the model refuses, and nothing here moves the window.
-    private async Task<bool> OpenStartedConversationAsync(string mailbox, string peer, string message)
+    private async Task<bool> OpenStartedConversationAsync(InboxViewModel model, NewConversationTarget target, string peer, string message)
     {
+        if (!ReferenceEquals(model, ViewModel) || !target.IsCurrent) return false;
         if (sideView != SideView.Chats) ShowSideView(SideView.Chats);
-        if (!await ViewModel.StartConversationAsync(peer, message, mailbox) || ViewModel.SelectedMailbox?.Address != mailbox) return false;
+        if (!await model.StartConversationAsync(target, peer, message) || !ReferenceEquals(model, ViewModel) || !target.IsCurrent) return false;
         if (sideView != SideView.Chats) ShowSideView(SideView.Chats);
         ShowConversation();
         if (ViewModel.Messages.LastOrDefault() is { } last) QueueScroll(last);
+        var selected = ViewModel.SelectedConversation?.Peer;
         DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
         {
-            if (!dialogOpen && ViewModel.CanCompose && MessagingArea.Visibility == Visibility.Visible && ViewModel.SelectedMailbox?.Address == mailbox)
+            if (!dialogOpen && ReferenceEquals(model, ViewModel) && target.IsCurrent && ViewModel.CanCompose
+                && MessagingArea.Visibility == Visibility.Visible && ViewModel.SelectedConversation?.Peer == selected)
                 Composer.Focus(FocusState.Programmatic);
         });
         return true;
