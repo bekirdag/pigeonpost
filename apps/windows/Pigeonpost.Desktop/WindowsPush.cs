@@ -37,7 +37,7 @@ internal static class WindowsPush
         {
             if (!PushNotificationManager.IsSupported()) { DesktopLog.Write("Windows push unsupported on this PC"); return; }
             // Handlers must be attached before Register.
-            PushNotificationManager.Default.PushReceived += (_, e) => _ = HandleRawAsync(e.Payload, "push");
+            PushNotificationManager.Default.PushReceived += (sender, e) => _ = HandleRawAsync(e.Payload, "push");
             PushNotificationManager.Default.Register();
             Registered = true;
             DesktopLog.Write("Windows push registered");
