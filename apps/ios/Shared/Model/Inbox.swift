@@ -432,7 +432,13 @@ final class Inbox {
     }
 
     func conversation(with peer: String) -> Conversation? {
-        conversations.first { $0.peer == peer }
+        if let conversation = conversations.first(where: { $0.peer == peer }) { return conversation }
+        // Discarding an unconfirmed first message leaves the composer open and empty. Keep only
+        // the currently read, locally started conversation alive; never invent a history row.
+        if reading == peer, started?.peer == peer, started?.mailbox == me?.address {
+            return Conversation(peer: peer)
+        }
+        return nil
     }
 
     func subthreads(of peer: String) -> [Subthread] {
