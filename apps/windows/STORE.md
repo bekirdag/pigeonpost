@@ -182,7 +182,7 @@ in Partner Center at all. The pieces:
    sign in on a Windows PC with the Store build, quit it from the notification-area icon, and call
    that account: the incoming-call toast should appear bottom right.
 
-The mapping is by package family name, so the Store build and a sideloaded package with the same
+Channels follow the package family name, so the Store build and a sideloaded package with the same
 identity both get channels; ZIP and fixture builds ring only while running. The Windows CI install
 test logs the channel result to `installed/push.log`.
 
