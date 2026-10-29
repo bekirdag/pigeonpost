@@ -87,12 +87,12 @@ struct MailboxRow: View {
 struct NewConversationSheet: View {
     @Environment(Inbox.self) private var inbox
     @Environment(\.dismiss) private var dismiss
-    let onStarted: (String) -> Void
 
     @State private var peer = "/"
     @State private var body_ = ""
     @State private var error: String?
     @State private var sending = false
+    @State private var target: Inbox.NewConversationTarget?
 
     var body: some View {
         NavigationStack {
@@ -109,6 +109,7 @@ struct NewConversationSheet: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .font(.geistMono(15))
+                        .accessibilityIdentifier("newConversationPeer")
                 } header: {
                     Text("Their address")
                 } footer: {
@@ -118,6 +119,7 @@ struct NewConversationSheet: View {
                 Section("First message") {
                     TextField("Write a message", text: $body_, axis: .vertical)
                         .lineLimit(3...8)
+                        .accessibilityIdentifier("newConversationBody")
                 }
 
                 if let error {
@@ -132,26 +134,31 @@ struct NewConversationSheet: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Send") { send() }
+                    Button(sending ? "Sending…" : "Send") { send() }
+                        .accessibilityIdentifier("newConversationSend")
                         .disabled(sending || !PeerFace.validConversationAddress(peer) || body_.trimmed.isEmpty)
                 }
             }
         }
+        .onAppear { if target == nil { target = inbox.captureNewConversationTarget() } }
     }
 
     private func send() {
         guard PeerFace.validConversationAddress(peer), !body_.trimmed.isEmpty, !sending else { return }
+        guard let target, inbox.isCurrent(target) else {
+            error = "Your inbox changed. Close this sheet and start again."
+            return
+        }
+        let recipient = peer.trimmed
+        let text = body_.trimmed
         sending = true
         error = nil
         Task {
-            do {
-                let started = try await inbox.startConversation(to: peer.trimmed, body: body_.trimmed)
-                onStarted(started)
-                dismiss()
-            } catch let failure as APIError {
-                error = failure.sendFailureMessage
-            } catch {
-                self.error = "Could not reach the postbox."
+            // The conversation opens from `inbox.started`, in the window that owns the mailbox —
+            // not from here, so a dialog outliving a mailbox switch cannot open it in another.
+            switch await inbox.startConversation(target: target, to: recipient, body: text) {
+            case .opened: dismiss()
+            case .failed(let message): error = message
             }
             sending = false
         }

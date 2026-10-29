@@ -246,8 +246,13 @@ final class CalendarUITests: XCTestCase {
         tap(element("calendar-invitations"))
         XCTAssertTrue(app.navigationBars["Invitations"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts["Filtered invitation"].exists)
-        tap(app.buttons["Filtered"].firstMatch)
-        tap(app.staticTexts["Filtered invitation"].firstMatch)
+        let filtered = app.segmentedControls.buttons["Filtered"].firstMatch
+        let invitation = app.buttons["calendar-invitation:evt_filtered:occ_evt_filtered_original"].firstMatch
+        // The inherited failure recording stayed on Pending after the first synthetic tap.
+        // Require the picker transition before searching or scrolling the invitation list.
+        tapPopup(filtered, until: invitation)
+        XCTAssertTrue(filtered.isSelected)
+        tap(invitation)
         XCTAssertTrue(app.navigationBars["Event"].waitForExistence(timeout: 5))
         XCTAssertFalse(element("calendar-edit").exists)
         tapRow(app.buttons["Maybe"].firstMatch, in: "calendar-event-details")

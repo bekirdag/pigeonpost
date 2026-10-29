@@ -137,6 +137,7 @@ extension Notification.Name {
             snapshot(host, name: "mac-inbox-empty")
             await repeatedPickerSwitches(window: window, host: host, account: account, inbox: inbox)
             await visitsFromDetails(window: window, host: host, account: account, inbox: inbox)
+            await startedConversationIsSelected(window: window, host: host, account: account, inbox: inbox)
             await clipboardMessages(window: window, account: account, inbox: inbox)
             await composerSizing(window: window, account: account, inbox: inbox)
             await idleCallOverlay(window: window)
@@ -443,6 +444,36 @@ extension Notification.Name {
             InboxLoadingTests.check(window.attachedSheet == nil, "visit \(index) leaves no modal sheet blocking clicks")
         }
         snapshot(host, name: "mac-inbox-details-visits")
+    }
+
+    /// New conversation → Send: the window selects the conversation the server filed it under,
+    /// with its thread open and the keyboard in its composer — not "Pick a conversation".
+    static func startedConversationIsSelected(window: NSWindow, host: NSView, account: Account, inbox: Inbox) async {
+        let me = account.me!.address
+        // What MacNewConversationSheet does with a written message: a namespace address.
+        let start = Task { await inbox.startConversation(to: "/test", body: "Hello from the Mac") }
+        let body = await InboxLoadingTests.nextSend()
+        InboxLoadingTests.check(ControlledURLProtocol.complete("/v1/send", identity: nil,
+            body: "{\"message_id\":\"mac-new\",\"sent_copy_id\":\"mac-copy\"}", status: 201), "the first send is accepted")
+        await InboxLoadingTests.wait("the window opens the typed conversation") { inbox.reading == "/test" }
+        await settle()
+        snapshot(host, name: "mac-new-conversation-opened")
+        let listing = String(data: try! JSONSerialization.data(withJSONObject: ["messages": [[
+            "message_id": "mac-copy", "from": me, "peer": "/k/mac-resolved", "peer_handle": "/test/main",
+            "body": "Hello from the Mac", "direction": "out", "msg_ref": body["msg_ref"] as? String ?? "", "sent_at": 20, "read": true
+        ]]]), encoding: .utf8)!
+        await InboxLoadingTests.wait("listing requested") {
+            ControlledURLProtocol.requests().contains { $0.url?.path == "/v1/inbox" && !($0.url?.query?.contains("wait=") ?? false) }
+        }
+        while ControlledURLProtocol.complete("/v1/inbox", identity: me, body: listing, poll: false) {}
+        _ = await start.value
+        await InboxLoadingTests.wait("the window follows it to where the server filed it") { inbox.reading == "/test/main" }
+        await settle()
+        snapshot(host, name: "mac-new-conversation-resolved")
+        InboxLoadingTests.check(inbox.conversation(with: "/test/main")?.messages.map(\.id) == ["mac-copy"],
+                                "the sent message is in the selected conversation")
+        await InboxLoadingTests.wait("the composer has the keyboard") { window.firstResponder is AttachmentTextView }
+        InboxLoadingTests.check(window.firstResponder is AttachmentTextView, "the new conversation's composer has focus")
     }
 
     static func firstConversationCenter(in host: NSView) -> NSPoint? {

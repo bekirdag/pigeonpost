@@ -111,6 +111,14 @@ final class HistoryController: UIViewController, UITableViewDataSource, UITableV
         rebuildRows()
         // Unseen incoming mail has no effect on the rendered history or its measured geometry.
         guard rows != previousRows || explicitlyRequested else { updateLatestButton(); return }
+        // UIKit can keep a removed UIHostingConfiguration in its reuse pool and accessibility
+        // tree after reloadData. Retire its content before removal so VoiceOver cannot read or
+        // act on a message that was discarded, deleted or expired.
+        let retained = Set(rows.map { "message:" + $0.id })
+        for cell in table.visibleCells where !retained.contains(cell.accessibilityIdentifier ?? "") {
+            cell.contentConfiguration = nil
+            cell.accessibilityIdentifier = nil
+        }
         table.reloadData()
         table.layoutIfNeeded()
         restore(anchor)
