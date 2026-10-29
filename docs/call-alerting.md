@@ -24,7 +24,7 @@ caller ──POST /calls/v1/calls──► calls service ── ring() ──►
                                      │
    ring ends (answered, declined, ──►├─POST /internal/v1/call-ring-cancel ─► postbox ──► FCM "call_cancel",
    timeout, caller hung up)          │                                               APNs alert replacement (Mac),
-                                     │                                               WNS toast removal
+                                     │                                               WNS raw "call_cancel"
 device woken by a push ──────────────┤
    GET  /calls/v1/rings/{room}       │  ring state, by ring token (no member token needed)
    POST /calls/v1/rings/{room}/decline  decline, by ring token
@@ -110,7 +110,7 @@ mailboxes should ring too.
 | `apns`, `kind=alert`, `os` unset (builds before 1c) | the same alert (tap opens the app, which then rings in-app) | the same replacement |
 | `apns`, `kind=alert`, `os=ios`/`ipados` | nothing — that build rings through its VoIP token | nothing |
 | `fcm` | data message `type=call_ring`, priority high, TTL = seconds left in the ring, `collapse_key` per room | data message `type=call_cancel` |
-| `wns` | `wns/toast` with `scenario="incomingCall"`, tag per room, group `calls`, TTL | `DELETE` matching the tag and group |
+| `wns` | `wns/toast` with `scenario="incomingCall"`, tag per room, group `calls`, TTL | `wns/raw` `{"type":"call_cancel","room","reason"}`, not cached, TTL 60 s; the app removes the toast by tag and group (WNS refuses an `X-WNS-Match` DELETE on desktop channels: 400 "Invalid filter value") |
 
 Message pushes (`push::fan_out`) only ever go to `kind=alert` rows on `apns`/`fcm`, so a VoIP token
 can never receive an alert and a WNS channel never receives mail notices.
