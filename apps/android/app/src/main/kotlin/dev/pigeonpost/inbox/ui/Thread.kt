@@ -61,7 +61,7 @@ fun ConversationPane(state: InboxState, store: InboxStore, model: InboxViewModel
     val subjects = state.subjects
     val subject = state.subject
     val messages = subject?.messages.orEmpty()
-    val name = peerLabel(peer, state.conversation?.contact?.alias, state.conversation?.name ?: displayName(peer))
+    val name = peerLabel(peer, state.conversation?.identity?.name ?: state.conversation?.contact?.alias, state.conversation?.name ?: displayName(peer))
     var searching by rememberSaveable(peer) { mutableStateOf(false) }
     var query by rememberSaveable(peer) { mutableStateOf("") }
     var match by rememberSaveable(peer) { mutableIntStateOf(0) }

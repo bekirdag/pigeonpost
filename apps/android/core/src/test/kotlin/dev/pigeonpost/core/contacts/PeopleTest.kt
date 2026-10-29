@@ -113,6 +113,7 @@ class PeopleTest {
         val s = PeopleState(aliases = mapOf("/k/peer" to "Local"), profiles = mapOf("/k/peer" to PeerProfile("/k/peer", "/marina/main", "Marina")))
         assertEquals("Local", s.label("/k/peer", "Legacy")); assertEquals("Legacy", s.copy(aliases = emptyMap()).label("/k/peer", "Legacy"))
         assertEquals("~Marina", s.copy(aliases = emptyMap()).label("/k/peer"))
+        assertEquals("~Marina", s.copy(aliases = emptyMap(), profiles = mapOf("/k/peer" to PeerProfile("/k/peer", null, "Marina"))).label("/k/peer"))
     }
     @Test fun skippedNamePromptIsLocalAndBoundToTheInbox() = runTest {
         val w = World(this); val old = w.context

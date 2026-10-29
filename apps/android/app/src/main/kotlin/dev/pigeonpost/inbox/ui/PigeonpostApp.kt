@@ -398,7 +398,7 @@ private fun InboxList(state: InboxState, store: InboxStore, model: InboxViewMode
 @Composable
 fun ConversationRow(row: Conversation, selected: Boolean, phone: Boolean, select: () -> Unit) {
     val p = Pp.colors
-    val name = peerLabel(row.peer, row.contact?.alias, row.name)
+    val name = peerLabel(row.peer, row.identity?.name ?: row.contact?.alias, row.name)
     val preview = row.messages.lastOrNull()?.display?.text?.lineSequence()?.firstOrNull { it.isNotBlank() }?.trimStart('#', ' ', '>')?.take(140)?.ifBlank { "Attachment" }
         ?: if (row.messages.lastOrNull()?.attachments?.isNotEmpty() == true) "Attachment" else "Start a conversation"
     val shape = RoundedCornerShape(10.dp)

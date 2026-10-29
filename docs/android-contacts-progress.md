@@ -24,3 +24,11 @@
 - Exact-head CI/review and merge; store version/submissions remain untouched for the next native batch.
 - Owner-approved handset test for actual SMS delivery and keyboard autofill. Emulator success does not prove carrier delivery.
 - Apple/Windows/Linux native contact surfaces remain separate follow-ups.
+
+- Exact-head tablet CI at `42d0e1f5` failed before the emulator booted: Google SDK package download returned “ZipFile unknown archive.” JVM/lint/build steps had passed. The retry request was refused while the phone job is still running; retry the failed tablet job after the run finishes. No source change or test waiver.
+
+- Broader exact-head phone UI suite caught an actual precedence regression: contact aliases replaced existing names for the user’s own inboxes, breaking eight existing flows. Reproduced `AppFlowTest.conversationsSubjectsComposeFindAndBack` locally before fixing. Restored owned-inbox labels as the legacy preference in list/header/thread column, while private local aliases still win; self-set names remain prefixed with ~ under contract §6.3. No existing UI assertion changed. Tablet SDK-corruption job was separately retried after the run completed.
+
+- After restoring owned-inbox labels, the full local emulator UI suite passes **166/166** without changing existing assertions. The core/lint/debug APK build also passed. Reverted an incidental handle/name priority change to retain contract §6.3; final core verification follows.
+
+- Final core run: **427/427 JVM tests pass** after restoring the documented name precedence. Full local UI: **166/166** passed on the owned emulator. These are local checks; fresh phone/tablet CI must qualify the committed revision before merge.
