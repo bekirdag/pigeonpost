@@ -58,6 +58,9 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
     val groups by (groupStore?.state ?: remember { kotlinx.coroutines.flow.MutableStateFlow(dev.pigeonpost.core.groups.GroupsState()) }).collectAsStateWithLifecycle()
     val cropping by model.crop.collectAsStateWithLifecycle()
     val profileState by model.profile.state.collectAsStateWithLifecycle()
+    val people by (model.people?.state ?: remember { kotlinx.coroutines.flow.MutableStateFlow(dev.pigeonpost.core.contacts.PeopleState()) }).collectAsStateWithLifecycle()
+    val peoplePeers = (state.conversations.map { it.peer } + state.calls.entries.mapNotNull { it.key }).distinct()
+    LaunchedEffect(people.context, peoplePeers, people.profiles.keys) { model.people?.loadProfiles(people.context, peoplePeers) }
     var blockTarget by remember { mutableStateOf<BlockTarget?>(null) }
     var filteredOpen by remember { mutableStateOf<String?>(null) }
     val handleState by model.handles.state.collectAsStateWithLifecycle()
@@ -103,6 +106,12 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
         if (owner != null || signedOut) sheetOwner = owner
     }
     val lifecycle by LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()
+    LaunchedEffect(people.context, peoplePeers, lifecycle) {
+        if (lifecycle.isAtLeast(Lifecycle.State.RESUMED)) while (true) {
+            model.people?.loadProfiles(people.context, peoplePeers)
+            kotlinx.coroutines.delay(60_000)
+        }
+    }
     val visibleIds = state.subject?.messages.orEmpty().map { it.id }
     // A failed acknowledgement may revert read marks. That alone must not trigger a retry loop.
     LaunchedEffect(session.termsAccepted, state.acting?.address, state.selectedPeer, state.subject?.id, visibleIds, lifecycle) {
@@ -130,7 +139,7 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
         }
     }
     PigeonpostTheme(dark) {
-      CompositionLocalProvider(LocalAvatars provides model.pictures, LocalAskBlock provides { target -> blockTarget = target }) {
+      CompositionLocalProvider(LocalAvatars provides model.pictures, LocalPeople provides people, LocalPeopleStore provides model.people, LocalAskBlock provides { target -> blockTarget = target }) {
         val p = Pp.colors
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val wide = maxWidth >= WideLayoutWidth
@@ -384,6 +393,7 @@ private fun InboxList(state: InboxState, store: InboxStore, model: InboxViewMode
 @Composable
 fun ConversationRow(row: Conversation, selected: Boolean, phone: Boolean, select: () -> Unit) {
     val p = Pp.colors
+    val name = peerLabel(row.peer, row.contact?.alias, row.name)
     val preview = row.messages.lastOrNull()?.display?.text?.lineSequence()?.firstOrNull { it.isNotBlank() }?.trimStart('#', ' ', '>')?.take(140)?.ifBlank { "Attachment" }
         ?: if (row.messages.lastOrNull()?.attachments?.isNotEmpty() == true) "Attachment" else "Start a conversation"
     val shape = RoundedCornerShape(10.dp)
@@ -392,10 +402,10 @@ fun ConversationRow(row: Conversation, selected: Boolean, phone: Boolean, select
         .clickable(onClick = select).testTag("conversation:" + row.peer)) {
         Row(Modifier.padding(horizontal = if (phone) 16.dp else 10.dp, vertical = if (phone) 13.dp else 10.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(11.dp)) {
-            Avatar(row.peer, row.name, if (phone) 44.dp else 38.dp)
+            Avatar(row.peer, name, if (phone) 44.dp else 38.dp)
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(row.name, Modifier.weight(1f), style = geistMono(if (phone) 14.5.sp else 13.sp, FontWeight.SemiBold), color = p.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(name, Modifier.weight(1f), style = geist(if (phone) 14.5.sp else 13.sp, FontWeight.SemiBold), color = if (name.startsWith("~")) p.secondary else p.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(shortTime(row.last), style = geist(11.5.sp), color = p.muted)
                 }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {

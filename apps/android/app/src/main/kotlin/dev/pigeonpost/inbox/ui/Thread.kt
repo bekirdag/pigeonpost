@@ -61,7 +61,7 @@ fun ConversationPane(state: InboxState, store: InboxStore, model: InboxViewModel
     val subjects = state.subjects
     val subject = state.subject
     val messages = subject?.messages.orEmpty()
-    val name = state.conversation?.name ?: displayName(peer)
+    val name = peerLabel(peer, state.conversation?.contact?.alias, state.conversation?.name ?: displayName(peer))
     var searching by rememberSaveable(peer) { mutableStateOf(false) }
     var query by rememberSaveable(peer) { mutableStateOf("") }
     var match by rememberSaveable(peer) { mutableIntStateOf(0) }
@@ -105,7 +105,7 @@ fun ConversationPane(state: InboxState, store: InboxStore, model: InboxViewModel
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Avatar(peer, name, if (wide) 30.dp else 34.dp)
                 Column(Modifier.weight(1f)) {
-                    Text(name, style = geist(14.5.sp, FontWeight.SemiBold), color = p.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(name, style = geist(14.5.sp, FontWeight.SemiBold), color = if (name.startsWith("~")) p.secondary else p.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(peer, style = geistMono(11.5.sp), color = p.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 if (timer != null) Icon(Icons.Outlined.Timer, "Messages disappear after ${timerLabel(timer)}", Modifier.size(16.dp).testTag("timerBadge"), tint = p.muted)

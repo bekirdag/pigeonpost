@@ -225,7 +225,7 @@ What *you* call someone. Stored on the device only, never sent to the server. Th
 Pigeonpost yet; when it exists, aliases move into it end-to-end encrypted. Until then an alias set on the phone does not
 appear on the laptop. Storage: web `localStorage` key `ppi_aliases_v1:<sign-in subject>` (JSON `{peer: alias}`; the browser does not know the account id, so it uses the token's `sub`, cleared on sign-out), iOS/macOS
 the app's sandboxed `UserDefaults` suite or a file in Application Support (excluded from iCloud backup is not required),
-Android `DataStore` in app-private storage, Windows `ApplicationData.Current.LocalSettings`, Linux
+Android app-private `SharedPreferences` (subject + inbox scoped, backup disabled), Windows `ApplicationData.Current.LocalSettings`, Linux
 `$XDG_DATA_HOME/pigeonpost/aliases.json` (mode 600). Up to 64 characters, same character rules as display names minus the
 reserved words. Removing a conversation does not remove its alias; signing out does.
 
