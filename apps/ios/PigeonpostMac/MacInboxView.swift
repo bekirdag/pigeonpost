@@ -193,6 +193,12 @@ struct MacInboxView: View {
         .onReceive(NotificationCenter.default.publisher(for: .newConversation)) { _ in
             showingNew = true
         }
+        // A conversation just started from New conversation, in this mailbox: select it.
+        .onChange(of: inbox.started) { _, started in
+            guard let next = started?.selection(from: peer, reading: account.me?.address) else { return }
+            if next != peer { subthread = nil }
+            peer = next
+        }
         .sheet(isPresented: $showingNew) {
             MacNewConversationSheet(initialPeer: newContact) { started in
                 newContact = nil
@@ -269,6 +275,7 @@ struct MacInboxView: View {
             return
         }
         if deviceApprovals?.finishScanner() == true { pendingMailbox = nil; return }
+        newContact = nil
         if let meeting = pendingMeeting {
             pendingMeeting = nil
             guard account.me?.address == meeting.request.mailbox, calendar?.scopeId == meeting.scope,

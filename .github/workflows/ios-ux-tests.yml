@@ -30,8 +30,24 @@ concurrency:
 
 jobs:
   native-ios:
+    # Stable aggregate check: a timeout/failure in any shard still fails the iPhone gate.
+    runs-on: ubuntu-24.04
+    needs: native-ios-shards
+    if: always()
+    steps:
+      - name: Require every iPhone suite
+        env:
+          RESULT: ${{ needs.native-ios-shards.result }}
+        run: test "$RESULT" = success
+
+  native-ios-shards:
+    name: native-ios (${{ matrix.suite }})
     runs-on: macos-26
     timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [messaging, calendar, account]
     defaults:
       run:
         working-directory: apps/ios
@@ -67,6 +83,7 @@ jobs:
           print(device['name'], device['udid'])
           PY
       - name: Swift model regressions
+        if: matrix.suite == 'messaging'
         run: ./Tests/run.sh
       - name: Build and install the fixture app
         run: |
@@ -77,11 +94,14 @@ jobs:
           xcrun simctl install "$IOS_SIM" "$RUNNER_TEMP/ios-app/Build/Products/Debug-iphonesimulator/Pigeonpost.app"
       - name: Native history, mailbox, purchase and composer regressions
         run: |
-          selected_tests=(-only-testing:PPUITests/IOSUXTests -only-testing:PPUITests/HandlePurchaseTests
-            -only-testing:PPUITests/ComposerTests -only-testing:PPUITests/GroupTests
-            -only-testing:PPUITests/Phase1bTests -only-testing:PPUITests/CalendarUITests -only-testing:PPUITests/DeviceApprovalUITests
-            -only-testing:PPUITests/OrganizationRoomUITests -only-testing:PPUITests/PeopleUITests)
+          case "${{ matrix.suite }}" in
+            messaging) selected_tests=(-only-testing:PPUITests/IOSUXTests -only-testing:PPUITests/ComposerTests -only-testing:PPUITests/GroupTests) ;;
+            calendar) selected_tests=(-only-testing:PPUITests/CalendarUITests -only-testing:PPUITests/OrganizationRoomUITests) ;;
+            account) selected_tests=(-only-testing:PPUITests/HandlePurchaseTests -only-testing:PPUITests/Phase1bTests -only-testing:PPUITests/DeviceApprovalUITests -only-testing:PPUITests/PeopleUITests) ;;
+            *) exit 1 ;;
+          esac
           if [[ "$CALENDAR_FILES_ONLY" == true ]]; then
+            [[ "${{ matrix.suite }}" == calendar ]] || exit 0
             selected_tests=(-only-testing:PPUITests/CalendarUITests/testLocalCalendarFileCanBeSelectedAndPreviewed
               -only-testing:PPUITests/CalendarUITests/testCalendarFilePickerOpensAndCancels
               -only-testing:PPUITests/CalendarUITests/testEventExportChooserCanBeCancelled)
@@ -94,7 +114,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: ios-native-ux-results
+          name: ios-native-ux-${{ matrix.suite }}-results
           path: ${{ runner.temp }}/ios-ux.xcresult
           retention-days: 14
 

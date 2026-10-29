@@ -151,10 +151,18 @@ struct MessageBubble: View {
         }
         // Both directions: a sent copy takes up the same room in the mailbox as a received one,
         // and this is the only way to get that room back.
-        Button(role: .destructive) {
-            confirmingDelete = true
-        } label: {
-            Label("Delete", systemImage: "trash")
+        if message.status == .failed && message.id.hasPrefix("local_") {
+            Button(role: .destructive) {
+                Task { await inbox.deleteMessage(id: message.id) }
+            } label: {
+                Label("Discard", systemImage: "trash")
+            }
+        } else {
+            Button(role: .destructive) {
+                confirmingDelete = true
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
         }
     }
 
@@ -249,6 +257,16 @@ struct MessageBubble: View {
                 Text("not sent")
                     .font(.geist(12, .semibold))
                     .foregroundStyle(Theme.Pill.blockedText)
+                    .accessibilityIdentifier("not-sent:" + message.id)
+                // A message that never reached the postbox exists only on this device. Sending it
+                // again is the composer's Send (its words are kept there); this is the other way out.
+                if message.id.hasPrefix("local_") {
+                    Button("Discard") { Task { await inbox.deleteMessage(id: message.id) } }
+                        .buttonStyle(.plain)
+                        .font(.geist(12, .semibold))
+                        .foregroundStyle(metaColor)
+                        .accessibilityIdentifier("discard:" + message.id)
+                }
             }
             if message.status == .sending {
                 Image(systemName: "clock")

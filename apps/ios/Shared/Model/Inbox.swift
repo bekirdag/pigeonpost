@@ -63,6 +63,16 @@ final class Inbox {
     /// notification centre gets muted.
     private var listed: Set<String>?
     private(set) var pending: [PendingMessage] = []
+    /// The conversation New conversation just started, for the window that started it to open.
+    private(set) var started: StartedConversation?
+    /// First messages the postbox did not confirm, waiting for their conversation's composer.
+    private(set) var unconfirmedFirstSends: [UnconfirmedFirstSend] = []
+    /// Composers retire an adopted retry when it is confirmed or explicitly discarded.
+    private(set) var resolvedFirstSends: Set<String> = []
+    /// Whether that composer should take focus once the conversation is on screen.
+    @ObservationIgnored private var startedFocus: (mailbox: String, peer: String)?
+    /// The message reference of the send that started `started`, to find where the server filed it.
+    @ObservationIgnored private var startedReference: String?
     private struct UploadSignature: Equatable {
         let digest: Data
         let name: String
@@ -121,6 +131,28 @@ final class Inbox {
 
     private func isCurrent(_ request: MailboxRequest) -> Bool {
         !Task.isCancelled && request == mailboxRequest
+    }
+
+    /// A sheet belongs to the mailbox and login that opened it, including A → B → A.
+    struct NewConversationTarget {
+        fileprivate let owner: ObjectIdentifier
+        fileprivate let identity: String
+        fileprivate let generation: UUID
+        fileprivate let authorization: UUID
+        fileprivate let actor: UUID
+    }
+
+    func captureNewConversationTarget() -> NewConversationTarget? {
+        guard let request = mailboxRequest else { return nil }
+        return NewConversationTarget(owner: ObjectIdentifier(self), identity: request.identity,
+            generation: request.generation, authorization: account.session.authorizationId,
+            actor: account.actingGeneration)
+    }
+
+    func isCurrent(_ target: NewConversationTarget) -> Bool {
+        !Task.isCancelled && target.owner == ObjectIdentifier(self)
+            && target.identity == mailboxRequest?.identity && target.generation == mailboxGeneration
+            && target.authorization == account.session.authorizationId && target.actor == account.actingGeneration
     }
 
     private func isCancellation(_ error: Error) -> Bool {
@@ -235,9 +267,16 @@ final class Inbox {
         messages = incoming
         policy = body.policy ?? policy
         let known = Set(messages.map(\.messageId))
+        // A send whose answer was lost, that the postbox's own listing now shows it stored, was
+        // delivered after all: the listing's copy is the message, and retrying it is moot.
+        let stored = Set(messages.filter(\.isOutgoing).compactMap(\.msgRef))
+        resolvedFirstSends.formUnion(pending.filter { $0.status == .failed }.compactMap(\.msgRef).filter(stored.contains))
         pending.removeAll { row in
-            row.status != .failed && (row.sentCopyId.map(known.contains) ?? false)
+            if row.status == .failed { return row.msgRef.map(stored.contains) ?? false }
+            return row.sentCopyId.map(known.contains) ?? false
         }
+        unconfirmedFirstSends.removeAll { stored.contains($0.reference) }
+        followStartedConversation()
         rebuild()
     }
 
@@ -327,6 +366,11 @@ final class Inbox {
         serverThreads = []
         archived = []
         pending = []
+        started = nil
+        unconfirmedFirstSends = []
+        resolvedFirstSends = []
+        startedFocus = nil
+        startedReference = nil
         conversations = []
         hasLoaded = false
         filter = ""
@@ -522,6 +566,15 @@ final class Inbox {
     /// trip to remove something somebody just deleted makes the app feel like it disagreed.
     func deleteMessage(id: String) async {
         guard let me else { return }
+        // A message that never reached the postbox exists only here: discarding it is local.
+        if let row = pending.first(where: { $0.id == id && $0.mailbox == me.address && $0.status == .failed }) {
+            pending.removeAll { $0.id == row.id }
+            if let reference = row.msgRef { resolvedFirstSends.insert(reference) }
+            if let reference = row.msgRef { abandonSend(reference: reference, mailbox: row.mailbox) }
+            unconfirmedFirstSends.removeAll { $0.mailbox == row.mailbox && $0.reference == row.msgRef }
+            rebuild()
+            return
+        }
         guard !Fixtures.enabled else {
             toast = "Deleted — from the fixture mailbox, which is only in memory."
             return
@@ -704,26 +757,42 @@ final class Inbox {
         }
     }
 
+    /// How a send ended. `rejected` is the postbox refusing it outright — nothing was delivered;
+    /// `unconfirmed` is everything else that was not a success, where it may or may not have been.
+    enum SendOutcome: Equatable {
+        case sent
+        case refused
+        case rejected(APIError)
+        case unconfirmed
+    }
+
     @discardableResult
     func send(_ text: String, to peer: String, threadId: String?, files: [StagedFile] = [],
               msgRef: String = MessageReference.make(), reply: MessageComposerAction? = nil) async -> Bool {
+        await deliver(text, to: peer, threadId: threadId, files: files, msgRef: msgRef, reply: reply) == .sent
+    }
+
+    private func deliver(_ text: String, to peer: String, threadId: String?, files: [StagedFile] = [],
+                         msgRef: String = MessageReference.make(), reply: MessageComposerAction? = nil,
+                         announce: Bool = true, using scopedClient: PostboxClient? = nil) async -> SendOutcome {
+        let client = scopedClient ?? self.client
         guard let me, let request = mailboxRequest,
-              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !files.isEmpty else { return false }
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !files.isEmpty else { return .refused }
         if let reply {
-            guard reply.kind == .reply, reply.scope.mailbox == me.address, reply.scope.peer == peer else { return false }
+            guard reply.kind == .reply, reply.scope.mailbox == me.address, reply.scope.peer == peer else { return .refused }
         }
         let targetThread = reply?.message.threadId ?? threadId
         let uploadKey = UploadCacheKey(mailbox: request.identity, reference: msgRef)
         let signature = files.map { UploadSignature(digest: Data(SHA256.hash(data: $0.data)), name: $0.name, mediaType: $0.mediaType) }
         if let cached = sendUploads[uploadKey], cached.signature != signature {
             toast = "This send changed. Start a new attempt."
-            return false
+            return .refused
         }
         // Only digests and server ids are retained, never a second copy of the files.
         // Refuse before uploading if this session already has too many unfinished file sends.
         if !files.isEmpty, sendUploads[uploadKey] == nil, sendUploads.count >= 64 {
             toast = "Too many unfinished file sends. Finish an existing send first."
-            return false
+            return .refused
         }
         var uploads = sendUploads[uploadKey] ?? SendUploads(signature: signature, attachments: [])
         // Everything sent from this app asks for work, at the most it can ask for. The optimistic
@@ -750,13 +819,21 @@ final class Inbox {
         rebuild()
 
         if Fixtures.enabled {
+            #if DEBUG
+            // `-first-send-unconfirmed` stages a first send whose answer was lost.
+            if reply == nil, threadId == nil, CommandLine.arguments.contains("-first-send-unconfirmed") {
+                update(row.id) { $0.status = .failed }
+                rebuild()
+                return .unconfirmed
+            }
+            #endif
             update(row.id) { $0.status = .sent }
             if let reply { cancelMessageAction(reply.id) }
             rebuild()
-            return true
+            return .sent
         }
 
-        var succeeded = false
+        var outcome = SendOutcome.unconfirmed
         do {
             // Uploaded before the send names them. A failure here stops the message rather than
             // sending it without the files it was about: half a message is worse than none,
@@ -785,7 +862,7 @@ final class Inbox {
                 // optimistic row and let the next listing be the truth.
                 pending.removeAll { $0.id == row.id }
             }
-            succeeded = true
+            outcome = .sent
             sendUploads[uploadKey] = nil
             if isCurrent(request) {
                 if let reply { cancelMessageAction(reply.id) }
@@ -793,13 +870,16 @@ final class Inbox {
             }
         } catch let error as APIError {
             update(row.id) { $0.status = .failed }
-            if isCurrent(request) { toast = error.sendFailureMessage }
+            // A refusal is the postbox saying no; a timeout or a server error may have come after
+            // the message was stored, so it is not confirmed either way.
+            outcome = (400..<500).contains(error.status) && error.status != 408 ? .rejected(error) : .unconfirmed
+            if announce, isCurrent(request) { toast = error.sendFailureMessage }
         } catch {
             update(row.id) { $0.status = .failed }
-            if isCurrent(request) { toast = "Could not reach the postbox." }
+            if announce, isCurrent(request) { toast = "Could not reach the postbox." }
         }
         rebuild()
-        return succeeded
+        return outcome
     }
 
     func action(in scope: MessageActionScope) -> MessageComposerAction? {
@@ -902,15 +982,102 @@ final class Inbox {
         change(&pending[index])
     }
 
-    /// Start a conversation with an address nobody has written from yet. Returns the peer the
-    /// server filed it under, which is not always what was typed — a namespace or a `/k/` address
-    /// resolves to a mailbox.
-    func startConversation(to peer: String, body text: String) async throws -> String {
-        guard let me else { throw AuthError.sessionExpired }
-        _ = try await client.sendMessage(from: me.address, to: peer, body: RequestEnvelope.work(text), threadId: nil)
-        await loadAll()
-        let normalised = ConversationBuilder.normalise(peer, against: messages)
-        return conversation(with: normalised)?.peer ?? normalised
+    /// Start a conversation with an address, sending its first message, and say where it is.
+    ///
+    /// This used to send, reload, and hand back the typed address for the caller to select. A
+    /// namespace (`/bekir`) is filed under the mailbox it resolves to (`/bekir/main`), so that
+    /// selected a conversation that did not exist: "Pick a conversation". An unconfirmed send handed
+    /// back nothing at all, leaving the dialog up with an error and the message perhaps stored.
+    /// Now `started` names the conversation the moment the postbox has answered, bound to the
+    /// mailbox that sent it, and every window opens it from there. The send's own optimistic row is
+    /// already in it, so the message is on screen.
+    ///
+    /// When the listing says the server filed it under another peer (a namespace or a `/k/` address
+    /// resolves to a mailbox), `started` moves there. A send whose delivery is not confirmed opens
+    /// too, showing the message as not sent, with its words waiting in `unconfirmedFirstSends` for
+    /// that conversation's composer under the same reference — so Send retries this message rather
+    /// than sending a second one. Only an outright refusal stays in the dialog, and leaves nothing
+    /// behind. Switching mailbox or account while this is in flight drops the result.
+    func startConversation(to typed: String, body text: String) async -> StartOutcome {
+        guard let target = captureNewConversationTarget() else { return .failed(nil) }
+        return await startConversation(target: target, to: typed, body: text)
+    }
+
+    func startConversation(target: NewConversationTarget, to typed: String, body text: String) async -> StartOutcome {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard isCurrent(target), let me, let request = mailboxRequest, !text.isEmpty else {
+            return .failed("Your inbox changed. Close this sheet and start again.")
+        }
+        let reference = MessageReference.make()
+        let key = ConversationBuilder.normalise(typed, against: messages)
+        let scopedClient = account.scopedClient(acting: true)
+        let outcome = await deliver(text, to: typed, threadId: nil, msgRef: reference, announce: false, using: scopedClient)
+        // The answer belongs to the mailbox that asked. Another one on screen now opens nothing.
+        guard isCurrent(target), request == mailboxRequest else { return .failed(nil) }
+        switch outcome {
+        case .sent:
+            break
+        case .refused:
+            return .failed(nil)
+        case .rejected(let error):
+            // Nothing was delivered and nothing is waiting: no conversation is left behind for an
+            // address that was refused, and the dialog keeps the words to correct.
+            pending.removeAll { $0.mailbox == me.address && $0.msgRef == reference }
+            abandonSend(reference: reference, mailbox: me.address)
+            rebuild()
+            return .failed(error.sendFailureMessage)
+        case .unconfirmed:
+            unconfirmedFirstSends.removeAll { $0.mailbox == me.address && $0.peer == key }
+            unconfirmedFirstSends.append(UnconfirmedFirstSend(mailbox: me.address, peer: key, text: text, reference: reference))
+            toast = "Delivery not confirmed. Send it again to retry, or discard it."
+        }
+        started = StartedConversation(id: UUID(), mailbox: me.address, peer: key)
+        startedFocus = (me.address, key)
+        startedReference = reference
+        guard !Fixtures.enabled else { return .opened(key) }
+        // Also after an unconfirmed send: the listing may show it was stored after all. Whichever
+        // listing brings the sent copy back — this one or the send's own — moves `started` to it.
+        await loadInbox(for: request)
+        guard isCurrent(target), request == mailboxRequest, let started, started.mailbox == me.address else { return .failed(nil) }
+        return .opened(started.peer)
+    }
+
+    /// Move `started` to the peer the server filed its first message under, if that is not where
+    /// it was opened. Called as each listing is adopted, in the same turn as the optimistic row is
+    /// retired, so the opened conversation never empties out from under the window between the two.
+    private func followStartedConversation() {
+        guard let reference = startedReference, let current = started, current.mailbox == me?.address,
+              let copy = messages.last(where: { $0.isOutgoing && $0.msgRef == reference }) else { return }
+        startedReference = nil
+        guard copy.peerKey != current.peer else { return }
+        started = StartedConversation(id: UUID(), mailbox: current.mailbox, peer: copy.peerKey, replacing: current.peer)
+        if startedFocus?.peer == current.peer { startedFocus = (current.mailbox, copy.peerKey) }
+        unconfirmedFirstSends = unconfirmedFirstSends.map { waiting in
+            guard waiting.mailbox == current.mailbox, waiting.peer == current.peer else { return waiting }
+            return UnconfirmedFirstSend(mailbox: waiting.mailbox, peer: copy.peerKey, text: waiting.text, reference: waiting.reference)
+        }
+    }
+
+    enum StartOutcome: Equatable {
+        /// Open this conversation; its first message is in it, sent or waiting to be retried.
+        case opened(String)
+        /// Stay in the dialog, saying this if there is something to say.
+        case failed(String?)
+    }
+
+    /// The unconfirmed first message for this conversation, once, for its composer.
+    func takeUnconfirmedFirstSend(mailbox: String?, peer: String, intoEmptyComposer: Bool = true) -> UnconfirmedFirstSend? {
+        guard intoEmptyComposer, let mailbox, mailbox == me?.address,
+              let index = unconfirmedFirstSends.firstIndex(where: { $0.mailbox == mailbox && $0.peer == peer }) else { return nil }
+        return unconfirmedFirstSends.remove(at: index)
+    }
+
+    /// Whether this conversation was just started here and its composer should take focus. Once.
+    func takeStartedFocus(mailbox: String?, peer: String) -> Bool {
+        guard let mailbox, mailbox == me?.address, let focus = startedFocus,
+              focus.mailbox == mailbox, focus.peer == peer else { return false }
+        startedFocus = nil
+        return true
     }
 
     /// Delete a subject and the mail in it, from this mailbox.

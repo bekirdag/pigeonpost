@@ -130,6 +130,36 @@ struct PendingMessage: Identifiable {
     var replyTo: MessageReplyReference? = nil
 }
 
+/// A conversation this device has just started from New conversation, for the window to open.
+///
+/// Bound to the mailbox that sent it: a window now reading another mailbox, or another account,
+/// must not open it. `replacing` is set when the postbox filed the conversation under a different
+/// peer from the address that was typed (a namespace, or a `/k/` address with a handle), and only
+/// moves a selection still on the typed one (or none yet) — somebody who has since opened something
+/// else stays where they are.
+struct StartedConversation: Equatable {
+    let id: UUID
+    let mailbox: String
+    let peer: String
+    var replacing: String? = nil
+
+    func selection(from current: String?, reading mailbox: String?) -> String? {
+        guard let mailbox, mailbox == self.mailbox else { return nil }
+        guard let replacing else { return peer }
+        // Nothing selected yet counts as still on it: the two changes can reach a window together.
+        return current == nil || current == replacing ? peer : nil
+    }
+}
+
+/// A first message whose delivery is not confirmed. Its words go back into that conversation's
+/// composer with the same message reference, so Send retries the same message rather than a new one.
+struct UnconfirmedFirstSend: Equatable {
+    let mailbox: String
+    let peer: String
+    let text: String
+    let reference: String
+}
+
 struct MessageActionScope: Hashable {
     let mailbox: String?
     let peer: String
@@ -143,12 +173,12 @@ struct MessageSendAttempt: Equatable {
     let editOf: String?
     let reference: String
 
-    init(text: String, fileIDs: [UUID], replyTo: String? = nil, editOf: String? = nil) {
+    init(text: String, fileIDs: [UUID], replyTo: String? = nil, editOf: String? = nil, reference: String = MessageReference.make()) {
         self.text = text
         self.fileIDs = fileIDs
         self.replyTo = replyTo
         self.editOf = editOf
-        self.reference = MessageReference.make()
+        self.reference = reference
     }
 
     func matches(text: String, fileIDs: [UUID], replyTo: String?, editOf: String?) -> Bool {

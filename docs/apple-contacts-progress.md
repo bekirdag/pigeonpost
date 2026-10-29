@@ -17,3 +17,5 @@
 - SMS dismissal regression fixed: **51 core checks and all 7 native UI tests pass**, including actual Contacts denial/recovery and explicit invitation cancel/confirm. Further legacy-name preservation adds a 52nd passing core check. Final iOS and Mac builds pass. Visual review of the synthetic Find people screen confirms readable native layout and separate invitation action.
 
 - Review caught initial Settings reads being skipped during background profile loading. Read-only initial loads now wait for the existing operation with cancellation and scope checks; mutations remain one attempt. Three delayed-read regressions bring the focused suite to **55 passing checks**. Onboarding forms reset on scope change. Rebuild/retest after combining PR #180 remains required.
+
+- Combined PR #180 (`2b27ed98`) into this branch. Resolved first-message constructor/selection and CI conflicts: contact-prefilled recipients now use the scoped `Inbox.started` path; all existing suites plus PeopleUITests remain selected (account shard and iPad). Requalification follows before opening the PR.
