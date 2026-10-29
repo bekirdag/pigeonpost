@@ -8,9 +8,8 @@ Product: **Pigeonpost Desktop** (the shorter Pigeonpost name was unavailable).
 - Publisher display name: `Wodo Teknoloji A.Ş.`
 - Package family: `WodoTeknolojiA.PigeonpostDesktop_80zy2mk5xaxza`
 - First submission: `1152921505702010327`
-- Current public package: `1.0.6.0`; update in certification: `1.0.7.0`; prepared: `1.0.8.0` (design refresh) and
-  `1.0.9.0` (calls, attachment viewer), Windows 11, x64 and ARM64. 1.0.9.0 contains everything in 1.0.8.0: if 1.0.8.0 was
-  never uploaded, submit 1.0.9.0 alone; if it was, 1.0.9.0 replaces it in a new submission.
+- Current public package: `1.0.11.0` (Submission 10); update in certification: `1.0.12.0` (Submission 11,
+  `1152921505702264712`, submitted October 29, 2026), Windows 11, x64 and ARM64.
 
 ## Listing copy
 
@@ -61,6 +60,10 @@ On October 16, 2026, Partner Center confirms **1.0.6.0** publicly released in Su
 and shows **In certification**, with pre-processing in progress. Both x64 and ARM64 packages
 validated, and publication starts automatically after certification. The update is not yet confirmed live.
 
+On October 29, 2026, **1.0.11.0** is live as **Submission 10** (`1152921505702263164`, 1.0.10 never
+shipped separately), and **1.0.12.0** is submitted as **Submission 11** (`1152921505702264712`): In
+certification, publishes automatically when it passes.
+
 Windows workflow `38870868381`, source `6a57b1f`, passed core behavior, native x64/ARM64 builds,
 MSIX installation, UI smoke and ten notification integration checks. The hosted test account is
 different from Explorer's account, so the taskbar overlay API is denied there; this is handled without
@@ -74,8 +77,11 @@ Incoming calls can now ring on this PC while Pigeonpost Desktop is closed: Answe
 Decline declines it without opening the app.
 
 1.0.12 adds no capabilities. The manifest gains a second COM server (Windows App SDK push, class ID
-= the Entra application ID) next to the app-notification activator. Not submitted yet: 1.0.11 is in
-certification; submit 1.0.12 after it. Suggested certification note: "Incoming calls use Windows push
+= the Entra application ID) next to the app-notification activator. Submitted October 29, 2026 as
+**Submission 11** (`1152921505702264712`), x64 and ARM64 only. "What's new" starts with "1.0.12: Calls ring even
+when Pigeonpost is closed: Answer opens the call, Decline declines it without opening the app.", followed
+by the 1.0.11 and 1.0.10 notes; publishes automatically after certification. The existing certification note is 497/500
+characters, so this sentence was not added. Suggested certification note: "Incoming calls use Windows push
 notifications (Windows App SDK) to show an incoming-call notification while the app is closed. No
 new capabilities."
 
