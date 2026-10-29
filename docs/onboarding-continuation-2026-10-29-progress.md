@@ -74,3 +74,10 @@ Updates below record completed work and evidence, not inferred completion from t
 - Service SHA256 `66c9ad77efaed83fbb421730798f6b79a2e243c7e7aca6f9a76d10a3179b856e`; audio SHA256 `2d186b050d16a450899adcf5faaf7a1496aed37f0f6f7a5bdc8b2d21c5660cd4`.
 - Live signaling/relay shared secret matches by a one-time HMAC challenge; all four TURN URLs are loaded. Pinned SFU backhaul TLS verifies from raijin. No long-lived secret was copied or printed.
 - Postmark recheck still shows login. Native Apple #180/#184 CI remains in progress; current store submissions are preserved.
+
+### Native qualification — 29 October, 23:00 UTC
+
+- Apple #180 account suite: 31/32 pass; one launch before purchase cancellation reports an unhittable settings row. Preserved log, result bundle, recording and hierarchy. The entire failure capture is black and the app window is reported at one-third size; the next launch on the same runner recovers. The unchanged purchase-cancellation test passes locally. No assertion or app change made for this evidence; retry the failed job after its parent workflow finishes (GitHub refuses it while siblings are running). Messaging, StoreKit and both Mac suites pass; calendar/iPad still running.
+- Apple #184 messaging and Mac 26 pass; remaining native jobs queued/running.
+- Added Windows name parity in #187, head `35baf2ff`: free profile name/visibility and private local aliases; 501/501 core/MLS checks, no warnings in core build. Native builds/UI pending. Existing store submissions remain intact. Mobile phone import is in Android/Apple; Windows does not request contact permission or send SMS.
+- Rechecked the documented Postmark configuration options: the existing server token uses the tracking-enabled default stream without a custom header. Keycloak needs a separate stream SMTP token; the published setup creates that credential in the dashboard. Browser login remains required for the planned setup. No unrelated stream defaults changed and no real email was sent.
