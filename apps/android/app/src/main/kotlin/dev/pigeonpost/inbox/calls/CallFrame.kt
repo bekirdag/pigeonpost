@@ -25,13 +25,19 @@ import kotlinx.coroutines.launch
 class CallFrame(private val activity: ComponentActivity, private val host: CallHost) {
     private class Container(context: Context) : FrameLayout(context) {
         var passThrough = true
-        /** The strips behind the status and navigation bars, painted during a full-screen call. */
-        var bars = IntArray(2)
+        /**
+         * The strips behind the system bars and the display cutout (top, bottom, left, right), painted
+         * during a full-screen call. On a phone on its side the cutout and the navigation bar are at
+         * the left and right: unpainted, the inbox showed through there beside the call.
+         */
+        var bars = IntArray(4)
         private val paint = android.graphics.Paint().apply { color = 0xFF0D0F12.toInt() }
         init { setWillNotDraw(false) }
         override fun onDraw(canvas: android.graphics.Canvas) {
             if (bars[0] > 0) canvas.drawRect(0f, 0f, width.toFloat(), bars[0].toFloat(), paint)
             if (bars[1] > 0) canvas.drawRect(0f, (height - bars[1]).toFloat(), width.toFloat(), height.toFloat(), paint)
+            if (bars[2] > 0) canvas.drawRect(0f, 0f, bars[2].toFloat(), height.toFloat(), paint)
+            if (bars[3] > 0) canvas.drawRect((width - bars[3]).toFloat(), 0f, width.toFloat(), height.toFloat(), paint)
         }
         @SuppressLint("ClickableViewAccessibility")
         override fun dispatchTouchEvent(event: MotionEvent) = if (passThrough) false else super.dispatchTouchEvent(event)
@@ -77,7 +83,7 @@ class CallFrame(private val activity: ComponentActivity, private val host: CallH
         }
         web.alpha = if (mode == CallHost.Mode.HIDDEN) 0f else 1f
         // Behind the system bars during a full-screen call: the call's own dark ground.
-        container.bars = if (mode == CallHost.Mode.FULL) intArrayOf(bars.top, bars.bottom) else IntArray(2)
+        container.bars = if (mode == CallHost.Mode.FULL) intArrayOf(bars.top, bars.bottom, bars.left, bars.right) else IntArray(4)
         container.invalidate()
         container.requestLayout()
         back.isEnabled = mode == CallHost.Mode.FULL
