@@ -43,6 +43,8 @@ public partial class App : Application
             if (activation.Kind == ExtendedActivationKind.AppNotification
                 && activation.Data is AppNotificationActivatedEventArgs notification)
                 HandleNotification(notification);
+            // A push handed over by a second process: never a reason to show the window.
+            else if (activation.Kind == ExtendedActivationKind.Push) _ = WindowsPush.HandleBackgroundAsync(activation);
             else dispatcher.TryEnqueue(() => window.ShowInbox());
         }
         AppNotificationManager.Default.NotificationInvoked += (_, activation) => HandleNotification(activation);
@@ -64,6 +66,20 @@ public partial class App : Application
             Exit();
             return;
         }
+        // Windows App SDK push must be registered before the activation is read (packaged only).
+        var packaged = DesktopLog.PackageIdentity() != "unpackaged";
+        if (packaged) WindowsPush.Register();
+        var initialActivation = AppInstance.GetCurrent().GetActivatedEventArgs();
+        if (initialActivation.Kind == ExtendedActivationKind.Push)
+        {
+            // Started by Windows for a raw push while the app was closed: a ring ended. Remove its
+            // toast and exit, without a window or a notification-area icon.
+            await WindowsPush.HandleBackgroundAsync(initialActivation);
+            instance.UnregisterKey();
+            Exit();
+            return;
+        }
+        if (packaged) _ = WindowsPush.CreateChannelAsync(); // Ready by sign-in; the result is logged.
         window.InitializeNotifications();
         instance.Activated += (_, activation) => HandleActivation(activation);
         window.Closed += (_, _) =>
@@ -71,7 +87,6 @@ public partial class App : Application
             try { AppNotificationManager.Default.Unregister(); } catch (Exception) { }
             instance.UnregisterKey();
         };
-        var initialActivation = AppInstance.GetCurrent().GetActivatedEventArgs();
         // COM launches deliver their target through NotificationInvoked. Wait for it
         // before activating, so the previously selected subject is not acknowledged.
         var startedAtSignIn = initialActivation.Kind == ExtendedActivationKind.StartupTask;

@@ -68,6 +68,17 @@ disabling the tray or native alerts. Overlay display in a normal same-user Explo
 visually tested. Evidence and package hashes are recorded in
 `docs/planning/2026-10-16-desktop-notifications-progress.md`.
 
+### Version 1.0.12 release notes
+
+Incoming calls can now ring on this PC while Pigeonpost Desktop is closed: Answer opens the call,
+Decline declines it without opening the app.
+
+1.0.12 adds no capabilities. The manifest gains a second COM server (Windows App SDK push, class ID
+= the Entra application ID) next to the app-notification activator. Not submitted yet: 1.0.11 is in
+certification; submit 1.0.12 after it. Suggested certification note: "Incoming calls use Windows push
+notifications (Windows App SDK) to show an incoming-call notification while the app is closed. No
+new capabilities."
+
 ### Version 1.0.11 release notes
 
 Live streams in groups: a red LIVE banner shows who is streaming, Watch opens the stream full screen,
@@ -145,22 +156,35 @@ account (web inbox at https://inbox.pigeonpost.dev). Windows will ask for microp
 
 ### Incoming calls with the app closed (WNS)
 
-The app already creates and registers its Windows push channel (README, Incoming calls). To make
-calls ring while it is closed, the postbox needs the Store app's WNS credentials, which only Partner
-Center shows (they are not stored anywhere in this repository):
+Since 1.0.12 the app uses Windows App SDK push (`Pigeonpost.Desktop/WindowsPush.cs`). Microsoft
+refuses the older package-SID credentials from Partner Center's WNS/MPNS page ("Client credential
+flows against login.live.com are no longer supported"), and Windows App SDK push is not configured
+in Partner Center at all. The pieces:
 
-1. Partner Center > Apps and games > Pigeonpost Desktop > Product management > **WNS/MPNS**
-   (it links to the app registration). Copy the **Package SID** (`ms-app://S-1-15-2-…`) and create or
-   copy an application **client secret**.
-2. On the postbox host, set `PIGEONPOST_WNS_PACKAGE_SID` and `PIGEONPOST_WNS_CLIENT_SECRET` (or
-   `PIGEONPOST_WNS_CLIENT_SECRET_FILE` pointing at a root-only file), restart the postbox, and check its
-   log for `WNS configured`.
-3. Turn on `CALLS_RING_PUSH=1` in the calls service and the `call_push` feature flag
-   (`docs/call-alerting.md`). Then sign in on a Windows PC with the Store build, quit it from the
-   notification-area icon, and call that account: the incoming-call toast should appear bottom right.
+1. Entra app registration **Pigeonpost Desktop WNS** in the Wodo Network tenant
+   (`48477bf1-ca44-4687-a97c-3d39d7ef7572`), accounts in any organizational directory, as
+   Microsoft's push quickstart requires. Application ID `6b717f08-17c7-4433-8ea8-25f06ed63e60`
+   (the manifest's push COM class and `WnsChannel.AzureAppId`); service principal object ID
+   `d4a94855-b3f5-41af-8b48-c66d4d7eef73` (the channel request's remote ID,
+   `WnsChannel.AzureObjectId`). Client secret `pigeonpost-postbox-wns`, valid until 2028-10-28,
+   lives only in the postbox's env.
+2. Microsoft's quickstart says a packaged app's package family name must be mapped to that
+   application by request (Win_App_SDK_Push@microsoft.com, subject "Windows App SDK Push
+   Notifications Mapping Request", body `PFN: WodoTeknolojiA.PigeonpostDesktop_80zy2mk5xaxza`,
+   `AppId: 6b717f08-17c7-4433-8ea8-25f06ed63e60`, `ObjectId:
+   d4a94855-b3f5-41af-8b48-c66d4d7eef73`; processed weekly). On 2026-10-29 no request had been
+   sent, yet a CI install of this package got a channel and received a raw push from the postbox's
+   credentials (`200 received`, logged by the app). Send the request only if channels start
+   failing ("Push channel unavailable" in the desktop log).
+3. The postbox has `PIGEONPOST_WNS_TENANT_ID`, `PIGEONPOST_WNS_CLIENT_ID` and
+   `PIGEONPOST_WNS_CLIENT_SECRET` (`deploy/postbox/README.md`).
+4. `CALLS_RING_PUSH=1` in the calls service and the `call_push` flag (`docs/call-alerting.md`). Then
+   sign in on a Windows PC with the Store build, quit it from the notification-area icon, and call
+   that account: the incoming-call toast should appear bottom right.
 
-Push channels need a package whose identity matches the Partner Center app (the Store build, or a
-sideloaded package with the same identity); ZIP and fixture builds ring only while running.
+Channels follow the package family name, so the Store build and a sideloaded package with the same
+identity both get channels; ZIP and fixture builds ring only while running. The Windows CI install
+test logs the channel result to `installed/push.log`.
 
 ### Version 1.0.8 release notes
 

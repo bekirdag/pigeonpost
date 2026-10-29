@@ -56,17 +56,23 @@ and `webcam` device capabilities, so Windows privacy settings govern access.
   `action=answer|decline&room=…&ring=…&kind=…`). Answer starts the app, restores the saved session,
   opens the call page and answers with the ring token; Decline posts the ring token to
   `/calls/v1/rings/{room}/decline` without the page and leaves the app in the notification area.
-  While the app runs, a WNS call toast is suppressed and re-shown by the app, so it never doubles.
+  While the app runs, Windows shows a pushed toast itself (Windows App SDK channels deliver toasts
+  to the system); the page rings too and the app's toast for the room replaces the pushed one.
 - Toasts are tagged with the room's first 16 characters (WNS's tag limit) in group `calls`, the same
   tag and group the postbox uses, so the local and the WNS toast replace each other and the ring's
   end removes either. A toast is also removed 60 seconds after its ring started.
-- After sign-in, on every start and daily, a packaged install creates its WNS channel
-  (`PushNotificationChannelManager.CreatePushNotificationChannelForApplicationAsync`) and registers
-  it with `POST /v1/devices {token: <channel URI>, platform: "wns", kind: "alert", os: "windows",
-  identity}`; a changed channel replaces the old registration and sign-out removes it
-  (`DELETE /v1/devices/{channel}`). Unpackaged and test builds skip this; every failure is logged
-  and calls still ring while the app runs. The postbox only pushes when it has the Store app's WNS
+- A packaged install registers Windows App SDK push at launch (`PushNotificationManager.Register`,
+  COM server class = the Entra application ID in `Package.appxmanifest`) and asks for a channel
+  with the Entra app's object ID (`WindowsPush.cs`). After sign-in, on every start and daily, it
+  registers the channel with `POST /v1/devices {token: <channel URI>, platform: "wns", kind:
+  "alert", os: "windows", identity}`; a changed channel replaces the old registration and sign-out
+  removes it (`DELETE /v1/devices/{channel}`). Unpackaged and test builds skip this; every failure
+  is logged and calls still ring while the app runs. The postbox needs the Entra app's
   credentials (see STORE.md, "Incoming calls with the app closed").
+- The end of a ring reaches the app as a raw push `{"type":"call_cancel","room":…}` (WNS cannot
+  remove a toast on a desktop channel from the server). Running: the app removes the room's toast.
+  Closed: Windows starts the app in the background for the push; it removes the toast and exits
+  without a window or a notification-area icon.
 
 Code: `Pigeonpost.Core/CallRing.cs` (ring parsing, launch arguments, toast XML, ring state,
 ring-token decline; unit-tested in `Pigeonpost.Core.Tests/CallRingTests.cs`) and

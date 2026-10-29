@@ -1,8 +1,8 @@
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.Windows.AppNotifications;
+using Microsoft.Windows.PushNotifications;
 using Pigeonpost.Core;
-using Windows.Networking.PushNotifications;
 
 namespace Pigeonpost.Desktop;
 
@@ -17,10 +17,14 @@ namespace Pigeonpost.Desktop;
 //    window no longer jumps to the front for a ring. The app re-configures the page whenever the
 //    window moves between the two states, and a ring already sounding in the window when it goes
 //    to the background moves to a toast.
-//  - App not running: the same toast, sent by the postbox through WNS to the channel registered
-//    here (when the postbox has WNS credentials). Answer starts the app, signs in from the saved
-//    session, opens the call page and answers with the push's ring token; Decline declines with the
-//    ring token over HTTP, without the page, and leaves the app in the notification area.
+//  - App not running: the same toast, sent by the postbox through WNS to the Windows App SDK channel
+//    registered here (WindowsPush.cs). Answer starts the app, signs in from the saved session,
+//    opens the call page and answers with the push's ring token; Decline declines with the ring
+//    token over HTTP, without the page, and leaves the app in the notification area.
+//  - App running when a WNS toast arrives: Windows shows it (Windows App SDK channels deliver
+//    toasts to the system, not to the app). The page rings too and the app's toast for the room
+//    replaces the pushed one, since both use the same tag and group.
+//  - The ring's end reaches a closed app as a raw push (WindowsPush.cs), which removes the toast.
 //
 //  The local toast and the WNS toast share the room id as tag and "calls" as group, so either
 //  replaces the other and the end of the ring removes whichever is showing.
@@ -44,6 +48,8 @@ public sealed partial class MainWindow
         if (callAlertsHooked) return;
         callAlertsHooked = true;
         callWindowActive = activeWindow; // The window may have been activated before calls started.
+        // A ring ended by push (WindowsPush.cs has already removed its toast).
+        WindowsPush.RingCancelled += room => DispatcherQueue.TryEnqueue(() => rings.End(room));
         Activated += (sender, e) =>
         {
             callWindowActive = e.WindowActivationState != WindowActivationState.Deactivated;
@@ -241,23 +247,7 @@ public sealed partial class MainWindow
         if (identity is null) return;
         try
         {
-            var channel = await PushNotificationChannelManager.CreatePushNotificationChannelForApplicationAsync();
-            if (!ReferenceEquals(channel, pushChannel))
-            {
-                if (pushChannel is not null) pushChannel.PushNotificationReceived -= PushChannel_Received;
-                pushChannel = channel;
-                channel.PushNotificationReceived += PushChannel_Received;
-            }
-            if (!WnsChannel.IsValid(channel.Uri)) { DesktopLog.Write("Call push channel refused: not a WNS address"); return; }
-            var previous = ReadPushChannel();
-            if (previous is not null && previous != channel.Uri)
-            {
-                try { await postbox.UnregisterDeviceAsync(previous, lifetime.Token); }
-                catch (Exception ex) when (ex is not OperationCanceledException) { DesktopLog.Error("Removing the previous call push channel failed", ex); }
-            }
-            await postbox.RegisterDeviceAsync(identity, channel.Uri, "wns", "windows", lifetime.Token);
-            SavePushChannel(channel.Uri);
-            DesktopLog.Write($"Call push channel registered; expires {channel.ExpirationTime:yyyy-MM-dd}");
+            if (await WindowsPush.CreateChannelAsync() is { } channel) await RegisterChannelAsync(identity, channel);
         }
         catch (OperationCanceledException) { }
         catch (PostboxException ex) { DesktopLog.Write($"Call push channel not registered: postbox {ex.StatusCode} {ex.Code}"); }
@@ -271,6 +261,22 @@ public sealed partial class MainWindow
 #endif
     }
 
+    private async Task RegisterChannelAsync(string identity, PushNotificationChannel channel)
+    {
+        pushChannel = channel;
+        var uri = channel.Uri.AbsoluteUri;
+        if (!WnsChannel.IsValid(uri)) { DesktopLog.Write("Call push channel refused: not a WNS address"); return; }
+        var previous = ReadPushChannel();
+        if (previous is not null && previous != uri)
+        {
+            try { await postbox.UnregisterDeviceAsync(previous, lifetime.Token); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { DesktopLog.Error("Removing the previous call push channel failed", ex); }
+        }
+        await postbox.RegisterDeviceAsync(identity, uri, "wns", "windows", lifetime.Token);
+        SavePushChannel(uri);
+        DesktopLog.Write($"Call push channel registered; expires {channel.ExpirationTime:yyyy-MM-dd}");
+    }
+
     // Sign-out: this PC stops ringing for the account.
     private async Task UnregisterCallPushAsync()
     {
@@ -278,46 +284,15 @@ public sealed partial class MainWindow
         pushTimer = null;
         if (pushChannel is { } channel)
         {
-            channel.PushNotificationReceived -= PushChannel_Received;
             try { channel.Close(); } catch (Exception) { }
             pushChannel = null;
         }
+        WindowsPush.Forget();
         if (ReadPushChannel() is not { } registered) return;
         try { await postbox.UnregisterDeviceAsync(registered, lifetime.Token); }
         catch (Exception ex) when (ex is not OperationCanceledException) { DesktopLog.Error("Removing the call push channel failed", ex); }
         catch (OperationCanceledException) { }
         try { File.Delete(PushChannelFile); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
-    }
-
-    // A WNS call toast while the app runs: the app shows it itself, so it is not shown twice when the
-    // page rings too, and its ring token is kept for Decline. Runs on a background thread; the
-    // decision to cancel the system's toast must be made here, synchronously.
-    private void PushChannel_Received(PushNotificationChannel sender, PushNotificationReceivedEventArgs e)
-    {
-        if (e.NotificationType != PushNotificationType.Toast || e.ToastNotification?.Content is not { } content) return;
-        string payload;
-        CallLaunch? launch = null;
-        try
-        {
-            payload = content.GetXml();
-            foreach (var node in content.GetElementsByTagName("action"))
-                if (CallLaunch.Parse(node.Attributes?.GetNamedItem("arguments")?.InnerText) is { } parsed) { launch = parsed; break; }
-            launch ??= CallLaunch.Parse(content.DocumentElement?.GetAttribute("launch"));
-        }
-        catch (Exception ex) { DesktopLog.Error("Reading a call push failed", ex); return; }
-        if (launch is null) return;
-        e.Cancel = true;
-        var call = launch;
-        DispatcherQueue.TryEnqueue(() =>
-        {
-            var now = DateTimeOffset.UtcNow;
-            var ring = new CallRing(call.Room, call.Kind, null, null, null, null, call.RingToken);
-            if (rings.WasHandled(call.Room, now)) return;
-            if (!rings.Begin(ring, now)) return; // The page rang first; the ring token is merged in.
-            StartRingTimer();
-            DesktopLog.Write($"Incoming {call.Kind} call (push)");
-            ShowCallToast(ring, payload);
-        });
     }
 
     private static string? ReadPushChannel()

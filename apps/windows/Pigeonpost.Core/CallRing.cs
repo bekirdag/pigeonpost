@@ -268,6 +268,27 @@ public static class CallRings
     }
 }
 
+// The postbox's raw WNS notification at the end of a ring (crates/pigeonpost-postbox
+// src/call_alerts.rs wns_cancel): {"type":"call_cancel","room":…,"reason":…}. Anything else, or a
+// room that is not a room id, is ignored.
+public static class CallPush
+{
+    public const int MaxPayload = 5000; // WNS's own limit.
+
+    public static string? CancelledRoom(byte[]? payload)
+    {
+        if (payload is null || payload.Length is 0 or > MaxPayload) return null;
+        try
+        {
+            if (JsonNode.Parse(payload) is not JsonObject message) return null;
+            if (message["type"] is not JsonValue type || !type.TryGetValue<string>(out var kind) || kind != "call_cancel") return null;
+            if (message["room"] is not JsonValue room || !room.TryGetValue<string>(out var value)) return null;
+            return CallRing.ValidRoom(value) ? value : null;
+        }
+        catch (System.Text.Json.JsonException) { return null; }
+    }
+}
+
 // A WNS channel URI is only ever registered when it really points at Microsoft's push service,
 // as the postbox also requires.
 public static class WnsChannel
@@ -279,4 +300,13 @@ public static class WnsChannel
 
     // Channels last 30 days; renewing on every start and once a day keeps the registration fresh.
     public static readonly TimeSpan RefreshInterval = TimeSpan.FromHours(24);
+
+    // Windows App SDK push (docs/call-alerting.md). The Entra app registration "Pigeonpost Desktop
+    // WNS" in the Wodo Network tenant (48477bf1-ca44-4687-a97c-3d39d7ef7572): Microsoft maps the
+    // package family name to its application ID, the package's push COM server is registered under
+    // that ID, the channel request names the app by its service principal's object ID, and the
+    // postbox signs in to WNS as the same application. None of these is a secret.
+    public static readonly Guid AzureAppId = new("6b717f08-17c7-4433-8ea8-25f06ed63e60");
+    public static readonly Guid AzureObjectId = new("d4a94855-b3f5-41af-8b48-c66d4d7eef73");
+    public const string PushServerArguments = "----WindowsAppRuntimePushServer:";
 }
