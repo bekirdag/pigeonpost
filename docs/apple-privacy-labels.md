@@ -6,6 +6,8 @@ three. The labels must agree with `apps/ios/Pigeonpost/PrivacyInfo.xcprivacy` in
 `https://pigeonpost.dev/privacy` (and `/app-privacy`). If one changes, change the others in the same
 release: a label that disagrees with the manifest is a rejection.
 
+Next native contact build: add **Phone Number** under Contact Info and retain **Contacts**. Both are linked to the user, used only for app functionality, never tracking. This is separate from the currently submitted 1.1 (50) build.
+
 New in 1.1: **meeting audio** (Phase 7, `docs/meeting-summaries.md`) and **live streams** (Phase 6,
 `docs/streaming.md`).
 
@@ -25,11 +27,12 @@ Every type: **Linked to the user: Yes · Used for tracking: No · Purpose: App F
 
 | Category | Type | Why it is collected |
 | --- | --- | --- |
-| Contact Info | Name | Account and handle names |
+| Contact Info | Name | Account, handle and optional free display names |
+| Contact Info | **Phone Number** | Optional verified number and explicitly confirmed SMS-invitation destination |
 | Contact Info | the account's contact address (as declared in the manifest) | Sign-in, account notices |
 | Identifiers | User ID | Account and mailbox ids |
 | Identifiers | Device ID | Push tokens, group-encryption devices, meeting-notes keys (public halves) |
-| Contacts | Contacts | Contacts a person saves in Pigeonpost |
+| Contacts | Contacts | Saved Pigeonpost contacts and explicitly submitted phone-number hashes for discovery; abuse-prevention marks persist for up to 7 days |
 | User Content | Other messages (text messages) | Messages, stored by the postbox |
 | User Content | Photos or Videos | Attachments and profile pictures |
 | User Content | **Audio Data** | **Meeting notes (new in 1.1, see §3)**; audio attachments |
@@ -84,3 +87,11 @@ Data Types" and "Other User Content".
 - [ ] The product page preview in App Store Connect shows "Data Linked to You" with Audio Data
       listed, and **no** "Data Used to Track You" section.
 - [ ] `apps/ios/STORE-LISTING.md` (App Privacy) points here.
+
+## 6. Native contact release
+
+- Update App Store Connect Phone Number and Contacts answers before submitting this new build; do not replace the existing submission.
+- Device address-book names and local aliases stay on the device. Local aliases are scoped by account/inbox, excluded from backups and cleared at explicit sign-out.
+- Contacts permission follows the disclosure and only a user action imports. Limited iOS access is respected. Pressing Find sends hashes; hashes are not anonymous, and 7-day abuse marks mean this is not ephemeral-only processing.
+- A verified phone is private by default. Turning discoverability on makes its opted-in inbox matchable. Invitations require one explicit confirmation per number and use the existing Novu/Twilio delivery service.
+- iOS and Mac package the same privacy manifest; the build declares PhoneNumber. Existing Audio Data review action is still required.

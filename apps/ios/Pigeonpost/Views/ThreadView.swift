@@ -26,6 +26,7 @@ struct ThreadView: View {
 
     @Environment(Account.self) private var account
     @Environment(Inbox.self) private var inbox
+    @Environment(PeopleStore.self) private var people: PeopleStore?
     @Environment(PushService.self) private var push
     @Environment(CallLog.self) private var callLog: CallLog?
 
@@ -112,6 +113,12 @@ struct ThreadView: View {
         return CallLogEntry.merge(conversation.messages.filter { ($0.threadId ?? "") == subthread }, lines)
     }
 
+    private var conversationTitle: String {
+        if embedded { return "" }
+        if let name = people?.displayName(peer, legacyName: conversation?.peopleLegacyName) { return name }
+        return conversation?.name ?? PeerFace.displayName(peer)
+    }
+
     var body: some View {
         ConversationHistoryView(messages: shown, latestRequest: latestRequest, account: account, inbox: inbox, actionScope: actionScope)
             .id(HistoryKey(mailbox: account.me?.address, peer: peer, subthread: subthread))
@@ -139,7 +146,7 @@ struct ThreadView: View {
                 composer.modifier(ReportsItsPlace(measure: \.minY, report: LandingReport.composer))
             }
         }
-        .navigationTitle(embedded ? "" : conversation?.name ?? PeerFace.displayName(peer))
+        .navigationTitle(conversationTitle)
         .navigationBarTitleDisplayMode(.inline)
         // Glass rather than paint. This was opaque for a while, because the doodle showed through
         // the bar and ran under the title — but the answer to a pattern competing with a title is

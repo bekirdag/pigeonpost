@@ -89,6 +89,10 @@ struct NewConversationSheet: View {
     @Environment(\.dismiss) private var dismiss
     let onStarted: (String) -> Void
 
+    init(initialPeer: String? = nil, onStarted: @escaping (String) -> Void) {
+        self.onStarted = onStarted
+        _peer = State(initialValue: initialPeer ?? "/")
+    }
     @State private var peer = "/"
     @State private var body_ = ""
     @State private var error: String?

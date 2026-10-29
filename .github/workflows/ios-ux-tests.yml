@@ -80,7 +80,7 @@ jobs:
           selected_tests=(-only-testing:PPUITests/IOSUXTests -only-testing:PPUITests/HandlePurchaseTests
             -only-testing:PPUITests/ComposerTests -only-testing:PPUITests/GroupTests
             -only-testing:PPUITests/Phase1bTests -only-testing:PPUITests/CalendarUITests -only-testing:PPUITests/DeviceApprovalUITests
-            -only-testing:PPUITests/OrganizationRoomUITests)
+            -only-testing:PPUITests/OrganizationRoomUITests -only-testing:PPUITests/PeopleUITests)
           if [[ "$CALENDAR_FILES_ONLY" == true ]]; then
             selected_tests=(-only-testing:PPUITests/CalendarUITests/testLocalCalendarFileCanBeSelectedAndPreviewed
               -only-testing:PPUITests/CalendarUITests/testCalendarFilePickerOpensAndCancels
@@ -148,7 +148,7 @@ jobs:
       - name: iPad layout and calendar regressions
         run: |
           selected_tests=(-only-testing:PPUITests/IPadLayoutTests -only-testing:PPUITests/CalendarUITests -only-testing:PPUITests/DeviceApprovalUITests
-            -only-testing:PPUITests/OrganizationRoomUITests)
+            -only-testing:PPUITests/OrganizationRoomUITests -only-testing:PPUITests/PeopleUITests)
           if [[ "$CALENDAR_FILES_ONLY" == true ]]; then
             selected_tests=(-only-testing:PPUITests/CalendarUITests/testLocalCalendarFileCanBeSelectedAndPreviewed
               -only-testing:PPUITests/CalendarUITests/testCalendarFilePickerOpensAndCancels

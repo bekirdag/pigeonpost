@@ -19,6 +19,9 @@
 		PP000000000000000000B3 = {isa = PBXBuildFile; fileRef = PP000000000000000000B4; };
 		PP000000000000000000C2 /* PigeonpostGroupCrypto.swift in Sources (iOS) */ = {isa = PBXBuildFile; fileRef = PP000000000000000000C1; };
 		PP000000000000000000C3 /* PigeonpostGroupCrypto.swift in Sources (Mac) */ = {isa = PBXBuildFile; fileRef = PP000000000000000000C1; };
+		PP000000000000000000D1 = {isa = PBXBuildFile; productRef = PP000000000000000000D3; };
+		PP000000000000000000D2 = {isa = PBXBuildFile; productRef = PP000000000000000000D4; };
+		PP000000000000000000D5 = {isa = PBXBuildFile; fileRef = PP000000000000000000D6; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -70,6 +73,7 @@
 		PP000000000000000000B5 = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HandleStoreKitTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		PP000000000000000000C1 /* PigeonpostGroupCrypto.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PigeonpostGroupCrypto.swift; path = ../../crates/pigeonpost-groupcrypto/bindings/swift/PigeonpostGroupCrypto.swift; sourceTree = SOURCE_ROOT; };
 		PP000000000000000000C6 /* build-groupcrypto.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = scripts/build-groupcrypto.sh; sourceTree = SOURCE_ROOT; };
+		PP000000000000000000D6 = {isa = PBXFileReference; lastKnownFileType = text.xml; path = Pigeonpost/PrivacyInfo.xcprivacy; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -77,6 +81,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+                PP000000000000000000D1,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -84,6 +89,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+                PP000000000000000000D2,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -144,6 +150,7 @@
 				PP0000000000000000005A /* Shared */,
 			);
 			name = Pigeonpost;
+            packageProductDependencies = (PP000000000000000000D3);
 			productName = Pigeonpost;
 			productReference = PP0000000000000000000B /* Pigeonpost.app */;
 			productType = "com.apple.product-type.application";
@@ -166,6 +173,7 @@
 				PP0000000000000000006A /* PigeonpostMac */,
 			);
 			name = PigeonpostMac;
+            packageProductDependencies = (PP000000000000000000D4);
 			productName = PigeonpostMac;
 			productReference = PP0000000000000000006B /* Pigeonpost Desktop.app */;
 			productType = "com.apple.product-type.application";
@@ -182,6 +190,14 @@
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
 /* End PBXNativeTarget section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+        PP000000000000000000D0 = {isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/PhoneNumberKit/PhoneNumberKit"; requirement = {kind = exactVersion; version = 5.0.9; }; };
+/* End XCRemoteSwiftPackageReference section */
+/* Begin XCSwiftPackageProductDependency section */
+        PP000000000000000000D3 = {isa = XCSwiftPackageProductDependency; package = PP000000000000000000D0; productName = PhoneNumberKit; };
+        PP000000000000000000D4 = {isa = XCSwiftPackageProductDependency; package = PP000000000000000000D0; productName = PhoneNumberKit; };
+/* End XCSwiftPackageProductDependency section */
 
 /* Begin PBXProject section */
 		PP00000000000000000013 /* Project object */ = {
@@ -212,6 +228,7 @@
 			productRefGroup = PP0000000000000000000E /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
+            packageReferences = (PP000000000000000000D0);
 			targets = (
 				PP0000000000000000000F /* Pigeonpost */,
 				PP0000000000000000006F /* PigeonpostMac */,
@@ -232,6 +249,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+                PP000000000000000000D5 /* Shared privacy manifest */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -9,6 +9,10 @@ struct MacNewConversationSheet: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(Inbox.self) private var inbox
+    init(initialPeer: String? = nil, opened: @escaping (String) -> Void) {
+        self.opened = opened
+        _peer = State(initialValue: initialPeer ?? "/")
+    }
     @State private var peer = "/"
     @State private var draft = ""
 

@@ -1,0 +1,19 @@
+# Apple contacts progress
+
+- Isolated checkout `pigeonpost-contacts-apple-20261029`, branch `codex/contacts-apple-20261029`, base `78a8118e` (merged contacts server/web). PR #180 remains separate while iPhone/iPad CI runs.
+- Initialized Docdex at this exact worktree root; HTTP-scoped tree and repo memory recall succeeded. Global MCP session is pinned to main, so worktree calls use explicit repo-id HTTP requests.
+- Read contacts contract, shared Account authorization/acting-generation boundary and organization-room API/store patterns. Plan recorded before implementation; no application edits yet.
+
+- Implemented shared typed API, scoped PeopleStore, local protected/excluded-from-backup alias files, PhoneNumberKit adapter, names/phone/discovery UI, explicit invitations and contact-name labels. Exact-root Docdex symbol/open/impact recovered; Swift file graph has no edges, so verified call sites directly. Local-model DTO draft was used only after adding Sendable/reviewing every field.
+- First focused suite: 42 checks pass, including payload privacy, malformed matches, login/inbox replacement, quotas and invitation cancellation/replay. First Mac build caught iOS-only limited Contacts status referenced on Mac; guarded by platform. Corrected before retry.
+- No real contacts, SMS, phone verification or store submission used by tests. Native fixtures keep all network operations in memory.
+
+- Full existing Apple core suite passed, including 46 people checks with on-disk isolation/backup exclusion. Subsequent exact-match phone validation and three published cross-client vectors bring the focused suite to **50 passing checks**. Mac and iPhone/iPad simulator builds pass. Four initial native UI cases pass. Adding actual Contacts-denial, six-digit verification and invite-confirmation UI cases, all on a dedicated empty simulator with synthetic API responses.
+- Local-model UI test draft failed validation (undeclared app, missing launch scope and no actual cancellation) and was not used. Primary implementation uses real app IDs and waits.
+- Added the contact tests to both native CI selections and PhoneNumber to the privacy manifest; Mac now packages the same manifest. No App Store Connect changes made.
+
+- Expanded Apple UI run: disclosure cancel, actual OS Contacts denial/recovery, skippable name, free name, phone settings and six-digit verification passed. SMS confirmation exposed a real SwiftUI dismissal race: the binding cleared the pending review before the async send began. Confirmation is now consumed synchronously and carried as a one-use, scope-bound intent; a regression simulates the automatic binding reset. Requalification pending.
+
+- SMS dismissal regression fixed: **51 core checks and all 7 native UI tests pass**, including actual Contacts denial/recovery and explicit invitation cancel/confirm. Further legacy-name preservation adds a 52nd passing core check. Final iOS and Mac builds pass. Visual review of the synthetic Find people screen confirms readable native layout and separate invitation action.
+
+- Review caught initial Settings reads being skipped during background profile loading. Read-only initial loads now wait for the existing operation with cancellation and scope checks; mutations remain one attempt. Three delayed-read regressions bring the focused suite to **55 passing checks**. Onboarding forms reset on scope change. Rebuild/retest after combining PR #180 remains required.
