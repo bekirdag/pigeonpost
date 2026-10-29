@@ -534,6 +534,7 @@ class GroupStore(
     fun create(name: String, description: String?, invite: List<String>, joinPolicy: String, postPolicy: String, timer: Long?, done: (String?) -> Unit) {
         val c = client ?: return
         require(name.isNotBlank() && name.length <= 80) { "Give the group a name." }
+        val run = generation
         mutable.update { it.copy(busy = true) }
         launch {
             try {
@@ -547,6 +548,8 @@ class GroupStore(
                 val refused = created.invitations.orEmpty().count { it.status != "invited" }
                 if (refused > 0) note("$refused ${if (refused == 1) "person" else "people"} could not be invited.")
                 refresh()
+                // Opened only in the mailbox that created it; a switch meanwhile leaves it in that mailbox's list.
+                if (run != generation) { done(null); return@launch }
                 open(created.group.id)
                 done(created.group.id)
             } catch (cancelled: CancellationException) { throw cancelled }
