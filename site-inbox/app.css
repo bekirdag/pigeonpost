@@ -1050,6 +1050,9 @@ button { font: inherit; color: inherit; }
 .mine .bubble .meta { color: var(--mine-meta); border-top-color: var(--mine-rule); }
 .messages > li:not(.mine) .bubble:has(.decision .pill-held) .meta { border-top-color: var(--held-edge); }
 .bubble .meta .failed { color: var(--blocked-text); font-weight: 600; }
+/* Retry and Discard sit beside "not confirmed": the two ways out of an unknown outcome. */
+.bubble .meta .send-retry, .bubble .meta .send-discard { font: inherit; font-weight: 600; padding: 0 2px; min-height: 24px; }
+.mine .bubble .meta .send-retry, .mine .bubble .meta .send-discard { color: inherit; text-decoration: underline; }
 
 /* Copy sits in the meta row, quiet until the pointer is near it. It is a real button so it is
    reachable by keyboard; the glyph carries no meaning that the aria-label does not. */

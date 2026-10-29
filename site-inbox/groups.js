@@ -1285,7 +1285,13 @@
       hideSheet("group-create-sheet");
       const refused = (res.invitations || []).filter((i) => i.status !== "invited");
       if (refused.length) host().toast(`${refused.length} ${refused.length === 1 ? "person" : "people"} could not be invited.`);
-      if (as === me()) { await refresh(); openGroup(res.group.id); }
+      // A listing that fails to reload must not leave the group just created unopened behind a
+      // closed sheet: the group exists, and the next refresh fills in the list around it.
+      if (as === me()) {
+        // Twice at most: a refresh already in flight is shared, and its listing predates the group.
+        try { await refresh(); if (!groupById(res.group.id) && as === me()) await refresh(); } catch { /* opened anyway */ }
+        if (as === me()) openGroup(res.group.id);
+      }
       else host().toast(`Created as ${as}. Switch to that mailbox to open it.`);
     } catch (e) {
       showError("gc-error", explain(e));
