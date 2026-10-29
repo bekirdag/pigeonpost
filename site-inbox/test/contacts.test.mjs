@@ -66,7 +66,7 @@ test("vCard: folded lines, several TELs, 2.1 quoted-printable, item1.TEL and tel
     "TEL;CELL:+44 7700 900123", "END:VCARD",
     "BEGIN:VCARD", "VERSION:4.0", "N:Tester;Casey;;;", "item1.TEL;type=pref:+61 491 570 156",
     "item1.X-ABLabel:mobile", "TEL;VALUE=uri;TYPE=home:tel:+1-555-555-0102", "END:VCARD",
-    "BEGIN:VCARD", "VERSION:3.0", "FN:Nobody\\, No Phone", "EMAIL:nobody@example.invalid", "END:VCARD",
+    "BEGIN:VCARD", "VERSION:3.0", "FN:Nobody\\, No Phone", "ORG:Example Org", "END:VCARD",
   ].join("\r\n");
   const cards = C.parseVcard(vcf);
   assert.deepEqual(JSON.parse(JSON.stringify(cards)), [
