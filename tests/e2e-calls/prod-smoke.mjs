@@ -99,7 +99,9 @@ const MEDIA = `(() => {
 // exercised although both ends run on one machine.
 const RELAY = process.env.RELAY === "1" ? `try { localStorage.setItem("ppi_calls_relay", "1"); } catch (_) {}` : "";
 const NATIVE_HOST = `window.webkit = { messageHandlers: { pigeonpost: { postMessage: (m) => { (window.__host ||= []).push(m); } } } };`;
-const STALLED_AUDIO = `AudioContext.prototype.resume = function () { return new Promise(() => {}); };`;
+// WebKit with audio not allowed: every AudioContext stays suspended and resume() never settles.
+const STALLED_AUDIO = `Object.defineProperty(AudioContext.prototype, "state", { get() { return "suspended"; } });
+  AudioContext.prototype.resume = function () { return new Promise(() => {}); };`;
 
 function findChrome() {
   return [process.env.CHROME, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
@@ -263,7 +265,7 @@ const scenarios = {
     // The callee's app is woken by the push and only now loads the page; WebKit will not start audio.
     const b = await member(browser, "callee (CallKit, audio not allowed)", B, { init: NATIVE_HOST + STALLED_AUDIO, nativeRing: true });
     await b.evaluate(`window.PigeonpostNative.answer(${JSON.stringify(room)}, null); true`);
-    for (const p of [a, b]) await until(p.name + " is in an active call", async () => (await inspect(p)).call?.state === "active", 25000);
+    for (const p of [a, b]) await until(p.name + " is in an active call", async () => (await inspect(p)).call?.state === "active" || not({ call: (await inspect(p)).call, host: await p.evaluate("(window.__host || []).slice(-4)") }), 25000);
     await flowing([a, b], { video: true, mesh: 2 });
     await hangUpAll([a, b]);
   },
