@@ -2,13 +2,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import http from "node:http";
+import { EventEmitter } from "node:events";
 import {
   b64, generateSigningKeyPem, loadSigningKey, newSessionKey, openBrief, openChunk, sealChunk, unb64, verifySessionKey,
 } from "../src/crypto.js";
 import { createIntel, LIMITS } from "../src/service.js";
 import { createHandler } from "../src/server.js";
 import { createSummarizer, validateNotes, parseJsonObject } from "../src/summary.js";
-import { BYTES_PER_SECOND, peak, wav } from "../src/audio.js";
+import { BYTES_PER_SECOND, createDecoder, peak, wav } from "../src/audio.js";
 
 const signing = loadSigningKey(generateSigningKeyPem());
 const MEETING = "mtg_" + "a".repeat(26);
@@ -210,6 +211,40 @@ test("failures clean up: undecryptable, undecodable, STT down, LLM down, no spee
   assert.deepEqual(r.posted.at(-1).body, { status: "failed", reason: "aborted" });
 });
 
+test("discard during decode rejects and wipes the in-flight audio", async () => {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const decoded = pcm(10);
+  let plain;
+  let transcriptions = 0;
+  const r = rig({ decode: async (p) => { plain = p; await gate; return decoded; }, transcribe: async () => { transcriptions++; return { segments: [] }; } });
+  const o = r.intel.open({ meeting_id: MEETING });
+  const s = r.intel.sessionFor(o.session);
+  try {
+    const pending = send(r.intel, s, o, "pid_aaaaaaaaaaaa", 0, "loud:10:1", 1);
+    await until(() => plain != null);
+    r.intel.discard(s, { participant: "pid_aaaaaaaaaaaa" });
+    release();
+    await assert.rejects(pending, /discarded/);
+    assert.equal(peak(decoded), 0);
+    assert.ok(plain.every((x) => x === 0));
+    assert.equal(s.open.size, 0);
+    assert.equal(transcriptions, 0);
+  } finally { release(); r.intel.abort(s); }
+});
+
+test("transcription failure wipes the actual joined PCM passed to STT", async () => {
+  let submitted;
+  const r = rig({ transcribe: async (p) => { submitted = p; throw new Error("stt_unavailable"); } });
+  const o = r.intel.open({ meeting_id: MEETING });
+  const s = r.intel.sessionFor(o.session);
+  await send(r.intel, s, o, "pid_aaaaaaaaaaaa", 0, "loud:10:1", 1);
+  await r.intel.finish(s, "call_ended");
+  assert.ok(submitted);
+  assert.equal(peak(submitted), 0, "the STT copy is zeroed on rejection too");
+  assert.equal(r.intel._sessions.size, 0);
+});
+
 test("stop for me: a participant's unprocessed audio is discarded and their in-flight window ignored", async () => {
   const r = rig();
   const release = r.gate();
@@ -282,3 +317,27 @@ test("http: the service token is required; health needs none and leaks no conten
     server.close();
   }
 });
+
+for (const failure of ["overflow", "timeout"]) {
+  test(`decoder wipes buffered and late output after ${failure}`, async () => {
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stdin = new EventEmitter();
+    child.stdin.end = () => {};
+    child.kill = () => {};
+    const decode = createDecoder({ spawn: () => child, maxSeconds: 1, timeoutMs: failure === "timeout" ? 10 : 1000 });
+    const pending = decode(Buffer.from("synthetic audio"));
+    const rejected = assert.rejects(pending, failure === "timeout" ? /decode_timeout/ : /decode_too_long/);
+    const first = Buffer.alloc(20, 7);
+    child.stdout.emit("data", first);
+    const excess = Buffer.alloc(BYTES_PER_SECOND, 9);
+    if (failure === "overflow") child.stdout.emit("data", excess);
+    await rejected;
+    assert.ok(first.every((x) => x === 0));
+    if (failure === "overflow") assert.ok(excess.every((x) => x === 0), "overflowing buffer is wiped too");
+    const late = Buffer.alloc(20, 11);
+    child.stdout.emit("data", late);
+    assert.ok(late.every((x) => x === 0), "late pipe data must not be retained after termination");
+    child.emit("close", 1);
+  });
+}

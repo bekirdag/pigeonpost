@@ -133,6 +133,7 @@ export function createIntel(cfg, deps) {
       stats.chunks_refused++;
       throw new IntelError(400, "undecryptable");
     }
+    const generation = s.gen.get(participant) || 0;
     decoding++;
     let pcm;
     try {
@@ -146,6 +147,11 @@ export function createIntel(cfg, deps) {
     }
     // The session may have ended or this speaker stopped while ffmpeg ran.
     if (!sessions.has(s.id) || s.finishing) { pcm.fill(0); throw new IntelError(409, "finished"); }
+    if ((s.gen.get(participant) || 0) !== generation) {
+      pcm.fill(0);
+      stats.chunks_refused++;
+      throw new IntelError(409, "discarded");
+    }
     s.seqs.set(participant, seq);
     s.lastChunkAt = now();
     armIdle(s);
@@ -250,8 +256,9 @@ export function createIntel(cfg, deps) {
         const { session: s, window: w } = item;
         s.lastServed = now();
         const seconds = w.bytes / BYTES_PER_SECOND;
+        let pcm;
         try {
-          const pcm = Buffer.concat(w.parts);
+          pcm = Buffer.concat(w.parts);
           wipeWindow(w);
           if (peak(pcm) < LIMITS.silencePeak) {
             stats.silent_windows++;
@@ -268,12 +275,13 @@ export function createIntel(cfg, deps) {
               }
             }
           }
-          pcm.fill(0);
         } catch (err) {
           stats.failures++;
           s.sttErrors = (s.sttErrors || 0) + 1;
           log(`session ${s.id.slice(0, 10)} window failed: ${err && err.message ? err.message.slice(0, 40) : "error"}`);
         } finally {
+          pcm?.fill(0);
+          wipeWindow(w);
           s.pending--;
           settle(s);
         }
