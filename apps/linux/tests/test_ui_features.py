@@ -456,6 +456,7 @@ class GroupWindowTests(WindowCase):
         form["submit"]()
         pump(lambda: w.group_open and w.page() == "group", timeout=10)
         gid = w.group_open
+        self.assertIs(w.get_focus(), w.group_composer, "a new group opens with the focus in its message box")
         self.assertEqual(self.fake.groups[gid]["activation_state"], "active")
         # The invitation is the server's job here: Bob accepts; Alice's loop adds his device.
         self.fake.invite(gid, B)

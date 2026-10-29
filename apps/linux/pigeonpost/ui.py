@@ -1179,14 +1179,43 @@ class Window(MessagesMixin, NotesMixin, PairingMixin, OrgsMixin, CalendarMixin, 
         if self.calls:
             self.calls.decline(room)
 
-    def sent_snapshot(self, messages):
+    def sent_snapshot(self, messages, follow=None):
         self.messages = live_messages(messages)
+        if follow:
+            self.follow_sent(*follow)
         self.render_all()
+        if follow and self.draft_key()[:2] == (follow[0], self.peer):
+            self.keep_composer_focus(self.draft_key())
 
-    def reload_messages(self):
+    def reload_messages(self, follow=None):
+        """Read the inbox again. `follow` is (mailbox, conversation, sent copy id, msg_ref) of a send
+        that just completed: once its copy is in, the conversation it was filed under is opened."""
         identity, revision = self.identity, self.revision
         self._work(lambda: self.read_inbox(identity),
-                   lambda rows: self.sent_snapshot(rows) if revision == self.revision else None)
+                   lambda rows: self.sent_snapshot(rows, follow) if revision == self.revision and identity == self.identity else None)
+
+    def follow_sent(self, identity, peer, copy_id, ref):
+        """Open the conversation a just-sent message was filed under.
+
+        The server files a conversation by the mailbox it reached, so a first message to a
+        namespace (/bekir), a key address of a named mailbox, or a differently written handle lands
+        under another key than the one typed. Left alone, the typed address stays selected with no
+        messages under it, and the new conversation sits unselected in the list. Only moves while
+        the same mailbox and the conversation the message was sent from are still on screen."""
+        if identity != self.identity or peer != self.peer or self.page() != "conversation" or not (copy_id or ref):
+            return
+        def ours(message):
+            return message.get("direction") == "out" and (
+                (copy_id and message.get("message_id") == copy_id) or (ref and message.get("msg_ref") == ref))
+        target = next((key for key, rows in conversations(self.messages).items() if any(ours(m) for m in rows)), None)
+        if not target or target == self.peer:
+            return
+        old, new = (identity, peer, self.subject), (identity, target, self.subject)
+        for store in (self.drafts, self.files, self.compose_modes):
+            if old in store and new not in store:
+                store[new] = store.pop(old)
+        self.peer = target
+        self.restore_draft()
 
     def pick_file(self):
         if not self.peer:
@@ -1390,10 +1419,22 @@ class Window(MessagesMixin, NotesMixin, PairingMixin, OrgsMixin, CalendarMixin, 
     def new_conversation(self):
         if not self.identity:
             return
+        identity = self.identity
         def start(peer):
             if not valid_peer(peer):
                 raise ValueError("Use an address such as /bekir, /bekir/main or /k/your-address.")
-            self.peer, self.subject = normalize(peer, self.messages), None
+            if identity != self.identity:
+                return  # the mailbox changed while the dialog was open; never start it in another
+            # Opened from a group, Calls, the calendar or Filtered: the conversation page has to be
+            # the one on screen, or the new conversation is selected behind a page nobody sees.
+            if getattr(self, "group_mode", None):
+                self.cancel_group_mode()
+            self.group_open = None
+            if self.page() != "conversation":
+                self.main_stack.set_visible_child_name("conversation")
+                self.sync_side_nav()
+            self.peer, self.subject, self.message_limit = normalize(peer, self.messages), None, 200
+            self.message_search.set_text("")
             self.render_all()
             self.restore_draft()
             self.composer.grab_focus()

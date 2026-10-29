@@ -1363,9 +1363,11 @@ class GroupsMixin:
                 refused = [i for i in result.get("invitations") or [] if i.get("status") != "invited"]
                 if refused:
                     self.toast(f"{len(refused)} {'person' if len(refused) == 1 else 'people'} could not be invited.")
-                if mailbox == current:
+                if mailbox == current == self.identity:
                     self.groups.append(result["group"])
                     self.open_group(result["group"]["id"])
+                    if self.group_composer.get_sensitive():
+                        self.group_composer.grab_focus()
                     self.groups_cycle(force=True)
                 else:
                     self.toast(f"Created as {display_name(mailbox)}. Switch to that mailbox to open it.")

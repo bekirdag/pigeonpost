@@ -32,6 +32,7 @@ class ActionsAPI(FakeAPI):
         self.posted = []
         self.fail_next = None
         self.policy = {"read_receipts": True, "unknown_messages": "show"}
+        self.filed = {}  # typed address -> the conversation the server files the sent copy under
         self.rows = [
             {"message_id": "in1", "msg_ref": REF_A, "peer_handle": "/alex/main", "body": "Can you check the layout?",
              "received_at": NOW - 600, "read": True, "thread_id": "release"},
@@ -58,7 +59,8 @@ class ActionsAPI(FakeAPI):
         if self.fail_next is not None:
             error, self.fail_next = self.fail_next, None
             raise error
-        self.rows.append({"message_id": "m" + str(len(self.posted)), "msg_ref": body["msg_ref"], "peer_handle": body["to"],
+        self.rows.append({"message_id": "m" + str(len(self.posted)), "msg_ref": body["msg_ref"],
+                          "peer_handle": self.filed.get(body["to"], body["to"]),
                           "direction": "out", "body": body["body"], "sent_at": NOW, "thread_id": body.get("thread_id"),
                           "receipt": {"state": "sent"}})
         return {"message_id": "x", "sent_copy_id": "m" + str(len(self.posted)), "msg_ref": body["msg_ref"]}
@@ -255,6 +257,110 @@ class MessageActionTests(unittest.TestCase):
         pump(timeout=0.3)
         self.assertEqual(self.window.drafts, {})
         self.assertEqual(self.window.pending, {})
+
+    # ---- a new conversation opens on its first message ------------------------------------------
+
+    def start_conversation(self, typed):
+        """The real New conversation dialog: type the address and press Continue."""
+        self.window.new_conversation()
+        dialog = self.window.dialogs[-1]
+        entry = next(w for w in walk(dialog.get_content()) if isinstance(w, Gtk.Entry))
+        entry.set_text(typed)
+        pump(timeout=0.05)
+        find_button(dialog.get_content(), "Continue").emit("clicked")
+        pump(timeout=0.05)
+
+    def selected_peer(self):
+        row = self.window.peer_list.get_selected_row()
+        return getattr(row, "peer", None) if row else None
+
+    def peer_rows(self):
+        rows, row = [], self.window.peer_list.get_first_child()
+        while row:
+            rows.append(getattr(row, "peer", None))
+            row = row.get_next_sibling()
+        return rows
+
+    def shown_bodies(self):
+        return [w.get_text() for w in walk(self.window.message_list) if isinstance(w, Gtk.Label) and w.has_css_class("pp-body")]
+
+    def test_first_message_to_a_namespace_opens_the_conversation_it_was_filed_under(self):
+        self.api.filed = {"/bob": "/bob/main"}  # the server files /bob under the mailbox it reached
+        self.start_conversation("/bob")
+        self.assertEqual((self.window.peer, self.selected_peer()), ("/bob", "/bob"))
+        self.window.composer.get_buffer().set_text("Hello Bob")
+        self.window.send()
+        pump(lambda: self.window.peer == "/bob/main" and self.window.get_focus() is self.window.composer)
+        self.assertEqual(self.window.peer, "/bob/main", "the conversation the message was filed under is open")
+        self.assertEqual(self.selected_peer(), "/bob/main", "and selected in the sidebar")
+        self.assertNotIn("/bob", self.peer_rows(), "no empty row is left behind for the typed address")
+        self.assertIn("Hello Bob", self.shown_bodies(), "the sent message is visible")
+        self.assertNotIn("Choose a conversation, or start a new one.", texts(self.window.message_list))
+        self.assertIs(self.window.get_focus(), self.window.composer, "the focus is in its message box")
+        self.assertEqual(self.window.page(), "conversation")
+
+    def test_new_conversation_from_another_page_shows_the_conversation(self):
+        self.window.show_page("filtered")
+        self.assertEqual(self.window.page(), "filtered")
+        self.start_conversation("/carol/main")
+        self.assertEqual(self.window.page(), "conversation", "the conversation page replaces Filtered")
+        self.assertEqual(self.selected_peer(), "/carol/main")
+        self.window.composer.get_buffer().set_text("Hi Carol")
+        self.window.send()
+        pump(lambda: "Hi Carol" in self.shown_bodies())
+        self.assertEqual((self.window.peer, self.selected_peer()), ("/carol/main", "/carol/main"))
+        self.assertIn("Hi Carol", self.shown_bodies())
+
+    def test_unconfirmed_first_message_opens_with_its_review_then_follows_the_confirmation(self):
+        self.api.filed = {"/bob": "/bob/main"}
+        self.api.fail_next = APIError(0, "network_error")
+        self.start_conversation("/bob")
+        self.window.composer.get_buffer().set_text("Maybe delivered")
+        self.window.send()
+        pump(lambda: self.window.pending.get("/k/one"))
+        for dialog in list(self.window.dialogs):
+            dialog.close()
+        self.assertEqual((self.window.peer, self.selected_peer()), ("/bob", "/bob"), "the new conversation stays open")
+        pending = [w for w in walk(self.window.message_list) if hasattr(w, "attempt")]
+        self.assertEqual(len(pending), 1, "showing the unconfirmed message")
+        self.assertIn("Maybe delivered", texts(pending[0]))
+        self.assertIsNotNone(find_button(pending[0], "Retry sending"))
+        self.assertTrue(self.window.recovery_button.get_visible())
+        find_button(pending[0], "Retry sending").emit("clicked")
+        pump(lambda: self.window.peer == "/bob/main")
+        self.assertEqual((self.window.peer, self.selected_peer()), ("/bob/main", "/bob/main"))
+        self.assertIn("Maybe delivered", self.shown_bodies())
+
+    def test_a_send_never_opens_its_conversation_in_another_mailbox(self):
+        self.api.filed = {"/bob": "/bob/main"}
+        gate = threading.Event()
+        original = self.api.post_exact
+
+        def slow(path, data):
+            gate.wait(2)
+            return original(path, data)
+        self.api.post_exact = slow
+        self.start_conversation("/bob")
+        self.window.composer.get_buffer().set_text("From the first mailbox")
+        self.window.send()
+        pump(timeout=0.1)
+        self.window.mailbox_picker.set_selected(1)  # /k/two
+        pump(lambda: self.window.identity == "/k/two")
+        gate.set()
+        pump(lambda: self.api.posted, timeout=2)
+        pump(timeout=0.3)
+        self.assertEqual(self.window.identity, "/k/two")
+        self.assertIsNone(self.window.peer, "the other mailbox is not moved to the new conversation")
+        self.assertNotIn("/bob/main", self.peer_rows())
+        # A New conversation dialog left open across a mailbox change cannot start it in the new one.
+        self.window.mailbox_picker.set_selected(0)
+        pump(lambda: self.window.identity == "/k/one")
+        self.window.new_conversation()
+        dialog = self.window.dialogs[-1]
+        self.window.mailbox_picker.set_selected(1)
+        pump(lambda: self.window.identity == "/k/two")
+        self.assertNotIn(dialog, self.window.dialogs, "the dialog closes with its mailbox")
+        self.assertIsNone(self.window.peer)
 
     def test_read_receipts_setting(self):
         from pigeonpost.widgets import SettingsNavigation
