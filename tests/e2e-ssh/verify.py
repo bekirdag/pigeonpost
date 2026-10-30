@@ -24,6 +24,7 @@ import os
 import pty
 import secrets
 import select
+import shlex
 import shutil
 import socket
 import sqlite3
@@ -424,10 +425,13 @@ def main():
         c.ok(r.returncode != 0 and "no_agent" in r.stderr, "someone else's agent: not even its existence")
 
         # --- revocation and kill ------------------------------------------------------------------
-        p = subprocess.Popen([args.cli, "ssh", full["address"], "--", "sleep", "33333"], env=cli_env(me),
+        killed_pid_file = os.path.join(full["ws"], "revoked-command.pid")
+        command = f"echo $$ > {shlex.quote(killed_pid_file)}; exec sleep 33333"
+        p = subprocess.Popen([args.cli, "ssh", full["address"], "--", command], env=cli_env(me),
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL)
+        command_pid = wait_for("the remote command's pid", lambda: _read_pid(killed_pid_file))
         sid = wait_for("a connected session", lambda: _session(base, strong, "connected"))
-        c.ok(_pgrep("sleep 33333"), "the long-running command is running on the agent")
+        c.ok(_process_running(command_pid), "the long-running command is running on the agent")
         s, _ = call(base, "DELETE", f"/v1/shell/sessions/{sid}", weak)
         c.ok(s == 200, "the owner ends the session")
         try:
@@ -436,15 +440,18 @@ def main():
             p.kill()
             raise SystemExit("FAIL: the client did not end after the kill")
         c.ok(p.returncode != 0, "the client's session ends")
-        wait_for("the process group to go", lambda: not _pgrep("sleep 33333"), timeout=15)
+        wait_for("the remote command to go", lambda: not _process_running(command_pid), timeout=15)
         c.ok(True, "teardown killed the session's processes on the agent")
 
         # Idle: the broker ends a silent session (TUNNEL_IDLE_SECS=10 here; 900 in production).
+        idle_pid_file = os.path.join(full["ws"], "idle-command.pid")
         t0 = time.time()
-        r = ssh(me, full["address"], "sleep", "45", timeout=60)
+        r = ssh(me, full["address"], f"echo $$ > {shlex.quote(idle_pid_file)}; exec sleep 45", timeout=60)
         took = time.time() - t0
         c.ok(r.returncode != 0 and took < 40 and "idle" in r.stderr, f"an idle session ends ({took:.0f}s)")
-        wait_for("the idle session's processes to go", lambda: not _pgrep("sleep 45"), timeout=15)
+        idle_pid = _read_pid(idle_pid_file)
+        c.ok(idle_pid is not None, "the idle command ran on the agent")
+        wait_for("the idle session's processes to go", lambda: not _process_running(idle_pid), timeout=15)
 
         # --- host keys ------------------------------------------------------------------------------
         # A directory (or broker) lying about the host key: the client pins what it is told, and the
@@ -550,8 +557,21 @@ def _session(base, token, state):
     return None
 
 
-def _pgrep(pattern):
-    return subprocess.run(["pgrep", "-f", pattern], stdout=subprocess.DEVNULL).returncode == 0
+def _read_pid(path):
+    try:
+        with open(path) as f:
+            pid = int(f.read().strip())
+        return pid if pid > 1 else None
+    except (OSError, ValueError):
+        return None
+
+
+def _process_running(pid):
+    # Match the remote fixture's actual PID, not the local client's command line. A killed
+    # process waiting for its parent/init to reap it cannot execute and is not a live member.
+    result = subprocess.run(["ps", "-p", str(pid), "-o", "stat="], capture_output=True, text=True)
+    state = result.stdout.strip()
+    return result.returncode == 0 and bool(state) and not state.startswith("Z")
 
 
 def interactive(cli, env, agent, lines, until, timeout=40):

@@ -16,8 +16,11 @@ New in 1.1: **meeting audio** (Phase 7, `docs/meeting-summaries.md`) and **live 
 - [ ] Privacy Policy URL is `https://pigeonpost.dev/privacy`, and the live page has the "Meeting
       summaries" section (`site/privacy.html#meeting-summaries`) and the "Live streams in groups"
       section. Both were deployed with Phase 6/7 on 2026-10-27; check that they are still there.
-- [ ] "Do you or your third-party partners use data for tracking?" **No.** There is no analytics,
-      no advertising identifier and no third-party code in the app; `NSPrivacyTracking` is `false`.
+- [ ] "Do you or your third-party partners use data for tracking?" **No.** There is no analytics
+      or advertising identifier; `NSPrivacyTracking` is `false`. The app does include third-party
+      libraries. Review their data handling with the app's own behavior; their presence alone
+      does not mean tracking, and the manifest alone does not prove its absence. See
+      [Apple's privacy guidance](https://developer.apple.com/app-store/app-privacy-details/).
 - [ ] The manifest in the build being submitted declares every type in §2 (`AudioData` and
       `OtherUserContent` are already declared there; 1.1 changes no manifest entry).
 
