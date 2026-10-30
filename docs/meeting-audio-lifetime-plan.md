@@ -1,0 +1,3 @@
+# Meeting audio lifetime review
+
+Review found two concrete gaps in the notes processor: audio finishing its decode after a participant discards can enter a new window under the newer generation; and PCM handed to a failing transcription is not zeroed in the failure path. Add regressions for both before fixing. Capture the participant generation before asynchronous decoding, reject/zero stale PCM, and zero transcription buffers in finally. Review decoder late-output cleanup too, keep encrypted transport/results unchanged, and qualify the full notes/calls suites. Deploy only after CI and a confirmed idle notes service, with backups and source hash checks.

@@ -4,7 +4,7 @@ public static class ConversationBuilder
 {
     public static IReadOnlyList<Conversation> Build(InboxSnapshot snapshot, IReadOnlyList<PendingMessage> pending,
         IReadOnlyList<Mailbox> mailboxes, Mailbox acting, IEnumerable<string>? opened = null,
-        IReadOnlyList<CallLogEntry>? calls = null, long? now = null)
+        IReadOnlyList<CallLogEntry>? calls = null, long? now = null, IReadOnlyDictionary<string, PeerName>? names = null)
     {
         var clock = now ?? DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var aliases = Aliases(snapshot.Messages);
@@ -59,6 +59,8 @@ public static class ConversationBuilder
                 ?? FindContact(pair.Key, snapshot.Contacts);
             var name = own is not null ? (own.Handle is { } handle ? DisplayName(handle) : own.DisplayName)
                 : string.IsNullOrWhiteSpace(contact?.Alias) ? DisplayName(pair.Key) : contact.Alias;
+            if (names?.GetValueOrDefault(pair.Key) is { } profile)
+                name = profile.Resolve(DisplayName(pair.Key), own is not null ? name : contact?.Alias);
             var messages = pair.Value.OrderBy(m => m.At).ThenBy(m => m.Id, StringComparer.Ordinal).ToArray();
             return new Conversation(pair.Key, name, messages, own is not null, contact);
         }).OrderByDescending(c => c.Last).ThenBy(c => c.Name, StringComparer.OrdinalIgnoreCase).ToArray();

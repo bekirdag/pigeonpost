@@ -9,6 +9,10 @@ import kotlinx.serialization.Serializable
  * older postbox simply leaves them all off, and the app then looks exactly as before.
  */
 object Features {
+    const val PHONE_NUMBERS = "phone_numbers"
+    const val CONTACT_DISCOVERY = "contact_discovery"
+    const val SMS_INVITES = "sms_invites"
+    const val DISPLAY_NAMES = "display_names"
     const val MESSAGE_FILTERING = "message_filtering"
     const val CALL_ADMISSION = "call_admission"
     const val CALL_HISTORY = "call_history"

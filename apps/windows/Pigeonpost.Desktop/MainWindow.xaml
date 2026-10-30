@@ -481,6 +481,7 @@
                                         <MenuFlyoutItem Text="{x:Bind ViewModel.ArchiveAction, Mode=OneWay}" Click="Archive_Click" IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" />
                                         <MenuFlyoutItem Text="Refresh" Click="Refresh_Click" />
                                         <MenuFlyoutItem Text="Sender details" Click="Contact_Click" IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" />
+                                        <MenuFlyoutItem x:Name="LocalNameMenuItem" Text="Local name…" Click="LocalName_Click" Visibility="Collapsed" IsEnabled="{x:Bind ViewModel.HasConversation, Mode=OneWay}" />
                                         <MenuFlyoutItem x:Name="TimerMenuItem" Text="Disappearing messages…" Click="Timer_Click" Visibility="Collapsed" IsEnabled="{x:Bind ViewModel.CanSetTimer, Mode=OneWay}" />
                                         <MenuFlyoutItem x:Name="BlockMenuItem" Text="Block…" Click="BlockConversation_Click" IsEnabled="{x:Bind ViewModel.HasConversation, Mode=OneWay}" />
                                     </MenuFlyout></Button.Flyout>
@@ -651,6 +652,7 @@
                     <FontIcon Glyph="&#xE77B;" FontSize="16" />
                     <Button.Flyout><MenuFlyout Placement="TopEdgeAlignedLeft" Opening="AccountMenu_Opening">
                         <MenuFlyoutItem Text="Copy my address" Click="CopyAddress_Click" />
+                        <MenuFlyoutItem x:Name="ProfileNameMenuItem" Text="Your name…" Click="ProfileName_Click" Visibility="Collapsed" />
                         <MenuFlyoutItem x:Name="ProfileMenuItem" Text="Profile picture…" Click="ProfilePicture_Click" Visibility="Collapsed" />
                         <MenuFlyoutItem x:Name="PrivacyMenuItem" Text="Privacy and filtering…" Click="Privacy_Settings_Click" Visibility="Collapsed" />
                         <MenuFlyoutItem x:Name="BlockedMenuItem" Text="Blocked…" Click="Blocked_Click" />
