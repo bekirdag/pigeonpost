@@ -37,3 +37,9 @@
 - The free-name welcome sheet used a flexible List without a Mac sheet size. Set the same 520-point width as the adjacent Settings sheet and a 560-point height so the name, visibility, save and skip controls have room.
 - Separate stacked branch preserves the ongoing iPhone/iPad qualification. Docdex symbols/impact returned writer backoff; inspected the adjacent sheet cases and sheetSurface directly. A small local-model draft was validated and used.
 - Full PigeonpostMac build passes locally. Native Mac CI pending; no app version or store submission changed.
+
+## 2026-10-30 00:04 UTC — Mac composer focus race
+
+Mac 26 CI on #188 failed the unchanged first-send keyboard assertion; the conversation and sent message were present in retained screenshots. The existing editor advanced its refocus token before its asynchronous attempt could see a window, permanently losing early requests. The editor now consumes only successful focus and retries pending requests when attached or re-enabled; dismantling cancels pending work. Added deterministic native checks for unattached/disabled/superseded/retired requests. Docdex symbols/impact inspected (Swift graph edges empty); direct MacThreadView and harness call sites reviewed. Local model draft was invalid and rejected. No other composer text/attachment behavior changed.
+
+Mac follow-up validation: unsigned full app build and standalone native harness compile passed. Runtime harness explicitly refuses the locked local desktop, so native execution remains a CI requirement. Initial local signed build stopped on the absent Mac development profile; no signing or store settings were changed.

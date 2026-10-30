@@ -10,3 +10,7 @@ Implement the reviewed phone/contact contract on iPhone, iPad and Mac using thei
 6. Update privacy/release documentation, qualify CI and review before merge. Gather changes for the next store batch; no replacement of the current submission.
 
 Dependency order: wire models/API → scoped store → Contacts/PhoneNumberKit adapter → shared screens + platform entry points → fixtures/CI. Use existing Account.scopedClient(acting: true), actingGeneration and AuthorizationLease patterns.
+
+## Mac qualification follow-up
+
+The native first-send regression exposed a lost composer-focus request when SwiftUI queues it before AppKit attaches the editor. Keep that request pending until first-responder success, retry on attachment/re-enabling, and cancel queued work on dismantling. Validate stale requests and retired editors with the existing native harness; retain the full first-send/keyboard assertion. This joins the free-name sheet sizing follow-up in #188.
