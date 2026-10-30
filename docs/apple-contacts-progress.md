@@ -31,3 +31,11 @@
 - Fresh Mac CI exposed the standalone inbox harness missing the new People types (the full app built correctly). Split free-name and contact-label views from phone/permission views, and include the real People model/API/store/name/label sources in the harness. This keeps its actual Inbox and native view assertions intact without stubbing the new labels or adding PhoneNumberKit to an unrelated harness.
 
 - Mac harness now compiles with real People sources and the updated `initialPeer` dialog test double; local UI execution stops at its existing locked-desktop guard (exit 69), so no local UI pass is claimed. Fresh full iOS and macOS app builds pass after the view extraction. CI will execute the unchanged Mac UI assertions on an unlocked runner.
+
+## 2026-10-29 23:57 UTC — CI permission-fixture and hit-target follow-up
+
+- Current CI: iPhone 37/39 and iPad 53 pass/1 skip/2 fail. Artifacts show synthetic contacts cleared after the real permission-denial test; no real contacts were read in the SMS scenario. Explicit debug discovery fixtures now ignore device-address-book invalidation only; release builds and real/denied contact imports keep both revocation/change checks.
+- The iPad verification tap left an enabled row with the correct number and no error; the iPhone call-history Block tap left its menu open. AX frames span blank row space beyond their labels. The tests now target inside the visible label once and keep all completion/confirmation assertions, with no action retry. Local iOS18 unchanged reproduction passed; CI iOS26 remains the authority for these platform-specific paths.
+- Docdex symbols/impact/DAG inspected before edits; Swift test/view graphs contain no indexed edges, so direct lifecycle/test call sites were inspected. Local-model tap draft was insufficient and not applied unchanged. Updated iOS app build passed.
+
+Follow-up validation: full local app build; 8/8 iPhone UI cases (all People plus call-history actions) and 7/7 iPad People cases passed with the real permission-denial case retained. CI iOS26 requalification is next.
