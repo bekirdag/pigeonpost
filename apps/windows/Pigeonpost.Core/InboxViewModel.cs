@@ -157,6 +157,7 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
         mailboxScope.Dispose();
         mailboxScope = new();
         mailboxVersion++;
+        peerNames = new Dictionary<string, PeerName>();
         ClearPendingDeliveryViews();
         SelectedMailbox = mailbox;
         snapshot = InboxSnapshot.Empty;
@@ -596,7 +597,7 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
     private void Rebuild()
     {
         if (SelectedMailbox is null) return;
-        allConversations = ConversationBuilder.Build(snapshot, pending, Mailboxes, SelectedMailbox, opened.GetValueOrDefault(SelectedMailbox.Address), callEntries, now: MessageNow);
+        allConversations = ConversationBuilder.Build(snapshot, pending, Mailboxes, SelectedMailbox, opened.GetValueOrDefault(SelectedMailbox.Address), callEntries, now: MessageNow, names: peerNames);
         FilterConversations();
         Changed(nameof(InboxSummary));
         // A block or a timer can change without the selected row changing.

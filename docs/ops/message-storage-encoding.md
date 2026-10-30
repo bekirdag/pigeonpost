@@ -92,7 +92,17 @@ Capacity for 1 GB of message payload, one send = both copies:
 1. Set `POSTBOX_WRAP_STORAGE=json` on the current image and restart it, so no new compact rows are
    written.
 2. `POSTBOX_DB_PATH=... pigeonpost-postbox --rewrite-wraps json` (dry run), then the same with
-   `--apply`. Rerun the dry run: `converted 0` on both lines means every row is JSON.
+   `--apply`. Rerun the dry run and require `converted 0` and `undecodable 0` for both
+   columns. A zero conversion count alone is insufficient: corrupt compact records are skipped,
+   not converted. With the writer still in JSON mode, also require both counts below to be zero:
+
+   ```sql
+   SELECT COUNT(*) FROM messages WHERE substr(wrap_blob, 1, 1) = X'B1';
+   SELECT COUNT(*) FROM message_meta WHERE substr(meta_blob, 1, 1) = X'B1';
+   ```
+
+   Stop the downgrade and investigate any undecodable or remaining compact rows; do not delete
+   messages to make this check pass.
 3. Deploy the older image.
 
 Rows rewritten to JSON decode to the identical wrap; their JSON is in the shape the image before

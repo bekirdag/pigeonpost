@@ -148,8 +148,11 @@ struct FindPeoplePage: View {
         }.sheetSurface()
             .contactsAccessPicker(isPresented: $picker) { people.clearContacts(scope); localNotice = "Your shared contacts changed. Choose contacts again to refresh the list." }
             .task(id: scope) { await people.loadPhones(scope) }
-            .onChange(of: phase) { _, phase in if phase == .active, !PhoneContacts.allowed { people.clearContacts(scope) } }
+            .onChange(of: phase) { _, phase in
+                if observesSystemContacts, phase == .active, !PhoneContacts.allowed { people.clearContacts(scope) }
+            }
             .onReceive(NotificationCenter.default.publisher(for: .CNContactStoreDidChange)) { _ in
+                guard observesSystemContacts else { return }
                 people.clearContacts(scope); localNotice = "Contacts changed. Choose contacts again to refresh."
             }
             .alert("Find your contacts", isPresented: $disclosure) {
@@ -167,6 +170,16 @@ struct FindPeoplePage: View {
                 Text("Pigeonpost will send a join link to \(people.state.invitation?.contact.phone ?? "this number"). Invite only someone who expects to hear from you. Your verified inbox is required; daily and monthly limits apply.")
             }
     }
+    private var observesSystemContacts: Bool {
+        #if DEBUG
+        // Explicit synthetic contacts do not come from the device address book. A prior
+        // permission test must not erase them when the app becomes active. Real imports,
+        // including the permission-denial fixture, still observe both privacy signals.
+        if Fixtures.enabled, CommandLine.arguments.contains("-people-discovery-fixtures") { return false }
+        #endif
+        return true
+    }
+
     private func read(_ scope: PeopleScope?) {
         importing = true; localError = nil; let region = region.uppercased()
         Task {

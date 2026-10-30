@@ -248,7 +248,7 @@ export function createSummaries(ctx) {
         session: sess.body.session, key: sess.body.key, key_id: sess.body.key_id,
         signature: sess.body.signature, expires_at: sess.body.expires_at,
       },
-      consents: new Map(), ever: new Set(), seqs: new Map(),
+      consents: new Map(), ever: new Set(), seqs: new Map(), consentWrites: new Map(), consentRevisions: new Map(),
     };
     console.log(`calls: summary room=${room.id.slice(0, 6)} requested participants=${room.participants.size}`);
     publish(room);
@@ -278,29 +278,51 @@ export function createSummaries(ctx) {
       }
       key = { key_id: k.key_id, public_key: k.public_key, ...(typeof k.label === "string" ? { label: k.label.slice(0, 60) } : {}) };
     }
-    // Members' answers are recorded by the postbox, which decides who may later receive the brief.
-    // A yes that the postbox could not record does not count.
-    if (!p.guest && p.mailbox) {
-      const answer = yes ? "yes" : previous === "yes" ? "withdrawn" : "no";
-      const r = await postbox("POST", `/internal/v1/meetings/${s.meeting}/attendees`, {
-        address: p.mailbox.address, consent: answer, ...(key ? { notes_key: key } : {}),
-      }).catch(() => ({ status: 0 }));
-      if (r.status !== 200) {
-        if (yes) throw new HttpError(r.status === 409 ? 409 : 502, r.status === 409 ? "notes_off" : "postbox_unavailable");
-        console.warn(`calls: summary room=${room.id.slice(0, 6)} decline not recorded status=${r.status}`);
-      }
-    }
-    if (room.summary !== s || s.state === "stopped") throw new HttpError(409, "notes_off");
-    s.consents.set(p.id, yes ? "yes" : "no");
-    if (yes) s.ever.add(p.id);
-    if (!yes && previous === "yes") {
-      // Stop for me: whatever of mine is still queued and unprocessed is thrown away.
+    // Refusal takes effect before any network wait. A slow postbox must never keep recording
+    // after a participant withdraws, nor may an older yes response undo their newer decision.
+    const revision = (s.consentRevisions.get(p.id) || 0) + 1;
+    s.consentRevisions.set(p.id, revision);
+    if (!yes) {
+      s.consents.set(p.id, "no");
+      compute(room);
+      publish(room);
       intel("POST", `/v1/sessions/${s.session}/discard`, { participant: p.id }).catch(() => { counters.intel_errors++; });
     }
-    // A withdrawal moves an active call to waiting, which bumps the version and so stales every
-    // capture credential at once.
-    compute(room);
-    publish(room);
+    const current = () => room.summary === s && s.state !== "stopped" && room.participants.get(p.id) === p;
+    const latest = () => current() && s.consentRevisions.get(p.id) === revision;
+    const record = async () => {
+      if (yes && (!latest() || Number(body.version) !== s.version)) throw new HttpError(409, "consent_stale", { version: s.version });
+      if (!p.guest && p.mailbox) {
+        const answer = yes ? "yes" : previous === "yes" ? "withdrawn" : "no";
+        const path = `/internal/v1/meetings/${s.meeting}/attendees`;
+        const r = await postbox("POST", path, {
+          address: p.mailbox.address, consent: answer, ...(key ? { notes_key: key } : {}),
+        }).catch(() => ({ status: 0 }));
+        if (r.status !== 200) {
+          if (yes) throw new HttpError(r.status === 409 ? 409 : 502, r.status === 409 ? "notes_off" : "postbox_unavailable");
+          console.warn(`calls: summary room=${room.id.slice(0, 6)} decline not recorded status=${r.status}`);
+        }
+        if (yes && latest() && Number(body.version) !== s.version) {
+          // Membership changed during the write. Do not leave this rejected answer as a new
+          // durable permission. This compensation stays in the same ordered write lane.
+          s.consents.set(p.id, "no"); compute(room); publish(room);
+          const undone = await postbox("POST", path, { address: p.mailbox.address, consent: "no" }).catch(() => ({ status: 0 }));
+          if (undone.status !== 200) finish(room, "consent_unavailable");
+        }
+      }
+      if (yes) {
+        if (!latest() || Number(body.version) !== s.version) throw new HttpError(409, "consent_stale", { version: s.version });
+        s.consents.set(p.id, "yes"); s.ever.add(p.id);
+        compute(room); publish(room);
+      }
+    };
+    // Keep durable answers in arrival order. A later no waits for an earlier write to settle,
+    // while its local capture pause above is immediate. Failed writes do not block the next one.
+    const write = (s.consentWrites.get(p.id) || Promise.resolve()).catch(() => {}).then(record);
+    s.consentWrites.set(p.id, write);
+    try { await write; }
+    finally { if (s.consentWrites.get(p.id) === write) s.consentWrites.delete(p.id); }
+    if (!current()) throw new HttpError(409, "notes_off");
     return view(room, p);
   }
 

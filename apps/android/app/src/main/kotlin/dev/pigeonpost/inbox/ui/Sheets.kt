@@ -97,6 +97,7 @@ fun SubjectDialog(busy: Boolean, create: (String) -> Unit, dismiss: () -> Unit) 
 }
 
 private enum class SettingsPage(val title: String) {
+    PHONE("Phone number"), FIND_PEOPLE("Find people I know"), DISPLAY_NAME("Display name"),
     ROOT("Settings"), ACCOUNT("Account"), HANDLES("Handles"), PURCHASES("Get a handle"),
     PROFILE("Profile picture"), PRIVACY("Privacy & filtering"), BLOCKED("Blocked"), GROUPS("Group encryption"),
     SUBSCRIPTIONS("Google Play subscriptions"), PREVIEW("Tester registration"), INBOX("Inbox and storage"), HELP("Help and about")
@@ -146,6 +147,9 @@ fun SettingsDialog(state: InboxState, session: SessionState, fixtures: Boolean, 
                 SettingsRow("Inbox and storage", "Storage and archived conversations", Icons.Outlined.Inbox) { navigate(SettingsPage.INBOX) }
                 if (state.has(Features.AVATARS) && model != null) SettingsRow("Profile picture", "Your face instead of initials", Icons.Outlined.Face) { navigate(SettingsPage.PROFILE) }
                 SettingsRow("Contacts and permissions", "Senders you know and trust", Icons.Outlined.PeopleOutline, contacts)
+                if (state.has(Features.PHONE_NUMBERS) && model?.people != null) SettingsRow("Phone number", "Verify your number and choose who can find you", Icons.Outlined.Phone) { navigate(SettingsPage.PHONE) }
+                if (state.has(Features.CONTACT_DISCOVERY) && model?.people != null) SettingsRow("Find people I know", "Check contacts with your permission", Icons.Outlined.PeopleOutline) { navigate(SettingsPage.FIND_PEOPLE) }
+                if (state.has(Features.DISPLAY_NAMES) && model?.people != null) SettingsRow("Display name", "A free name for this inbox", Icons.Outlined.AccountCircle) { navigate(SettingsPage.DISPLAY_NAME) }
                 if (state.has(Features.CALL_ADMISSION) || state.has(Features.MESSAGE_FILTERING) || state.has(Features.CALL_HISTORY) || state.has(Features.RECEIPTS))
                     SettingsRow("Privacy & filtering", "Read receipts, strangers, calls and blocking", Icons.Outlined.Shield) { navigate(SettingsPage.PRIVACY) }
                 else SettingsRow("Blocked", "People and namespaces you blocked", Icons.Outlined.Block) { navigate(SettingsPage.BLOCKED) }
@@ -191,6 +195,12 @@ fun SettingsDialog(state: InboxState, session: SessionState, fixtures: Boolean, 
         }
             }
             SettingsPage.PURCHASES -> paidHandles?.let { PaidHandleSection(it, openLink) }
+            SettingsPage.PHONE, SettingsPage.FIND_PEOPLE, SettingsPage.DISPLAY_NAME -> model?.people?.let { people ->
+                val flag = when (page) { SettingsPage.PHONE -> Features.PHONE_NUMBERS; SettingsPage.FIND_PEOPLE -> Features.CONTACT_DISCOVERY; else -> Features.DISPLAY_NAMES }
+                if (state.has(flag)) PeopleSettings(when (page) { SettingsPage.PHONE -> "phone"; SettingsPage.FIND_PEOPLE -> "find"; else -> "name" }, people) { peer ->
+                    model.startConversation(peer); dismiss()
+                } else Text("This feature is not available for this inbox.")
+            }
             SettingsPage.SUBSCRIPTIONS -> paidHandles?.let { PaidHandleManagement(it, state.mailboxes, openInbox, openLink) }
             SettingsPage.PREVIEW -> HandleSection(handleState, handles, state.mailboxes, openInbox)
             SettingsPage.PROFILE -> model?.let { m ->
@@ -290,6 +300,11 @@ fun ContactDialog(state: InboxState, original: Contact?, save: (Contact) -> Unit
 fun PeerDialog(state: InboxState, store: InboxStore, dismiss: () -> Unit, edit: (Contact) -> Unit) {
     val peer = state.selectedPeer ?: return
     val contact = Conversations.contact(peer, state.contacts)
+    val people = LocalPeople.current
+    val peopleStore = LocalPeopleStore.current
+    val peerName = people.label(peer, contact?.alias, state.conversation?.name ?: displayName(peer))
+    var localAlias by remember(people.context, peer) { mutableStateOf(people.aliases[peer].orEmpty()) }
+    var aliasMessage by remember(people.context, peer) { mutableStateOf<String?>(null) }
     val exact = state.contacts.firstOrNull { it.peer == peer }
     val full = contact?.autonomy == "auto" && state.vocabulary.safeGrantable.isNotEmpty() && contact.allowedVerbs.orEmpty().containsAll(state.vocabulary.safeGrantable)
     var confirmation by remember { mutableStateOf<String?>(null) }
@@ -298,9 +313,15 @@ fun PeerDialog(state: InboxState, store: InboxStore, dismiss: () -> Unit, edit: 
     val known by (pictures?.store?.pictures ?: remember { kotlinx.coroutines.flow.MutableStateFlow(emptyMap()) }).collectAsStateWithLifecycle()
     PageDialog("Conversation info", dismiss) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Avatar(peer, state.conversation?.name ?: displayName(peer), 44.dp); Text(state.conversation?.name ?: displayName(peer), style = MaterialTheme.typography.titleLarge)
+            Avatar(peer, peerName, 44.dp); Text(peerName, style = MaterialTheme.typography.titleLarge)
         }
         SelectionContainer { Text(peer) }
+        if (peopleStore != null) {
+            OutlinedTextField(localAlias, { localAlias = it.take(128) }, label = { Text("Your local name for this person") }, singleLine = true)
+            Text("Only on this device. It does not grant permissions or change their handle. Cleared on sign-out.", style = MaterialTheme.typography.bodySmall)
+            TextButton({ aliasMessage = if (peopleStore.alias(people.context, peer, localAlias)) "Local name saved." else "Use up to 64 characters without addresses or invisible characters." }) { Text("Save local name") }
+            aliasMessage?.let { Text(it) }
+        }
         state.conversation?.identity?.let { own -> Button({ store.switchMailbox(own); dismiss() }) { Text("Open this inbox") } }
         if (contact?.wildcard == true) Text("Uses the ${contact.peer} contact rule. Changes here apply only to this sender.", style = MaterialTheme.typography.bodySmall)
         ToggleRow("Known sender", "Remember this sender without granting new automatic permissions.", contact?.admission == "allow", enabled = !state.actionBusy) { checked ->
@@ -343,7 +364,7 @@ fun PeerDialog(state: InboxState, store: InboxStore, dismiss: () -> Unit, edit: 
 }
 
 @Composable
-private fun ToggleRow(title: String, detail: String, checked: Boolean, enabled: Boolean = true, change: (Boolean) -> Unit) {
+internal fun ToggleRow(title: String, detail: String, checked: Boolean, enabled: Boolean = true, change: (Boolean) -> Unit) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Column(Modifier.weight(1f)) { Text(title, style = MaterialTheme.typography.titleSmall); Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         Switch(checked, change, enabled = enabled)

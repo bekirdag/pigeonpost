@@ -38,6 +38,14 @@
 - Separate stacked branch preserves the ongoing iPhone/iPad qualification. Docdex symbols/impact returned writer backoff; inspected the adjacent sheet cases and sheetSurface directly. A small local-model draft was validated and used.
 - Full PigeonpostMac build passes locally. Native Mac CI pending; no app version or store submission changed.
 
+## 2026-10-29 23:57 UTC — CI permission-fixture and hit-target follow-up
+
+- Current CI: iPhone 37/39 and iPad 53 pass/1 skip/2 fail. Artifacts show synthetic contacts cleared after the real permission-denial test; no real contacts were read in the SMS scenario. Explicit debug discovery fixtures now ignore device-address-book invalidation only; release builds and real/denied contact imports keep both revocation/change checks.
+- The iPad verification tap left an enabled row with the correct number and no error; the iPhone call-history Block tap left its menu open. AX frames span blank row space beyond their labels. The tests now target inside the visible label once and keep all completion/confirmation assertions, with no action retry. Local iOS18 unchanged reproduction passed; CI iOS26 remains the authority for these platform-specific paths.
+- Docdex symbols/impact/DAG inspected before edits; Swift test/view graphs contain no indexed edges, so direct lifecycle/test call sites were inspected. Local-model tap draft was insufficient and not applied unchanged. Updated iOS app build passed.
+
+Follow-up validation: full local app build; 8/8 iPhone UI cases (all People plus call-history actions) and 7/7 iPad People cases passed with the real permission-denial case retained. CI iOS26 requalification is next.
+
 ## 2026-10-30 00:04 UTC — Mac composer focus race
 
 Mac 26 CI on #188 failed the unchanged first-send keyboard assertion; the conversation and sent message were present in retained screenshots. The existing editor advanced its refocus token before its asynchronous attempt could see a window, permanently losing early requests. The editor now consumes only successful focus and retries pending requests when attached or re-enabled; dismantling cancels pending work. Added deterministic native checks for unattached/disabled/superseded/retired requests. Docdex symbols/impact inspected (Swift graph edges empty); direct MacThreadView and harness call sites reviewed. Local model draft was invalid and rejected. No other composer text/attachment behavior changed.

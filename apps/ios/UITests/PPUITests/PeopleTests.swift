@@ -69,7 +69,13 @@ final class PeopleUITests: XCTestCase {
     func testPhoneVerificationUsesSixDigitCode() {
         launch(["-sheet=phone"])
         let phone = app.textFields["people-phone"]; tap(phone); phone.typeText("+442079460123")
-        tap(item("people-send-code"))
+        let send = item("people-send-code")
+        XCTAssertTrue(send.waitForExistence(timeout: 12))
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true AND hittable == true"), object: send)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 8), .completed)
+        // On iPad the accessibility frame includes the wide, empty part of the List row.
+        // Touch the visible leading label, while keeping the same one-tap send assertion.
+        send.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.5)).tap()
         let code = app.textFields["people-code"]; tap(code); code.typeText("123456")
         tap(item("people-verify"))
         XCTAssertTrue(app.staticTexts["Your phone number is verified."].waitForExistence(timeout: 10))

@@ -99,11 +99,11 @@ workspace = "/srv/app"
 [mailbox.shell]
 enabled = true
 mode = "container"                    # container | allowlist | unconfined — required, no default
-image = "docker.io/library/debian:13@sha256:…"  # container; default pinned by digest
-docker_rootful_acknowledged = false   # container + Docker: see below
-runtime = "podman"                    # container: podman | docker (default: podman if installed)
-network = "none"                      # container: none | outbound
-read_only = false                     # container: mount the workspace read-only
+image = "docker.io/library/debian:13@sha256:…"  # container / allowlist; default pinned by digest
+docker_rootful_acknowledged = false   # confined modes + Docker: see below
+runtime = "podman"                    # confined modes: podman | docker (default: podman if installed)
+network = "none"                      # confined modes: none | outbound
+read_only = false                     # confined modes: mount the workspace read-only
 max_sessions = 2                      # 1-8
 idle_secs = 900                       # 60-900
 ```
@@ -115,7 +115,7 @@ Every session is announced in `agentd.log`, as a desktop notification, and in
 | Mode | Boundary | Platforms |
 |---|---|---|
 | `container` (recommended) | Podman (rootless, `--userns keep-id`; preferred) or Docker (`--user` = this machine's uid). Docker is refused when `docker info` shows a rootful daemon without user-namespace remapping (container root = host root after an escape), unless the owner sets `docker_rootful_acknowledged = true`; rootless Docker, `userns-remap` and Docker Desktop's VM are accepted. The default image is `debian:13` pinned by digest. Only the workspace, bind-mounted at `/workspace`; `--cap-drop ALL`, `no-new-privileges`, read-only root filesystem, 64 MB `/tmp`, 256 pids, 1 GB, 1 CPU, `--init`, network `none` unless `outbound`, never the runtime socket. Named per session and removed on teardown. | Linux; macOS through Docker Desktop's VM (exercised by the end-to-end harness) |
-| `allowlist` | No shell and no terminal. Each request is one exact argv from `[[mailbox.shell.command]]` (absolute program; shells, interpreters and launchers such as `env`, `xargs`, `find`, `sudo` are refused in the config), executed directly — never through a shell — with a fixed environment in the workspace. Up to `paths` trailing arguments, each a relative path that resolves, symlinks included, inside the workspace. Characters a shell would interpret are refused outright. | Linux, macOS |
+| `allowlist` | No shell and no terminal. Each request is one exact argv from `[[mailbox.shell.command]]` (absolute program; shells, interpreters and launchers such as `env`, `xargs`, `find`, `sudo` are refused in the config), executed as the container entrypoint — never through a shell on the host — within the same boundary, limits, network policy and runtime checks as `container` mode. Up to `paths` trailing arguments, each a relative path that resolves, symlinks included, inside the workspace. Characters a shell would interpret are refused outright. Validated workspace paths map to `/workspace` inside the container. | Linux; macOS through the runtime VM |
 | `unconfined` | The machine user's login shell, `cwd` = workspace. Needs `unconfined_acknowledged = true` as a second explicit statement. Same risk as the existing `full` tier. | Linux, macOS |
 | `user` (SDS) | Not implemented in this build; refused by name rather than run as something weaker. | — |
 
@@ -125,6 +125,19 @@ variable of agentd's own reaches a session except `PATH`, and unconfined `HOME/U
 subsystem (so SFTP/SCP) are refused; one session channel per connection. The workspace may not be
 `/`, the user's whole home, or contain or sit inside the Pigeonpost home that holds this machine's
 credentials. Windows: not offered.
+
+**Allowlist upgrade requirement:** install Podman or Docker even if the previous allowlist worked
+without it. There is no fallback to executing on the host. The configured absolute program must
+still exist locally for configuration validation and also exist at that path in the selected
+image; a program inside the workspace maps to `/workspace`. Choose an image containing your
+approved tools. The default Debian image does not include Git. The `image`, `runtime`, `network`,
+`read_only` and Docker acknowledgement options apply to both confined modes.
+
+An exact argv allowlist limits the requested command; it cannot stop that command from loading
+workspace-controlled hooks or configuration. Those hooks now execute inside the session container.
+Treat workspace contents as executable/untrusted, use `read_only` when writes are unnecessary, and
+keep `network = "none"` unless outbound access is intended. The container is the isolation boundary;
+it does not make arbitrary hooks harmless to the mounted workspace.
 
 Recording (`record = true`) is not implemented and is refused.
 
@@ -217,6 +230,6 @@ the record for 2 years.
   process-group teardown).
 * `tests/e2e-ssh/verify.py` — real postbox, broker, `agentd run` and `pigeonpost ssh` on loopback
   with a recording proxy: commands and an interactive terminal, the broker capture holding SSH
-  banners and ciphertext only, allowlist escapes over real SSH, container mode (when Docker is
+  banners and ciphertext only, allowlist escapes and an approved workspace hook attempting host access over real SSH, both confined modes (when Docker is
   available; required in CI), step-up and stranger refusals, kill and idle teardown, a lying
   directory's host key refused in the handshake, host-key rotation, metadata-only audit.

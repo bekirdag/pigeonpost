@@ -6,11 +6,11 @@ import { spawn } from "node:child_process";
 export const RATE = 16_000;
 export const BYTES_PER_SECOND = RATE * 2;
 
-export function createDecoder({ ffmpeg = "ffmpeg", timeoutMs = 20_000, maxSeconds = 40 } = {}) {
+export function createDecoder({ ffmpeg = "ffmpeg", timeoutMs = 20_000, maxSeconds = 40, spawn: spawnImpl = spawn } = {}) {
   const maxBytes = maxSeconds * BYTES_PER_SECOND;
   return function decode(input) {
     return new Promise((resolve, reject) => {
-      const child = spawn(ffmpeg, ["-hide_banner", "-loglevel", "error", "-nostdin", "-i", "pipe:0", "-vn", "-ac", "1", "-ar", String(RATE), "-f", "s16le", "pipe:1"], {
+      const child = spawnImpl(ffmpeg, ["-hide_banner", "-loglevel", "error", "-nostdin", "-i", "pipe:0", "-vn", "-ac", "1", "-ar", String(RATE), "-f", "s16le", "pipe:1"], {
         stdio: ["pipe", "pipe", "ignore"],
       });
       const out = [];
@@ -20,19 +20,22 @@ export function createDecoder({ ffmpeg = "ffmpeg", timeoutMs = 20_000, maxSecond
         if (done) return;
         done = true;
         clearTimeout(timer);
-        if (err) { for (const b of out) b.fill(0); reject(err); } else resolve(value);
+        for (const b of out) b.fill(0);
+        out.length = 0;
+        if (err) reject(err); else resolve(value);
       };
       const timer = setTimeout(() => { child.kill("SIGKILL"); finish(new Error("decode_timeout")); }, timeoutMs);
       child.stdout.on("data", (d) => {
+        if (done) { d.fill(0); return; }
         size += d.length;
-        if (size > maxBytes) { child.kill("SIGKILL"); finish(new Error("decode_too_long")); return; }
+        if (size > maxBytes) { d.fill(0); child.kill("SIGKILL"); finish(new Error("decode_too_long")); return; }
         out.push(d);
       });
       child.on("error", (e) => finish(e));
       child.on("close", (code) => {
+        if (done) return;
         if (code !== 0) return finish(new Error("decode_failed"));
         const pcm = Buffer.concat(out);
-        for (const b of out) b.fill(0);
         finish(null, pcm.subarray(0, pcm.length - (pcm.length % 2)));
       });
       child.stdin.on("error", () => {});
