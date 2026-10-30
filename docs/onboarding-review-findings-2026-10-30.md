@@ -13,6 +13,7 @@ This is a focused source and regression review of the October 29 handoff and its
 | Notes audio decoded after discard could re-enter capture; failure paths retained mutable PCM | Capture/check generation; finally cleanup and late-decoder-output wiping | #186 merged/live; four failing-before regressions, 95 combined checks and real synthetic ffmpeg pipe test |
 | Mac composer consumed focus before its text view joined a window | Keep pending focus until first-responder success; retry attachment/re-enable, cancel retired/stale work | Combined Apple #188, unsigned app build and native harness compile pass; CI pending |
 | Compact storage rollback documentation could treat conversion failures as completion | Require undecodable count and remaining compact-row checks before old-reader rollback | Documentation corrected in #183; no production storage rollback attempted |
+| Store checklists equated memory-only audio with ephemeral processing and claimed the Apple app had no third-party code | Describe queued transcription and third-party libraries accurately; recommend non-ephemeral audio disclosure for the current service | Compared actual chunk/queue lifetime with Google and Apple guidance; documentation only, no console answers or submissions changed |
 
 ## Boundaries checked without a new defect found
 

@@ -97,3 +97,9 @@ Updates below record completed work and evidence, not inferred completion from t
 - #188's first Mac26 run exposed a real composer-focus race: the refocus token advanced before attachment/first-responder success. The pending-focus fix plus native regression checks are in `f44a381e`; full unsigned Mac build and native harness compile pass. Runtime UI requires an unlocked desktop, so local harness refuses rather than claiming a pass. `4c44a19b` includes the latest contact/main baseline and both Mac fixes; combined full Mac build passes.
 - Consolidated all Apple contact work into #188, head `4c44a19bedd2bc76bbed3853f9af756b5cf8894a`, now based on main. #184 is CLOSED/SUPERSEDED, not merged separately. All its commits are ancestors of #188. Cancelled only its three superseded qualification runs. Final checks continue at iOS `40978090147`, Mac `40978090203`, general `40978090133`. Do not wait for cancelled #184 runs or retarget #188 again.
 - Retained original failing CI logs, recordings, hierarchies and screenshots under `validation/apple-184-*` and `apple-188-mac26-*`. No assertions were removed, no real communications were sent, and current store submissions remain intact.
+
+## 2026-10-30 00:30 UTC — Store disclosure review
+
+- Corrected Android's earlier ephemeral-audio recommendation: `chunk` acknowledges accepted uploads before buffered windows/queued transcription finish. Google's exemption requires real-time request processing, not merely RAM-only storage; recommend non-ephemeral disclosure for this implementation. Audio wipe behavior is unchanged.
+- Removed Apple's inaccurate claim that the app contains no third-party code. The checklist now distinguishes dependencies from tracking and points to the official Apple guidance. This is documentation-only; no console answer or submitted artifact was changed.
+- Combined Apple #188 qualification continues. StoreKit passed; iPad/calendar UI and Mac14/model checks are running.

@@ -47,7 +47,7 @@ pictures, app activity for calls, device IDs for push, crash data: none). Then:
 
 - [ ] **Collected: Yes.** Meeting notes send call audio off the device to Pigeonpost's server.
 - [ ] **Shared: No.** It is processed only by Pigeonpost's own notes service on Pigeonpost's server (whisper.cpp and a local model). No third party, no cloud AI provider receives it.
-- [ ] **Processed ephemerally: Yes.** The audio is decrypted in memory, transcribed and discarded; it is never written to disk and never kept longer than 24 hours. (The text result is covered below.)
+- [ ] **Processed ephemerally: No for the current buffered transcription service.** The service acknowledges chunks while retaining their decoded audio in open windows or a transcription queue (`meeting-intel/src/service.js`, `chunk`, `flush`, `pump`). Memory-only storage and a retention limit do not establish Google's real-time-request exemption. Audio is wiped after transcription or discard; the text result is covered below. This corrects the earlier checklist recommendation, not a console answer already saved. See [Google's definition](https://support.google.com/googleplay/android-developer/answer/10787469?hl=en).
 - [ ] **Required or optional: Optional.** Nothing is captured unless the person chooses Agree in the call; declining never removes anyone from the call.
 - [ ] **Purposes: App functionality** only (the meeting notes the person asked for). Not analytics, advertising, personalization or fraud prevention.
 - [ ] Only the person's **own microphone**, on their own device: no device records anyone else's audio, and remote participants' streams are never captured.
