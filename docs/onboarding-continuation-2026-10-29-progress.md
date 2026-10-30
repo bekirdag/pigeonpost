@@ -108,3 +108,9 @@ Updates below record completed work and evidence, not inferred completion from t
 
 - Combined Apple head `4c44a19b` passes unsigned full Release builds for both iOS simulator and Mac; the DEBUG-only synthetic contact path is absent in production configuration. Mac14 UI and all general CI pass. Mac14's saved first-send screenshot shows the message open and the composer caret; native deferred/disabled/superseded/cancelled focus checks pass. Mac26 and iOS26 qualification continue.
 - Documentation PR #189 initially failed the repository vocabulary check on sign-in transport wording. Adjusted the public review prose to the established mail/sign-in vocabulary, leaving the CI rule intact. The exact staging directory remains in the private operational review; the public image tag/digest and activation warning are unchanged.
+
+## 2026-10-30 00:59 UTC — SSH cleanup follow-up
+
+- #189's next CI run exposed a real late-exec race: the broker/client closed while the SSH handler could still launch after teardown. Both deterministic PTY/non-PTY protocol tests failed on main, then passed with the shared closed-state fence. Commands registered before cleanup retain the existing process-group/container cleanup; later requests fail.
+- The loopback harness now identifies the remote fixture PID instead of matching the local client's command line. All 23 focused shell checks and 61 real Docker/SSH checks pass, with no skips. Formatting, Python compilation and Docdex pre-commit pass.
+- Source fix `d6fd3890` was developed separately on main and incorporated into #189, extending that PR beyond documentation. Existing CLI/agentd installations are unchanged pending their separate release. Final CI result is tracked on #189.
