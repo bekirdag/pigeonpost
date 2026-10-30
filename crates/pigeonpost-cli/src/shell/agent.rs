@@ -607,6 +607,7 @@ async fn serve(
 
 #[derive(Default)]
 struct ProcInfo {
+    closed: bool,
     pid: Option<u32>,
     container: Option<(PathBuf, String)>,
 }
@@ -615,6 +616,7 @@ struct ProcInfo {
 async fn teardown(info: &Arc<Mutex<ProcInfo>>) {
     let (pid, container) = {
         let mut i = info.lock().expect("proc lock");
+        i.closed = true;
         (i.pid.take(), i.container.take())
     };
     if let Some(pid) = pid.and_then(|p| rustix::process::Pid::from_raw(p as i32)) {
@@ -759,6 +761,12 @@ struct Spawned {
 }
 
 fn spawn(l: &Launch, cols: u16, rows: u16, info: Arc<Mutex<ProcInfo>>) -> Result<Spawned, String> {
+    // The SSH handler can outlive the task that closes its broker session. Register the child
+    // under the same lock as teardown, so cleanup either sees it or prevents its launch.
+    let mut state = info.lock().expect("proc lock");
+    if state.closed {
+        return Err("session already ended".into());
+    }
     if l.pty {
         let (pty, pts) = pty_process::open().map_err(|e| e.to_string())?;
         pty.resize(pty_process::Size::new(rows, cols))
@@ -772,11 +780,8 @@ fn spawn(l: &Launch, cols: u16, rows: u16, info: Arc<Mutex<ProcInfo>>) -> Result
             .kill_on_drop(true)
             .spawn(pts)
             .map_err(|e| e.to_string())?;
-        {
-            let mut i = info.lock().expect("proc lock");
-            i.pid = child.id();
-            i.container = l.container.clone();
-        }
+        state.pid = child.id();
+        state.container = l.container.clone();
         let (rd, wr) = pty.into_split();
         Ok(Spawned {
             input: Input::Pty(wr),
@@ -795,11 +800,8 @@ fn spawn(l: &Launch, cols: u16, rows: u16, info: Arc<Mutex<ProcInfo>>) -> Result
             .kill_on_drop(true)
             .process_group(0);
         let mut child = cmd.spawn().map_err(|e| e.to_string())?;
-        {
-            let mut i = info.lock().expect("proc lock");
-            i.pid = child.id();
-            i.container = l.container.clone();
-        }
+        state.pid = child.id();
+        state.container = l.container.clone();
         let stdin = child.stdin.take().ok_or("no stdin")?;
         let stdout = child.stdout.take().ok_or("no stdout")?;
         let stderr = child.stderr.take().ok_or("no stderr")?;
@@ -1540,6 +1542,46 @@ mod ssh_tests {
         let (_, err, status, _) = collect(&mut ch).await;
         assert_eq!(status, Some(126));
         assert!(err.contains("/bin/echo"), "{err}");
+    }
+
+    async fn late_exec_after_teardown(use_pty: bool) {
+        let (ca, client) = (key(1), key(3));
+        let (r, ok) = rig(
+            Mode::Unconfined,
+            &client,
+            cert(good(&ca, &client, "unconfined")),
+        )
+        .await;
+        assert!(ok);
+        let mut ch = r.client.channel_open_session().await.unwrap();
+        if use_pty {
+            ch.request_pty(true, "xterm", 80, 24, 0, 0, &[])
+                .await
+                .unwrap();
+            assert!(matches!(ch.wait().await, Some(russh::ChannelMsg::Success)));
+        }
+        teardown(&r.proc_info).await;
+        ch.exec(true, "printf launched > late-exec-marker")
+            .await
+            .unwrap();
+        let response = tokio::time::timeout(Duration::from_secs(3), ch.wait())
+            .await
+            .expect("late exec must be refused promptly");
+        assert!(
+            matches!(response, Some(russh::ChannelMsg::Failure)),
+            "a retired session accepted an exec request (pty={use_pty})"
+        );
+        assert!(!r._ws.path().join("late-exec-marker").exists());
+    }
+
+    #[tokio::test]
+    async fn a_retired_session_refuses_late_exec() {
+        late_exec_after_teardown(false).await;
+    }
+
+    #[tokio::test]
+    async fn a_retired_session_refuses_late_pty_exec() {
+        late_exec_after_teardown(true).await;
     }
 
     #[tokio::test]
