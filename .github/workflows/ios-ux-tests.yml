@@ -97,7 +97,7 @@ jobs:
           case "${{ matrix.suite }}" in
             messaging) selected_tests=(-only-testing:PPUITests/IOSUXTests -only-testing:PPUITests/ComposerTests -only-testing:PPUITests/GroupTests) ;;
             calendar) selected_tests=(-only-testing:PPUITests/CalendarUITests -only-testing:PPUITests/OrganizationRoomUITests) ;;
-            account) selected_tests=(-only-testing:PPUITests/HandlePurchaseTests -only-testing:PPUITests/Phase1bTests -only-testing:PPUITests/DeviceApprovalUITests) ;;
+            account) selected_tests=(-only-testing:PPUITests/HandlePurchaseTests -only-testing:PPUITests/Phase1bTests -only-testing:PPUITests/DeviceApprovalUITests -only-testing:PPUITests/PeopleUITests) ;;
             *) exit 1 ;;
           esac
           if [[ "$CALENDAR_FILES_ONLY" == true ]]; then
@@ -168,7 +168,7 @@ jobs:
       - name: iPad layout and calendar regressions
         run: |
           selected_tests=(-only-testing:PPUITests/IPadLayoutTests -only-testing:PPUITests/CalendarUITests -only-testing:PPUITests/DeviceApprovalUITests
-            -only-testing:PPUITests/OrganizationRoomUITests)
+            -only-testing:PPUITests/OrganizationRoomUITests -only-testing:PPUITests/PeopleUITests)
           if [[ "$CALENDAR_FILES_ONLY" == true ]]; then
             selected_tests=(-only-testing:PPUITests/CalendarUITests/testLocalCalendarFileCanBeSelectedAndPreviewed
               -only-testing:PPUITests/CalendarUITests/testCalendarFilePickerOpensAndCancels

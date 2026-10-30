@@ -264,9 +264,13 @@ final class CalendarUITests: XCTestCase {
         launch(); openReview()
         let reminders = element("calendar-reminders")
         typeRow("abc", into: reminders, in: "calendar-event-details")
+        // Native focus can select the existing number. Preserve exactly the invalid draft
+        // the user entered, whether typing replaced the selection or appended to it.
+        guard let draft = reminders.value as? String else { return XCTFail("Expected a reminder draft") }
+        XCTAssertTrue(draft.contains("abc"), "The draft must contain the invalid input before saving")
         tap(app.buttons["Save reminders"].firstMatch)
         XCTAssertTrue(element("calendar-detail-error").waitForExistence(timeout: 5))
-        XCTAssertEqual(reminders.value as? String, "10abc")
+        XCTAssertEqual(reminders.value as? String, draft)
     }
     func testCalendarPrivacySaveKeepsTimezone() {
         launch()

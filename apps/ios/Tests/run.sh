@@ -17,6 +17,10 @@ swiftc -O -parse-as-library -o "$out/group-store-scope" Tests/GroupStoreScopeTes
   Shared/Model/Account.swift Shared/Model/Features.swift Shared/Groups/GroupModels.swift Shared/Groups/GroupAPI.swift \
   Shared/Groups/GroupVault.swift Shared/Groups/GroupEngine.swift Shared/Groups/GroupText.swift Shared/Groups/GroupStreams.swift Shared/Groups/GroupStore.swift
 "$out/group-store-scope"
+swiftc -O -DDEBUG -parse-as-library -o "$out/people" Tests/PeopleTests.swift Shared/Config.swift \
+  Shared/API/Models.swift Shared/API/APIError.swift Shared/API/PostboxClient.swift \
+  Shared/People/PeopleModels.swift Shared/People/PeopleAPI.swift Shared/People/PeopleStore.swift Shared/People/PeopleFixtures.swift Shared/People/PeopleFiles.swift
+"$out/people"
 swiftc -O -o "$out/auth" Tests/AuthTests.swift Shared/Config.swift
 "$out/auth"
 swiftc -O -DDEBUG -parse-as-library -o "$out/session-lifetime" Tests/SessionLifetimeTests.swift Shared/Config.swift \

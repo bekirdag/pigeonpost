@@ -50,13 +50,7 @@ struct MacMessageEditor: NSViewRepresentable {
         editor.attach = attach
         editor.reportError = reportError
         editor.send = send
-        if refocus != editor.refocused {
-            editor.refocused = refocus
-            DispatchQueue.main.async { [weak editor] in
-                guard let editor, editor.isEditable, let window = editor.window else { return }
-                window.makeFirstResponder(editor)
-            }
-        }
+        editor.requestRefocus(refocus)
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSScrollView, context: Context) -> CGSize? {
@@ -66,6 +60,7 @@ struct MacMessageEditor: NSViewRepresentable {
     static func dismantleNSView(_ scroll: NSScrollView, coordinator: Coordinator) {
         coordinator.retired = true
         guard let editor = scroll.documentView as? AttachmentTextView else { return }
+        editor.cancelPendingRefocus()
         editor.delegate = nil
         editor.isEditable = false
         editor.attach = { _ in }
@@ -90,6 +85,35 @@ final class AttachmentTextView: NSTextView {
     var reportError: (String) -> Void = { _ in }
     var send: () -> Void = {}
     var refocused = -1
+    private var pendingRefocus: Int?
+
+    func requestRefocus(_ token: Int) {
+        guard token != refocused else { pendingRefocus = nil; return }
+        pendingRefocus = token
+        schedulePendingRefocus()
+    }
+
+    func cancelPendingRefocus() { pendingRefocus = nil }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        schedulePendingRefocus()
+    }
+
+    private func schedulePendingRefocus() {
+        guard let token = pendingRefocus else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.pendingRefocus == token, self.isEditable,
+                  let window = self.window else { return }
+            // SwiftUI can request focus before AppKit attaches the editor to a window.
+            // Consume the request only after success; attachment or re-enabling retries it.
+            if window.makeFirstResponder(self) {
+                self.refocused = token
+                self.pendingRefocus = nil
+            }
+        }
+    }
+
     private var measuredText = ""
     private var measuredFont: NSFont?
     private var measuredParagraph: NSParagraphStyle?

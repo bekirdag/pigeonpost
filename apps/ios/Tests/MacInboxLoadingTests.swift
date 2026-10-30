@@ -50,6 +50,7 @@ struct PeerInfoSheet: View {
     }
 }
 struct MacNewConversationSheet: View {
+    var initialPeer: String? = nil
     let started: (String) -> Void
     var body: some View { Text("New conversation") }
 }
@@ -474,6 +475,36 @@ extension Notification.Name {
                                 "the sent message is in the selected conversation")
         await InboxLoadingTests.wait("the composer has the keyboard") { window.firstResponder is AttachmentTextView }
         InboxLoadingTests.check(window.firstResponder is AttachmentTextView, "the new conversation's composer has focus")
+        await deferredComposerFocus()
+    }
+
+    static func deferredComposerFocus() async {
+        let editor = AttachmentTextView(frame: NSRect(x: 0, y: 0, width: 400, height: 60))
+        editor.requestRefocus(11)
+        await settle()
+        InboxLoadingTests.check(editor.refocused == -1, "an unattached composer keeps its focus request pending")
+        let window = NSWindow(contentRect: editor.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        window.contentView = editor
+        await InboxLoadingTests.wait("attachment applies the pending focus") { window.firstResponder === editor && editor.refocused == 11 }
+        editor.isEditable = false
+        editor.requestRefocus(12)
+        await settle()
+        InboxLoadingTests.check(editor.refocused == 11, "a disabled composer does not consume a focus request")
+        editor.isEditable = true
+        editor.requestRefocus(12)
+        await InboxLoadingTests.wait("re-enabled composer gets focus") { editor.refocused == 12 }
+        editor.requestRefocus(13)
+        editor.requestRefocus(14)
+        await settle()
+        InboxLoadingTests.check(editor.refocused == 14, "the latest focus request supersedes queued requests")
+        window.makeFirstResponder(nil)
+        editor.requestRefocus(15)
+        editor.cancelPendingRefocus()
+        await settle()
+        InboxLoadingTests.check(window.firstResponder !== editor && editor.refocused == 14,
+                                "a retired composer cannot consume its queued focus request")
     }
 
     static func firstConversationCenter(in host: NSView) -> NSPoint? {

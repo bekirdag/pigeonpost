@@ -9,6 +9,7 @@ import SwiftUI
 struct MacInboxView: View {
     @Environment(Account.self) private var account
     @Environment(Inbox.self) private var inbox
+    @Environment(PeopleStore.self) private var people: PeopleStore?
     @Environment(PushService.self) private var push
     @Environment(GroupStore.self) private var groups
     @Environment(CallLog.self) private var callLog: CallLog?
@@ -24,9 +25,11 @@ struct MacInboxView: View {
     @State private var showingNew = false
     @State private var sheet: Sheet?
     @State private var pendingMailbox: Mailbox?
+    @State private var newContact: String?
     @State private var pendingMeeting: (request: CallHost.ScheduledJoin, scope: UUID)?
 
     private enum Sheet: Identifiable {
+        case freeName
         case settings
         case filtered
         case peer(Conversation)
@@ -38,6 +41,7 @@ struct MacInboxView: View {
         var id: String {
             switch self {
             case .settings: return "settings"
+            case .freeName: return "free-name"
             case .newGroup: return "new-group"
             case .joinLink: return "join-link"
             case .join(let link): return "join:" + link.id
@@ -96,7 +100,7 @@ struct MacInboxView: View {
         .task {
             if let staged = Fixtures.openPeer, peer == nil { peer = staged }
             switch Fixtures.sheet {
-            case "settings", "privacy", "blocked", "profile": sheet = .settings
+            case "settings", "privacy", "blocked", "profile", "name", "phone", "find-people": sheet = .settings
             case "filtered": sheet = .filtered
             case "new": showingNew = true
             case "new-group": sheet = .newGroup
@@ -196,15 +200,21 @@ struct MacInboxView: View {
             peer = next
         }
         .sheet(isPresented: $showingNew) {
-            MacNewConversationSheet { started in
+            MacNewConversationSheet(initialPeer: newContact) { started in
+                newContact = nil
                 peer = started
                 subthread = nil
             }
         }
         // One sheet at a time. Two `.sheet(isPresented:)` on one view are not reliably both
         // honoured — the phone lost Settings entirely to that shape once.
+        .onChange(of: people?.state.nameLoaded, initial: true) { _, loaded in
+            if loaded == true, people?.has("display_names") == true, people?.state.ownName == nil,
+               people?.state.promptSeen == false, Fixtures.sheet == nil, sheet == nil, calls.mode == .hidden { sheet = .freeName }
+        }
         .sheet(item: $sheet, onDismiss: finishMailboxVisit) { which in
             switch which {
+            case .freeName: NavigationStack { DisplayNamePage(onboarding: true).id(people?.scope) }.frame(width: 520, height: 560).interactiveDismissDisabled()
             case .settings:
                 // The phone's, now shared. A Mac sheet takes its size from its content, and a Form
                 // with no width asks for the narrowest one that fits its longest label.
@@ -259,7 +269,13 @@ struct MacInboxView: View {
     }
 
     private func finishMailboxVisit() {
+        if let contact = people?.takeConversationRequest() {
+            newContact = contact
+            showingNew = true
+            return
+        }
         if deviceApprovals?.finishScanner() == true { pendingMailbox = nil; return }
+        newContact = nil
         if let meeting = pendingMeeting {
             pendingMeeting = nil
             guard account.me?.address == meeting.request.mailbox, calendar?.scopeId == meeting.scope,

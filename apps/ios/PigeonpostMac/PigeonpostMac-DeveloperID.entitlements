@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>com.apple.security.personal-information.addressbook</key>
+	<true/>
 	<!-- The website (Developer ID) build's entitlements: PigeonpostMac.entitlements without Sign in
 	     with Apple, which Apple grants to Mac App Store profiles only — a Developer ID profile for
 	     this App ID comes back without it, and a signed app claiming an entitlement its profile

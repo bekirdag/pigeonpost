@@ -14,6 +14,7 @@ struct CallLogList: View {
     let callBack: (String, Bool) -> Void
 
     @Environment(Inbox.self) private var inbox
+    @Environment(PeopleStore.self) private var people: PeopleStore?
     @State private var blocking: BlockTarget?
     @State private var confirmingClear = false
 
@@ -96,7 +97,7 @@ struct CallLogList: View {
 
     private func name(_ entry: CallLogEntry) -> String {
         if let key = entry.peerKey {
-            return inbox.conversation(with: key)?.name ?? PeerFace.displayName(key)
+            return people?.displayName(key, legacyName: inbox.conversation(with: key)?.peopleLegacyName) ?? inbox.conversation(with: key)?.name ?? PeerFace.displayName(key)
         }
         let people = entry.participants?.count ?? 0
         return people > 0 ? "\(people) people" : "Call"
