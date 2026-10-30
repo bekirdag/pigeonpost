@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 
 final class PeopleUITests: XCTestCase {
     private let app = XCUIApplication(bundleIdentifier: "dev.pigeonpost.inbox")
@@ -69,13 +70,20 @@ final class PeopleUITests: XCTestCase {
     func testPhoneVerificationUsesSixDigitCode() {
         launch(["-sheet=phone"])
         let phone = app.textFields["people-phone"]; tap(phone); phone.typeText("+442079460123")
+        // An iPad form sheet moves when its keyboard closes. Dismiss it through the native
+        // keyboard control before resolving the Send target, rather than tapping a stale frame.
+        if UIDevice.current.userInterfaceIdiom == .pad, app.keyboards.firstMatch.exists {
+            let hideKeyboard = app.keyboards.buttons["Hide keyboard"]
+            XCTAssertTrue(hideKeyboard.waitForExistence(timeout: 5))
+            hideKeyboard.tap()
+            let hidden = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.keyboards.firstMatch)
+            XCTAssertEqual(XCTWaiter.wait(for: [hidden], timeout: 8), .completed)
+        }
         let send = item("people-send-code")
         XCTAssertTrue(send.waitForExistence(timeout: 12))
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true AND hittable == true"), object: send)
         XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 8), .completed)
-        // On iPad the accessibility frame includes the wide, empty part of the List row.
-        // Touch the visible leading label, while keeping the same one-tap send assertion.
-        send.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.5)).tap()
+        send.tap()
         let code = app.textFields["people-code"]; tap(code); code.typeText("123456")
         tap(item("people-verify"))
         XCTAssertTrue(app.staticTexts["Your phone number is verified."].waitForExistence(timeout: 10))

@@ -116,6 +116,9 @@ final class HandlePurchaseTests: XCTestCase {
         let paste = app.menuItems["Paste"]
         XCTAssertTrue(paste.waitForExistence(timeout: 5))
         paste.tap()
+        // UIKit's paste and the accessibility value can settle after the menu tap returns.
+        let pasted = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", address), object: field)
+        XCTAssertEqual(XCTWaiter.wait(for: [pasted], timeout: 5), .completed)
         XCTAssertEqual(field.value as? String, address)
         app.buttons["Cancel"].tap()
     }
