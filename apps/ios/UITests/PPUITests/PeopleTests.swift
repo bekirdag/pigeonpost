@@ -71,12 +71,15 @@ final class PeopleUITests: XCTestCase {
         launch(["-sheet=phone"])
         let phone = app.textFields["people-phone"]; tap(phone); phone.typeText("+442079460123")
         // An iPad form sheet moves when its keyboard closes. Dismiss it through the native
-        // keyboard control before resolving the Send target, rather than tapping a stale frame.
+        // control before resolving Send; a hidden keyboard can remain in AX with zero height.
         if UIDevice.current.userInterfaceIdiom == .pad, app.keyboards.firstMatch.exists {
             let hideKeyboard = app.keyboards.buttons["Hide keyboard"]
             XCTAssertTrue(hideKeyboard.waitForExistence(timeout: 5))
             hideKeyboard.tap()
-            let hidden = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.keyboards.firstMatch)
+            let keyboard = app.keyboards.firstMatch
+            let hidden = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                !keyboard.exists || keyboard.frame.intersection(self.app.frame).isEmpty
+            }, object: nil)
             XCTAssertEqual(XCTWaiter.wait(for: [hidden], timeout: 8), .completed)
         }
         let send = item("people-send-code")
