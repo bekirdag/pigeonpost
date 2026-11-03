@@ -155,9 +155,13 @@ def erase(conn, request_id, blob_root, evidence):
         # Phase 10 (SDS §14D): numbers, pending codes, invitations sent, discovery state, names.
         # The SMS cost ledger keeps its rows for budget accounting without the account id;
         # opt-outs name a number, never an account, and stay.
+        # Per mailbox as well as per account, so a row whose account column is stale or empty
+        # (a mailbox that moved, a self-served one) still goes with the mailbox.
         for address in addresses:
-            if has(conn, "profile_names"):
-                conn.execute("DELETE FROM profile_names WHERE address=?", (address,))
+            for table, column in (("profile_names", "address"), ("phone_numbers", "identity"),
+                                  ("phone_challenges", "identity")):
+                if has(conn, table):
+                    conn.execute("DELETE FROM " + table + " WHERE " + column + "=?", (address,))
         for table, column in (("phone_numbers", "account_id"), ("phone_challenges", "account_id"),
                               ("sms_invites", "sender_account"), ("discovery_usage", "account_id"),
                               ("discovery_marks", "account_id"), ("discovery_lockouts", "account_id"),

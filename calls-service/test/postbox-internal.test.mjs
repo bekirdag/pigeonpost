@@ -212,7 +212,7 @@ test("lifecycle: answer then end, decline, busy and caller cancel are reported i
   } finally { await t.stop(); }
 });
 
-test("admission is asked once per 30 s per caller and callee, and fails closed when the postbox is down", async () => {
+test("every ring is admitted afresh, a block takes effect on the next call, and admission fails closed when the postbox is down", async () => {
   const pb = fakePostbox({ decision: "ring" });
   const t = await start(pb, { ringMs: 100 });
   try {
@@ -221,9 +221,15 @@ test("admission is asked once per 30 s per caller and callee, and fails closed w
     const call = () => t.req("tok-alice", "POST", "/calls/v1/calls", { session: alice.id, from: "/alice", to: "/bob", kind: "audio" });
     await call(); await bob.until("incoming"); await alice.until("ended", 1500);
     await call(); await bob.until("incoming"); await alice.until("ended", 1500);
-    assert.equal(pb.admissions.length, 1);
+    assert.equal(pb.admissions.length, 2, "a ring is never answered from the cache");
     assert.deepEqual(pb.admissions[0], { from: { mailbox: "/k/alice1", handle: "/alice" }, to: "/bob", kind: "audio" });
-    assert.equal(t.service.internal.health().cache_hits, 1);
+    assert.equal(t.service.internal.health().cache_hits, 0);
+    // Bob blocks Alice: the very next call does not ring him.
+    pb.state.decision = "block";
+    const rang = bob.seen.filter((e) => e.event === "incoming").length;
+    await call(); await alice.until("ended", 1500); await settle();
+    assert.equal(pb.admissions.length, 3);
+    assert.equal(bob.seen.filter((e) => e.event === "incoming").length, rang, "a blocked caller never rings");
   } finally { await t.stop(); }
 
   const down = fakePostbox({ admissionStatus: 503 });
@@ -295,7 +301,7 @@ function scripted(statuses) {
   return { fetch, posts };
 }
 
-test("admission cache expires after 30 s; bad responses fail closed", async () => {
+test("a refusal is cached for 30 s, a ring never is; bad responses fail closed", async () => {
   const clock = fakeTimers();
   const net = scripted([200, 200]);
   const pi = createPostboxInternal({ url: "http://x", token: "svc_t", fetch: net.fetch, now: clock.now, setTimeout: clock.setTimeout });
@@ -307,6 +313,12 @@ test("admission cache expires after 30 s; bad responses fail closed", async () =
   await clock.advance(2_000);
   await ask();
   assert.equal(net.posts.length, 2);
+
+  const ringing = createPostboxInternal({ url: "http://x", token: "svc_t", now: clock.now, setTimeout: clock.setTimeout,
+    fetch: async () => { ringing.asked = (ringing.asked || 0) + 1; return { ok: true, status: 200, json: async () => ({ decision: "ring", targets: [] }) }; } });
+  await ringing.admit({ from: { address: "/k/a" }, to: "/b", kind: "audio" });
+  await ringing.admit({ from: { address: "/k/a" }, to: "/b", kind: "audio" });
+  assert.equal(ringing.asked, 2);
 
   const bad = createPostboxInternal({ url: "http://x", token: "svc_t", now: clock.now, setTimeout: clock.setTimeout,
     fetch: async () => ({ ok: true, status: 200, json: async () => ({ decision: "maybe", targets: [] }) }) });

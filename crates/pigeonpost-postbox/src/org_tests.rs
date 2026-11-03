@@ -1342,4 +1342,30 @@ async fn agent_limit_and_org_rooms() {
         )
         .await;
     assert_eq!(s, 403);
+    // Nor learn its name, description or size by resolving it, even when it is listed.
+    let gid = rid.to_string();
+    srv.state
+        .store
+        .group_tx(move |tx| -> Result<(), crate::groups::GErr> {
+            tx.execute(
+                "UPDATE groups SET visibility = 'listed' WHERE id = ?1",
+                rusqlite::params![gid],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let (s, v) = srv
+        .call(
+            Method::POST,
+            &format!("/v1/groups/resolve?identity={out_mb}"),
+            Some(&outsider.token),
+            Some(json!({ "group_id": rid })),
+        )
+        .await;
+    assert_eq!(s, 404, "{v}");
+    assert!(
+        v.get("name").is_none() && v.get("member_count").is_none(),
+        "{v}"
+    );
 }

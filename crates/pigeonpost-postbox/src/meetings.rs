@@ -9,7 +9,8 @@
 //! - the meeting-intel service asks for the consenting attendees' notes keys (`…/recipients`) and
 //!   stores the finished brief (`…/brief`): one AES-256-GCM ciphertext plus the content key
 //!   wrapped for each of those keys;
-//! - members list and fetch only the briefs of meetings they consented to (`/v1/meetings…`), and
+//! - members list and fetch only the briefs of meetings they consented to and did not later
+//!   withdraw from or decline (`/v1/meetings…`; SDS §14, audit 2026-11-03), and
 //!   decrypt them on a device that holds one of their notes keys.
 //!
 //! Audit rows carry ids, counts and consent outcomes only.
@@ -48,6 +49,100 @@ fn retention_secs() -> u64 {
         .unwrap_or(DEFAULT_RETENTION_DAYS)
         .clamp(1, 365)
         * 86_400
+}
+
+// ---- eligibility (D-17) ---------------------------------------------------------------------------
+
+/// Who may request AI meeting notes.
+///
+/// D-17 says summaries are included for enterprise organizations from tier T20 up (an add-on below
+/// that is not built). Production ran with every account eligible before this policy existed, so
+/// the deployment chooses explicitly: `POSTBOX_MEETING_SUMMARIES_ELIGIBILITY=all` keeps that
+/// behaviour; unset, `enterprise`, or anything unrecognised means the D-17 rule. The
+/// `meeting_summaries` feature flag still gates both.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SummariesPolicy {
+    /// Every account the feature flag is on for, 1:1 calls included.
+    All,
+    /// Hosts who own or are an active member of an active (or past-due) organization with at least
+    /// `min_seats` seats (`POSTBOX_MEETING_SUMMARIES_MIN_SEATS`, default 20 = T20).
+    Enterprise { min_seats: i64 },
+}
+
+/// D-17's threshold: tier T20.
+pub(crate) const D17_MIN_SEATS: i64 = 20;
+
+impl SummariesPolicy {
+    pub(crate) fn parse(policy: Option<&str>, min_seats: Option<&str>) -> Self {
+        let min_seats = min_seats
+            .and_then(|v| v.trim().parse::<i64>().ok())
+            .unwrap_or(D17_MIN_SEATS)
+            .clamp(1, 100_000);
+        match policy.map(|v| v.trim().to_ascii_lowercase()).as_deref() {
+            Some("all") => Self::All,
+            None | Some("") | Some("enterprise") => Self::Enterprise { min_seats },
+            Some(other) => {
+                tracing::warn!(
+                    value = other,
+                    "POSTBOX_MEETING_SUMMARIES_ELIGIBILITY not recognised; using the enterprise rule"
+                );
+                Self::Enterprise { min_seats }
+            }
+        }
+    }
+
+    pub(crate) fn from_env() -> Self {
+        let p = Self::parse(
+            std::env::var("POSTBOX_MEETING_SUMMARIES_ELIGIBILITY")
+                .ok()
+                .as_deref(),
+            std::env::var("POSTBOX_MEETING_SUMMARIES_MIN_SEATS")
+                .ok()
+                .as_deref(),
+        );
+        tracing::info!(policy = ?p, "meeting summaries eligibility");
+        p
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Enterprise { .. } => "enterprise",
+        }
+    }
+}
+
+/// Whether `account` may request notes under `policy`.
+pub(crate) fn host_eligible(
+    c: &rusqlite::Connection,
+    policy: SummariesPolicy,
+    account: &str,
+) -> rusqlite::Result<bool> {
+    let SummariesPolicy::Enterprise { min_seats } = policy else {
+        return Ok(true);
+    };
+    let found: Option<i64> = c
+        .query_row(
+            "SELECT 1 FROM orgs o
+              WHERE o.status IN ('active','past_due') AND o.seats >= ?2
+                AND (o.owner_account = ?1 OR o.internal_account_id = ?1
+                     OR EXISTS (SELECT 1 FROM org_members m
+                                 WHERE m.org_id = o.id AND m.account_id = ?1 AND m.status = 'active'))
+              LIMIT 1",
+            params![account, min_seats],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(found.is_some())
+}
+
+/// The refusal a host gets when the policy leaves them out: clients show it as "not included".
+fn not_included(policy: SummariesPolicy) -> Value {
+    let mut v = json!({ "allowed": false, "reason": "not_included", "policy": policy.name() });
+    if let SummariesPolicy::Enterprise { min_seats } = policy {
+        v["min_seats"] = json!(min_seats);
+    }
+    v
 }
 
 // ---- routers -----------------------------------------------------------------------------------
@@ -273,6 +368,15 @@ async fn open_inner(
     if !flag_on(state, &account).await {
         return Ok(json!({ "allowed": false, "reason": "feature_disabled" }));
     }
+    let policy = state.summaries_policy;
+    let who = account.clone();
+    let eligible = state
+        .store
+        .group_read(move |c| -> GResult<bool> { Ok(host_eligible(c, policy, &who)?) })
+        .await?;
+    if !eligible {
+        return Ok(not_included(policy));
+    }
     let retention_days = retention_secs() / 86_400;
     if req.check_only {
         return Ok(json!({ "allowed": true, "retention_days": retention_days }));
@@ -456,7 +560,8 @@ async fn attendee_inner(
             match req.consent.as_str() {
                 "yes" => tx.execute(
                     "UPDATE meeting_attendees SET consented_at = COALESCE(consented_at, ?3),
-                         withdrawn_at = NULL WHERE meeting_id = ?1 AND account_id = ?2",
+                         withdrawn_at = NULL, declined_at = NULL
+                       WHERE meeting_id = ?1 AND account_id = ?2",
                     params![id, account, now],
                 )?,
                 "no" => tx.execute(
@@ -644,7 +749,7 @@ async fn recipients_inner(state: &AppState, headers: &HeaderMap, id: String) -> 
                 "SELECT a.account_id, a.address, k.key_id, k.public_key
                    FROM meeting_attendees a
                    JOIN meeting_notes_keys k ON k.account_id = a.account_id
-                  WHERE a.meeting_id = ?1 AND a.consented_at IS NOT NULL AND a.removed_at IS NULL
+                  WHERE a.meeting_id = ?1 AND a.consented_at IS NOT NULL AND a.withdrawn_at IS NULL AND a.declined_at IS NULL AND a.removed_at IS NULL
                   ORDER BY a.account_id, k.key_id",
             )?;
             let rows = stmt.query_map(params![id], |r| {
@@ -799,7 +904,7 @@ async fn brief_inner(
                         "SELECT 1 FROM meeting_attendees a JOIN meeting_notes_keys k
                             ON k.account_id = a.account_id AND k.key_id = ?3
                           WHERE a.meeting_id = ?1 AND a.account_id = ?2
-                            AND a.consented_at IS NOT NULL AND a.removed_at IS NULL",
+                            AND a.consented_at IS NOT NULL AND a.withdrawn_at IS NULL AND a.declined_at IS NULL AND a.removed_at IS NULL",
                         params![mid, w.account_id, w.key_id],
                         |r| r.get(0),
                     )
@@ -832,7 +937,7 @@ async fn brief_inner(
             // Tell every consenting attendee, on the mailbox they took part as.
             let mut stmt = tx.prepare(
                 "SELECT account_id, address FROM meeting_attendees
-                  WHERE meeting_id = ?1 AND consented_at IS NOT NULL AND removed_at IS NULL",
+                  WHERE meeting_id = ?1 AND consented_at IS NOT NULL AND withdrawn_at IS NULL AND declined_at IS NULL AND removed_at IS NULL",
             )?;
             let targets: Vec<(String, Option<String>)> = stmt
                 .query_map(params![mid], |r| Ok((r.get::<_, String>(1)?, Some(r.get::<_, String>(0)?))))?
@@ -864,7 +969,7 @@ async fn list_inner(state: &AppState, headers: &HeaderMap) -> GResult<Value> {
                 "SELECT m.id, m.kind, m.state, m.created_at, m.ended_at, m.ready_at, m.expires_at,
                         m.host_address, a.address, m.failure
                    FROM meetings m JOIN meeting_attendees a ON a.meeting_id = m.id
-                  WHERE a.account_id = ?1 AND a.consented_at IS NOT NULL AND a.removed_at IS NULL
+                  WHERE a.account_id = ?1 AND a.consented_at IS NOT NULL AND a.withdrawn_at IS NULL AND a.declined_at IS NULL AND a.removed_at IS NULL
                     AND m.expires_at > ?2
                   ORDER BY m.created_at DESC LIMIT 200",
             )?;
@@ -925,7 +1030,7 @@ async fn fetch_inner(state: &AppState, headers: &HeaderMap, id: String) -> GResu
                     "SELECT m.kind, m.state, m.created_at, m.ended_at, m.ready_at, m.expires_at,
                             m.alg, m.iv, m.ciphertext, m.failure, m.host_address
                        FROM meetings m JOIN meeting_attendees a ON a.meeting_id = m.id
-                      WHERE m.id = ?1 AND a.account_id = ?2 AND a.consented_at IS NOT NULL
+                      WHERE m.id = ?1 AND a.account_id = ?2 AND a.consented_at IS NOT NULL AND a.withdrawn_at IS NULL AND a.declined_at IS NULL
                         AND a.removed_at IS NULL AND m.expires_at > ?3",
                     params![id, account, now],
                     |r| {
@@ -1009,7 +1114,7 @@ async fn remove_inner(state: &AppState, headers: &HeaderMap, id: String) -> GRes
         .group_tx(move |tx| -> GResult<Value> {
             let changed = tx.execute(
                 "UPDATE meeting_attendees SET removed_at = ?3
-                  WHERE meeting_id = ?1 AND account_id = ?2 AND consented_at IS NOT NULL AND removed_at IS NULL",
+                  WHERE meeting_id = ?1 AND account_id = ?2 AND consented_at IS NOT NULL AND withdrawn_at IS NULL AND declined_at IS NULL AND removed_at IS NULL",
                 params![id, account, now],
             )?;
             if changed == 0 {
@@ -1021,7 +1126,7 @@ async fn remove_inner(state: &AppState, headers: &HeaderMap, id: String) -> GRes
             )?;
             let left: i64 = tx.query_row(
                 "SELECT COUNT(*) FROM meeting_attendees
-                  WHERE meeting_id = ?1 AND consented_at IS NOT NULL AND removed_at IS NULL",
+                  WHERE meeting_id = ?1 AND consented_at IS NOT NULL AND withdrawn_at IS NULL AND declined_at IS NULL AND removed_at IS NULL",
                 params![id],
                 |r| r.get(0),
             )?;

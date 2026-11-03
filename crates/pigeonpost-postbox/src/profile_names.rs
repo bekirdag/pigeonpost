@@ -382,6 +382,9 @@ pub(crate) async fn remove_name(
     }
 }
 
+/// Name lookups (`GET /v1/profiles`) one caller may make per hour, each of up to 100 addresses.
+pub(crate) const LOOKUPS_PER_HOUR: usize = 240;
+
 #[derive(Deserialize)]
 pub(crate) struct LookupQuery {
     #[serde(default)]
@@ -398,6 +401,15 @@ pub(crate) async fn lookup_names(
         Ok(p) => p,
         Err(e) => return e.into_response(),
     };
+    // Bounded like the other lookups (audit 2026-11-03 P3-4): at most LOOKUPS_PER_HOUR batches of
+    // 100 per account (or self-served mailbox), so names cannot be scraped at line rate.
+    let who = match &principal {
+        Principal::Identity(id) => id.address.clone(),
+        Principal::Account(account, _) => account.clone(),
+    };
+    if let Err(e) = crate::groups::rate_limit(&format!("profiles:{who}"), LOOKUPS_PER_HOUR, 3_600) {
+        return e.into_response();
+    }
     let names: Vec<String> = q
         .addresses
         .split(',')

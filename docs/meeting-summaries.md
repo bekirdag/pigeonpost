@@ -8,7 +8,20 @@ global). Runbook: `deploy/meeting-intel/README.md`.
 
 1. **Request.** Only the host can ask: the person who started an ad-hoc, 1:1 or group call, or the host
    of a scheduled meeting. Guests and other members cannot. The calls service asks the postbox whether
-   the host's account has `meeting_summaries`; when it does, the host sees a Notes control.
+   the host's account has `meeting_summaries` **and** is eligible under the deployment's summaries
+   policy (below); when it does, the host sees a Notes control. A host the policy leaves out sees the
+   control greyed, with "not included in your plan" (`you.unavailable = "not_included"`).
+
+   **Eligibility (D-17).** `POSTBOX_MEETING_SUMMARIES_ELIGIBILITY`:
+   - unset, `enterprise` or anything unrecognised — the D-17 rule: the host's account owns, or is an
+     active member of, an `active`/`past_due` organization with at least
+     `POSTBOX_MEETING_SUMMARIES_MIN_SEATS` seats (default 20, tier T20). The add-on below T20 is not
+     built.
+   - `all` — every account the flag is on for, 1:1 calls included (production, pending the owner's
+     D-17 decision; set explicitly in `postbox.env`).
+
+   Refusals answer `{allowed:false, reason:"not_included", policy, min_seats}` on
+   `POST /internal/v1/meetings` (with or without `check_only`).
 2. **Disclosure and consent.** Every participant, guests included, gets the same disclosure: processor,
    what is captured, audio handling, audience, retention, acoustic limits and how to stop. Capture runs
    only while *every person currently in the call* has explicitly agreed to the current disclosure.
@@ -31,7 +44,10 @@ global). Runbook: `deploy/meeting-intel/README.md`.
    session: keys, transcript and any audio.
 5. **Results.** Members who agreed see the brief under **Meeting notes** in the inbox: summary,
    decisions, action items, open questions and the full transcript, decrypted on a device that holds one
-   of their notes keys. Guests can agree but receive no copy.
+   of their notes keys. Guests can agree but receive no copy. Someone who agreed and later withdrew
+   ("Stop for me") or declined, and did not agree again, receives neither brief nor transcript: the
+   recipient list, the wraps meeting-intel may store, the `meeting.brief` event and every member read
+   exclude them (SDS §14; since 2026-11-03).
 
 ## 2. Components and interfaces
 
@@ -49,13 +65,13 @@ global). Runbook: `deploy/meeting-intel/README.md`.
 
 | Method | Path | Body | Notes |
 |---|---|---|---|
-| POST | `/rooms/{room}/summary` | `{session, enabled}` | Host only (`host_only`); `notes_disabled` when the postbox says no; `summary_active`; `summary_unavailable`/`summary_busy` (503) when meeting-intel is down or full |
+| POST | `/rooms/{room}/summary` | `{session, enabled}` | Host only (`host_only`); `notes_not_included` when the summaries policy leaves the host out, `notes_disabled` when the postbox says no otherwise; `summary_active`; `summary_unavailable`/`summary_busy` (503) when meeting-intel is down or full |
 | POST | `/rooms/{room}/summary/consent` | `{session, consent, version, disclosure_hash, notes_key?}` | `consent_stale` (409, carries `version`); `notes_key` = `{key_id, public_key, label}` from members only |
 | POST | `/rooms/{room}/summary/audio?session=&seq=` | encrypted envelope (JSON, ≤192 KiB), header `x-capture-token` | `capture_paused` (409), `consent_required`, `bad_chunk`, `summary_busy` (503); duplicates answer `{accepted, duplicate:true}` |
 
 SSE event `summary`, per participant: `{room, state: off|waiting|active|stopped, meeting, version, host,
 disclosure, disclosure_hash, retention_days, service_key{session,key,key_id,signature,expires_at},
-waiting_for, agreed[], reason, you{participant, consent, can_control, can_request}, capture{token,
+waiting_for, agreed[], reason, you{participant, consent, can_control, can_request, unavailable?, min_seats?}, capture{token,
 version}|null}`. Others' answers are not revealed: a decline and an unanswered prompt both show as
 "waiting". The SDS API names (`/v1/meetings/{room}/notes|consent|audio`) map to these calls-service
 routes; `/v1/meetings/{id}` in the postbox serves results.

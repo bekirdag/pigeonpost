@@ -3,7 +3,9 @@
 // This service holds the consent state of each call's notes and relays audio it cannot read:
 //
 // - only the host (the person who started an ad-hoc or 1:1 call, the scheduled meeting's host) may
-//   turn notes on or off, and only when the postbox says the host's account has the feature;
+//   turn notes on or off, and only when the postbox says the host's account has the feature and
+//   is eligible under the deployment's summaries policy (D-17). A host the policy leaves out is
+//   told so (`you.unavailable = "not_included"`), and a request is refused as `notes_not_included`;
 // - capture runs only while *every* person in the call has explicitly agreed to the current
 //   disclosure. A newcomer, a decline or a withdrawal pauses it for everyone until the people
 //   present have all agreed again. Declining never removes anyone from the call;
@@ -105,11 +107,17 @@ export function createSummaries(ctx) {
   async function eligible(address) {
     const hit = eligibility.get(address);
     if (hit && now() - hit.at < SUMMARY_LIMITS.eligibilityCacheMs) return hit;
-    let entry = { allowed: false, retentionDays: 0, at: now() };
+    let entry = { allowed: false, retentionDays: 0, at: now(), unavailable: null };
     if (configured()) {
       try {
         const r = await postbox("POST", "/internal/v1/meetings", { host: address, check_only: true });
-        if (r.status === 200 && r.body && r.body.allowed === true) entry = { allowed: true, retentionDays: r.body.retention_days || 90, at: now() };
+        if (r.status === 200 && r.body && r.body.allowed === true) entry = { allowed: true, retentionDays: r.body.retention_days || 90, at: now(), unavailable: null };
+        // D-17 (audit 2026-11-03): the host's plan does not include notes. The host is told why,
+        // rather than the button silently missing.
+        else if (r.status === 200 && r.body && r.body.reason === "not_included") {
+          const minSeats = Number.isInteger(r.body.min_seats) ? r.body.min_seats : null;
+          entry = { allowed: false, retentionDays: 0, at: now(), unavailable: "not_included", minSeats };
+        }
       } catch (_) { /* unreachable postbox: not available */ }
     }
     eligibility.set(address, entry);
@@ -140,6 +148,7 @@ export function createSummaries(ctx) {
   function view(room, p) {
     const s = room.summary;
     const you = { participant: p.id, consent: null, can_control: isHost(room, p), can_request: Boolean(p && p.canRequest) };
+    if (p && p.notesUnavailable) { you.unavailable = p.notesUnavailable; if (p.notesMinSeats) you.min_seats = p.notesMinSeats; }
     if (!s) return { room: room.id, state: "off", you };
     you.consent = s.consents.get(p.id) || null;
     const out = {
@@ -171,7 +180,9 @@ export function createSummaries(ctx) {
     if (!p.guest && p.mailbox && isHost(room, p) && configured()) {
       eligible(p.mailbox.address).then((e) => {
         p.canRequest = e.allowed;
-        if (e.allowed && room.participants.has(p.id) && room.state !== "ended") send(sessions.get(p.sessionId), "summary", view(room, p));
+        p.notesUnavailable = e.unavailable || null;
+        p.notesMinSeats = e.minSeats || null;
+        if ((e.allowed || e.unavailable) && room.participants.has(p.id) && room.state !== "ended") send(sessions.get(p.sessionId), "summary", view(room, p));
       }, () => {});
     }
   }
@@ -227,7 +238,10 @@ export function createSummaries(ctx) {
       ...(room.scheduled ? { calendar_event_id: room.scheduled.event_id, occurrence_id: room.scheduled.occurrence_id } : {}),
     }).catch(() => ({ status: 0 }));
     if (opened.status !== 200 || !opened.body) throw new HttpError(502, "postbox_unavailable");
-    if (opened.body.allowed !== true) { counters.refused++; throw new HttpError(403, "notes_disabled"); }
+    if (opened.body.allowed !== true) {
+      counters.refused++;
+      throw new HttpError(403, opened.body.reason === "not_included" ? "notes_not_included" : "notes_disabled");
+    }
     const meeting = opened.body.meeting_id;
     const sess = await intel("POST", "/v1/sessions", { meeting_id: meeting }).catch(() => ({ status: 0 }));
     if (sess.status !== 200 || !sess.body || !sess.body.session) {

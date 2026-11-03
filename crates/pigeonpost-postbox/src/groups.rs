@@ -628,10 +628,17 @@ pub(crate) struct GroupRow {
     pub stream_policy: String,
 }
 
+/// `max_members` as read: a personal group keeps its stored cap (1,000, D-09); an org room's cap is
+/// its organization's seats plus agent addresses, up to 10,000 (D-09), computed at read
+/// time so a plan change applies without rewriting every room (audit 2026-11-03 P2-5).
 const GROUP_COLS: &str =
     "id, org_id, name, description, avatar_id, join_policy, post_policy, visibility,
     members_can_invite, members_can_change_timer, revision, activation_state, link_token_hash,
-    ephemeral_secs, max_members, epoch, last_seq, pruned_through_seq, created_by, created_at,
+    ephemeral_secs,
+    CASE WHEN org_id IS NULL THEN max_members ELSE COALESCE(
+        (SELECT MIN(10000, o.seats + o.agent_limit) FROM orgs o WHERE o.id = groups.org_id),
+        max_members) END,
+    epoch, last_seq, pruned_through_seq, created_by, created_at,
     last_at, deleted_at, stream_policy";
 
 fn map_group(r: &rusqlite::Row<'_>) -> rusqlite::Result<GroupRow> {
@@ -2597,8 +2604,17 @@ pub(crate) async fn resolve(
                     return Err(GErr::not_found());
                 }
                 let m = load_member(c, &g.id, &me)?;
-                let link_ok = g.join_policy == "public" && link_matches(&g, req.link_token.as_deref());
-                let listed = g.join_policy == "public" && g.visibility == "listed";
+                // An org room describes itself only to that org's members (audit 2026-11-03
+                // P2-9): a link or a listing never shows its name, description or size to outsiders,
+                // exactly as joining requires live org membership.
+                let outsider = match g.org_id.as_deref() {
+                    Some(org) => !crate::org_rooms::member_mailbox_in(c, org, &me)?,
+                    None => false,
+                };
+                let link_ok = !outsider
+                    && g.join_policy == "public"
+                    && link_matches(&g, req.link_token.as_deref());
+                let listed = !outsider && g.join_policy == "public" && g.visibility == "listed";
                 let related = m
                     .as_ref()
                     .is_some_and(|m| matches!(m.state.as_str(), "active" | "keying" | "invited"));

@@ -1929,7 +1929,10 @@ pub(crate) async fn opt_out(
                         "INSERT OR IGNORE INTO sms_optouts (tag, created_at) VALUES (?1, ?2)",
                         params![t, now as i64],
                     )?;
-                    tx.execute("DELETE FROM sms_invites WHERE tag = ?1", params![t])?;
+                    // The invitations themselves stay until they expire: they are what the
+                    // senders' daily and monthly caps count, and an opt-out must not hand a
+                    // sender their quota back (audit 2026-11-03 P3-4). The opt-out row is what
+                    // stops any further text to the number.
                     crate::store::audit::append_in(tx, &audit)?;
                 }
                 Ok(())

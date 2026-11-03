@@ -2345,3 +2345,44 @@ async fn group_fanout_load() {
         );
     }
 }
+
+/// D-09: a personal group holds 1,000; an org room holds its organization's seats plus agent
+/// addresses, up to 10,000, and follows a seat change without the room being rewritten.
+#[tokio::test]
+async fn org_rooms_are_capped_at_seats_plus_agents_not_one_thousand() {
+    let store = crate::store::Store::open(":memory:").unwrap();
+    let caps = store
+        .group_tx(|tx| -> Result<Vec<i64>, crate::groups::GErr> {
+            let org = |id: &str, seats: i64| {
+                tx.execute(
+                    "INSERT INTO orgs (id, namespace, name, owner_account, status, seats, agent_limit,
+                        storage_bytes, created_at, create_operation_id, create_hash)
+                     VALUES (?1, ?1, 'Synthetic Co', 'acct_owner', 'active', ?2, ?2 * 10, 0, 0, ?1, 'h')",
+                    params![id, seats],
+                )
+            };
+            org("org_small", 100)?;
+            org("org_large", 5000)?;
+            for (gid, org_id) in [
+                ("grp_aaaaaaaaaaaaaaaaaaaaaaaaaa", None),
+                ("grp_bbbbbbbbbbbbbbbbbbbbbbbbbb", Some("org_small")),
+                ("grp_cccccccccccccccccccccccccc", Some("org_large")),
+            ] {
+                tx.execute(
+                    "INSERT INTO groups (id, org_id, name, created_by, created_at, last_at)
+                     VALUES (?1, ?2, 'Room', '/k/owner', 0, 0)",
+                    params![gid, org_id],
+                )?;
+            }
+            let cap = |gid: &str| -> Result<i64, crate::groups::GErr> {
+                Ok(crate::groups::load_group(tx, gid)?.unwrap().max_members)
+            };
+            let mut out = vec![cap("grp_aaaaaaaaaaaaaaaaaaaaaaaaaa")?, cap("grp_bbbbbbbbbbbbbbbbbbbbbbbbbb")?, cap("grp_cccccccccccccccccccccccccc")?];
+            tx.execute("UPDATE orgs SET seats = 200, agent_limit = 2000 WHERE id = 'org_small'", [])?;
+            out.push(cap("grp_bbbbbbbbbbbbbbbbbbbbbbbbbb")?);
+            Ok(out)
+        })
+        .await
+        .unwrap();
+    assert_eq!(caps, vec![1000, 1100, 10_000, 2200]);
+}

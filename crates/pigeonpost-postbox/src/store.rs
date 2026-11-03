@@ -1005,6 +1005,8 @@ impl Store {
                 }
             }
         }
+        // Group calls logged before `group_id` was written (audit 2026-11-03).
+        calllog::backfill_group_ids(&conn)?;
         // Organizations (Phase 4): additive tables plus three columns on `orgs`.
         org_model::migrate(&conn)?;
         // Enterprise API (Phase 5): keys, idempotency, webhooks and the event triggers, which need
@@ -3155,6 +3157,27 @@ impl Store {
                 // person who asked to be deleted.
                 tx.execute(
                     "DELETE FROM workspace_context WHERE address = ?1",
+                    params![address],
+                )?;
+                // Profile data tied to this mailbox (SDS §14D; audit 2026-11-03 P2-3): the verified
+                // phone number (which would otherwise keep counting toward the account's limit and
+                // stay discoverable), any pending verification, and the display name.
+                tx.execute(
+                    "DELETE FROM phone_numbers WHERE identity = ?1",
+                    params![address],
+                )?;
+                tx.execute(
+                    "DELETE FROM phone_challenges WHERE identity = ?1",
+                    params![address],
+                )?;
+                tx.execute(
+                    "DELETE FROM profile_names WHERE address = ?1",
+                    params![address],
+                )?;
+                // The mailbox's own call history describes calls it took part in.
+                tx.execute("DELETE FROM call_log WHERE owner = ?1", params![address])?;
+                tx.execute(
+                    "DELETE FROM call_log_cleared WHERE owner = ?1",
                     params![address],
                 )?;
             }
@@ -5658,6 +5681,72 @@ mod tests {
             .unwrap()); // idempotent
         assert!(store.get("/k/mine".into()).await.unwrap().is_none());
         assert_eq!(store.inbox_count("/k/mine".into()).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn delete_identity_removes_its_phone_number_and_display_name() {
+        let store = Store::open(":memory:").unwrap();
+        let key = NewKey {
+            key_hash: [4; 32],
+            id: "k".into(),
+            prefix: "pk_live_y".into(),
+        };
+        store.create_account("acct_p".into(), key, 0).await.unwrap();
+        for addr in ["/k/gone", "/k/kept"] {
+            let mut id = sample(addr);
+            id.account_id = Some("acct_p".into());
+            store.insert(id).await.unwrap();
+        }
+        let count = |table: &'static str, col: &'static str, who: &'static str| {
+            let c = store.conn.lock().unwrap();
+            c.query_row(
+                &format!("SELECT COUNT(*) FROM {table} WHERE {col} = ?1"),
+                params![who],
+                |r| r.get::<_, i64>(0),
+            )
+            .unwrap()
+        };
+        {
+            let c = store.conn.lock().unwrap();
+            for (n, addr) in [(1u8, "/k/gone"), (2u8, "/k/kept")] {
+                c.execute(
+                    "INSERT INTO phone_numbers (id, account_id, identity, tag, number_sealed,
+                        country_code, discoverable, verified_at, updated_at)
+                     VALUES (?1, 'acct_p', ?2, ?3, x'00', 'TR', 1, 0, 0)",
+                    params![format!("ph{n}"), addr, vec![n; 16]],
+                )
+                .unwrap();
+                c.execute(
+                    "INSERT INTO phone_challenges (id, account_id, identity, tag, number_sealed,
+                        country_code, code_mac, created_at, expires_at)
+                     VALUES (?1, 'acct_p', ?2, x'01', x'00', 'TR', x'00', 0, 600)",
+                    params![format!("pc{n}"), addr],
+                )
+                .unwrap();
+                c.execute(
+                    "INSERT INTO profile_names (address, account_id, display_name, updated_at)
+                     VALUES (?1, 'acct_p', 'Synthetic Name', 0)",
+                    params![addr],
+                )
+                .unwrap();
+            }
+        }
+        assert!(store
+            .delete_identity(Some("acct_p".into()), "/k/gone".into())
+            .await
+            .unwrap());
+        assert_eq!(count("phone_numbers", "identity", "/k/gone"), 0);
+        assert_eq!(count("phone_challenges", "identity", "/k/gone"), 0);
+        assert_eq!(count("profile_names", "address", "/k/gone"), 0);
+        // The account's other mailbox keeps its own.
+        assert_eq!(count("phone_numbers", "identity", "/k/kept"), 1);
+        assert_eq!(count("phone_challenges", "identity", "/k/kept"), 1);
+        assert_eq!(count("profile_names", "address", "/k/kept"), 1);
+        assert_eq!(
+            count("phone_numbers", "account_id", "acct_p"),
+            1,
+            "no longer counts toward the limit"
+        );
     }
 
     #[tokio::test]

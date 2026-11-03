@@ -246,8 +246,13 @@
     const v = view;
     const on = v && (v.state === "waiting" || v.state === "active");
     const you = (v && v.you) || {};
-    $("call-notes-btn").hidden = !(you.can_request || (on && you.can_control));
+    // D-17: a host whose plan doesn't include notes still sees the button, greyed, and learns why.
+    const excluded = !you.can_request && you.unavailable === "not_included";
+    $("call-notes-btn").hidden = !(you.can_request || excluded || (on && you.can_control));
     $("call-notes-btn").setAttribute("aria-pressed", String(Boolean(on)));
+    $("call-notes-btn").classList.toggle("call-notes-unavailable", excluded && !on);
+    $("call-notes-btn").setAttribute("aria-disabled", String(excluded && !on));
+    $("call-notes-btn").title = excluded && !on ? notIncluded(you.min_seats) : "Meeting notes";
     const banner = $("call-notes-banner");
     banner.hidden = !on;
     banner.dataset.state = on ? v.state : "off";
@@ -290,8 +295,15 @@
     if ($("call-notes-ask")) $("call-notes-ask").hidden = true;
   }
 
+  function notIncluded(minSeats) {
+    const seats = Number.isInteger(minSeats) && minSeats > 0 ? minSeats : 20;
+    return `AI meeting notes aren't included in your plan. They come with Pigeonpost for business plans of ${seats} seats or more.`;
+  }
+
   function notesButton() {
     const on = view && (view.state === "waiting" || view.state === "active");
+    const you = (view && view.you) || {};
+    if (!on && !you.can_request && you.unavailable === "not_included") { api.toast(notIncluded(you.min_seats)); return; }
     if (on) setNotes(false);
     else { ensureUi(); $("call-notes-ask").hidden = false; }
   }
@@ -303,7 +315,7 @@
       const v = await api.post(`/rooms/${r.id}/summary`, { session: api.session(), enabled });
       if (v && v.room) onEvent(v);
     } catch (e) {
-      const why = { notes_disabled: "Meeting notes aren't available for this account.", summary_busy: "The notes service is busy. Try again in a few minutes.", summary_unavailable: "The notes service isn't reachable right now.", host_only: "Only the host can turn notes on or off." }[e.code];
+      const why = { notes_not_included: notIncluded(view && view.you && view.you.min_seats), notes_disabled: "Meeting notes aren't available for this account.", summary_busy: "The notes service is busy. Try again in a few minutes.", summary_unavailable: "The notes service isn't reachable right now.", host_only: "Only the host can turn notes on or off." }[e.code];
       api.toast(why || "Couldn't change meeting notes.");
     }
   }

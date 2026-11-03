@@ -4,8 +4,12 @@
 // token (`svc_…`), never with a member's token:
 //
 //   * call admission — before ringing anyone, whether the callee's settings say ring, silence or
-//     block. Cached for 30 s per (caller, callee, kind). If the postbox is configured but cannot be
-//     asked, admission fails closed: the call behaves exactly like an unanswered one.
+//     block. Only refusals (silence, block) are cached, for 30 s per (caller, callee, kind): a
+//     "ring" is asked afresh every time, so a block or a filter change takes effect on the very
+//     next call and every ring attempt reaches the postbox's per-pair throttle (SDS §13.3; audit
+//     2026-11-03). A cached refusal can only make a call quieter than it should be, never louder.
+//     If the postbox is configured but cannot be asked, admission fails closed: the call behaves
+//     exactly like an unanswered one.
 //   * lifecycle events — ring, answer, decline, missed, end … so each participant's call history can
 //     be written. Sent through a bounded retry queue with stable event ids, so a retried event is
 //     deduplicated by the postbox. With `spoolPath` (CALLS_EVENT_SPOOL, Phase 9) the queue is also
@@ -149,8 +153,12 @@ export function createPostboxInternal({ url, token, fetch, now, setTimeout: setT
       return { decision: "block", targets: [], reason: "admission_unavailable" };
     }
     counters.admission_ok++;
-    if (cache.size >= L.admissionCacheEntries) cache.delete(cache.keys().next().value);
-    cache.set(key, { value, expires: clock() + L.admissionCacheMs });
+    // Never cache "ring": that would let a caller blocked a moment ago ring for the rest of the
+    // window, and would skip the postbox's attempt counting.
+    if (value.decision !== "ring") {
+      if (cache.size >= L.admissionCacheEntries) cache.delete(cache.keys().next().value);
+      cache.set(key, { value, expires: clock() + L.admissionCacheMs });
+    }
     return value;
   }
 

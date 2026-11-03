@@ -78,6 +78,10 @@ class AccountDeletionTests(unittest.TestCase):
             self.db.execute("INSERT INTO discovery_lockouts VALUES (?,9)", (who,))
             self.db.execute("INSERT INTO profile_names VALUES (?,?,?)", (address, who, "Name " + who))
         self.db.execute("INSERT INTO sms_optouts VALUES (?,1)", (b"opted",))
+        # Rows for /k/a whose account column does not name the account still belong to the mailbox.
+        self.db.execute("INSERT INTO phone_numbers VALUES (?,?,?,?)", ("ph-stale", None, "/k/a", b"stale"))
+        self.db.execute("INSERT INTO phone_challenges VALUES (?,?,?)", ("pvc-stale", None, "/k/a"))
+        self.db.execute("INSERT INTO profile_names VALUES (?,?,?)", ("/k/a", None, "Stale name"))
         self.shared = "a" * 64
         self.private = "b" * 64
         for sha in (self.shared, self.private):
@@ -116,6 +120,8 @@ class AccountDeletionTests(unittest.TestCase):
                               ("discovery_marks", "account_id"), ("discovery_lockouts", "account_id"),
                               ("profile_names", "account_id")):
             self.assertEqual([r[0] for r in self.db.execute("SELECT " + column + " FROM " + table)], ["b"], table)
+        for table, column in (("phone_numbers", "identity"), ("phone_challenges", "identity"), ("profile_names", "address")):
+            self.assertEqual([r[0] for r in self.db.execute("SELECT " + column + " FROM " + table)], ["/k/b"], table)
         self.assertEqual(sorted(str(r[0]) for r in self.db.execute("SELECT account_id FROM sms_ledger")), ["None", "b"])
         self.assertEqual(self.db.execute("SELECT COUNT(*) FROM sms_optouts").fetchone()[0], 1)
         with self.assertRaises(ValueError):
