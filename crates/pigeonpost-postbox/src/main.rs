@@ -99,6 +99,9 @@ mod mls;
 mod msgactions;
 #[cfg(test)]
 mod msgactions_tests;
+mod nests;
+#[cfg(test)]
+mod nests_tests;
 mod oidc;
 mod org;
 mod org_agents;
@@ -225,6 +228,8 @@ struct AppState {
     contacts: Arc<contacts::Runtime>,
     /// Who may request AI meeting notes (D-17): `POSTBOX_MEETING_SUMMARIES_ELIGIBILITY`.
     summaries_policy: meetings::SummariesPolicy,
+    /// Nests Phase A: the client for nestd on the worker host, and the per-account limits.
+    nests: Arc<nests::Runtime>,
 }
 
 /// Namespaces where a name is authorised by proving control of it at an identity provider, rather
@@ -661,6 +666,7 @@ fn build_state(cfg: &Config, master_key: [u8; 32]) -> Result<AppState, store::St
         shell: Arc::new(shell::Runtime::from_env()),
         contacts: Arc::new(contacts::Runtime::from_env()),
         summaries_policy: meetings::SummariesPolicy::from_env(),
+        nests: Arc::new(nests::Runtime::from_env()),
     })
 }
 
@@ -1012,6 +1018,8 @@ fn build_router(state: AppState) -> Router {
         .merge(org_api::router(state.clone()))
         // Phase 7: meeting summaries (SDS §14, docs/meeting-summaries.md).
         .merge(meetings::router())
+        // Nests Phase A: a hosted agent redeems its one-time enrollment code.
+        .merge(nests::router())
         // Phase 3B: calendar and scheduled meetings (SDS §14B.5, docs/calendar.md).
         .route(
             "/v1/calendars",
@@ -3806,6 +3814,10 @@ pub(crate) async fn do_send_with(
     state.event_hub.mail.touch(&sender.address);
     if let Some(account) = recipient.account_id.as_deref() {
         state.event_hub.wake(account);
+    }
+    // A Nest stopped while idle is woken for its mail (Nests Phase A). Spawned; never fails a send.
+    if !filtered {
+        nests::wake_for(state, &recipient.address);
     }
 
     // And wake the phones. Spawned, never awaited: a message is delivered once it is in the
@@ -7292,6 +7304,7 @@ mod tests {
             shell: Arc::new(shell::Runtime::default()),
             contacts: Arc::new(contacts::Runtime::for_test()),
             summaries_policy: meetings::SummariesPolicy::All,
+            nests: Arc::new(nests::Runtime::default()),
         }
     }
 
@@ -10137,6 +10150,7 @@ mod tests {
             shell: Arc::new(shell::Runtime::default()),
             contacts: Arc::new(contacts::Runtime::for_test()),
             summaries_policy: meetings::SummariesPolicy::All,
+            nests: Arc::new(nests::Runtime::default()),
         };
         let _ = build_router(state);
     }

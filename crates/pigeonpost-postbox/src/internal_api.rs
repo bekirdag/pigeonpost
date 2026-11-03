@@ -66,6 +66,8 @@ pub(crate) enum Endpoint {
     StreamAdmission,
     /// `POST /internal/v1/shell/legs`, `/shell/check`, `/shell/closed` (Phase 8).
     ShellBroker,
+    /// `/internal/v1/nests*` (Nests Phase A): hosted agent lifecycle and entitlement (ops only).
+    Nests,
 }
 
 /// The services this postbox knows, the variable each one's token lives in, and what each may
@@ -112,6 +114,7 @@ const SERVICES: &[(&str, &str, &[Endpoint])] = &[
             Endpoint::FeaturesWrite,
             Endpoint::ModerateAvatars,
             Endpoint::AccountPurge,
+            Endpoint::Nests,
         ],
     ),
 ];
@@ -247,6 +250,8 @@ pub(crate) fn router(state: AppState) -> Router {
         .route("/internal/v1/features/{name}", put(set_feature))
         // Phase 7: meeting summaries (calls service and meeting-intel).
         .merge(crate::meetings::internal_router())
+        // Nests Phase A: hosted agents on the worker host (docs/nests/phase-a-plan.md).
+        .merge(crate::nests::internal_router())
         .route(
             "/internal/v1/entitlements/{provider}/{environment}/{reference}",
             put(billing_internal::put_entitlement),

@@ -55,6 +55,8 @@ const ROUTERS: &[(&str, &str)] = &[
     ("webhooks.rs", "pub(crate) fn router("),
     ("meetings.rs", "pub(crate) fn router("),
     ("meetings.rs", "pub(crate) fn internal_router("),
+    ("nests.rs", "pub(crate) fn router("),
+    ("nests.rs", "pub(crate) fn internal_router("),
 ];
 
 const DEPTH: usize = 4;

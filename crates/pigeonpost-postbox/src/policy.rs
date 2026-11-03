@@ -75,6 +75,8 @@ pub(crate) enum Action {
     ManageOwnAccount,
     /// `POST /internal/v1/accounts/{id}/purge`: remove an empty account (ops only, Phase 9).
     PurgeEmptyAccount,
+    /// `/internal/v1/nests*`: create, list, run and delete hosted agents (Nests Phase A, ops).
+    ManageNests,
     /// Take part in a group as one's own mailbox: read, post, leave, own keys (SDS §4.4). Agents
     /// may; a connector acting for the member may not reach E2EE content at all.
     GroupParticipate,
@@ -246,6 +248,7 @@ impl Action {
             | Action::CallEvents
             | Action::ModerateAvatars
             | Action::PurgeEmptyAccount
+            | Action::ManageNests
             | Action::GroupCallAdmission => Requirement::Service,
             Action::GroupParticipate | Action::CalendarUse => Requirement::NotConnector,
             Action::MeetingAccess => Requirement::Service,

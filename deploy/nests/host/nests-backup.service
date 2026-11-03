@@ -1,0 +1,6 @@
+[Unit]
+Description=Nests ledger backup
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/nests-backup

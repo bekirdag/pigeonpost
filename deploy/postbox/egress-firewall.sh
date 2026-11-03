@@ -23,6 +23,10 @@ NETWORK="${PP_POSTBOX_NETWORK:-pigeonpost-postbox_default}"
 CHAIN=PP-POSTBOX-EGRESS
 RESOLVERS="${PP_POSTBOX_DNS:-8.8.8.8 1.1.1.1}"
 PORTS="${PP_POSTBOX_EGRESS_PORTS:-443,8443}"
+# Exact private TCP destinations allowed before the private-range drops, as space-separated
+# `ip:port` (e.g. "10.66.0.2:8790" for nestd over WireGuard, Nests Phase A). Empty by default, so
+# nothing changes unless an operator names a destination.
+ALLOW="${PP_POSTBOX_EGRESS_ALLOW:-}"
 PRIVATE="0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 169.254.0.0/16 172.16.0.0/12 \
 192.0.0.0/24 192.0.2.0/24 192.168.0.0/16 198.18.0.0/15 198.51.100.0/24 203.0.113.0/24 \
 224.0.0.0/4 240.0.0.0/4"
@@ -55,6 +59,17 @@ apply)
         iptables -A "$CHAIN" -d "$r" -p udp --dport 53 -j RETURN
         iptables -A "$CHAIN" -d "$r" -p tcp --dport 53 -j RETURN
     done
+    for dest in $ALLOW; do
+        ip="${dest%:*}"
+        port="${dest##*:}"
+        case "$ip:$port" in
+        *[!0-9.:]* | :* | *: | *:*:*)
+            echo "egress-firewall: PP_POSTBOX_EGRESS_ALLOW entry '$dest' is not ip:port" >&2
+            exit 1
+            ;;
+        esac
+        iptables -A "$CHAIN" -d "$ip/32" -p tcp --dport "$port" -j RETURN
+    done
     for p in $PRIVATE; do
         iptables -A "$CHAIN" -d "$p" -j DROP
     done
@@ -63,7 +78,7 @@ apply)
     iptables -A "$CHAIN" -j DROP
     remove_jumps
     iptables -I DOCKER-USER 1 -s "$net" -j "$CHAIN"
-    echo "egress-firewall: $NETWORK ($net) limited to public TCP $PORTS and DNS to $RESOLVERS"
+    echo "egress-firewall: $NETWORK ($net) limited to public TCP $PORTS and DNS to $RESOLVERS${ALLOW:+, plus $ALLOW}"
     ;;
 remove)
     remove_jumps

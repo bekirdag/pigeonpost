@@ -207,9 +207,18 @@ pub async fn run(home: &Path, once: bool) -> Result<(), Error> {
         crate::shell::agent::start(home);
     }
 
+    let mailbox_mode = listens_by_mailbox();
+    if mailbox_mode {
+        log_line(home, "listening by mailbox credential (no account sign-in)");
+    }
     let mut backoff = BACKOFF_MIN;
     loop {
-        match stream_once(home).await {
+        let pass = if mailbox_mode {
+            poll_once(home).await
+        } else {
+            stream_once(home).await
+        };
+        match pass {
             Ok(()) => {
                 // A clean end of stream is the server closing an idle connection; reconnect
                 // promptly rather than treating it as a failure.
@@ -225,6 +234,63 @@ pub async fn run(home: &Path, once: bool) -> Result<(), Error> {
         }
         tokio::time::sleep(backoff).await;
     }
+}
+
+/// `PIGEONPOST_AGENTD_LISTEN=mailbox`: hear about mail by long-polling each routed mailbox with
+/// that mailbox's own credential, instead of holding the account event stream.
+///
+/// The event stream needs an account sign-in, and a hosted Nest must never hold one: its only
+/// credential is the one mailbox it was enrolled as (Nests plan §6.2). Anything else means the
+/// default, account mode.
+fn listens_by_mailbox() -> bool {
+    std::env::var("PIGEONPOST_AGENTD_LISTEN").is_ok_and(|v| v.trim() == "mailbox")
+}
+
+/// How long one mailbox poll may wait on the postbox for mail to arrive.
+const POLL_WAIT_SECS: u64 = 50;
+/// Floor between polls. Unread mail this daemon decided not to act on stays unread, and the postbox
+/// answers a poll at once while any is waiting; without a floor that is a busy loop.
+const POLL_GAP: Duration = Duration::from_secs(3);
+
+/// One pass over every routed mailbox: list its unread mail and hand each message to [`handle`],
+/// exactly as a streamed event would be. `handle` dedupes on the event id, and the message's
+/// storage sequence number is unique and never reused, so a message listed by two polls is
+/// handled once.
+async fn poll_once(home: &Path) -> Result<(), Error> {
+    let routing = crate::executor::load_routing(home)?;
+    if routing.mailbox.is_empty() {
+        return Err("mailbox listening needs at least one [[mailbox]] route".into());
+    }
+    // One mailbox can wait on the server; several are polled in turn without waiting, so one quiet
+    // mailbox does not hold up the others.
+    let wait = if routing.mailbox.len() == 1 {
+        POLL_WAIT_SECS
+    } else {
+        0
+    };
+    for route in &routing.mailbox {
+        let credential = crate::postbox_cmd::credential_anywhere(home, &route.address)?;
+        for message in crate::postbox_cmd::unread_wait(&credential, wait).await? {
+            let (Some(seq), Some(id), Some(from)) = (
+                message["seq"].as_i64(),
+                message["message_id"].as_str(),
+                message["from"].as_str(),
+            ) else {
+                continue;
+            };
+            handle(
+                home,
+                &MailEvent {
+                    event_id: seq,
+                    mailbox: route.address.clone(),
+                    message_id: id.to_string(),
+                    sender: from.to_string(),
+                },
+            )?;
+        }
+    }
+    tokio::time::sleep(POLL_GAP).await;
+    Ok(())
 }
 
 async fn stream_once(home: &Path) -> Result<(), Error> {
@@ -1411,6 +1477,7 @@ fn runtime_programs(config: &crate::executor::RoutingConfig) -> Vec<String> {
                 crate::executor::Runtime::Mcoda(_) | crate::executor::Runtime::McodaCloud(_) => {
                     "mcoda"
                 }
+                crate::executor::Runtime::Nest => crate::runner::NEST_RUNNER,
             }
             .to_string();
             if !seen.contains(&program) {

@@ -3044,6 +3044,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "pigeonpost-nests"
+version = "0.7.18"
+dependencies = [
+ "axum",
+ "ed25519-dalek 2.2.0",
+ "rand_core 0.6.4",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "subtle",
+ "tokio",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+ "zeroize",
+]
+
+[[package]]
 name = "pigeonpost-postbox"
 version = "0.7.18"
 dependencies = [

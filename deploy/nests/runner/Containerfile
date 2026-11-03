@@ -1,0 +1,32 @@
+# Pigeonpost Nest runner image (Phase A): agentd + the bounded Nest runner, nothing else.
+#
+# Both base images are pinned by digest; the build refuses to start from anything else. The final
+# image has no shell tools beyond Debian's base, no compiler, no package manager cache, and runs as
+# uid 10001. Its root filesystem is mounted read-only by the control service; the Nest's volume
+# appears at /nest.
+#
+# Built on the Nests host from a source tree at a merged commit:
+#   deploy/nests/runner/build.sh <commit>
+ARG RUST_IMAGE=docker.io/library/rust:1.91.1-slim-bookworm@sha256:8514999d4786ef12efe89239e86b3d0a021b94b9d35108c8efe6c79ca7dc1a65
+ARG BASE_IMAGE=docker.io/library/debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3
+
+FROM ${RUST_IMAGE} AS build
+WORKDIR /src
+COPY . .
+# The image's toolchain is the repo's (1.91.1); dropping the toolchain file keeps rustup from
+# fetching components the build does not need.
+RUN rm -f rust-toolchain.toml \
+ && cargo build --release --locked -p pigeonpost-cli -p pigeonpost-nests \
+      --bin pigeonpost --bin pigeonpost-nest-runner --bin pigeonpost-nestd \
+ && strip target/release/pigeonpost target/release/pigeonpost-nest-runner target/release/pigeonpost-nestd
+
+FROM ${BASE_IMAGE}
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates \
+ && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
+ && useradd --uid 10001 --no-create-home --home-dir /nest/home --shell /usr/sbin/nologin nest
+COPY --from=build /src/target/release/pigeonpost /usr/local/bin/pigeonpost
+COPY --from=build /src/target/release/pigeonpost-nest-runner /usr/local/bin/pigeonpost-nest-runner
+USER 10001:10001
+ENV PIGEONPOST_HOME=/nest/home PIGEONPOST_AGENTD_LISTEN=mailbox
+ENTRYPOINT ["/usr/local/bin/pigeonpost-nest-runner", "init"]

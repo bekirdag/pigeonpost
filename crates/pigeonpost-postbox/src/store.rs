@@ -32,6 +32,7 @@ mod limits;
 mod listing;
 pub(crate) mod meetings;
 mod msgactions;
+mod nests;
 mod org_api;
 mod org_model;
 mod orgs;
@@ -991,6 +992,8 @@ impl Store {
         conn.execute_batch(limits::SCHEMA)?;
         // Phase 10: phone numbers, contact discovery, SMS invitations, display names (SDS §14D).
         conn.execute_batch(contacts::SCHEMA)?;
+        // Nests Phase A: hosted agents and their one-time enrollment codes.
+        conn.execute_batch(nests::SCHEMA)?;
         for stmt in MIGRATIONS
             .iter()
             .chain(filtering::MIGRATIONS)

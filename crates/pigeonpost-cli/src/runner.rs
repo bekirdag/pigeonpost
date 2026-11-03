@@ -357,8 +357,18 @@ pub fn argv(
             }
             ("mcoda".into(), args, StdinSource::Null)
         }
+        // The Nest runner has no tiers of its own: it makes one bounded model call and has no
+        // tools, so every permission tier means the same thing to it. Prompt on stdin, as above.
+        Runtime::Nest => (
+            NEST_RUNNER.into(),
+            vec!["answer".into()],
+            StdinSource::File(prompt_file.to_path_buf()),
+        ),
     }
 }
+
+/// The program a `runtime = "nest"` route spawns, from `PATH` inside the Nest image.
+pub const NEST_RUNNER: &str = "pigeonpost-nest-runner";
 
 /// Where a child's stdin comes from.
 #[derive(Debug, PartialEq, Eq)]
@@ -377,7 +387,7 @@ pub fn extract(runtime: &Runtime, stdout: &str) -> Result<(String, Option<String
     let (text, adapter) = match runtime {
         // Both print the answer and nothing else. `codex exec` without `--json` writes the
         // final message to stdout, which is the same contract.
-        Runtime::Claude | Runtime::Codex => (stdout.trim().to_string(), None),
+        Runtime::Claude | Runtime::Codex | Runtime::Nest => (stdout.trim().to_string(), None),
         Runtime::Mcoda(_) | Runtime::McodaCloud(_) => {
             match serde_json::from_str::<serde_json::Value>(stdout) {
                 Ok(value) => {
@@ -680,6 +690,26 @@ pub async fn run(
 
 #[cfg(test)]
 mod tests {
+    /// The Nest runner reads the prompt on stdin, whatever the tier: it has no tools to widen.
+    #[test]
+    fn the_nest_runner_takes_its_prompt_on_stdin_at_every_tier() {
+        let prompt = Path::new("/tmp/prompt.txt");
+        for tier in [
+            Permission::ReadOnly,
+            Permission::Workspace,
+            Permission::Full,
+        ] {
+            let (program, args, stdin) = argv(&Runtime::Nest, prompt, tier);
+            assert_eq!(program, NEST_RUNNER);
+            assert_eq!(args, vec!["answer".to_string()]);
+            assert_eq!(stdin, StdinSource::File(prompt.to_path_buf()));
+        }
+        assert_eq!(
+            extract(&Runtime::Nest, "  the answer \n").unwrap().0,
+            "the answer"
+        );
+    }
+
     use super::*;
     use crate::executor::MailboxRoute;
 

@@ -1,0 +1,4 @@
+# /etc/systemd/network/50-nests-svc.netdev — the host's service address for sandboxes (broker).
+[NetDev]
+Name=nests-svc
+Kind=dummy

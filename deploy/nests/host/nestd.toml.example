@@ -1,0 +1,51 @@
+# /etc/nests/nestd.toml — Nests Phase A on nests-1. No secrets in this file.
+db = "/var/lib/nests/ledger/nestd.db"
+
+[control]
+# WireGuard address facing the postbox host only. Never a public address.
+bind = "10.66.0.2:8790"
+# SHA-256 (hex) of POSTBOX_NESTS_TOKEN; the token itself lives only on the postbox host.
+token_sha256_file = "/etc/nests/control-token.sha256"
+idle_stop_secs = 900
+# Admission: resident Nests (running or paused). Measured; see docs/nests/phase-a-plan.md §3.
+max_running = 16
+reconcile_secs = 60
+
+[sandbox]
+runtime = "gvisor"
+oci_runtime = "runsc-nests"
+# Pinned by digest; set by deploy/nests/runner/build.sh.
+image = "localhost/pigeonpost-nest-runner@sha256:REPLACE"
+network = "nests"
+memory_mib = 512
+cpu_weight = 100
+cpu_max_millis = 1000
+pids = 128
+tmp_mib = 64
+postbox_host = "postbox.pigeonpost.dev"
+postbox_ip = "45.132.181.100"
+postbox_url = "https://postbox.pigeonpost.dev"
+broker_ip = "10.67.255.1"
+broker_port = 8788
+
+[storage]
+backend = "lvm-luks"
+vg = "nests"
+pool = "pool"
+mount_root = "/var/lib/nests/mnt"
+key_dir = "/var/lib/nests/keys"
+default_gib = 5
+# Thin pool is 62.6 GiB; no overcommit.
+max_total_gib = 60
+sandbox_uid = 10001
+
+[broker]
+bind = "10.67.255.1:8788"
+# Until the mswarm Pigeonpost tenant exists: the local mock. Then
+# https://api.mswarm.org/v1/chat/completions with the tenant's key.
+upstream_url = "http://127.0.0.1:8789/v1/chat/completions"
+upstream_key_file = "/run/credentials/nestd-broker.service/upstream.key"
+model = "deepseek/deepseek-v4.1-flash-1017"
+max_input_tokens = 16384
+max_output_tokens = 1024
+upstream_timeout_secs = 120

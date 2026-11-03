@@ -353,6 +353,10 @@ pub enum Runtime {
     /// An mcoda agent that is expected to be remote. Separate from `Mcoda` so that sending
     /// another agent's text off this machine cannot be reached by a routing default drifting.
     McodaCloud(String),
+    /// The hosted Nest runner (`pigeonpost-nest-runner answer`): one bounded model call through the
+    /// Nest's model broker. Not local — the text leaves the sandbox for the broker and its upstream
+    /// model provider, which is the processing destination a Nest discloses.
+    Nest,
 }
 
 /// Slug prefix mcoda gives the managed remote agents it materialises.
@@ -364,13 +368,13 @@ impl Runtime {
     /// The premise in this module's header — routing is local — is only true if the thing on the
     /// end of it is local too, so the caller checks this before handing over untrusted text.
     pub fn is_local(&self) -> bool {
-        !matches!(self, Runtime::McodaCloud(_))
+        !matches!(self, Runtime::McodaCloud(_) | Runtime::Nest)
     }
 
     /// The pinned agent slug, where the runtime names one.
     pub fn slug(&self) -> Option<&str> {
         match self {
-            Runtime::Claude | Runtime::Codex => None,
+            Runtime::Claude | Runtime::Codex | Runtime::Nest => None,
             Runtime::Mcoda(slug) | Runtime::McodaCloud(slug) => Some(slug),
         }
     }
@@ -397,6 +401,7 @@ impl std::str::FromStr for Runtime {
         match text {
             "claude" => Ok(Runtime::Claude),
             "codex" => Ok(Runtime::Codex),
+            "nest" => Ok(Runtime::Nest),
             // Named the family but not the agent. Whether mcoda is installed has nothing to do with
             // it — this is a spelling rule, and saying "unknown runtime" here sends people off to
             // check their installation for a problem that is one word long.
@@ -1733,6 +1738,16 @@ mod tests {
             Runtime::McodaCloud("mswarm-cloud-some-remote".into())
         );
         assert!(!cloud.is_local());
+    }
+
+    /// A Nest's runner sends the request to its model broker, off the sandbox: it parses, and it
+    /// is never reported as local.
+    #[test]
+    fn the_nest_runtime_parses_and_is_not_local() {
+        let nest = "nest".parse::<Runtime>().unwrap();
+        assert_eq!(nest, Runtime::Nest);
+        assert!(!nest.is_local());
+        assert_eq!(nest.slug(), None);
     }
 
     #[test]

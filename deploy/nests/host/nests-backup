@@ -1,0 +1,20 @@
+#!/bin/sh
+# /usr/local/sbin/nests-backup — nightly consistent copy of the Nests ledger, kept 14 days.
+#
+# Nest *volumes* are not copied off-host in Phase A: no independent backup storage is defined for
+# Nests yet (docs/nests/phase-a-plan.md §8). When one is, point restic at it with
+# RESTIC_REPOSITORY/RESTIC_PASSWORD_FILE in /etc/nests/backup.env and this script also runs
+# `restic backup` of the ledger copy and each open Nest volume (snapshots are encrypted by restic).
+set -eu
+DIR=/var/backups/nests
+mkdir -p "$DIR"; chmod 700 "$DIR"
+STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+sqlite3 /var/lib/nests/ledger/nestd.db ".backup '$DIR/nestd-$STAMP.db'"
+chmod 600 "$DIR/nestd-$STAMP.db"
+find "$DIR" -name 'nestd-*.db' -mtime +14 -delete
+if [ -f /etc/nests/backup.env ]; then
+  . /etc/nests/backup.env
+  export RESTIC_REPOSITORY RESTIC_PASSWORD_FILE
+  restic backup --quiet --tag nests "$DIR/nestd-$STAMP.db" /var/lib/nests/mnt
+  restic forget --quiet --tag nests --keep-daily 14 --keep-weekly 8 --prune
+fi

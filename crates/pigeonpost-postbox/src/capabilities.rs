@@ -121,6 +121,10 @@ pub(crate) const KNOWN_FEATURES: &[(&str, &str)] = &[
         "Invite a contact by SMS through saas_be/Novu (/v1/contacts/invites, SDS §14D)",
     ),
     (
+        NESTS,
+        "Nests: hosted agents on the worker host, /internal/v1/nests and /v1/nests/enroll (Phase A, no sales)",
+    ),
+    (
         DISPLAY_NAMES,
         "Self-set display names per mailbox (/v1/profile/name, /v1/profiles, profile.name events)",
     ),
@@ -183,6 +187,8 @@ pub(crate) const RECIPIENT_LOOKUP: &str = "recipient_lookup";
 pub(crate) const ORG_API: &str = "org_api";
 /// SSH to agent workspaces (Phase 8, SDS §11, docs/agent-ssh.md).
 pub(crate) const AGENT_SSH: &str = "agent_ssh";
+/// Hosted agents (Nests Phase A, docs/nests/phase-a-plan.md). Off unless a row turns it on.
+pub(crate) const NESTS: &str = "nests";
 
 /// Typed event names the account stream may emit when `account_events` is on.
 pub(crate) const EVENT_TYPES: &[&str] = &[

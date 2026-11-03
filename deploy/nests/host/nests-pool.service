@@ -1,0 +1,12 @@
+[Unit]
+Description=Nests storage pool (loop-backed LVM thin pool)
+After=local-fs.target
+Before=nestd-control.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/nests-pool-attach
+
+[Install]
+WantedBy=multi-user.target

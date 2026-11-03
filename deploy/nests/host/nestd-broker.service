@@ -1,0 +1,33 @@
+[Unit]
+Description=Pigeonpost Nests model broker (sandbox-facing, budget-reserving)
+After=network-online.target systemd-networkd.service
+Wants=network-online.target
+
+[Service]
+User=nest-broker
+Group=nests
+LoadCredential=upstream.key:/etc/nests/upstream.key
+ExecStart=/usr/local/bin/pigeonpost-nestd broker --config /etc/nests/nestd.toml
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ReadWritePaths=/var/lib/nests/ledger
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+CapabilityBoundingSet=
+SystemCallFilter=@system-service
+UMask=0007
+MemoryMax=256M
+Environment=RUST_LOG=info
+
+[Install]
+WantedBy=multi-user.target

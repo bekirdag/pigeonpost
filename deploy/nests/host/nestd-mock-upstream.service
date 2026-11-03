@@ -1,0 +1,19 @@
+[Unit]
+Description=Pigeonpost Nests mock model upstream (loopback; until the mswarm PP tenant exists)
+
+[Service]
+DynamicUser=yes
+LoadCredential=upstream.key:/etc/nests/upstream.key
+ExecStart=/usr/local/bin/pigeonpost-nestd mock-upstream --bind 127.0.0.1:8789 --key-file ${CREDENTIALS_DIRECTORY}/upstream.key
+Restart=on-failure
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+CapabilityBoundingSet=
+MemoryMax=64M
+
+[Install]
+WantedBy=multi-user.target

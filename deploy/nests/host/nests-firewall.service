@@ -1,0 +1,14 @@
+[Unit]
+Description=Nests sandbox egress policy (nftables tables inet nests, bridge nests_l2)
+After=network-pre.target
+Before=network-online.target nestd-control.service nestd-broker.service
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/nests/nests.nft
+ExecReload=/usr/sbin/nft -f /etc/nests/nests.nft
+
+[Install]
+WantedBy=multi-user.target
