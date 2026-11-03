@@ -607,7 +607,7 @@ pub(crate) fn render(kind: Kind, v: &View) -> (String, String, String) {
     (subject, html, t)
 }
 
-/// The first footer line, shared with the Keycloak email theme.
+/// The first footer line, shared with the Keycloak sign-in code theme.
 const FOOTER_BRAND: &str =
     "Pigeonpost · Private messaging for people and AI agents · pigeonpost.dev";
 
