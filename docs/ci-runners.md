@@ -35,11 +35,44 @@ limit, the missing packages in the image (or per-job installs into `$RUNNER_TOOL
 `DOTNET_INSTALL_DIR` under it), and a green run of `ci.yml`, `group-crypto.yml`, `android.yml` and
 `linux-desktop.yml` on a branch with the variable set.
 
+## Self-sufficient jobs (2026-11-03)
+
+Every job that can select the pool now provisions what it used to take from the hosted image:
+
+- `.github/actions/self-hosted-prereqs` runs right after checkout. On GitHub-hosted runners it does
+  nothing. On the worker it reads the container's cgroup limits (`nproc` reports all 16 host cores,
+  the container has 3 CPUs and 8 GiB) and exports `CARGO_BUILD_JOBS`, `GRADLE_MAX_WORKERS`,
+  `CMAKE_BUILD_PARALLEL_LEVEL` and `MAKEFLAGS` (2 on wodomini), then `apt-get install`s only the
+  requested packages that are missing (`ruby` for the lint policy checks and the Cubemeld catalog,
+  `sqlite3 systemd` for acceptance). It never upgrades packages. Installs persist only in this
+  repository's runner container; recreating the container removes them.
+- The same action gives each job a throwaway `CARGO_HOME` under `$RUNNER_TEMP` and puts the image's
+  rustup (`/opt/cargo/bin`) on `PATH`. `Swatinem/rust-cache`'s post-job cleanup deletes every regular
+  file in `$CARGO_HOME/bin` that the job did not `cargo install`; with the persistent `/opt/cargo` it
+  deleted `rustup` and the next job failed with `rustc -vV` / `cargo: command not found`. The action
+  reinstalls rustup there if an older job already removed it.
+- `inbox web` installs Chrome for Testing with `browser-actions/setup-chrome` (self-hosted only) and
+  the Linux test runners pass `--no-sandbox`, because Chrome's sandbox needs user namespaces.
+- `setup-dotnet` installs into `$RUNNER_TEMP/dotnet`; the Android Gradle calls pass
+  `--max-workers=$GRADLE_MAX_WORKERS`.
+- `acceptance` → proxy privacy sets `TMPDIR=$RUNNER_TEMP`: Docker is the host's daemon (socket
+  mount), and only the runner directory has the same path inside and outside the container.
+
+Jobs that stay on GitHub-hosted runners even with the variable on:
+
+| Job | Why |
+|---|---|
+| `linux-desktop.yml` → `build` | `flatpak-builder` needs bubblewrap user namespaces, which Docker's default seccomp profile denies in the runner container; it also installs the built `.deb` system-wide. |
+| `linux-desktop.yml` → `release` | Attests build provenance (same rule as the release attestation jobs). |
+| `release.yml` → `container_candidate`, `container_verify` | `docker/setup-qemu-action` registers binfmt handlers in the shared host kernel. |
+| The rest of `release.yml` | Tag-only, never qualified on the worker. It follows its own variable, `PIGEONPOST_SELF_HOSTED_RELEASE` (unset = hosted); its `ci` call still follows `PIGEONPOST_SELF_HOSTED_CI`. |
+
 ## Required exceptions
 
 | Job type | Runner | Reason |
 |---|---|---|
-| Normal Linux/X64 tests, Android builds, packaging and release preparation | Hosted Ubuntu; `wodo-ci` pool only with `PIGEONPOST_SELF_HOSTED_CI=true` | See above. |
+| Normal Linux/X64 tests and Android builds | Hosted Ubuntu; `wodo-ci` pool only with `PIGEONPOST_SELF_HOSTED_CI=true` | See above. |
+| `release.yml` build and preparation jobs | Hosted Ubuntu; `wodo-ci` pool only with `PIGEONPOST_SELF_HOSTED_RELEASE=true` | Tag-only; not yet qualified on the worker. |
 | Fork PR jobs | Original hosted Ubuntu label | Contributor code runs separately from persistent workers. |
 | Native Linux/X64 group-encryption library | `ubuntu-22.04`; `wodo-ci` pool when opted in | Keep the glibc 2.35 floor check; the initial self-hosted build passed it. `ubuntu-22.04` is the default and fork-PR label. |
 | Native Linux ARM64, Windows and macOS jobs | Existing OS/architecture label | No matching self-hosted worker is registered for this repository. |

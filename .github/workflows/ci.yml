@@ -29,6 +29,18 @@ jobs:
         working-directory: site-inbox
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Prepare the self-hosted worker (no-op on GitHub-hosted runners)
+        uses: ./.github/actions/self-hosted-prereqs
+      # The hosted image ships google-chrome; the self-hosted worker gets Chrome for Testing (and its
+      # shared libraries) here. Its sandbox needs user namespaces the container does not allow, so
+      # the Linux test runners pass --no-sandbox.
+      - name: Install Chrome on the self-hosted worker
+        id: chrome
+        if: runner.environment == 'self-hosted'
+        uses: browser-actions/setup-chrome@48ad923757ca74d66703209fe939badbdf80f2f4 # v2.2.0
+        with:
+          chrome-version: stable
+          install-dependencies: true
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "24.19.0"
@@ -45,7 +57,9 @@ jobs:
       - name: Enterprise portal end to end (headless Chrome, mock postbox, bridge and realm)
         working-directory: site-enterprise
         timeout-minutes: 4
-        run: CHROME="$(command -v google-chrome || command -v chromium)" npm run test:e2e
+        env:
+          SETUP_CHROME: ${{ steps.chrome.outputs.chrome-path }}
+        run: CHROME="${SETUP_CHROME:-$(command -v google-chrome || command -v chromium)}" npm run test:e2e
       - name: Call signaling (authorization, ringing, signals, TURN credentials)
         working-directory: calls-service
         run: npm test
@@ -56,7 +70,8 @@ jobs:
         timeout-minutes: 6
         env:
           OUT: ${{ runner.temp }}/call-layout
-        run: CHROME="$(command -v google-chrome || command -v chromium)" npm run test:call-layout
+          SETUP_CHROME: ${{ steps.chrome.outputs.chrome-path }}
+        run: CHROME="${SETUP_CHROME:-$(command -v google-chrome || command -v chromium)}" npm run test:call-layout
       - name: Keep the call layout screenshots
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -74,6 +89,9 @@ jobs:
         os: [ubuntu-24.04, macos-14, windows-2022]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Prepare the self-hosted worker (no-op on GitHub-hosted runners)
+        uses: ./.github/actions/self-hosted-prereqs
+        if: runner.os == 'Linux'
       - name: Parse the Windows release lifecycle harness
         if: runner.os == 'Windows'
         shell: pwsh
@@ -114,6 +132,10 @@ jobs:
     runs-on: ${{ vars.PIGEONPOST_SELF_HOSTED_CI == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Prepare the self-hosted worker (no-op on GitHub-hosted runners)
+        uses: ./.github/actions/self-hosted-prereqs
+        with:
+          apt-packages: ruby
       - name: Test the fail-closed Cubemeld App Store broker
         run: python3 .github/scripts/test_cubemeld_iap.py
       - name: Validate the dedicated ChatGPT OAuth provisioning boundaries
@@ -914,6 +936,8 @@ jobs:
     runs-on: ${{ vars.PIGEONPOST_SELF_HOSTED_CI == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Prepare the self-hosted worker (no-op on GitHub-hosted runners)
+        uses: ./.github/actions/self-hosted-prereqs
       - uses: dtolnay/rust-toolchain@8632757d5a758c452f724e9d837848c694a7bb48 # 1.91.1
       - name: Install the exact compatible cargo-audit release
         run: cargo install cargo-audit --version 0.22.2 --locked
@@ -927,6 +951,8 @@ jobs:
     runs-on: ${{ vars.PIGEONPOST_SELF_HOSTED_CI == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Prepare the self-hosted worker (no-op on GitHub-hosted runners)
+        uses: ./.github/actions/self-hosted-prereqs
       - uses: dtolnay/rust-toolchain@8632757d5a758c452f724e9d837848c694a7bb48 # 1.91.1
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo test --locked -p pigeonpost-core --test conformance
@@ -979,6 +1005,10 @@ jobs:
     runs-on: ${{ vars.PIGEONPOST_SELF_HOSTED_CI == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Prepare the self-hosted worker (no-op on GitHub-hosted runners)
+        uses: ./.github/actions/self-hosted-prereqs
+        with:
+          apt-packages: sqlite3 systemd
       - uses: dtolnay/rust-toolchain@8632757d5a758c452f724e9d837848c694a7bb48 # 1.91.1
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -1005,6 +1035,9 @@ jobs:
       - name: Prove generated Caddy logs do not retain source identifiers
         env:
           PIGEONPOST_BIN: ${{ github.workspace }}/target/debug/pigeonpost
+          # Docker bind-mounts these files. On the self-hosted worker the daemon is the host's, and
+          # only the runner directory has the same path on both sides; the container's /tmp does not.
+          TMPDIR: ${{ runner.temp }}
         run: ./deploy/acceptance/proxy-privacy.sh
       - name: Prove v0.1 backups, forward migrations, and restore rollback
         run: ./deploy/acceptance/migration-rollback.sh
@@ -1035,6 +1068,8 @@ jobs:
     runs-on: ${{ vars.PIGEONPOST_SELF_HOSTED_CI == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Prepare the self-hosted worker (no-op on GitHub-hosted runners)
+        uses: ./.github/actions/self-hosted-prereqs
       - uses: dtolnay/rust-toolchain@8632757d5a758c452f724e9d837848c694a7bb48 # 1.91.1
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Assert the exact platform-custody package and feature boundaries
@@ -1293,6 +1328,8 @@ jobs:
         node: ["22.23.2", "24.19.0"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Prepare the self-hosted worker (no-op on GitHub-hosted runners)
+        uses: ./.github/actions/self-hosted-prereqs
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: ${{ matrix.node }}

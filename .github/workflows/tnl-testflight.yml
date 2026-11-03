@@ -73,6 +73,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Prepare the self-hosted worker (no-op on GitHub-hosted runners)
+        uses: ./.github/actions/self-hosted-prereqs
+
       - name: Validate invitation mode
         env:
           REINVITE_PENDING: ${{ inputs.reinvite_pending }}
