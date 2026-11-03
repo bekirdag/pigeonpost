@@ -31,12 +31,15 @@
 //   ONLY=video node tests/e2e-calls/prod-smoke.mjs         # audio | video | mesh | sfu (comma list)
 //   ORIGIN=https://inbox.example POSTBOX=https://postbox.example node tests/e2e-calls/prod-smoke.mjs
 //   RELAY=1 node tests/e2e-calls/prod-smoke.mjs           # every mesh connection through the TURN relay
-//   CHROME=/path/to/chrome   KEEP=1 (keep the accounts)   VERBOSE=1 (page console)
+//   CHROME=/path/to/chrome   KEEP=1 (keep the accounts)   VERBOSE=1 (page console)   FPS=30
+//   DIAG=1 (a voice that is not playing: its element and its audio stream's stats)
+//   A killed run leaves its accounts in $TMPDIR/call-smoke-accounts-<pid>.json; ACCOUNTS=<that
+//   file> on the next run reuses them and then deletes them.
 //
 // Exits 1 on the first failed scenario, after cleaning up.
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -44,6 +47,9 @@ const ORIGIN = process.env.ORIGIN || "https://inbox.pigeonpost.dev";
 const POSTBOX = process.env.POSTBOX || "https://postbox.pigeonpost.dev";
 const ONLY = new Set((process.env.ONLY || "audio,video,mesh,sfu").split(",").map((s) => s.trim()));
 const VERBOSE = process.env.VERBOSE === "1";
+// The synthetic camera's frame rate. Seven tabs of one browser each decoding six videos load a
+// laptop heavily; 15 fps keeps a 7-person call responsive and still proves frames are decoded.
+const FPS = Number(process.env.FPS || 15);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const t0 = Date.now();
 const log = (...a) => console.log(((Date.now() - t0) / 1000).toFixed(1).padStart(6), ...a);
@@ -65,9 +71,14 @@ async function makeAccounts() {
   // One account with two mailboxes: the postbox allows 5 new accounts an hour from one address.
   const out = [];
   const { api_key } = await pb("POST", "/v1/accounts", null, await proofOfWork());
+  // Until cleanup, the key is kept where a killed run can be cleaned up by hand: ACCOUNTS=<file>.
+  const keep = path.join(os.tmpdir(), "call-smoke-accounts-" + process.pid + ".json");
+  const save = () => writeFileSync(keep, JSON.stringify(out.map((a) => ({ api_key: a.api_key, address: a.address, created: true }))), { mode: 0o600 });
+  out.file = keep;
   for (let i = 0; i < 2; i++) {
     const { address } = await pb("POST", "/v1/identities", api_key, { label: "call-smoke-" + i });
     out.push({ api_key, address, created: true });
+    save();
   }
   for (const me of out) for (const other of out) if (me !== other) await pb("PUT", "/v1/contacts", me.api_key, { identity: me.address, peer: other.address, admission: "allow" });
   return out;
@@ -81,6 +92,7 @@ async function removeAccounts(accounts) {
       for (const k of keys || []) await pb("DELETE", "/v1/api-keys/" + encodeURIComponent(k.id), a.api_key);
     } catch (e) { log("cleanup: keys", e.message); }
   }
+  if (accounts.file) rmSync(accounts.file, { force: true });
 }
 
 // ---- headless Chrome over the DevTools protocol --------------------------------------------------
@@ -88,7 +100,7 @@ async function removeAccounts(accounts) {
 // the checks can read what actually arrived.
 const MEDIA = `(() => {
   const synth = (w, h) => { const c = document.createElement("canvas"); c.width = w; c.height = h; const x = c.getContext("2d"); let f = 0;
-    setInterval(() => { f++; x.fillStyle = "hsl(" + (f * 3) % 360 + ",60%,40%)"; x.fillRect(0, 0, w, h); x.fillStyle = "#fff"; x.font = "40px sans-serif"; x.fillText("smoke " + f, 40, h / 2); }, 33);
+    setInterval(() => { f++; x.fillStyle = "hsl(" + (f * 3) % 360 + ",60%,40%)"; x.fillRect(0, 0, w, h); x.fillStyle = "#fff"; x.font = "40px sans-serif"; x.fillText("smoke " + f, 40, h / 2); }, ${Math.round(1000 / FPS)});
     return c.captureStream(30).getVideoTracks()[0]; };
   const tone = () => { const ac = new AudioContext(); const o = ac.createOscillator(); const d = ac.createMediaStreamDestination(); o.connect(d); o.start(); return d.stream.getAudioTracks()[0]; };
   const md = navigator.mediaDevices;
@@ -103,6 +115,14 @@ const MEDIA = `(() => {
       (await pc.getStats()).forEach((r) => { if (r.type !== "inbound-rtp") return; if (r.kind === "audio") { c.audio += r.bytesReceived || 0; c.energy += r.totalAudioEnergy || 0; } else { c.video += r.bytesReceived || 0; c.frames += r.framesDecoded || 0; } });
       out.push(c); }
     return out; };
+  // DIAG=1: each voice element and the stats of the audio stream it plays.
+  window.__voices = async () => { const byTrack = {};
+    for (const pc of window.__pcs) { if (pc.connectionState !== "connected") continue;
+      const st = await pc.getStats(); const tracks = {};
+      pc.getReceivers().forEach((r) => { if (r.track && r.track.kind === "audio") tracks[r.track.id] = r; });
+      st.forEach((r) => { if (r.type === "inbound-rtp" && r.kind === "audio") byTrack[r.trackIdentifier] = { packets: r.packetsReceived, bytes: r.bytesReceived, energy: r.totalAudioEnergy, level: r.audioLevel, conceal: r.concealedSamples, samples: r.totalSamplesReceived, mid: r.mid }; }); }
+    const C = window.PigeonpostCalls && window.PigeonpostCalls.inspect();
+    return { sfu: C && C.sfu, voices: [...document.querySelectorAll("#call-audio audio")].map((a) => ({ t: a.currentTime, rs: a.readyState, paused: a.paused, tracks: (a.srcObject ? a.srcObject.getAudioTracks() : []).map((t) => ({ id: t.id, state: t.readyState, muted: t.muted, enabled: t.enabled, stats: byTrack[t.id] || null })) })) }; };
   // What the page plays: each other person's voice element and video tile, by playback position.
   window.__playing = () => ({
     voices: [...document.querySelectorAll("#call-audio audio")].filter((a) => a.srcObject && a.srcObject.getAudioTracks().length).map((a) => a.currentTime),
@@ -144,8 +164,12 @@ async function launchChrome() {
     if (m.id && pending.has(m.id)) { const { res, rej } = pending.get(m.id); pending.delete(m.id); if (m.error) rej(new Error(JSON.stringify(m.error))); else res(m.result); }
     else if (m.method && m.sessionId && listeners.has(m.sessionId)) listeners.get(m.sessionId)(m.method, m.params);
   });
+  // Every command gives up after 45 s: a page that stops answering must fail the run (and let the
+  // accounts be cleaned up), never hang it.
   const send = (method, params = {}, sessionId) => new Promise((res, rej) => {
-    const i = ++id; pending.set(i, { res, rej });
+    const i = ++id;
+    const timer = setTimeout(() => { pending.delete(i); rej(new Error(method + " timed out")); }, 45000);
+    pending.set(i, { res: (v) => { clearTimeout(timer); res(v); }, rej: (e) => { clearTimeout(timer); rej(e); } });
     ws.send(JSON.stringify({ id: i, method, params, ...(sessionId ? { sessionId } : {}) }));
   });
   const contexts = [], people = [];
@@ -184,7 +208,8 @@ async function launchChrome() {
     // Everyone still on a page leaves their call: a participant who just vanishes is held for the
     // resume grace, and their mailbox counts as busy (no ring) until it ends.
     hangUpAll: async () => { await hangUpAll(people.splice(0)); },
-    close: async () => { for (const c of contexts) await send("Target.disposeBrowserContext", { browserContextId: c }).catch(() => {}); try { ws.close(); } catch (_) {} proc.kill(); try { rmSync(dir, { recursive: true, force: true }); } catch (_) {} },
+    // At most 5 s: a hung page must not keep the accounts from being cleaned up.
+    close: async () => { await Promise.race([Promise.all(contexts.map((c) => send("Target.disposeBrowserContext", { browserContextId: c }).catch(() => {}))), sleep(5000)]); try { ws.close(); } catch (_) {} proc.kill(); try { rmSync(dir, { recursive: true, force: true }); } catch (_) {} },
   };
 }
 
@@ -225,8 +250,8 @@ async function flowingOnce(people, { video, mesh = 0 }) {
   people.forEach((p, i) => {
     const sum = (list, k) => list.reduce((n, c) => n + c[k], 0);
     const links = mesh ? second[i].map((c, j) => [c, first[i][j] || { audio: 0, video: 0, frames: 0 }]) : [[
-      { audio: sum(second[i], "audio"), video: sum(second[i], "video"), frames: sum(second[i], "frames") },
-      { audio: sum(first[i], "audio"), video: sum(first[i], "video"), frames: sum(first[i], "frames") }]];
+      { audio: sum(second[i], "audio"), energy: sum(second[i], "energy"), video: sum(second[i], "video"), frames: sum(second[i], "frames") },
+      { audio: sum(first[i], "audio"), energy: sum(first[i], "energy"), video: sum(first[i], "video"), frames: sum(first[i], "frames") }]];
     if (!links.length) throw new Error(p.name + " has no live connection");
     links.forEach(([now, before], j) => {
       const who = mesh ? " from connection " + (j + 1) : "";
@@ -238,6 +263,7 @@ async function flowingOnce(people, { video, mesh = 0 }) {
     const others = (mesh || people.length) - 1;
     const advancing = (later, earlier) => later.filter((t, k) => t > (earlier[k] ?? 0) + 1).length;
     const voices = advancing(shownLater[i].voices, shown[i].voices), tiles = advancing(shownLater[i].videos, shown[i].videos);
+    if (voices < others && process.env.DIAG === "1") p.evaluate("window.__voices()").then((d) => log("DIAG", p.name, JSON.stringify(d))).catch(() => {});
     if (voices < others) throw new Error(p.name + " plays " + voices + " of " + others + " voices " + JSON.stringify(shownLater[i].voices));
     if (video && tiles < others) throw new Error(p.name + " shows " + tiles + " of " + others + " videos " + JSON.stringify(shownLater[i].videos));
     const a = links.reduce((n, [x, y]) => n + x.audio - y.audio, 0), v = links.reduce((n, [x, y]) => n + x.video - y.video, 0);
