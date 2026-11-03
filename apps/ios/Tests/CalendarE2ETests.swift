@@ -48,6 +48,14 @@ struct CalendarE2ETests {
         let a = fixture.people["alice"]!.address, b = fixture.people["bob"]!.address
         let alice = client("alice"), bob = client("bob")
         let zone = TimeZone(identifier: "Europe/Istanbul")!
+        // Days relative to a base a month ahead: the server stops listing invitations once an event
+        // has ended, so fixed dates turn this suite red as soon as they pass.
+        func day(_ offset: Int) -> String {
+            var calendar = Calendar(identifier: .gregorian); calendar.timeZone = zone
+            let date = calendar.date(byAdding: .day, value: 30 + offset, to: calendar.startOfDay(for: Date()))!
+            let c = calendar.dateComponents([.year, .month, .day], from: date)
+            return String(format: "%04d-%02d-%02d", c.year!, c.month!, c.day!)
+        }
         do {
             let empty = try await alice.calendars(mailbox: a)
             check(empty.isEmpty, "calendar reads do not create a default calendar")
@@ -56,7 +64,7 @@ struct CalendarE2ETests {
             for field in ["unknown_messages", "unnamed_messages"] {
                 _ = try await bob.sendRaw("/v1/policy", method: "PUT", json: ["identity": b, field: "filter"])
             }
-            var draft = CalendarEventDraft(day: try CalendarDay("2026-10-30"), zone: zone, calendarId: folder.id)
+            var draft = CalendarEventDraft(day: try CalendarDay(day(0)), zone: zone, calendarId: folder.id)
             draft.title = "Native review"; draft.rrule = "FREQ=DAILY;COUNT=3"
             draft.meeting.enabled = true; draft.meeting.transport = "sfu"
             var member = CalendarInviteeDraft(); member.destination = b; member.cohost = true
@@ -69,14 +77,14 @@ struct CalendarE2ETests {
             check(created.event.id == retried.event.id && created.event.revision == retried.event.revision, "an identical real create retry returns the original event")
             check(created.event.meeting?.code?.count == 10 && created.event.meeting?.transport == "sfu", "a scheduled30-person call decodes its locator and transport")
             let id = created.event.id
-            let from = Int(try CalendarWallTime("2026-10-29T00:00", tzid: zone.identifier).resolve().timeIntervalSince1970)
-            let to = Int(try CalendarWallTime("2026-11-04T00:00", tzid: zone.identifier).resolve().timeIntervalSince1970)
+            let from = Int(try CalendarWallTime(day(-1) + "T00:00", tzid: zone.identifier).resolve().timeIntervalSince1970)
+            let to = Int(try CalendarWallTime(day(5) + "T00:00", tzid: zone.identifier).resolve().timeIntervalSince1970)
             var listed = try await alice.calendarOccurrences(mailbox: a, from: from, to: to, calendars: [folder.id]).filter { $0.eventId == id }
             check(listed.count == 3, "the server expands the recurrence into three native occurrences")
             let first = listed.sorted { ($0.startsAt ?? 0) < ($1.startsAt ?? 0) }[0]
             let key = CalendarEventKey(eventId: id, occurrenceId: first.occurrenceId)
             let detail = try await alice.calendarEvent(mailbox: a, id: id, occurrenceId: key.occurrenceId)
-            check(detail.occurrence?.start == "2026-10-30T09:00" && detail.occurrence?.occurrenceId == first.occurrenceId, "detail keeps the authored wall time and original occurrence id")
+            check(detail.occurrence?.start == day(0) + "T09:00" && detail.occurrence?.occurrenceId == first.occurrenceId, "detail keeps the authored wall time and original occurrence id")
             let invited = try await bob.calendarInvitations(mailbox: b, filtered: false)
             let filtered = try await bob.calendarInvitations(mailbox: b, filtered: true)
             check(filtered.contains { $0.eventId == id }, "the recipient's explicit stranger policy places the invitation in Filtered")
@@ -116,10 +124,10 @@ struct CalendarE2ETests {
 
             let latest = try await alice.calendarEvent(mailbox: a, id: id, occurrenceId: first.occurrenceId)
             var edit = try CalendarEventDraft(target: .init(response: latest, key: key, scope: .this), fallbackZone: zone)
-            edit.startDay = try CalendarDay("2026-11-02"); edit.lastDay = edit.startDay; edit.startTime = "14:30"; edit.endTime = "15:30"
+            edit.startDay = try CalendarDay(day(3)); edit.lastDay = edit.startDay; edit.startTime = "14:30"; edit.endTime = "15:30"
             var changed = try edit.fields(); changed["expected_revision"] = latest.event.revision!; changed["scope"] = "this"; changed["occurrence_id"] = first.occurrenceId
             let moved = try await alice.updateCalendarEvent(mailbox: a, id: id, payload: CalendarWritePayload(changed))
-            check(moved.occurrence?.occurrenceId == first.occurrenceId && moved.occurrence?.start == "2026-11-02T14:30", "a real moved occurrence retains its opaque id")
+            check(moved.occurrence?.occurrenceId == first.occurrenceId && moved.occurrence?.start == day(3) + "T14:30", "a real moved occurrence retains its opaque id")
             await refused("revision_conflict", "a captured older revision cannot overwrite the moved event") {
                 _ = try await alice.updateCalendarEvent(mailbox: a, id: id, payload: CalendarWritePayload(["expected_revision": latest.event.revision!, "scope": "all", "title": "Stale"]))
             }
@@ -157,7 +165,7 @@ struct CalendarE2ETests {
             _ = await management.changeFeed(id: folder.id, enabled: false, projection: "busy")
             let (_, revoked) = try await http.data(from: feedURL)
             check((revoked as? HTTPURLResponse)?.statusCode != 200, "revoking a feed invalidates the previously copied link")
-            let rawICS = Data("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:external-example\r\nDTSTAMP:20261025T000000Z\r\nDTSTART;VALUE=DATE:20261101\r\nDTEND;VALUE=DATE:20261102\r\nSUMMARY:Imported private copy\r\nATTENDEE:mailto:never-send@calendar.test\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n".utf8)
+            let rawICS = Data("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:external-example\r\nDTSTAMP:20261025T000000Z\r\nDTSTART;VALUE=DATE:\(day(2).replacingOccurrences(of: "-", with: ""))\r\nDTEND;VALUE=DATE:\(day(3).replacingOccurrences(of: "-", with: ""))\r\nSUMMARY:Imported private copy\r\nATTENDEE:mailto:never-send@calendar.test\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n".utf8)
             guard let preview = await management.previewImport(data: rawICS, calendar: folder.id) else { throw APIError(status: 0, code: "fixture_import_preview", detail: nil) }
             check(preview.events?.count == 1 && preview.calendarId == folder.id && preview.events?.first?.importable == true, "native import previews real ICS with its resolved calendar and importability decision")
             guard let imported = await management.confirmImport(draft: preview.draftId, selected: [0, 0], calendar: folder.id) else { throw APIError(status: 0, code: "fixture_import_confirm", detail: nil) }
@@ -172,7 +180,7 @@ struct CalendarE2ETests {
             let lossClient = client("alice", at: proxy)
             let lossStore = CalendarStore(client: lossClient)
             lossStore.configure(mailbox: a, enabled: true, emailEnabled: false)
-            var uncertain = CalendarEventDraft(day: try CalendarDay("2026-10-31"), zone: zone, calendarId: folder.id)
+            var uncertain = CalendarEventDraft(day: try CalendarDay(day(1)), zone: zone, calendarId: folder.id)
             uncertain.title = "Response lost after commit"
             var control = URLRequest(url: proxy.appendingPathComponent("__test/control")); control.httpMethod = "POST"
             control.setValue("application/json", forHTTPHeaderField: "content-type"); control.httpBody = Data(#"{"mode":"after"}"#.utf8)
