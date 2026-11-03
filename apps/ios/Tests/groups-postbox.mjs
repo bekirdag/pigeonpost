@@ -68,7 +68,8 @@ for (let i = 0; ; i++) {
   if (i > 120) throw new Error("postbox did not start");
   await sleep(250);
 }
-for (const name of calendarMode ? ["calendar", "message_filtering", "account_events"] : ["groups", "disappearing", "account_events"]) {
+// Group edits and replies follow message_edit / message_reply (SDS §14C, #197), as in production.
+for (const name of calendarMode ? ["calendar", "message_filtering", "account_events"] : ["groups", "disappearing", "account_events", "message_edit", "message_reply"]) {
   const r = await fetch(`${INT}/internal/v1/features/${name}`, { method: "PUT", headers: { authorization: "Bearer " + OPS, "content-type": "application/json" }, body: JSON.stringify({ scope: "global", enabled: true }) });
   if (!r.ok) throw new Error(`flag ${name}: ${r.status}`);
 }
