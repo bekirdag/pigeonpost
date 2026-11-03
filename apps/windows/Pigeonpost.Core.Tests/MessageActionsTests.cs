@@ -68,9 +68,9 @@ internal static class MessageActionsTests
                 MsgRef = Ref, ReplyTo = new(MessageId: "parent_copy", Quote: "A remembered quote"), EditedAt = 120, EditCount = 2,
                 Receipt = new("delivered", 110), AgentStatus = new("working", 115) };
             var row = Build(source);
-            Require(row.MsgRef == Ref && row.ReplyTo?.MessageId == "parent_copy" && row.EditedLabel == "Edited" && row.ReceiptLabel == "Working");
+            Require(row.MsgRef == Ref && row.ReplyTo?.MessageId == "parent_copy" && row.EditedLabel == "Edited" && row.ReceiptLabel == "Agent working on this" && row.ShowsAgentGear);
             var seen = Build(source with { Receipt = new("seen", 110, 130), AgentStatus = null });
-            Require(seen.ReceiptLabel == "Seen" && !StableList.SameMessage(row, seen));
+            Require(seen.ReceiptLabel.StartsWith("Seen ", StringComparison.Ordinal) && seen.ShowsSeenTicks && !StableList.SameMessage(row, seen));
             var incoming = Build(source with { Direction = "in", From = Peer });
             Require(incoming.Receipt is null && incoming.AgentStatus is null && incoming.ReceiptLabel == "");
             Require((row with { Receipt = new("unknown"), AgentStatus = new("done") }).ReceiptLabel == "");

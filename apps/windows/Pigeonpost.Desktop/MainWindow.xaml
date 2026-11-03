@@ -32,6 +32,19 @@
                 <Setter Property="Background" Value="Transparent" /><Setter Property="BorderThickness" Value="0" />
                 <Setter Property="CornerRadius" Value="6" /><Setter Property="Width" Value="26" /><Setter Property="Height" Value="26" /><Setter Property="Padding" Value="0" />
             </Style>
+            <!-- §14C.7: the action row under a bubble. 18 px line icons in 30 px buttons. -->
+            <Style x:Key="MessageRowButton" TargetType="Button">
+                <Setter Property="Background" Value="Transparent" /><Setter Property="BorderThickness" Value="0" />
+                <Setter Property="Foreground" Value="{ThemeResource TextSecondaryBrush}" /><Setter Property="CornerRadius" Value="7" />
+                <Setter Property="Width" Value="30" /><Setter Property="Height" Value="30" /><Setter Property="Padding" Value="0" />
+                <Setter Property="MinWidth" Value="0" /><Setter Property="MinHeight" Value="0" />
+            </Style>
+            <!-- The receipt marks inside a sent bubble; activating them opens message info. -->
+            <Style x:Key="ReceiptMarkButton" TargetType="Button">
+                <Setter Property="Background" Value="Transparent" /><Setter Property="BorderThickness" Value="0" />
+                <Setter Property="CornerRadius" Value="4" /><Setter Property="Padding" Value="2,0" />
+                <Setter Property="MinWidth" Value="0" /><Setter Property="MinHeight" Value="0" /><Setter Property="VerticalAlignment" Value="Center" />
+            </Style>
             <Style x:Key="SecondaryActionButton" TargetType="Button">
                 <Setter Property="MinHeight" Value="36" /><Setter Property="Padding" Value="16,0" /><Setter Property="CornerRadius" Value="9" />
                 <Setter Property="FontSize" Value="13.5" /><Setter Property="FontWeight" Value="Medium" />
@@ -59,10 +72,13 @@
                 </ControlTemplate></Setter.Value></Setter>
             </Style>
             <DataTemplate x:Key="IncomingMessage" x:DataType="core:ThreadMessage">
-                <Border HorizontalAlignment="Left" MaxWidth="620" Margin="24,7,64,7" CornerRadius="14"
+                <!-- §14C.7: the bubble, then the action row below and outside it (copy, reply). -->
+                <StackPanel HorizontalAlignment="Left" MaxWidth="620" Margin="24,7,64,7" Spacing="2" Background="Transparent"
+                            PointerEntered="MessageStack_PointerEntered" PointerExited="MessageStack_PointerExited" GotFocus="MessageStack_FocusChanged" LostFocus="MessageStack_FocusChanged">
+                <Border CornerRadius="14" HorizontalAlignment="Left" Tag="{x:Bind}" Loaded="MessageAction_Loaded" Unloaded="MessageAction_Unloaded"
                         Background="{ThemeResource IncomingMessageBrush}" BorderBrush="{ThemeResource IncomingBorderBrush}" BorderThickness="1">
                     <StackPanel>
-                        <StackPanel Padding="16,12,16,14">
+                        <StackPanel Padding="16,12,16,8">
                             <Button Tag="{x:Bind}" Visibility="{x:Bind HasReply}" Loaded="MessageAction_Loaded" Unloaded="MessageAction_Unloaded" Click="ReplyParent_Click"
                                     AutomationProperties.Name="{x:Bind ReplyAccessibility}" ToolTipService.ToolTip="Open quoted message" Style="{StaticResource AttachmentButton}"
                                     HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Padding="10,8" Margin="0,0,0,10" MinWidth="0">
@@ -94,36 +110,40 @@
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
                         </StackPanel>
-                        <Border BorderThickness="0,1,0,0" BorderBrush="{ThemeResource IncomingFooterBorderBrush}" Padding="16,6,12,6">
-                            <Grid ColumnSpacing="10">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <TextBlock Text="{x:Bind FooterTimeLabel}" FontSize="12" VerticalAlignment="Center" Foreground="{ThemeResource IncomingFooterTextBrush}" />
-                                <Border Grid.Column="1" Padding="8,2,8,3" CornerRadius="6" VerticalAlignment="Center" Background="{ThemeResource ChipSurfaceBrush}"
-                                        Visibility="{Binding StatusLabel, Converter={StaticResource TextVisibility}}">
-                                    <TextBlock Text="{x:Bind StatusLabel}" FontSize="11.5" FontWeight="SemiBold" Foreground="{ThemeResource ChipTextBrush}" />
-                                </Border>
-                                <Button Grid.Column="3" Tag="{x:Bind}" Loaded="MessageOptions_Loaded" Unloaded="MessageOptions_Unloaded" Click="MessageOptions_Click"
-                                        Style="{StaticResource FooterIconButton}" Foreground="{ThemeResource IncomingFooterTextBrush}"
-                                        AutomationProperties.Name="Message actions" AutomationProperties.AutomationId="{x:Bind Id}" ToolTipService.ToolTip="Message actions">
-                                    <FontIcon Glyph="&#xE712;" FontSize="13" />
-                                </Button>
-                                <Button Grid.Column="4" Tag="{x:Bind CopyText}" Click="CopyMessage_Click" Style="{StaticResource FooterIconButton}" Foreground="{ThemeResource IncomingFooterTextBrush}"
-                                        AutomationProperties.Name="Copy message" AutomationProperties.AutomationId="{x:Bind Id}" ToolTipService.ToolTip="Copy message">
-                                    <FontIcon Glyph="&#xE8C8;" FontSize="13" />
-                                </Button>
-                            </Grid>
-                        </Border>
+                        <!-- Status chip on the left; the time sits at the bubble's bottom right. -->
+                        <Grid ColumnSpacing="10" Margin="16,0,14,9">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <Border Padding="8,2,8,3" CornerRadius="6" VerticalAlignment="Center" Background="{ThemeResource ChipSurfaceBrush}"
+                                    Visibility="{Binding StatusLabel, Converter={StaticResource TextVisibility}}">
+                                <TextBlock Text="{x:Bind StatusLabel}" FontSize="11.5" FontWeight="SemiBold" Foreground="{ThemeResource ChipTextBrush}" />
+                            </Border>
+                            <TextBlock Grid.Column="2" Text="{x:Bind FooterTimeLabel}" FontSize="12" VerticalAlignment="Center" Foreground="{ThemeResource IncomingFooterTextBrush}" />
+                        </Grid>
                     </StackPanel>
                     <Border.ContextFlyout>
-                        <MenuFlyout><MenuFlyoutItem Text="Copy original message" Tag="{x:Bind Body}" Click="CopyOriginal_Click" /><MenuFlyoutItem Text="Save attachments…" Tag="{x:Bind}" Click="SaveFiles_Click" /><MenuFlyoutItem Text="Block sender…" Tag="{x:Bind Id}" Click="BlockSender_Click" /></MenuFlyout>
+                        <MenuFlyout Opening="MessageMenu_Opening"><MenuFlyoutItem Text="Copy original message" Tag="{x:Bind Body}" Click="CopyOriginal_Click" /><MenuFlyoutItem Text="Save attachments…" Tag="{x:Bind}" Click="SaveFiles_Click" /><MenuFlyoutItem Text="Block sender…" Tag="{x:Bind Id}" Click="BlockSender_Click" /></MenuFlyout>
                     </Border.ContextFlyout>
                 </Border>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" Spacing="2" Margin="4,0,0,0" Opacity="0.7">
+                    <Button Tag="{x:Bind CopyText}" Click="CopyMessage_Click" Style="{StaticResource MessageRowButton}"
+                            AutomationProperties.Name="Copy message" AutomationProperties.AutomationId="{x:Bind Id}" ToolTipService.ToolTip="Copy message">
+                        <FontIcon Glyph="&#xE8C8;" FontSize="16" />
+                    </Button>
+                    <Button Tag="{x:Bind}" Loaded="MessageReply_Loaded" Unloaded="MessageControl_Unloaded" Click="MessageReply_Click" Style="{StaticResource MessageRowButton}"
+                            AutomationProperties.Name="Reply" AutomationProperties.AutomationId="{x:Bind Id}" ToolTipService.ToolTip="Reply">
+                        <FontIcon Glyph="&#xE97A;" FontSize="16" />
+                    </Button>
+                </StackPanel>
+                </StackPanel>
             </DataTemplate>
             <DataTemplate x:Key="OutgoingMessage" x:DataType="core:ThreadMessage">
-                <Border HorizontalAlignment="Right" MaxWidth="620" Margin="64,7,24,7" CornerRadius="14"
+                <!-- §14C.7: the bubble, then the action row below and outside it (edit while editable, copy). -->
+                <StackPanel HorizontalAlignment="Right" MaxWidth="620" Margin="64,7,24,7" Spacing="2" Background="Transparent"
+                            PointerEntered="MessageStack_PointerEntered" PointerExited="MessageStack_PointerExited" GotFocus="MessageStack_FocusChanged" LostFocus="MessageStack_FocusChanged">
+                <Border CornerRadius="14" HorizontalAlignment="Right" Tag="{x:Bind}" Loaded="MessageAction_Loaded" Unloaded="MessageAction_Unloaded"
                         Background="{ThemeResource OutgoingMessageBrush}" BorderBrush="{ThemeResource OutgoingBorderBrush}" BorderThickness="1">
                     <StackPanel>
-                        <StackPanel Padding="16,12,16,14">
+                        <StackPanel Padding="16,12,16,8">
                             <Button Tag="{x:Bind}" Visibility="{x:Bind HasReply}" Loaded="MessageAction_Loaded" Unloaded="MessageAction_Unloaded" Click="ReplyParent_Click"
                                     AutomationProperties.Name="{x:Bind ReplyAccessibility}" ToolTipService.ToolTip="Open quoted message" Style="{StaticResource AttachmentButton}"
                                     HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Padding="10,8" Margin="0,0,0,10" MinWidth="0">
@@ -155,30 +175,44 @@
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
                         </StackPanel>
-                        <Border BorderThickness="0,1,0,0" BorderBrush="{ThemeResource OutgoingFooterBorderBrush}" Padding="16,6,12,6">
-                            <Grid ColumnSpacing="10">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <TextBlock Text="{x:Bind FooterTimeLabel}" FontSize="12" VerticalAlignment="Center" Foreground="{ThemeResource OutgoingFooterTextBrush}" />
-                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
-                                    <TextBlock Text="{x:Bind ReceiptGlyph}" FontFamily="Segoe UI Symbol" FontSize="12" Foreground="{ThemeResource OutgoingFooterTextBrush}" AutomationProperties.AccessibilityView="Raw" />
-                                    <TextBlock Text="{x:Bind StatusLabel}" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource OutgoingFooterTextBrush}" />
+                        <!-- §14C.6: time, then the receipt marks, at the bubble's bottom right. -->
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="6" Margin="16,0,12,8">
+                            <TextBlock Text="{x:Bind StatusLabel}" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="{ThemeResource OutgoingFooterTextBrush}"
+                                       Visibility="{Binding StatusLabel, Converter={StaticResource TextVisibility}}" />
+                            <TextBlock Text="{x:Bind FooterTimeLabel}" FontSize="12" VerticalAlignment="Center" Foreground="{ThemeResource OutgoingFooterTextBrush}" />
+                            <Button Tag="{x:Bind}" Visibility="{x:Bind HasReceipt}" Loaded="ReceiptMark_Loaded" Unloaded="MessageControl_Unloaded" Click="ReceiptMark_Click"
+                                    Style="{StaticResource ReceiptMarkButton}" AutomationProperties.Name="{x:Bind ReceiptLabel}" AutomationProperties.AutomationId="{x:Bind Id}"
+                                    AutomationProperties.HelpText="Show message info" ToolTipService.ToolTip="{x:Bind ReceiptLabel}">
+                                <StackPanel Orientation="Horizontal" Spacing="4">
+                                    <TextBlock Text="✓" Visibility="{x:Bind ShowsSentTick}" FontFamily="Segoe UI Symbol" FontSize="12" Foreground="{ThemeResource OutgoingFooterTextBrush}" AutomationProperties.AccessibilityView="Raw" />
+                                    <TextBlock Text="✓✓" Visibility="{x:Bind ShowsDeliveredTicks}" FontFamily="Segoe UI Symbol" FontSize="12" Foreground="{ThemeResource OutgoingFooterTextBrush}" AutomationProperties.AccessibilityView="Raw" />
+                                    <TextBlock Text="✓✓" Visibility="{x:Bind ShowsSeenTicks}" FontFamily="Segoe UI Symbol" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource TickSeenBrush}" AutomationProperties.AccessibilityView="Raw" />
+                                    <StackPanel Orientation="Horizontal" Spacing="4" Visibility="{x:Bind ShowsAgentGear}">
+                                        <FontIcon Glyph="&#xE713;" FontSize="13" Foreground="{ThemeResource TickSeenBrush}" RenderTransformOrigin="0.5,0.5" Loaded="AgentGear_Loaded" Unloaded="AgentGear_Unloaded" AutomationProperties.AccessibilityView="Raw">
+                                            <FontIcon.RenderTransform><RotateTransform /></FontIcon.RenderTransform>
+                                        </FontIcon>
+                                        <TextBlock Text="Working…" FontSize="11.5" Visibility="Collapsed" Foreground="{ThemeResource TickSeenBrush}" Loaded="AgentGear_Loaded" Unloaded="AgentGear_Unloaded" AutomationProperties.AccessibilityView="Raw" />
+                                    </StackPanel>
+                                    <FontIcon Glyph="&#xE7BA;" FontSize="13" Visibility="{x:Bind ShowsAgentFailed}" Foreground="{ThemeResource TickFailedBrush}" AutomationProperties.AccessibilityView="Raw" />
                                 </StackPanel>
-                                <Button Grid.Column="3" Tag="{x:Bind}" Loaded="MessageOptions_Loaded" Unloaded="MessageOptions_Unloaded" Click="MessageOptions_Click"
-                                        Style="{StaticResource FooterIconButton}" Foreground="{ThemeResource OutgoingFooterTextBrush}"
-                                        AutomationProperties.Name="Message actions" AutomationProperties.AutomationId="{x:Bind Id}" ToolTipService.ToolTip="Message actions">
-                                    <FontIcon Glyph="&#xE712;" FontSize="13" />
-                                </Button>
-                                <Button Grid.Column="4" Tag="{x:Bind CopyText}" Click="CopyMessage_Click" Style="{StaticResource FooterIconButton}" Foreground="{ThemeResource OutgoingFooterTextBrush}"
-                                        AutomationProperties.Name="Copy message" AutomationProperties.AutomationId="{x:Bind Id}" ToolTipService.ToolTip="Copy message">
-                                    <FontIcon Glyph="&#xE8C8;" FontSize="13" />
-                                </Button>
-                            </Grid>
-                        </Border>
+                            </Button>
+                        </StackPanel>
                     </StackPanel>
                     <Border.ContextFlyout>
-                        <MenuFlyout><MenuFlyoutItem Text="Copy original message" Tag="{x:Bind Body}" Click="CopyOriginal_Click" /><MenuFlyoutItem Text="Save attachments…" Tag="{x:Bind}" Click="SaveFiles_Click" /></MenuFlyout>
+                        <MenuFlyout Opening="MessageMenu_Opening"><MenuFlyoutItem Text="Copy original message" Tag="{x:Bind Body}" Click="CopyOriginal_Click" /><MenuFlyoutItem Text="Save attachments…" Tag="{x:Bind}" Click="SaveFiles_Click" /></MenuFlyout>
                     </Border.ContextFlyout>
                 </Border>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="2" Margin="0,0,4,0" Opacity="0.7">
+                    <Button Tag="{x:Bind}" Loaded="MessageEdit_Loaded" Unloaded="MessageControl_Unloaded" Click="MessageEdit_Click" Style="{StaticResource MessageRowButton}"
+                            AutomationProperties.Name="Edit message" AutomationProperties.AutomationId="{x:Bind Id}" ToolTipService.ToolTip="Edit message">
+                        <FontIcon Glyph="&#xE70F;" FontSize="16" />
+                    </Button>
+                    <Button Tag="{x:Bind CopyText}" Click="CopyMessage_Click" Style="{StaticResource MessageRowButton}"
+                            AutomationProperties.Name="Copy message" AutomationProperties.AutomationId="{x:Bind Id}" ToolTipService.ToolTip="Copy message">
+                        <FontIcon Glyph="&#xE8C8;" FontSize="16" />
+                    </Button>
+                </StackPanel>
+                </StackPanel>
             </DataTemplate>
             <!-- Phase 1b and 3b rows, used by the pages built in MainWindow.SideViews.cs and MainWindow.Groups.cs. -->
             <DataTemplate x:Key="CallRowTemplate" x:DataType="core:CallRow">
@@ -261,8 +295,10 @@
                 </Border>
             </DataTemplate>
             <DataTemplate x:Key="GroupIncomingLine" x:DataType="groups:GroupLineRow">
-                <Grid HorizontalAlignment="Left" Margin="24,5,64,5" ColumnSpacing="8" MaxWidth="660">
+                <Grid HorizontalAlignment="Left" Margin="24,5,64,5" ColumnSpacing="8" RowSpacing="2" MaxWidth="660" Background="Transparent"
+                      PointerEntered="MessageStack_PointerEntered" PointerExited="MessageStack_PointerExited" GotFocus="MessageStack_FocusChanged" LostFocus="MessageStack_FocusChanged">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                     <Border Width="30" Height="30" CornerRadius="15" VerticalAlignment="Top" Background="{ThemeResource AvatarSurfaceBrush}" Tag="{x:Bind SenderKey}" Loaded="Avatar_Loaded" Unloaded="Avatar_Unloaded">
                         <TextBlock Text="{x:Bind Initials}" FontSize="11" FontWeight="Bold" Foreground="{ThemeResource AvatarTextBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False" />
                     </Border>
@@ -286,10 +322,19 @@
                             </StackPanel>
                         </StackPanel>
                     </Border>
+                    <!-- §14C.7: copy sits under the bubble, outside it. -->
+                    <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Left" Margin="4,0,0,0" Opacity="0.7">
+                        <Button Tag="{x:Bind Text}" Click="CopyMessage_Click" Style="{StaticResource MessageRowButton}"
+                                AutomationProperties.Name="Copy message" AutomationProperties.AutomationId="{x:Bind Key}" ToolTipService.ToolTip="Copy message">
+                            <FontIcon Glyph="&#xE8C8;" FontSize="16" />
+                        </Button>
+                    </StackPanel>
                 </Grid>
             </DataTemplate>
             <DataTemplate x:Key="GroupOutgoingLine" x:DataType="groups:GroupLineRow">
-                <Border HorizontalAlignment="Right" Margin="64,5,24,5" MaxWidth="620" CornerRadius="14" Padding="14,9,14,10" Background="{ThemeResource OutgoingMessageBrush}" BorderBrush="{ThemeResource OutgoingBorderBrush}" BorderThickness="1">
+                <StackPanel HorizontalAlignment="Right" Margin="64,5,24,5" MaxWidth="620" Spacing="2" Background="Transparent"
+                            PointerEntered="MessageStack_PointerEntered" PointerExited="MessageStack_PointerExited" GotFocus="MessageStack_FocusChanged" LostFocus="MessageStack_FocusChanged">
+                <Border HorizontalAlignment="Right" CornerRadius="14" Padding="14,9,14,10" Background="{ThemeResource OutgoingMessageBrush}" BorderBrush="{ThemeResource OutgoingBorderBrush}" BorderThickness="1">
                     <StackPanel Spacing="4">
                         <TextBlock Text="{x:Bind Text}" TextWrapping="Wrap" IsTextSelectionEnabled="True" FontSize="14.5" LineHeight="21" Foreground="{ThemeResource OutgoingTextBrush}" />
                         <ItemsControl ItemsSource="{x:Bind Files}">
@@ -308,6 +353,13 @@
                         </StackPanel>
                     </StackPanel>
                 </Border>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,4,0" Opacity="0.7">
+                    <Button Tag="{x:Bind Text}" Click="CopyMessage_Click" Style="{StaticResource MessageRowButton}"
+                            AutomationProperties.Name="Copy message" AutomationProperties.AutomationId="{x:Bind Key}" ToolTipService.ToolTip="Copy message">
+                        <FontIcon Glyph="&#xE8C8;" FontSize="16" />
+                    </Button>
+                </StackPanel>
+                </StackPanel>
             </DataTemplate>
             <local:GroupLineSelector x:Key="GroupLineSelector" Incoming="{StaticResource GroupIncomingLine}" Outgoing="{StaticResource GroupOutgoingLine}" Notice="{StaticResource GroupSystemLine}" />
             <!-- A missed call in a 1:1 conversation: a small centred line, not a message. -->

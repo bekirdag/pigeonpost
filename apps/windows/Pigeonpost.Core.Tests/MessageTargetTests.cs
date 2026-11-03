@@ -63,9 +63,30 @@ internal static class MessageTargetTests
         yield return ("Native receipt labels and edited markers remain accessible without inventing unknown status", () =>
         {
             var row = new ThreadMessage("copy", "Fixture", 100, null, true, Receipt: new("seen"), EditedAt: 110, EditCount: 1);
-            Require(row.StatusLabel == "Seen" && row.ReceiptGlyph == "✓✓" && row.FooterTimeLabel.EndsWith(" · Edited", StringComparison.Ordinal));
-            Require((row with { Receipt = null }).StatusLabel == "" && (row with { Receipt = new("unknown") }).ReceiptGlyph == "");
-            Require((row with { IsOutgoing = false }).ReceiptGlyph == "" && (row with { Status = DeliveryStatus.Sending }).StatusLabel == "Sending…");
+            Require(row.StatusLabel == "" && row.ReceiptLabel == "Seen" && row.ShowsSeenTicks && row.FooterTimeLabel.EndsWith(" · Edited", StringComparison.Ordinal));
+            Require((row with { Receipt = new("seen", 105, 130) }).ReceiptLabel.StartsWith("Seen ", StringComparison.Ordinal));
+            Require((row with { Receipt = null }).ReceiptLabel == "" && !(row with { Receipt = null }).HasReceipt && (row with { Receipt = new("unknown") }).ReceiptKind == "");
+            Require((row with { IsOutgoing = false }).ReceiptKind == "" && (row with { Status = DeliveryStatus.Sending }).StatusLabel == "Sending…"
+                && (row with { Status = DeliveryStatus.Sending }).ReceiptKind == "");
+            return Task.CompletedTask;
+        });
+        yield return ("Receipt marks follow §14C: gray tick, gray ticks, green ticks, green gear over the receipt, and a red warning", () =>
+        {
+            var row = new ThreadMessage("copy", "Fixture", 100, null, true, Receipt: new("sent"));
+            Require(row.ReceiptKind == "sent" && row.ShowsSentTick && !row.ShowsDeliveredTicks && row.ReceiptLabel == "Sent");
+            var delivered = row with { Receipt = new("delivered", 110) };
+            Require(delivered.ShowsDeliveredTicks && !delivered.ShowsSeenTicks && delivered.ReceiptLabel == "Delivered");
+            foreach (var receipt in new[] { "sent", "delivered", "seen" })
+            {
+                var working = row with { Receipt = new(receipt), AgentStatus = new("working", 120) };
+                Require(working.ShowsAgentGear && !working.ShowsSeenTicks && !working.ShowsSentTick && working.ReceiptLabel == "Agent working on this");
+                var failed = row with { Receipt = new(receipt), AgentStatus = new("failed", 130) };
+                Require(failed.ShowsAgentFailed && !failed.ShowsAgentGear && failed.ReceiptLabel == "Agent run failed");
+                var done = row with { Receipt = new(receipt), AgentStatus = new("done", 140) };
+                Require(done.ReceiptKind == receipt && !done.ShowsAgentGear);
+            }
+            Require((row with { Receipt = null, AgentStatus = new("working") }).ReceiptKind == "");
+            Require((row with { IsOutgoing = false, AgentStatus = new("working") }).ReceiptKind == "");
             return Task.CompletedTask;
         });
         yield return ("Unloading a message control retires its target while an explicit reload keeps the same accepted account", async () =>

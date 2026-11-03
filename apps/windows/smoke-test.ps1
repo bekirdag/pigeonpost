@@ -425,7 +425,16 @@ public static class NativeFileDragSource {
         if ($initialScroll.Current.VerticalScrollPercent -lt 95) { throw 'Initial conversation did not open at its newest messages.' }
         Set-Text 'Message' 'Please review the release checklist.'
         Capture 'inbox.png'
-        $null = Wait-Element 'Seen'
+        # §14C.6: the seen marks are named with their time ("Seen 10:05") and keyed to the message.
+        $seenMark = $null
+        for ($n = 0; $n -lt 40 -and -not $seenMark; $n++) {
+            foreach ($candidate in $root.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+                [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::AutomationIdProperty, 'design-2'))) {
+                if ($candidate.Current.Name.StartsWith('Seen', [StringComparison]::Ordinal)) { $seenMark = $candidate; break }
+            }
+            if (-not $seenMark) { Start-Sleep -Milliseconds 250 }
+        }
+        if (-not $seenMark) { throw 'Seen receipt mark missing.' }
         $quotedName = 'Open quoted message: I''ve organized the feedback for the next release. Can you review the desktop layout?'
         Invoke-Control $quotedName
         $parentSelected = $false
