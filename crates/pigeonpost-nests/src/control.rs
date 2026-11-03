@@ -930,6 +930,28 @@ mod tests {
         assert_eq!(c.db.nest(id).unwrap().unwrap().generation, 2);
     }
 
+    // Drafted by the local model (docdex delegation), corrected and reviewed.
+    #[test]
+    fn enrollment_codes_are_strict() {
+        assert!(valid_code(&format!("nenr_{}", "a".repeat(32))));
+        assert!(valid_code(&format!("nenr_{}", "f".repeat(128))));
+        assert!(!valid_code(&format!("nenr_{}", "a".repeat(31))));
+        assert!(!valid_code(&format!("nenr_{}", "a".repeat(129))));
+        assert!(!valid_code(&format!("nenr_{}", "g".repeat(32))));
+        assert!(!valid_code(&"a".repeat(37)));
+    }
+
+    #[test]
+    fn month_start_is_the_first_second_of_the_utc_month() {
+        // 2026-11-03T06:00Z -> 2026-11-01T00:00Z
+        assert_eq!(month_start(1_793_685_600), 1_793_491_200);
+        // 2027-01-01T00:00Z is its own month start.
+        assert_eq!(month_start(1_798_761_600), 1_798_761_600);
+        let t = 1_793_685_600;
+        assert_eq!(period_of(month_start(t)), period_of(t));
+        assert_ne!(period_of(month_start(t) - 1), period_of(t));
+    }
+
     #[tokio::test]
     async fn the_api_requires_the_service_token() {
         let (c, _) = ctx();
