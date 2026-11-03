@@ -186,6 +186,13 @@ const server = http.createServer(async (req, res) => {
     if (method === "GET" && (match = /^\/ent\/checkout\/(org_[a-z0-9]{6,64})$/.exec(path))) {
       return send(res, 200, await billing.enterpriseStatus(token, match[1]), origin);
     }
+    // The portal's Billing page: the org's plan, change of seats, cancel, card and retry.
+    if (method === "GET" && (match = /^\/ent\/orgs\/(org_[a-z0-9]{6,64})\/subscription$/.exec(path))) {
+      return send(res, 200, await billing.enterpriseSubscription(token, match[1]), origin);
+    }
+    if (method === "POST" && (match = /^\/ent\/orgs\/(org_[a-z0-9]{6,64})\/subscription\/(change|cancel|card-update|retry)$/.exec(path))) {
+      return send(res, 200, await billing.enterpriseOperation(token, match[1], match[2], await readJson(req)), origin);
+    }
 
     return send(res, 404, { error: "not found" }, origin);
   } catch (err) {

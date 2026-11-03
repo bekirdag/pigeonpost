@@ -83,6 +83,10 @@ impl Server {
     }
 
     pub(crate) async fn flag(&self, name: &str, account: &str) {
+        self.set_flag(name, account, true).await;
+    }
+
+    pub(crate) async fn set_flag(&self, name: &str, account: &str, enabled: bool) {
         let (status, _) = self
             .call(
                 reqwest::Method::PUT,
@@ -90,7 +94,7 @@ impl Server {
                 OPS,
                 None,
                 None,
-                Some(json!({ "scope": "account", "account_id": account, "enabled": true })),
+                Some(json!({ "scope": "account", "account_id": account, "enabled": enabled })),
             )
             .await;
         assert_eq!(status, 200, "flag {name}");
@@ -99,6 +103,7 @@ impl Server {
 
 /// A person (member session) with one hosted mailbox and one MLS device.
 pub(crate) struct Member {
+    pub account: String,
     pub token: String,
     pub api_key: String,
     pub address: String,
@@ -129,10 +134,13 @@ pub(crate) async fn member(srv: &Server, name: &str) -> Member {
     srv.flag("groups", &account).await;
     srv.flag("disappearing", &account).await;
     srv.flag("account_events", &account).await;
+    srv.flag("message_edit", &account).await;
+    srv.flag("message_reply", &account).await;
     let token = oidc::test_member_token(ISSUER, &sub);
     let device_id = format!("dev-{name}");
     let device = enroll(srv, &token, &address, &device_id).await;
     Member {
+        account: account.clone(),
         token,
         api_key,
         address,
@@ -1182,6 +1190,7 @@ async fn links_public_join_and_second_device() {
     );
     let second = enroll(&srv, &dave.token, &dave.address, "dave-phone").await;
     let mut dave2 = Member {
+        account: dave.account.clone(),
         token: dave.token.clone(),
         api_key: dave.api_key.clone(),
         address: dave.address.clone(),
@@ -1349,6 +1358,47 @@ async fn disappearing_messages_expire_for_groups_and_threads() {
         .iter()
         .any(|m| m["body"] == "dm two"));
     let _ = &mut alice;
+}
+
+#[tokio::test]
+async fn group_edits_and_replies_follow_the_message_action_flags() {
+    let srv = serve().await;
+    let (mut alice, _bob, _carol, gid) = three(&srv).await;
+    let (status, original) = alice.send(&srv, &gid, "original").await;
+    assert_eq!(status, 201, "{original}");
+    let seq = original["seq"].as_i64().unwrap();
+    srv.set_flag("message_edit", &alice.account, false).await;
+    srv.set_flag("message_reply", &alice.account, false).await;
+    let (status, body) = alice.send_edit(&srv, &gid, "changed", seq).await;
+    assert_eq!(status, 403, "{body}");
+    assert_eq!(body["error"], "feature_disabled");
+    let mut reply = alice.edit_request(&gid, "a reply", seq);
+    reply.as_object_mut().unwrap().remove("edit_of");
+    reply["reply_to"] = json!(seq);
+    let (status, body) = alice
+        .req(
+            &srv,
+            reqwest::Method::POST,
+            &format!("/v1/groups/{gid}/messages"),
+            Some(reply.clone()),
+        )
+        .await;
+    assert_eq!(status, 403, "{body}");
+    assert_eq!(body["error"], "feature_disabled");
+    // Back on, the same requests go through, exactly as in 1:1 threads.
+    srv.set_flag("message_edit", &alice.account, true).await;
+    srv.set_flag("message_reply", &alice.account, true).await;
+    let (status, body) = alice.send_edit(&srv, &gid, "changed", seq).await;
+    assert_eq!(status, 201, "{body}");
+    let (status, body) = alice
+        .req(
+            &srv,
+            reqwest::Method::POST,
+            &format!("/v1/groups/{gid}/messages"),
+            Some(reply),
+        )
+        .await;
+    assert_eq!(status, 201, "{body}");
 }
 
 #[tokio::test]

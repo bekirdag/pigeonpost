@@ -3313,6 +3313,21 @@ pub(crate) async fn post(
             ));
         }
         let (req, hash): (PostReq, String) = parse(body)?;
+        // Edits and replies follow the same flags in groups as in 1:1 threads (SDS §14C).
+        let account = ctx.me.account_id.as_deref();
+        if req.edit_of.is_some() && !feature_on(&state, account, capabilities::MESSAGE_EDIT).await {
+            return Err(GErr::forbidden(
+                "feature_disabled",
+                "editing messages is not enabled for this account",
+            ));
+        }
+        if req.reply_to.is_some() && !feature_on(&state, account, capabilities::MESSAGE_REPLY).await
+        {
+            return Err(GErr::forbidden(
+                "feature_disabled",
+                "replying to a message is not enabled for this account",
+            ));
+        }
         rate_limit(&format!("post:{}", ctx.address()), POSTS_PER_MINUTE, 60)?;
         let quota = group_quota(&state, &id).await;
         let me = ctx.address();

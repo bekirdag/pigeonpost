@@ -15,6 +15,13 @@
   async function poll() {
     PPE.renderAccount();
     const q = new URLSearchParams(window.location.search);
+    // Back from a card update: the redirect proves nothing, and the next renewal is the real test.
+    const cardOrg = q.get("card");
+    if (cardOrg && /^org_[a-z0-9]{6,64}$/.test(cardOrg)) {
+      box(el("h1", {}, "Card form finished"), el("p", { class: "muted" }, "If iyzico accepted the new card, the next renewal uses it. Billing shows any payment that fails."),
+        el("a", { class: "btn btn-primary", href: `/app/billing?org=${encodeURIComponent(cardOrg)}` }, "Back to Billing"));
+      return;
+    }
     const draft = q.get("d") || PPE.store.get("ppe_ent_draft");
     if (!draft || !/^org_[a-z0-9]{6,64}$/.test(draft)) {
       box(el("h1", {}, "Nothing to confirm"), el("p", { class: "muted" }, "Open your organization from the admin page."), el("a", { class: "btn btn-primary", href: "/app" }, "Open admin"));

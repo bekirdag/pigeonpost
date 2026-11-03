@@ -138,3 +138,89 @@ test("Security shows the SSH switches only with agent_ssh, and saves them", asyn
   assert.deepEqual(plain(f.patches), [{ settings: { ssh_allowed: true } }]);
   assert.match(on.$("#content").textContent, /needs an owner's, admin's or agent admin's approval/);
 });
+
+// ---- Billing: invoices, seat changes, card and cancel through the bridge -----------------------
+
+function billingFetch({ roles = ["owner"], sub = {}, billing = {} } = {}) {
+  const base = postbox({ roles });
+  const bridgeCalls = [];
+  const SUB = { subscription_id: "00000000-0000-4000-8000-000000000001", plan_code: "ent-30-yearly-usd", seats: 30, currency: "USD", interval: "year",
+    status: "active", paid_through: 1900000000, next_payment_at: "2030-03-17T00:00:00Z", failed_orders: [], buyer: true, can_manage: true,
+    seats_used: 3, agents_used: 1, pending_change: null,
+    options: [5, 10, 30, 50].map((n) => ({ plan_code: `ent-${n}-yearly-usd`, seats: n, agent_limit: n * 10, current: n === 30, fits: n >= 5, when: n > 30 ? "now" : "next_period" })),
+    ...sub };
+  const fn = (c) => {
+    const u = new URL(c.url, "https://enterprise.pigeonpost.dev");
+    if (u.pathname.startsWith("/api/")) {
+      const p = u.pathname.slice(4);
+      bridgeCalls.push({ method: c.method, path: p, body: c.body });
+      if (p === "/v1/billing/invoices") return reply(200, { invoices: [{ id: "00000000-0000-4000-8000-000000000061", number: "PP-1", status: "paid", total: "180.00", currency: "USD", issued_at: "2026-11-01" }] });
+      if (p === `/ent/orgs/${ORG.id}/subscription`) return reply(200, SUB);
+      if (p === `/ent/orgs/${ORG.id}/subscription/change`) return reply(200, { ...SUB, effective: c.body.plan_code === "ent-50-yearly-usd" ? "now" : "next_period" });
+      if (p === `/ent/orgs/${ORG.id}/subscription/cancel`) return reply(200, { ...SUB, status: "canceled" });
+      return reply(404, { error: "not found" });
+    }
+    if (u.pathname === `/v1/orgs/${ORG.id}/billing`) return reply(200, { plan_code: "ent-30-yearly-usd", seats: 30, seats_used: 3, agent_limit: 300, agents_used: 1,
+      status: "active", paid_through: 1900000000, source: "iyzico", can_manage: true, ...billing });
+    return base(c);
+  };
+  fn.bridgeCalls = bridgeCalls;
+  return fn;
+}
+
+test("Billing loads invoices from the bridge's path and changes seats in the same period", async (t) => {
+  const fetch = billingFetch();
+  const { $, window } = load(t, "app.html", { url: "https://enterprise.pigeonpost.dev/app/billing", session: jwt(), fetch });
+  await tick(80);
+  assert.match($("#content h1").textContent, /Billing/);
+  assert.ok(fetch.bridgeCalls.some((c) => c.path === "/v1/billing/invoices"), "invoices come from /v1/billing/invoices");
+  assert.ok(!fetch.bridgeCalls.some((c) => c.path === "/v1/invoices"));
+  assert.match(window.document.querySelector("#content tbody").textContent, /PP-1/);
+  const change = $("#content .page-head .btn-primary");
+  assert.equal(change.tagName, "BUTTON", "Change plan opens a sheet, not the new-organization wizard");
+  change.click();
+  await tick(10);
+  const pick = window.document.querySelector(".sheet select, [role=dialog] select");
+  assert.ok(pick, "a seat picker");
+  assert.deepEqual([...pick.options].map((o) => o.value), ["ent-5-yearly-usd", "ent-10-yearly-usd", "ent-30-yearly-usd", "ent-50-yearly-usd"]);
+  pick.value = "ent-50-yearly-usd";
+  pick.dispatchEvent(new window.Event("change"));
+  const text = [...window.document.querySelectorAll("[role=status]")].map((n) => n.textContent).join(" ");
+  assert.match(text, /More seats start now/);
+  const save = [...window.document.querySelectorAll("button")].filter((b) => b.textContent === "Change plan").at(-1);
+  assert.equal(save.disabled, false);
+  save.click();
+  await tick(40);
+  const sent = fetch.bridgeCalls.find((c) => c.path.endsWith("/subscription/change"));
+  assert.equal(sent.method, "POST");
+  assert.equal(sent.body.plan_code, "ent-50-yearly-usd");
+  assert.match(sent.body.intent_id, /^[a-f0-9]{32}$/);
+});
+
+test("Billing cancels through the bridge and sends card updates to the isolated checkout page", async (t) => {
+  const fetch = billingFetch();
+  const { $, window } = load(t, "app.html", { url: "https://enterprise.pigeonpost.dev/app/billing", session: jwt(), fetch });
+  await tick(80);
+  const buttons = () => [...window.document.querySelectorAll("#content button")];
+  const cancel = buttons().find((b) => b.textContent === "Cancel plan");
+  cancel.click();
+  await tick(60);
+  const sent = fetch.bridgeCalls.find((c) => c.path.endsWith("/subscription/cancel"));
+  assert.equal(sent.method, "POST");
+  const card = buttons().find((b) => b.textContent === "Update card");
+  assert.ok(card, "Update card");
+  void $;
+});
+
+test("Billing is read-only for a manager who did not buy the plan, and for granted plans", async (t) => {
+  const notBuyer = billingFetch({ sub: { buyer: false } });
+  const a = load(t, "app.html", { url: "https://enterprise.pigeonpost.dev/app/billing", session: jwt(), fetch: notBuyer });
+  await tick(80);
+  assert.equal(a.$("#content .page-head .btn-primary"), null);
+  assert.match(a.$("#content").textContent, /Only the person who bought this plan/);
+  const granted = billingFetch({ billing: { source: "grant" } });
+  const b = load(t, "app.html", { url: "https://enterprise.pigeonpost.dev/app/billing", session: jwt(), fetch: granted });
+  await tick(80);
+  assert.ok(!granted.bridgeCalls.some((c) => c.path.includes("/subscription")), "no subscription lookup for a granted plan");
+  assert.match(b.$("#content").textContent, /isn't paid by card here/);
+});

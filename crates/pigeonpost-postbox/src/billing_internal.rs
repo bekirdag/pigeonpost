@@ -588,6 +588,21 @@ fn org_json(org: &Org) -> Value {
     json!(org)
 }
 
+/// `orgs` gates every route that creates or activates an organization, so a payment (or a grant)
+/// can never produce an org that the member routes then refuse (SDS §26 kill switch).
+async fn orgs_enabled(state: &AppState, owner_account: &str) -> Result<(), Response> {
+    if crate::filtering::feature_on(state, Some(owner_account), crate::capabilities::ORGS).await {
+        Ok(())
+    } else {
+        Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "feature_disabled",
+            "organizations are not enabled for this account",
+        )
+        .into_response())
+    }
+}
+
 /// `POST /internal/v1/org-drafts`
 pub(crate) async fn create_org_draft(
     State(state): State<AppState>,
@@ -612,6 +627,9 @@ pub(crate) async fn create_org_draft(
     }
     if !valid_id(&b.owner_account) {
         return bad("invalid_owner", "owner_account has invalid characters");
+    }
+    if let Err(r) = orgs_enabled(&state, &b.owner_account).await {
+        return r;
     }
     let name = b.name.trim().to_string();
     if name.is_empty() || name.chars().count() > 120 || name.chars().any(char::is_control) {
@@ -754,6 +772,18 @@ pub(crate) async fn activate_org(
         Ok(i) => i,
         Err(r) => return r,
     };
+    match state.store.org(id.clone()).await {
+        Ok(Some(org)) => {
+            if let Err(r) = orgs_enabled(&state, &org.owner_account).await {
+                return r;
+            }
+        }
+        Ok(None) => {
+            return ApiError::new(StatusCode::NOT_FOUND, "org_unknown", "no such org")
+                .into_response()
+        }
+        Err(e) => return store_error(e),
+    }
     let reference = input.reference.clone();
     match state
         .store
