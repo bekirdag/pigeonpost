@@ -373,6 +373,11 @@ fn plan_for(
         if code.is_empty() || now_i - row.created_at > 600 {
             return Ok(Plan::Obsolete("challenge expired"));
         }
+        // saas_be's `pigeonpost-meeting-verify` schema requires both identifiers; a row
+        // without its challenge could never pass it, so it is not sent at all.
+        let Some(challenge_id) = row.reminder_id.clone().filter(|c| !c.is_empty()) else {
+            return Ok(Plan::Obsolete("no challenge"));
+        };
         let view = mail::View {
             lang: ev.locale.clone(),
             code: Some(code),
@@ -388,7 +393,7 @@ fn plan_for(
             workflow: "pigeonpost-meeting-verify",
             transaction_id: id.to_string(),
             sender_name: "Pigeonpost".into(),
-            payload: json!({ "delivery_id": id, "challenge_id": row.reminder_id }),
+            payload: json!({ "delivery_id": id, "event_id": ev.id, "challenge_id": challenge_id }),
             attachments: Vec::new(),
         })));
     }
@@ -551,6 +556,9 @@ fn plan_for(
             .unwrap_or(0),
         recipient_name: att.display_name.clone().unwrap_or_default(),
         code: None,
+        // The guest page downloads the calendar file when the fragment asks for it (`a=ics`);
+        // the token stays in the fragment, so it never reaches a server log.
+        ics_url: (kind != Kind::Cancel).then(|| format!("{page}&a=ics")),
     };
     let (subject, html, text) = mail::render(kind, &view);
     let mut attachments = Vec::new();

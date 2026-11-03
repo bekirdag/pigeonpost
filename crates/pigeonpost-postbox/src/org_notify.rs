@@ -66,14 +66,7 @@ fn config() -> Option<Config> {
     Some(Config { url, key, from })
 }
 
-fn esc(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-}
-
-/// Subject, HTML and text for one invitation.
+/// Subject, HTML and text for one invitation, in the shared Pigeonpost email layout.
 pub(crate) fn render(
     inviter: &str,
     org: &str,
@@ -81,31 +74,63 @@ pub(crate) fn render(
     link: &str,
     expires: &str,
 ) -> (String, String, String) {
+    use crate::email_layout::{self as layout, escape as esc, BODY, INK, MUTED, RULE};
     let subject =
         format!("{inviter} invited you to {org} on Pigeonpost").replace(['\r', '\n'], " ");
     let text = format!(
         "{inviter} invited you to join {org} on Pigeonpost.\n\nYour company address will be {handle}.\n\n\
          Accept the invitation: {link}\n\nThe link works once and expires on {expires}. It opens \
          enterprise.pigeonpost.dev — if it opens anywhere else, do not use it.\n\nIf you were not \
-         expecting this, ignore it; nothing happens unless you accept.\n"
+         expecting this, ignore it; nothing happens unless you accept.\n\n--\n\
+         Pigeonpost · pigeonpost.dev\nReplies to this message are not read.\n"
     );
-    let html = format!(
-        r#"<!doctype html><html><body style="margin:0;background:#f4f5f7;font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;color:#16181d">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:32px 16px">
-<table role="presentation" width="100%" style="max-width:520px;background:#ffffff;border-radius:14px;padding:32px" cellpadding="0" cellspacing="0">
-<tr><td style="font-size:15px;font-weight:600;color:#3b5bdb;letter-spacing:.02em">Pigeonpost</td></tr>
-<tr><td style="padding-top:20px;font-size:22px;font-weight:600;line-height:1.3">{inviter} invited you to {org}</td></tr>
-<tr><td style="padding-top:12px;font-size:15px;line-height:1.55;color:#454a54">Your company address will be <strong style="color:#16181d">{handle}</strong>. You will use it in the Pigeonpost apps beside your own mailboxes.</td></tr>
-<tr><td style="padding:28px 0"><a href="{link}" style="display:inline-block;background:#3b5bdb;color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;padding:12px 22px;border-radius:10px">Accept invitation</a></td></tr>
-<tr><td style="font-size:13px;line-height:1.5;color:#6b7280">This link works once and expires on {expires}. It opens enterprise.pigeonpost.dev — if your browser shows any other address, do not continue. If you were not expecting this invitation, you can ignore it.</td></tr>
-</table></td></tr></table></body></html>"#,
+    let card = format!(
+        r#"<p class="pp-muted" style="margin:0 0 6px;color:{MUTED};font-size:14px;line-height:1.5;">{lead}</p>
+<h1 class="pp-ink" style="margin:0 0 16px;font-size:22px;line-height:1.3;font-weight:700;letter-spacing:-0.01em;color:{INK};">{inviter} invited you to {org}</h1>
+<p class="pp-body" style="margin:0 0 14px;color:{BODY};font-size:15px;line-height:1.6;">Your company address will be <strong class="pp-ink" style="color:{INK};">{handle}</strong>. You will use it in the Pigeonpost apps beside your own mailboxes.</p>
+<p style="margin:22px 0 6px;">{button}</p>
+<p class="pp-muted pp-rule" style="margin:20px 0 0;padding-top:16px;border-top:1px solid {RULE};color:{MUTED};font-size:13px;line-height:1.55;">This link works once and expires on {expires}. It opens enterprise.pigeonpost.dev — if your browser shows any other address, do not continue. If you were not expecting this invitation, you can ignore it.</p>"#,
+        lead = esc("Organization invitation"),
         inviter = esc(inviter),
         org = esc(org),
         handle = esc(handle),
-        link = esc(link),
+        button = layout::button(link, "Accept invitation"),
         expires = esc(expires),
     );
+    let footer = format!(
+        "Pigeonpost · Private messaging for people and AI agents · pigeonpost.dev<br>You received this because an administrator of {} entered this address on Pigeonpost.<br>Replies to this message are not read.",
+        esc(org)
+    );
+    let preheader = format!("Your company address will be {handle}.");
+    let html = layout::document("en", &subject, &preheader, &card, &footer);
     (subject, html, text)
+}
+
+/// The saas_be internal email request for one invitation (`pigeonpost-org-invite`).
+pub(crate) fn request_body(
+    delivery_id: &str,
+    org_id: &str,
+    invite_id: &str,
+    to: &str,
+    from: &str,
+    rendered: (String, String, String),
+) -> Value {
+    let (subject, html, text) = rendered;
+    json!({
+        "tenant_id": "pigeonpost",
+        "workflow_id": "pigeonpost-org-invite",
+        "transaction_id": delivery_id,
+        "to": to,
+        "from": from,
+        "sender_name": "Pigeonpost",
+        "subject": subject,
+        "html": html,
+        "text": text,
+        "payload": {
+            "tenant_id": "pigeonpost", "delivery_id": delivery_id, "org_id": org_id, "invite_id": invite_id,
+            "subject": subject, "html": html, "text": text, "locale": "en",
+        },
+    })
 }
 
 fn date(ts: i64) -> String {
@@ -203,23 +228,14 @@ pub(crate) async fn deliver_due(state: &AppState) {
                     d.inviter.clone()
                 };
                 let handle = d.handle.clone().unwrap_or_default();
-                let (subject, html, text) =
-                    render(&inviter, &d.org_name, &handle, &link, &date(d.expires_at));
-                let body = json!({
-                    "tenant_id": "pigeonpost",
-                    "workflow_id": "pigeonpost-org-invite",
-                    "transaction_id": d.id,
-                    "to": to,
-                    "from": cfg.from,
-                    "sender_name": "Pigeonpost",
-                    "subject": subject,
-                    "html": html,
-                    "text": text,
-                    "payload": {
-                        "tenant_id": "pigeonpost", "delivery_id": d.id, "org_id": d.org_id, "invite_id": d.invite_id,
-                        "subject": subject, "html": html, "text": text, "locale": "en",
-                    },
-                });
+                let body = request_body(
+                    &d.id,
+                    &d.org_id,
+                    &d.invite_id,
+                    &to,
+                    &cfg.from,
+                    render(&inviter, &d.org_name, &handle, &link, &date(d.expires_at)),
+                );
                 match client
                     .post(format!("{}/v1/internal/notifications/email", cfg.url))
                     .header("x-api-key", &cfg.key)
@@ -349,9 +365,45 @@ mod tests {
         );
         assert_eq!(s, "Jane <x> invited you to Acme & Co on Pigeonpost");
         assert!(h.contains("Jane &lt;x&gt;") && h.contains("Acme &amp; Co"));
-        assert!(!h.contains("<img"), "no tracking pixel");
+        // The only images are the two versioned logos: no tracking pixel.
+        assert_eq!(h.matches("<img").count(), 2);
+        assert!(
+            h.contains(crate::email_layout::LOGO_LIGHT)
+                && h.contains(crate::email_layout::LOGO_DARK)
+        );
+        assert!(h.contains("href=\"https://enterprise.pigeonpost.dev/invite#tok\""));
         assert!(t.contains("https://enterprise.pigeonpost.dev/invite#tok"));
         assert_eq!(date(0), "1 Jan 1970 (UTC)");
         assert_eq!(date(1_798_761_600), "1 Jan 2027 (UTC)");
+    }
+
+    #[test]
+    fn the_request_satisfies_saas_be_org_invite_schema() {
+        let body = request_body(
+            "dlv_1",
+            "org_1",
+            "inv_1",
+            "a@example.com",
+            "invites@pigeonpost.dev",
+            render(
+                "Jane",
+                "Acme",
+                "/acme/john",
+                "https://enterprise.pigeonpost.dev/invite#tok",
+                "1 Jan 2027 (UTC)",
+            ),
+        );
+        assert_eq!(body["workflow_id"], "pigeonpost-org-invite");
+        let merged = crate::email_layout::contract::merged(
+            &body["payload"],
+            body["tenant_id"].as_str().unwrap(),
+            body["subject"].as_str().unwrap(),
+            body["html"].as_str().unwrap(),
+            body["text"].as_str().unwrap(),
+        );
+        assert_eq!(
+            crate::email_layout::contract::check("pigeonpost-org-invite", &merged),
+            Ok(())
+        );
     }
 }

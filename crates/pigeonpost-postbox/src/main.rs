@@ -75,6 +75,7 @@ mod chatgpt;
 mod contacts;
 #[cfg(test)]
 mod contacts_tests;
+mod email_layout;
 mod ephemeral;
 mod fcm;
 mod filtering;

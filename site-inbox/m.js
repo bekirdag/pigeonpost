@@ -2,6 +2,8 @@
 //
 // Three ways in (docs/calendar.md §6, §7):
 //   /m/<locator>#t=<token>[&r=accepted]  a contact guest's personal invitation;
+//   /m/<locator>#t=<token>&a=ics          the same, from the email's "Add to calendar" button:
+//                                        the calendar file downloads once the invitation loads;
 //   /m/u#u=<token>                       an unsubscribe link;
 //   /m/<CODE>                            a bare meeting link. Signed-in members may join; anyone else
 //                                        sees only whether they may ask to join. Never event details.
@@ -20,6 +22,8 @@
   let inviteToken = fragment.get("t") || null;
   let unsubscribeToken = fragment.get("u") || null;
   const presetRaw = fragment.get("r");
+  // Reading the event's calendar file changes nothing, so it needs no confirmation.
+  const wantsIcs = fragment.get("a") === "ics";
   if (location.hash) {
     try { history.replaceState(null, "", location.pathname + location.search); } catch (_) { /* nothing else to do */ }
   }
@@ -118,6 +122,11 @@
     }
     if (preset) G.selected = preset;
     renderInvitation();
+    if (wantsIcs && (G.preview.event || {}).status !== "cancelled") {
+      const button = $("m-ics");
+      if (button) button.focus();
+      await downloadIcs();
+    }
   }
 
   function currentOccurrence() {

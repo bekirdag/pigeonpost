@@ -197,6 +197,8 @@ pub(crate) struct View {
     pub cancel_message: Option<String>,
     pub minutes: i64,
     pub code: Option<String>,
+    /// The guest page with an "add to calendar" action (`…#t=<token>&a=ics`).
+    pub ics_url: Option<String>,
     #[allow(dead_code)]
     pub recipient_name: String,
 }
@@ -227,6 +229,8 @@ struct Words {
     no_reply: &'static str,
     verify_intro: &'static str,
     verify_note: &'static str,
+    verify_title: &'static str,
+    add_to_calendar: &'static str,
     message_from: &'static str,
 }
 
@@ -257,6 +261,8 @@ const EN: Words = Words {
     verify_intro: "Enter this code on the invitation page to confirm it's you:",
     verify_note: "It works once and expires in 10 minutes. If you didn't ask for it, you can ignore this message.",
     message_from: "Message from the organizer",
+    verify_title: "Confirm it's you",
+    add_to_calendar: "Add to calendar",
 };
 
 const TR: Words = Words {
@@ -286,6 +292,8 @@ const TR: Words = Words {
     verify_intro: "Siz olduğunuzu doğrulamak için bu kodu davet sayfasına girin:",
     verify_note: "Kod bir kez kullanılabilir ve 10 dakika içinde geçerliliğini yitirir. Siz istemediyseniz bu mesajı yok sayabilirsiniz.",
     message_from: "Düzenleyenin mesajı",
+    verify_title: "Siz olduğunuzu doğrulayın",
+    add_to_calendar: "Takvime ekle",
 };
 
 fn words(lang: &str) -> &'static Words {
@@ -297,18 +305,7 @@ fn words(lang: &str) -> &'static Words {
 }
 
 pub(crate) fn html_escape(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        match c {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            '\'' => out.push_str("&#39;"),
-            c => out.push(c),
-        }
-    }
-    out
+    crate::email_layout::escape(s)
 }
 
 fn fill(t: &str, v: &View) -> String {
@@ -452,73 +449,77 @@ pub(crate) fn render(kind: Kind, v: &View) -> (String, String, String) {
         },
         v,
     );
+    use crate::email_layout::{self as layout, BODY, INK, MONO, MUTED, RULE, SOFT};
     let e = html_escape;
     let mut h = String::new();
     let mut t = String::new();
-    h.push_str(&format!(
-        r#"<!doctype html><html lang="{lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><meta name="supported-color-schemes" content="light dark"><title>{subject}</title><style>
-body{{margin:0;padding:0;background:#f4f6f8;color:#12161c;font-family:Geist,"Segoe UI",-apple-system,BlinkMacSystemFont,Roboto,Helvetica,Arial,sans-serif;}}
-.wrap{{max-width:560px;margin:0 auto;padding:24px 16px;}}
-.card{{background:#ffffff;border:1px solid #e4e7ec;border-radius:14px;padding:28px;}}
-.brand{{display:flex;align-items:center;gap:10px;margin-bottom:20px;font-weight:600;font-size:15px;color:#12161c;}}
-.lead{{color:#59626e;font-size:14px;margin:0 0 6px;}}
-h1{{font-size:22px;line-height:1.3;margin:0 0 18px;color:#12161c;}}
-.row{{margin:0 0 12px;font-size:15px;line-height:1.5;color:#343c47;}}
-.label{{display:block;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:#636c78;}}
-.btn{{display:inline-block;background:#2563eb;color:#ffffff !important;text-decoration:none;font-weight:600;padding:12px 20px;border-radius:10px;font-size:15px;}}
-.ghost{{display:inline-block;border:1px solid #e4e7ec;color:#12161c !important;text-decoration:none;padding:9px 16px;border-radius:10px;margin:0 6px 6px 0;font-size:14px;}}
-.code{{font-size:30px;letter-spacing:.3em;font-weight:700;margin:12px 0;color:#12161c;}}
-.desc{{white-space:pre-wrap;font-size:14px;color:#343c47;background:#f4f6f8;border-radius:10px;padding:12px;}}
-.foot{{font-size:12px;color:#636c78;line-height:1.6;margin-top:18px;}}
-.foot a{{color:#636c78;}}
-@media (prefers-color-scheme: dark){{
-body{{background:#0f1216 !important;color:#e8ebef !important;}}
-.card{{background:#171b21 !important;border-color:#2a3038 !important;}}
-.brand,h1,.code{{color:#f2f4f7 !important;}}
-.row,.desc{{color:#c9ced6 !important;}}
-.desc{{background:#0f1216 !important;}}
-.lead,.label,.foot,.foot a{{color:#9aa3ae !important;}}
-.ghost{{border-color:#2a3038 !important;color:#e8ebef !important;}}
-.btn{{background:#3b82f6 !important;}}
-}}
-</style></head><body><div class="wrap"><div class="card">
-<div class="brand"><img src="https://pigeonpost.dev/logo.png" width="28" height="28" alt=""><span>Pigeonpost</span></div>
-"#,
-        lang = if v.lang == "tr" { "tr" } else { "en" },
-        subject = e(&subject),
-    ));
-    h.push_str(&format!("<p class=\"lead\">{}</p>\n", e(&lead)));
+    let p_body = format!("margin:0 0 14px;color:{BODY};font-size:15px;line-height:1.6;");
+    let p_note = format!("margin:14px 0 0;color:{MUTED};font-size:13px;line-height:1.55;");
+    if kind != Kind::Verify {
+        h.push_str(&format!(
+            "<p class=\"pp-muted\" style=\"margin:0 0 6px;color:{MUTED};font-size:14px;line-height:1.5;\">{}</p>\n",
+            e(&lead)
+        ));
+    }
     t.push_str(&lead);
     t.push_str("\n\n");
+    let preheader = if kind == Kind::Verify {
+        fill(w.verify_subject, v)
+    } else {
+        format!("{lead} · {}", v.when)
+    };
     if kind == Kind::Verify {
         let code = v.code.clone().unwrap_or_default();
         h.push_str(&format!(
-            "<p class=\"code\">{}</p><p class=\"row\">{}</p>\n",
-            e(&code),
+            "<h1 class=\"pp-ink\" style=\"margin:0 0 16px;font-size:20px;line-height:1.3;font-weight:700;letter-spacing:-0.01em;color:{INK};\">{}</h1>\n",
+            e(w.verify_title)
+        ));
+        h.push_str(&format!(
+            "<p class=\"pp-body\" style=\"{p_body}margin-bottom:20px;\">{}</p>\n",
+            e(&lead)
+        ));
+        h.push_str(&format!(
+            "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\"><tr><td align=\"center\" class=\"pp-code\" style=\"background-color:{SOFT};border:1px solid {RULE};border-radius:10px;padding:18px 12px 18px 22px;font-family:{MONO};font-size:40px;line-height:1.1;font-weight:700;letter-spacing:10px;color:{INK};-webkit-user-select:all;user-select:all;\">{}</td></tr></table>\n",
+            e(&code)
+        ));
+        h.push_str(&format!(
+            "<p class=\"pp-muted pp-rule\" style=\"{p_note}margin-top:20px;padding-top:16px;border-top:1px solid {RULE};\">{}</p>\n",
             e(w.verify_note)
         ));
         t.push_str(&format!("{code}\n\n{}\n", w.verify_note));
     } else {
-        h.push_str(&format!("<h1>{}</h1>\n", e(&v.title)));
-        t.push_str(&format!("{}\n\n", v.title));
         h.push_str(&format!(
-            "<p class=\"row\"><span class=\"label\">{}</span>{}</p>\n",
-            e(w.when),
+            "<h1 class=\"pp-ink\" style=\"margin:0 0 18px;font-size:22px;line-height:1.3;font-weight:700;letter-spacing:-0.01em;color:{INK};\">{}</h1>\n",
+            e(&v.title)
+        ));
+        t.push_str(&format!("{}\n\n", v.title));
+        let label = |s: &str| {
+            format!(
+                "<span class=\"pp-muted\" style=\"display:block;font-size:12px;line-height:1.4;text-transform:uppercase;letter-spacing:.04em;color:{MUTED};\">{}</span>",
+                e(s)
+            )
+        };
+        h.push_str(&format!(
+            "<p class=\"pp-body\" style=\"{p_body}\">{}{}</p>\n",
+            label(w.when),
             e(&v.when)
         ));
         t.push_str(&format!("{}: {}\n", w.when, v.when));
         if !v.location.is_empty() {
             h.push_str(&format!(
-                "<p class=\"row\"><span class=\"label\">{}</span>{}</p>\n",
-                e(w.where_),
+                "<p class=\"pp-body\" style=\"{p_body}\">{}{}</p>\n",
+                label(w.where_),
                 e(&v.location)
             ));
             t.push_str(&format!("{}: {}\n", w.where_, v.location));
         }
+        let soft = format!(
+            "white-space:pre-wrap;font-size:14px;line-height:1.55;color:{BODY};background-color:{SOFT};border:1px solid {RULE};border-radius:10px;padding:12px 14px;margin:0 0 14px;"
+        );
         if let Some(m) = &v.cancel_message {
             h.push_str(&format!(
-                "<p class=\"row\"><span class=\"label\">{}</span></p><div class=\"desc\">{}</div>\n",
-                e(w.message_from),
+                "<p class=\"pp-body\" style=\"margin:0 0 6px;\">{}</p><div class=\"pp-soft\" style=\"{soft}\">{}</div>\n",
+                label(w.message_from),
                 e(m)
             ));
             t.push_str(&format!("\n{}:\n{m}\n", w.message_from));
@@ -526,30 +527,26 @@ body{{background:#0f1216 !important;color:#e8ebef !important;}}
         if !v.description.is_empty() && kind != Kind::Cancel {
             // Shown as text: links in descriptions are never made clickable here.
             h.push_str(&format!(
-                "<div class=\"desc\">{}</div>\n",
+                "<div class=\"pp-soft\" style=\"{soft}\">{}</div>\n",
                 e(&v.description)
             ));
             t.push_str(&format!("\n{}\n", v.description));
         }
         if kind != Kind::Cancel {
-            h.push_str("<p style=\"margin:22px 0 8px\">");
+            h.push_str("<p style=\"margin:22px 0 6px;\">");
             match &v.meeting_url {
                 Some(url) => {
-                    h.push_str(&format!(
-                        "<a class=\"btn\" href=\"{}\">{}</a>",
-                        e(url),
-                        e(w.join)
-                    ));
+                    h.push_str(&layout::button(url, w.join));
                     t.push_str(&format!("\n{}: {url}\n", w.join));
                 }
                 None => {
-                    h.push_str(&format!(
-                        "<a class=\"btn\" href=\"{}\">{}</a>",
-                        e(&v.page_url),
-                        e(w.details)
-                    ));
+                    h.push_str(&layout::button(&v.page_url, w.details));
                     t.push_str(&format!("\n{}: {}\n", w.details, v.page_url));
                 }
+            }
+            if let Some(ics) = &v.ics_url {
+                h.push_str(&layout::ghost(ics, w.add_to_calendar));
+                t.push_str(&format!("{}: {ics}\n", w.add_to_calendar));
             }
             h.push_str("</p>\n");
         }
@@ -557,48 +554,62 @@ body{{background:#0f1216 !important;color:#e8ebef !important;}}
             (&v.rsvp_urls, matches!(kind, Kind::Invite | Kind::Update))
         {
             h.push_str(&format!(
-                "<p class=\"row\" style=\"margin-top:16px\"><span class=\"label\">{}</span></p><p>",
-                e(w.going)
+                "<p class=\"pp-body\" style=\"margin:18px 0 8px;\">{}</p><p style=\"margin:0;\">",
+                label(w.going)
             ));
-            for (label, url) in [(w.yes, yes), (w.maybe, maybe), (w.no, no)] {
-                h.push_str(&format!(
-                    "<a class=\"ghost\" href=\"{}\">{}</a>",
-                    e(url),
-                    e(label)
-                ));
-                t.push_str(&format!("{label}: {url}\n"));
+            t.push('\n');
+            for (answer, url) in [(w.yes, yes), (w.maybe, maybe), (w.no, no)] {
+                h.push_str(&layout::ghost(url, answer));
+                t.push_str(&format!("{answer}: {url}\n"));
             }
             h.push_str("</p>\n");
-            h.push_str(&format!("<p class=\"foot\">{}</p>\n", e(w.authoritative)));
+            h.push_str(&format!(
+                "<p class=\"pp-muted\" style=\"{p_note}\">{}</p>\n",
+                e(w.authoritative)
+            ));
             t.push_str(&format!("\n{}\n", w.authoritative));
         }
         if matches!(kind, Kind::Invite | Kind::Update | Kind::Cancel) {
-            h.push_str(&format!("<p class=\"foot\">{}</p>\n", e(w.attached)));
+            h.push_str(&format!(
+                "<p class=\"pp-muted pp-rule\" style=\"{p_note}margin-top:20px;padding-top:16px;border-top:1px solid {RULE};\">{}</p>\n",
+                e(w.attached)
+            ));
             t.push_str(&format!("{}\n", w.attached));
         }
     }
-    h.push_str("</div><div class=\"foot\">");
+    let mut foot = String::from(FOOTER_BRAND);
     t.push_str("\n--\n");
     if kind != Kind::Verify {
         let why = fill(w.why, v);
-        h.push_str(&format!("<p>{}<br>{}</p>", e(&why), e(w.no_reply)));
+        foot.push_str(&format!("<br>{}<br>{}", e(&why), e(w.no_reply)));
         t.push_str(&format!("{why}\n{}\n", w.no_reply));
         if let Some(u) = &v.unsubscribe_organizer {
-            h.push_str(&format!("<p><a href=\"{}\">{}</a>", e(u), e(w.stop_from)));
+            let link = |href: &str, label: &str| {
+                format!(
+                    "<a class=\"pp-muted\" href=\"{}\" style=\"color:{MUTED};text-decoration:underline;\">{}</a>",
+                    e(href),
+                    e(label)
+                )
+            };
+            foot.push_str(&format!("<br>{}", link(u, w.stop_from)));
             t.push_str(&format!("{}: {u}\n", w.stop_from));
             if let Some(a) = &v.unsubscribe_all {
-                h.push_str(&format!(" · <a href=\"{}\">{}</a>", e(a), e(w.stop_all)));
+                foot.push_str(&format!(" · {}", link(a, w.stop_all)));
                 t.push_str(&format!("{}: {a}\n", w.stop_all));
             }
-            h.push_str("</p>");
         }
     } else {
-        h.push_str(&format!("<p>{}</p>", e(w.no_reply)));
+        foot.push_str(&format!("<br>{}", e(w.no_reply)));
         t.push_str(&format!("{}\n", w.no_reply));
     }
-    h.push_str("</div></div></body></html>");
-    (subject, h, t)
+    t.push_str("Pigeonpost · pigeonpost.dev\n");
+    let html = layout::document(&v.lang, &subject, &preheader, &h, &foot);
+    (subject, html, t)
 }
+
+/// The first footer line, shared with the Keycloak email theme.
+const FOOTER_BRAND: &str =
+    "Pigeonpost · Private messaging for people and AI agents · pigeonpost.dev";
 
 /// A display name for the From header: "<organizer> via Pigeonpost", cleaned.
 pub(crate) fn sender_name(organizer: &str) -> String {
