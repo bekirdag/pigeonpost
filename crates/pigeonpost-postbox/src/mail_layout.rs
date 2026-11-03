@@ -249,37 +249,13 @@ pub(crate) fn header_safe_name(raw: &str) -> Option<String> {
     (!name.is_empty()).then_some(name)
 }
 
-/// RFC 2047 for a display-name phrase: ASCII is returned unchanged; anything else becomes
-/// `=?UTF-8?B?…?=` encoded-words of at most 75 characters each, split on character boundaries.
-pub(crate) fn rfc2047(phrase: &str) -> String {
-    if phrase.is_ascii() {
-        return phrase.to_string();
-    }
-    // 45 bytes of UTF-8 -> 60 base64 characters + 12 of framing = 72 <= 75.
-    let mut words = Vec::new();
-    let mut chunk = String::new();
-    for c in phrase.chars() {
-        if chunk.len() + c.len_utf8() > 45 {
-            words.push(std::mem::take(&mut chunk));
-        }
-        chunk.push(c);
-    }
-    if !chunk.is_empty() {
-        words.push(chunk);
-    }
-    words
-        .iter()
-        .map(|w| format!("=?UTF-8?B?{}?=", crate::b64_encode(w.as_bytes())))
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
 /// The `From` display name: "<name> via Pigeonpost" for a known name, else `fallback`
-/// (e.g. "Invitation via Pigeonpost"). The name is cleaned with [`header_safe_name`] and
-/// RFC 2047-encoded when it is not ASCII.
+/// (e.g. "Invitation via Pigeonpost"). The name is cleaned with [`header_safe_name`] and sent
+/// as plain UTF-8: saas_be builds the header (`pigeonpostFromHeader`), quoting ASCII names and
+/// RFC 2047-encoding the others as unquoted encoded-words.
 pub(crate) fn sender_display(name: Option<&str>, fallback: &str) -> String {
     match name.and_then(header_safe_name) {
-        Some(n) => format!("{} via Pigeonpost", rfc2047(&n)),
+        Some(n) => format!("{n} via Pigeonpost"),
         None => fallback.to_string(),
     }
 }
@@ -461,26 +437,6 @@ mod sender_tests {
     }
 
     #[test]
-    fn test_rfc2047() {
-        assert_eq!(rfc2047("Bekir"), "Bekir");
-
-        let encoded = rfc2047("Bekir Dağ");
-        assert!(encoded.starts_with("=?UTF-8?B?"));
-        assert!(encoded.ends_with("?="));
-        for word in encoded.split_whitespace() {
-            assert!(word.len() <= 75);
-        }
-
-        let long_non_ascii = "ş".repeat(60);
-        let encoded_long = rfc2047(&long_non_ascii);
-        let words: Vec<&str> = encoded_long.split_whitespace().collect();
-        assert!(words.len() > 1);
-        for word in &words {
-            assert!(word.len() <= 75);
-        }
-    }
-
-    #[test]
     fn test_sender_display() {
         assert_eq!(
             sender_display(Some("Bekir"), "Invitation via Pigeonpost"),
@@ -495,29 +451,7 @@ mod sender_tests {
             "Invitation via Pigeonpost"
         );
 
-        let result = sender_display(Some("Çağrı"), "X");
-        assert!(result.ends_with(" via Pigeonpost"));
-        assert!(result.starts_with("=?UTF-8?B?"));
-    }
-
-    #[test]
-    fn encoded_words_decode_back_to_the_name() {
-        for name in [
-            "Bekir Dağ",
-            "Çağrı Şahin Öztürk İğneada Ülkü Ğ",
-            "日本語の名前テスト",
-        ] {
-            let decoded: Vec<u8> = rfc2047(name)
-                .split(' ')
-                .flat_map(|w| {
-                    let inner = w
-                        .strip_prefix("=?UTF-8?B?")
-                        .and_then(|w| w.strip_suffix("?="))
-                        .unwrap();
-                    crate::b64_decode(inner).unwrap()
-                })
-                .collect();
-            assert_eq!(String::from_utf8(decoded).unwrap(), name);
-        }
+        // Non-ASCII stays plain UTF-8 here; saas_be encodes it for the header.
+        assert_eq!(sender_display(Some("Çağrı"), "X"), "Çağrı via Pigeonpost");
     }
 }

@@ -296,7 +296,7 @@ paid handle: `/bekir/main` → "Bekir"), or "Invitation via Pigeonpost" (invitat
 "Pigeonpost Calendar" (updates, cancellations) for a key-only organizer; greetings and the calendar
 file's organizer name follow the same rule, so a `/k/…` address never reaches a guest. Names are
 stripped of controls, quotes, angle brackets and address punctuation, capped at 40 characters and
-RFC 2047-encoded when not ASCII. Organization invitations use the inviter's member name the same way.
+RFC 2047-encoded by saas_be when not ASCII. Organization invitations use the inviter's member name the same way.
 The page must read the fragment, remove it from the address bar, and send the token only in POST
 bodies. Unsubscribe links are `…/m/u#u=<token>`.
 

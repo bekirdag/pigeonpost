@@ -726,9 +726,8 @@ mod tests {
     }
 
     #[test]
-    fn non_ascii_names_are_encoded_for_the_header() {
-        let from = sender_name(Some("Çağrı Dağ"), Kind::Invite);
-        assert!(from.starts_with("=?UTF-8?B?") && from.ends_with("?= via Pigeonpost"));
-        assert!(from.is_ascii());
+    fn non_ascii_names_stay_plain_and_header_safe() {
+        let from = sender_name(Some("Çağrı \"Dağ\" <x@y>"), Kind::Invite);
+        assert_eq!(from, "Çağrı Dağ xy via Pigeonpost");
     }
 }
