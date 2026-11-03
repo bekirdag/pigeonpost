@@ -54,3 +54,11 @@ test("the call client exposes the answering API and the link parameter", () => {
   assert.ok(src.includes('searchParams.get("answer")'));
   assert.ok(src.includes("ring_token"));
 });
+
+test("someone removed from a group mid-call is told why the call ended (audit P0-2)", () => {
+  const src = read("calls.js");
+  const table = src.slice(src.indexOf("function endedMessage"), src.indexOf("function placeError"));
+  assert.match(table, /removed: "You were removed from this group, so you left its call\."/);
+  // A ring cut short by removal is not reported as a missed call.
+  assert.match(src, /if \(data\.reason === "removed"\) toast\(endedMessage\("removed"\)\);\s*else if \(data\.reason !== "answered_elsewhere"\) toast\("Missed "/);
+});
