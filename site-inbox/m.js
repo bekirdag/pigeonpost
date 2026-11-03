@@ -2,7 +2,7 @@
 //
 // Three ways in (docs/calendar.md §6, §7):
 //   /m/<locator>#t=<token>[&r=accepted]  a contact guest's personal invitation;
-//   /m/<locator>#t=<token>&a=ics          the same, from the email's "Add to calendar" button:
+//   /m/<locator>#t=<token>&a=ics          the same, from the invitation message's "Add to calendar" button:
 //                                        the calendar file downloads once the invitation loads;
 //   /m/u#u=<token>                       an unsubscribe link;
 //   /m/<CODE>                            a bare meeting link. Signed-in members may join; anyone else

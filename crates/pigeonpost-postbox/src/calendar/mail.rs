@@ -305,7 +305,7 @@ fn words(lang: &str) -> &'static Words {
 }
 
 pub(crate) fn html_escape(s: &str) -> String {
-    crate::email_layout::escape(s)
+    crate::mail_layout::escape(s)
 }
 
 fn fill(t: &str, v: &View) -> String {
@@ -449,7 +449,7 @@ pub(crate) fn render(kind: Kind, v: &View) -> (String, String, String) {
         },
         v,
     );
-    use crate::email_layout::{self as layout, BODY, INK, MONO, MUTED, RULE, SOFT};
+    use crate::mail_layout::{self as layout, BODY, INK, MONO, MUTED, RULE, SOFT};
     let e = html_escape;
     let mut h = String::new();
     let mut t = String::new();

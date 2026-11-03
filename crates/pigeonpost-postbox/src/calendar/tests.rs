@@ -891,9 +891,9 @@ async fn guests_preview_answer_verify_and_join_with_scoped_credentials() {
     // saas_be accepts the payload, and the message offers "Add to calendar" through the guest
     // page (the token stays in the fragment) beside the attached file.
     let contract = |m: &super::mail::Outgoing| {
-        crate::email_layout::contract::check(
+        crate::mail_layout::contract::check(
             m.workflow,
-            &crate::email_layout::contract::merged(
+            &crate::mail_layout::contract::merged(
                 &m.payload,
                 "pigeonpost",
                 &m.subject,
@@ -905,7 +905,7 @@ async fn guests_preview_answer_verify_and_join_with_scoped_credentials() {
     assert_eq!(contract(m), Ok(()));
     assert!(m.text.contains("Add to calendar: https://") && m.text.contains("&a=ics"));
     assert!(m.html.contains(">Add to calendar</a>") && m.html.contains("&amp;a=ics\""));
-    assert!(m.html.contains(crate::email_layout::LOGO_LIGHT));
+    assert!(m.html.contains(crate::mail_layout::LOGO_LIGHT));
     assert!(!m.html.contains("pigeonpost.dev/logo.png"));
     let token = m
         .text

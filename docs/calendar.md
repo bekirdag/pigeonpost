@@ -284,12 +284,12 @@ thread. FCM remains data-only with generic text and string-valued fields.
 A contact guest's invitation link is `https://inbox.pigeonpost.dev/m/<locator>#t=<token>` (locator =
 meeting code, or the event id for events without a meeting; `&r=accepted|tentative|declined`
 preselects an answer, which the page then asks to confirm — opening a link never changes anything;
-`&a=ics` is the email's "Add to calendar" button: the page downloads the guest's calendar file through
+`&a=ics` is the invitation message's "Add to calendar" button: the page downloads the guest's calendar file through
 `POST /v1/calendar/guest/ics` once the invitation loads, unless the event is cancelled).
-Invitation, update and reminder emails carry that button; invitation, update and cancellation emails
-also attach `invite.ics`. Every email the postbox renders uses the shared layout in
-`crates/pigeonpost-postbox/src/email_layout.rs` (the same design as the Keycloak email theme, logos
-from `pigeonpost.dev/email/`, no tracking pixel), and its saas_be payload is checked in tests against
+Invitation, update and reminder messages to contact addresses carry that button; invitation, update
+and cancellation messages also attach `invite.ics`. Every such message the postbox renders uses the shared layout in
+`crates/pigeonpost-postbox/src/mail_layout.rs` (the same design as the Keycloak sign-in code theme,
+versioned logos on pigeonpost.dev, no tracking pixel), and its saas_be payload is checked in tests against
 a mirror of saas_be's `PIGEONPOST_PAYLOAD_SCHEMAS`.
 The page must read the fragment, remove it from the address bar, and send the token only in POST
 bodies. Unsubscribe links are `…/m/u#u=<token>`.

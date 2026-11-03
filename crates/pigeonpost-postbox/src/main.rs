@@ -75,7 +75,6 @@ mod chatgpt;
 mod contacts;
 #[cfg(test)]
 mod contacts_tests;
-mod email_layout;
 mod ephemeral;
 mod fcm;
 mod filtering;
@@ -91,6 +90,7 @@ mod groups_tests;
 mod inbox_paging_tests;
 mod internal_api;
 mod limits;
+mod mail_layout;
 mod mcp;
 mod meetings;
 #[cfg(test)]

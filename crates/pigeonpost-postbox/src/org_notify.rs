@@ -74,7 +74,7 @@ pub(crate) fn render(
     link: &str,
     expires: &str,
 ) -> (String, String, String) {
-    use crate::email_layout::{self as layout, escape as esc, BODY, INK, MUTED, RULE};
+    use crate::mail_layout::{self as layout, escape as esc, BODY, INK, MUTED, RULE};
     let subject =
         format!("{inviter} invited you to {org} on Pigeonpost").replace(['\r', '\n'], " ");
     let text = format!(
@@ -368,8 +368,7 @@ mod tests {
         // The only images are the two versioned logos: no tracking pixel.
         assert_eq!(h.matches("<img").count(), 2);
         assert!(
-            h.contains(crate::email_layout::LOGO_LIGHT)
-                && h.contains(crate::email_layout::LOGO_DARK)
+            h.contains(crate::mail_layout::LOGO_LIGHT) && h.contains(crate::mail_layout::LOGO_DARK)
         );
         assert!(h.contains("href=\"https://enterprise.pigeonpost.dev/invite#tok\""));
         assert!(t.contains("https://enterprise.pigeonpost.dev/invite#tok"));
@@ -394,7 +393,7 @@ mod tests {
             ),
         );
         assert_eq!(body["workflow_id"], "pigeonpost-org-invite");
-        let merged = crate::email_layout::contract::merged(
+        let merged = crate::mail_layout::contract::merged(
             &body["payload"],
             body["tenant_id"].as_str().unwrap(),
             body["subject"].as_str().unwrap(),
@@ -402,7 +401,7 @@ mod tests {
             body["text"].as_str().unwrap(),
         );
         assert_eq!(
-            crate::email_layout::contract::check("pigeonpost-org-invite", &merged),
+            crate::mail_layout::contract::check("pigeonpost-org-invite", &merged),
             Ok(())
         );
     }

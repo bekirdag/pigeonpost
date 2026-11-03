@@ -123,7 +123,7 @@ test("a preselected answer is highlighted and only sent after Confirm", async (t
   assert.deepEqual(a.calls.find((c) => c.path === "/v1/calendar/guest/ics").body, { token: TOKEN });
 });
 
-test("the email's Add to calendar link downloads the file once, with the token in the body only", async (t) => {
+test("the invitation message's Add to calendar link downloads the file once, with the token in the body only", async (t) => {
   const a = page(t, { hash: "#t=" + TOKEN + "&a=ics" });
   assert.equal(a.w.location.href, "https://inbox.pigeonpost.dev/m/ABCDEFGHJK", "fragment removed first");
   await until(() => a.calls.some((c) => c.download));
