@@ -2665,12 +2665,22 @@
     for (const [id, tile] of room.tiles) if (!wanted.has(id)) { tile.querySelector("video").srcObject = null; tile.remove(); room.tiles.delete(id); }
 
     // Voices, one <audio> per person, independent of any tile.
+    //
+    // The element is given the voice again whenever the set of tracks in it changes. Chromium
+    // (Chrome, Edge, the Android and Windows apps' web views) never starts an <audio> whose stream
+    // was empty when it was attached: a track added to that stream later stays silent for the whole
+    // call (readyState 0), although its packets arrive and decode. A person's voice always arrives
+    // after their tile is drawn — the connection's first track, or the media server's after a move
+    // — so without this every voice in a Chromium client was silent. WebKit plays either way.
     for (const p of list) {
       if (!p.audioEl) {
         p.audioEl = el("audio", { autoplay: true });
         $("call-audio").append(p.audioEl);
       }
-      if (p.audioEl.srcObject !== p.remote.audio) {
+      const voice = p.remote.audio.getAudioTracks().map((t) => t.id).join(",");
+      if (p.audioEl.srcObject !== p.remote.audio || p.audioVoice !== voice) {
+        p.audioVoice = voice;
+        p.audioEl.srcObject = null;
         p.audioEl.srcObject = p.remote.audio;
         if (prefs.speaker) p.audioEl.setSinkId?.(prefs.speaker).catch(() => {});
       }

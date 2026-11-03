@@ -12,6 +12,13 @@
 //   group (mesh)       four people: a call plus two guests through the meeting link, admitted
 //   group (SFU)        seven people: the seventh moves the call to the media server
 //
+// "Arrive" means what a person would notice, not packets: on every connection the received audio
+// carries energy (totalAudioEnergy grows; the synthetic microphone is a tone) and video frames are
+// decoded, and on the page each other person's voice element is actually playing (its currentTime
+// advances) and their video tile is playing pictures. Byte counters alone passed while Chromium
+// played no voice at all (2026-11-03: an <audio> attached to a stream that was still empty never
+// starts in Chromium).
+//
 // The two accounts take turns calling: the postbox silences more than 3 calls from one mailbox to
 // another in 2 minutes (10 an hour), so run it at most a few times an hour with the same ACCOUNTS.
 //
@@ -55,9 +62,10 @@ async function proofOfWork() {
   for (let i = 0; ; i++) if (zeroBits(createHash("sha256").update(challenge + ":" + i).digest()) >= bits) return { pow_challenge: challenge, pow_solution: String(i) };
 }
 async function makeAccounts() {
+  // One account with two mailboxes: the postbox allows 5 new accounts an hour from one address.
   const out = [];
+  const { api_key } = await pb("POST", "/v1/accounts", null, await proofOfWork());
   for (let i = 0; i < 2; i++) {
-    const { api_key } = await pb("POST", "/v1/accounts", null, await proofOfWork());
     const { address } = await pb("POST", "/v1/identities", api_key, { label: "call-smoke-" + i });
     out.push({ api_key, address, created: true });
   }
@@ -67,6 +75,7 @@ async function makeAccounts() {
 async function removeAccounts(accounts) {
   for (const a of accounts.filter((x) => x.created)) {
     try { await pb("DELETE", "/v1/identities?identity=" + encodeURIComponent(a.address), a.api_key); } catch (e) { log("cleanup: mailbox", e.message); }
+    if (a !== accounts.filter((x) => x.created).at(-1)) continue; // the shared key goes last
     try {
       const { keys } = await pb("GET", "/v1/api-keys", a.api_key);
       for (const k of keys || []) await pb("DELETE", "/v1/api-keys/" + encodeURIComponent(k.id), a.api_key);
@@ -90,10 +99,15 @@ const MEDIA = `(() => {
   // What arrives on each live connection: one per other person in a mesh, the subscriber's on the media server.
   window.__received = async () => { const out = [];
     for (const pc of window.__pcs) { if (pc.connectionState !== "connected") continue;
-      const c = { audio: 0, video: 0, frames: 0 };
-      (await pc.getStats()).forEach((r) => { if (r.type !== "inbound-rtp") return; if (r.kind === "audio") c.audio += r.bytesReceived || 0; else { c.video += r.bytesReceived || 0; c.frames += r.framesDecoded || 0; } });
+      const c = { audio: 0, energy: 0, video: 0, frames: 0 };
+      (await pc.getStats()).forEach((r) => { if (r.type !== "inbound-rtp") return; if (r.kind === "audio") { c.audio += r.bytesReceived || 0; c.energy += r.totalAudioEnergy || 0; } else { c.video += r.bytesReceived || 0; c.frames += r.framesDecoded || 0; } });
       out.push(c); }
     return out; };
+  // What the page plays: each other person's voice element and video tile, by playback position.
+  window.__playing = () => ({
+    voices: [...document.querySelectorAll("#call-audio audio")].filter((a) => a.srcObject && a.srcObject.getAudioTracks().length).map((a) => a.currentTime),
+    videos: [...document.querySelectorAll(".call-tile-video")].filter((v) => v.srcObject && v.srcObject.getVideoTracks().length).map((v) => v.videoWidth ? v.currentTime : -1),
+  });
 })();`;
 // RELAY=1: every connection through the TURN relay (the calls client's own switch), so the relay is
 // exercised although both ends run on one machine.
@@ -113,6 +127,9 @@ async function launchChrome() {
   const dir = mkdtempSync(path.join(os.tmpdir(), "call-smoke-"));
   const proc = spawn(chrome, ["--headless=new", "--remote-debugging-port=0", `--user-data-dir=${dir}`, "--no-first-run", "--no-default-browser-check",
     "--use-fake-ui-for-media-stream", "--autoplay-policy=no-user-gesture-required", "--disable-quic", "--mute-audio",
+    // Every person is a background tab of one browser: unthrottled, the synthetic camera draws at
+    // 30 fps instead of 1.
+    "--disable-background-timer-throttling", "--disable-renderer-backgrounding", "--disable-backgrounding-occluded-windows",
     ...(process.platform === "linux" ? ["--no-sandbox"] : []), "about:blank"], { stdio: ["ignore", "ignore", "pipe"] });
   const wsUrl = await new Promise((resolve, reject) => {
     let err = "";
@@ -200,8 +217,10 @@ async function flowing(people, opts) {
 async function flowingOnce(people, { video, mesh = 0 }) {
   if (mesh) for (const p of people) await until(p.name + " is connected to all " + (mesh - 1) + " others", async () => (await p.evaluate("window.__received()")).length >= mesh - 1 || not(await p.evaluate("window.__pcs.map((pc) => pc.connectionState + '/' + pc.iceConnectionState)")), 30000);
   const first = await Promise.all(people.map((p) => p.evaluate("window.__received()")));
+  const shown = await Promise.all(people.map((p) => p.evaluate("window.__playing()")));
   await sleep(3000);
   const second = await Promise.all(people.map((p) => p.evaluate("window.__received()")));
+  const shownLater = await Promise.all(people.map((p) => p.evaluate("window.__playing()")));
   if (VERBOSE) people.forEach((p, i) => log("  ", p.name, JSON.stringify(first[i]), "→", JSON.stringify(second[i])));
   people.forEach((p, i) => {
     const sum = (list, k) => list.reduce((n, c) => n + c[k], 0);
@@ -212,10 +231,18 @@ async function flowingOnce(people, { video, mesh = 0 }) {
     links.forEach(([now, before], j) => {
       const who = mesh ? " from connection " + (j + 1) : "";
       if (now.audio <= before.audio) throw new Error(p.name + " receives no audio" + who);
+      if (now.energy <= before.energy) throw new Error(p.name + " receives only silence" + who);
       if (video && (now.video <= before.video || now.frames <= before.frames)) throw new Error(p.name + " receives no video" + who);
     });
+    // Heard and seen: one playing voice (and, in a video call, one playing tile) per other person.
+    const others = (mesh || people.length) - 1;
+    const advancing = (later, earlier) => later.filter((t, k) => t > (earlier[k] ?? 0) + 1).length;
+    const voices = advancing(shownLater[i].voices, shown[i].voices), tiles = advancing(shownLater[i].videos, shown[i].videos);
+    if (voices < others) throw new Error(p.name + " plays " + voices + " of " + others + " voices " + JSON.stringify(shownLater[i].voices));
+    if (video && tiles < others) throw new Error(p.name + " shows " + tiles + " of " + others + " videos " + JSON.stringify(shownLater[i].videos));
     const a = links.reduce((n, [x, y]) => n + x.audio - y.audio, 0), v = links.reduce((n, [x, y]) => n + x.video - y.video, 0);
-    log("  ", p.name, "receiving on " + links.length + " connection(s): audio +" + a + " B" + (video ? ", video +" + v + " B" : ""));
+    const e = links.reduce((n, [x, y]) => n + x.energy - y.energy, 0), f = links.reduce((n, [x, y]) => n + x.frames - y.frames, 0);
+    log("  ", p.name, "receiving on " + links.length + " connection(s): audio +" + a + " B, energy +" + e.toFixed(2) + ", " + voices + " voice(s) playing" + (video ? "; video +" + v + " B, +" + f + " frames decoded, " + tiles + " tile(s) playing" : ""));
   });
 }
 async function hangUpAll(people) {
