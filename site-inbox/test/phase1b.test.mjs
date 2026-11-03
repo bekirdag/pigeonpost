@@ -261,15 +261,31 @@ test("block from the conversation header can report and cover the namespace", as
   await until(() => a.server.mailboxes[OWNER].contacts.some(c => c.peer === "/alp/*" && c.admission === "block"));
 });
 
-test("a message offers Block sender", async t => {
+test("a message offers Block sender and Report from its menu, not from inside the bubble", async t => {
   const a = await app(t);
   await a.clickPeer();
-  const button = a.$("messages").querySelector(".msg-block");
-  assert.ok(button);
-  assert.equal(button.getAttribute("aria-label"), "Block sender");
-  button.click();
+  const row = [...a.$("messages").querySelectorAll("li")].find(li => !li.classList.contains("mine") && li.querySelector(".bubble"));
+  assert.ok(row, "a received message");
+  const bubble = row.querySelector(".bubble");
+  assert.equal(bubble.querySelector("button.msg-block, .msg-actions, .msg-action"), null, "no action icons inside the bubble");
+  // Keyboard: Shift+F10 on the focused action row opens the same menu as a right-click.
+  const copy = row.querySelector(".msg-actions .msg-action");
+  assert.ok(copy, "the action row sits outside the bubble");
+  copy.focus();
+  copy.dispatchEvent(new a.w.KeyboardEvent("keydown", { key: "F10", shiftKey: true, bubbles: true, cancelable: true }));
+  assert.equal(a.$("msg-menu").hidden, false);
+  const items = () => [...a.$("msg-menu").querySelectorAll("button")];
+  assert.ok(items().some(b => b.textContent === "Report"));
+  items().find(b => b.textContent === "Block sender").click();
+  assert.equal(a.$("msg-menu").hidden, true);
   assert.equal(a.$("peer-block-sheet").hidden, false);
   a.$("peer-block-cancel").click();
+  // Report sends a spam report for that message and does not block.
+  bubble.dispatchEvent(new a.w.MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }));
+  items().find(b => b.textContent === "Report").click();
+  await until(() => a.called("/v1/report-spam", "POST").length === 1);
+  assert.equal(a.called("/v1/report-spam", "POST")[0].body.message_id, row.dataset.messageId);
+  assert.equal(a.called("/v1/contacts", "PUT").length, 0, "reporting is not blocking");
 });
 
 test("privacy settings load from and save to the policy", async t => {

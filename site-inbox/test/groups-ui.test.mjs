@@ -353,6 +353,16 @@ test("Phase 1e: group bubbles get the action row, ticks from member cursors, rep
   assert.ok(li(5).querySelector(".ticks").classList.contains("ticks-seen"), "every visible member has read it");
   assert.equal(li(3).querySelector(".ticks"), null, "others' messages carry no ticks");
   assert.equal(li(5).querySelector(".reply-quote .reply-line").textContent, "Shall we meet Saturday?");
+  // Delete is not a link inside the bubble; it is in the menu, which the keyboard reaches too.
+  assert.equal(a.$("group-messages").querySelector(".bubble .msg-delete, .bubble button.linkish"), null);
+  const menuItems = () => [...a.$("msg-menu").querySelectorAll("button")].map((b) => b.textContent);
+  li(5).querySelector(".bubble").dispatchEvent(new a.w.MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }));
+  assert.deepEqual(menuItems(), ["Reply", "Copy", "Edit", "Info", "Delete"]);
+  a.$("msg-menu").hidden = true;
+  li(5).querySelector(".msg-action.copy").dispatchEvent(new a.w.KeyboardEvent("keydown", { key: "ContextMenu", bubbles: true, cancelable: true }));
+  assert.equal(a.$("msg-menu").hidden, false);
+  assert.ok(menuItems().includes("Delete"));
+  a.$("msg-menu").hidden = true;
 
   li(5).querySelector(".ticks").click();
   await until(() => !a.w.document.getElementById("group-msg-info-sheet")?.hidden);
@@ -373,6 +383,18 @@ test("Phase 1e: group bubbles get the action row, ticks from member cursors, rep
   await until(() => a.server.sent.length === 2);
   assert.equal(a.server.sent[1].doc.edit_of, 5);
   assert.equal(a.server.sent[1].doc.reply_to, "3", "an edited reply stays a reply");
+});
+
+test("Phase 1e: group ticks follow the receipts flag, as in a conversation", async (t) => {
+  const gid = group().id;
+  const a = await app(t, {
+    features: ["groups", "message_edit", "message_reply"],
+    histories: { [gid]: [{ kind: "message", seq: 5, sender: OWNER, text: "Yes, 10am", files: [], created_at: NOW - 100 }] },
+  });
+  await until(() => a.$("groups-list")?.querySelector(".group-row"));
+  a.$("groups-list").querySelector(".group-row").click();
+  await until(() => a.$("group-messages").querySelector('li[data-seq="5"] .msg-actions'));
+  assert.equal(a.$("group-messages").querySelector('li[data-seq="5"] .ticks'), null, "no receipts, no ticks — not even Sent");
 });
 
 test("a live stream shows a LIVE banner with Watch, Go live opens its sheet, and the stream notice reads as a sentence", async (t) => {
