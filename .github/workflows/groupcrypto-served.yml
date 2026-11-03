@@ -1,0 +1,30 @@
+# Fails when the group-crypto runtime served at inbox.pigeonpost.dev differs from main
+# (audit 2026-11-03 P0-1: unversioned names served a stale WASM for two weeks).
+name: groupcrypto served bytes
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - site-inbox/vendor/groupcrypto/**
+      - site-inbox/groups.js
+      - deploy/sites/check-groupcrypto-served.py
+      - .github/workflows/groupcrypto-served.yml
+  pull_request:
+    paths:
+      - deploy/sites/check-groupcrypto-served.py
+      - .github/workflows/groupcrypto-served.yml
+permissions:
+  contents: read
+jobs:
+  served:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Compare served bytes with the repository
+        run: >
+          python3 -I deploy/sites/check-groupcrypto-served.py
+          --retained f185d0bd6f783430db1edd81aba0a90570a0b93c9bac486a81f9bc90c816de16

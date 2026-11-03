@@ -52,6 +52,25 @@ resolves that installed bundle under the vhost root. The observed legacy `v=2026
 without falling back to another bundle. Existing security headers and MIME types are inherited.
 Fresh static installations can keep the current bundle in both the default and versioned paths.
 
+The top-level (unversioned) files are **not** a frozen legacy copy: old cached loaders import them
+without a version, so they must always mirror the current bundle. Leaving them on an older build
+made those browsers run the 20 October WASM without the 24 October Welcome-suite fix and the
+28 October fingerprint fix (audit 2026-11-03, P0-1). Use the script, which stages, verifies
+checksums and sizes on the server, backs up, installs the immutable bundle (or proves the installed
+one identical), then mirrors it at the unversioned names in one `sudo -S` step:
+
+```bash
+deploy/sites/deploy-groupcrypto.sh origin/main         # PP_DRY_RUN=1 stops before install
+python3 -I deploy/sites/check-groupcrypto-served.py \
+  --retained f185d0bd6f783430db1edd81aba0a90570a0b93c9bac486a81f9bc90c816de16
+```
+
+The check compares every name a browser can reach (versioned bundle, unversioned, `?v=20261020-p3a`,
+`groups.js` and `index.html`) with this checkout, and confirms retained older bundles are still
+self-consistent. It runs every six hours in `.github/workflows/groupcrypto-served.yml` and fails
+when production differs from `main`. The edge revalidates these objects against the origin; if a
+check still sees old bytes after a deploy, purge only those URLs in Cloudflare.
+
 Before publishing HTML, run `nginx -t` against the candidate configuration and verify both the
 legacy and candidate module hashes through an isolated loopback server. After the exact live
 master reload, verify both versions through the public edge. It must preserve the query in its cache
