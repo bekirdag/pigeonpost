@@ -1,0 +1,8 @@
+#!/bin/sh
+# /usr/local/sbin/runsc-nests — the Nests sandbox runtime: gVisor runsc on the systrap platform
+# (this host has no KVM). The flags are fixed here so every Nest gets the same reviewed profile:
+#   --network=sandbox    gVisor's own network stack (netstack), not the host's
+#   --host-uds=none      no host Unix sockets can be opened or created from inside
+#   --host-fifo=none     no host FIFOs
+#   --overlay2=root:memory  root filesystem changes stay in sandbox memory (and podman mounts it read-only)
+exec /usr/bin/runsc --platform=systrap --network=sandbox --host-uds=none --host-fifo=none --overlay2=root:memory --ignore-cgroups=false "$@"

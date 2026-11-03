@@ -51,6 +51,16 @@ pub(crate) const TABLES: &[(&str, Rule)] = &[
     // ---- blockers: content, membership, money, names, obligations ---------------------------
     ("messages", Block(M, "owner = ?1")),
     ("attachments", Block(M, "owner = ?1")),
+    // Nest metadata: no content. Delete a live Nest through `DELETE /internal/v1/nests/{id}`
+    // first (it revokes the sandbox's mailbox credential); erasing its mailbox ends it anyway.
+    (
+        "nests",
+        Keep("Nest ownership metadata, no content; ops deletes the Nest before erasure"),
+    ),
+    (
+        "nest_enrollments",
+        Keep("hashed one-time codes and device public keys of a Nest; no content"),
+    ),
     ("group_members", Block(M, "member = ?1")),
     ("group_messages", Block(M, "sender = ?1")),
     ("group_attachments", Block(M, "uploader = ?1")),

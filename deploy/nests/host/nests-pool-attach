@@ -1,0 +1,15 @@
+#!/bin/sh
+# /usr/local/sbin/nests-pool-attach — attach the Nests storage pool (loop file -> LVM thin pool)
+# at boot. Idempotent. Created once with:
+#   fallocate -l 64G /var/lib/nests/pool/pool.img
+#   losetup --find --show --direct-io=on /var/lib/nests/pool/pool.img   # -> /dev/loopN
+#   pvcreate /dev/loopN; vgcreate nests /dev/loopN
+#   lvcreate --type thin-pool -l 98%FREE -n pool nests --zero n --discards passdown
+# --zero n is safe because every Nest volume is its own LUKS2 container: a new volume can only ever
+# see another (deleted) Nest's ciphertext, whose key is gone.
+set -eu
+IMG=/var/lib/nests/pool/pool.img
+if ! losetup -j "$IMG" | grep -q .; then
+  losetup --find --direct-io=on "$IMG"
+fi
+vgchange -q -ay nests

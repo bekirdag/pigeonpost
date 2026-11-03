@@ -367,6 +367,26 @@ pub(crate) async fn message_by_id(
         .cloned())
 }
 
+/// Long-poll a mailbox for unread mail with its own credential (`GET /v1/inbox?wait=`).
+///
+/// The account event stream needs an account sign-in; a hosted Nest holds only its mailbox
+/// credential, so this is how it hears about new mail. The postbox answers as soon as unread mail
+/// is waiting, or after `wait_secs` with an empty list.
+pub(crate) async fn unread_wait(
+    credential: &Credential,
+    wait_secs: u64,
+) -> Result<Vec<serde_json::Value>, Error> {
+    let value = request_with_timeout(
+        credential,
+        reqwest::Method::GET,
+        &format!("/v1/inbox?include_read=false&actions=1&wait={wait_secs}"),
+        None,
+        Duration::from_secs(wait_secs + 20),
+    )
+    .await?;
+    Ok(value["messages"].as_array().cloned().unwrap_or_default())
+}
+
 /// What a send may carry besides its text (SDS §14C): a reference of its own, and the message it
 /// answers or edits.
 #[derive(Debug, Default, Clone)]

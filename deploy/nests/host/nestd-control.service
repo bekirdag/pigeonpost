@@ -1,0 +1,23 @@
+[Unit]
+Description=Pigeonpost Nests control service (private API on WireGuard)
+Documentation=https://github.com/bekirdag/pigeonpost/blob/main/docs/nests/phase-a-plan.md
+After=network-online.target nests-pool.service wg-quick@wg-nests.service nftables.service
+Requires=nests-pool.service wg-quick@wg-nests.service
+Wants=network-online.target
+
+[Service]
+# Root: it drives podman, cryptsetup, LVM and mount. It is the only process that does.
+ExecStart=/usr/local/bin/pigeonpost-nestd control --config /etc/nests/nestd.toml
+Restart=on-failure
+RestartSec=5
+# Nests keep running when this service restarts; reconcile adopts them.
+KillMode=process
+# No ProtectHome/PrivateTmp/ProtectSystem: any of them gives this service a private mount
+# namespace, and the Nest volumes it mounts must be visible to podman and the host.
+# The ledger is shared with the broker (group nests); secrets are written 0400 explicitly.
+UMask=0007
+MemoryMax=512M
+Environment=RUST_LOG=info
+
+[Install]
+WantedBy=multi-user.target

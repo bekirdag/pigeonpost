@@ -1,0 +1,7 @@
+[Match]
+Name=nests-svc
+
+[Network]
+Address=10.67.255.1/32
+LinkLocalAddressing=no
+IPv6AcceptRA=no

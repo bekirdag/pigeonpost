@@ -1,0 +1,25 @@
+# WireGuard between the postbox host and nests-1: the only path to the Nest control API.
+# Keys are generated on each host (wg genkey) and never leave it; only public keys are exchanged.
+#
+# --- nests-1: /etc/wireguard/wg-nests.conf (listens; ufw admits UDP 51820 from the postbox only)
+[Interface]
+Address = 10.66.0.2/30
+ListenPort = 51820
+PrivateKey = <nests-1 private key>
+
+[Peer]
+# postbox host 45.132.181.100
+PublicKey = <postbox public key>
+AllowedIPs = 10.66.0.1/32
+
+# --- postbox host: /etc/wireguard/wg-nests.conf (initiates; no inbound port opened there)
+[Interface]
+Address = 10.66.0.1/30
+PrivateKey = <postbox private key>
+
+[Peer]
+# nests-1 193.164.5.238
+PublicKey = <nests-1 public key>
+AllowedIPs = 10.66.0.2/32
+Endpoint = 193.164.5.238:51820
+PersistentKeepalive = 25

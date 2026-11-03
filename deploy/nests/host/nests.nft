@@ -1,0 +1,67 @@
+#!/usr/sbin/nft -f
+# Nests egress policy (nests-1). Default deny for everything a Nest sandbox starts.
+#
+# A Nest lives on the podman bridge nests0 (10.67.0.0/24). It may reach exactly:
+#   - the model broker on the host's service address 10.67.255.1:8788 (input hook), and
+#   - the postbox (postbox.pigeonpost.dev) on TCP 443 (forward hook).
+# Nothing else: no host services, no other Nest, no metadata/link-local, no private or
+# neighbouring ranges (193.164.5.0/24 holds other Wodo hosts), no IPv6, no DNS.
+#
+# Drops in a base chain are final in nftables regardless of other tables (ufw, netavark),
+# so these chains run first (priority -10) and only ever drop or fall through.
+# Managed by deploy/nests/host; reload with: nft -f /etc/nftables.d/nests.nft
+
+table inet nests
+delete table inet nests
+
+table inet nests {
+	# Edited by the operator when the postbox moves; the control service checks it at start.
+	set postbox_v4 {
+		type ipv4_addr
+		elements = { 45.132.181.100 }
+	}
+
+	set broker_v4 {
+		type ipv4_addr
+		elements = { 10.67.255.1 }
+	}
+
+	chain input {
+		type filter hook input priority -10; policy accept;
+		iifname != "nests0" return
+		meta nfproto ipv6 counter drop
+		ct state established,related return
+		ip daddr @broker_v4 tcp dport 8788 ct state new return
+		counter drop comment "nest -> host: only the model broker"
+	}
+
+	chain forward {
+		type filter hook forward priority -10; policy accept;
+		iifname "nests0" jump from_nest
+		oifname "nests0" jump to_nest
+	}
+
+	chain from_nest {
+		meta nfproto ipv6 counter drop
+		ct state established,related return
+		ip daddr @postbox_v4 tcp dport 443 ct state new return
+		counter drop comment "nest egress default deny"
+	}
+
+	chain to_nest {
+		ct state established,related return
+		counter drop comment "nothing initiates into a nest"
+	}
+}
+
+# Layer 2: frames bridged between two Nest ports never pass the IP hooks above, so drop
+# every port-to-port frame on nests0. Nest <-> host/router traffic is unaffected.
+table bridge nests_l2
+delete table bridge nests_l2
+
+table bridge nests_l2 {
+	chain forward {
+		type filter hook forward priority -10; policy accept;
+		ibrname "nests0" counter drop comment "no nest-to-nest traffic"
+	}
+}
