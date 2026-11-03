@@ -481,6 +481,122 @@ async fn only_flagged_hosts_open_notes_and_the_brief_reaches_only_consenting_att
 }
 
 #[tokio::test]
+async fn attendees_who_withdraw_or_decline_after_consenting_get_neither_brief_nor_transcript() {
+    let state = state();
+    let s = serve(state.clone()).await;
+    let alice = person(&state, "acct_wd_alice").await;
+    let bob = person(&state, "acct_wd_bob").await;
+    let carol = person(&state, "acct_wd_carol").await;
+    let dave = person(&state, "acct_wd_dave").await;
+    s.flag(&alice.account, true).await;
+    let (_, v) = open(&s, &alice.address).await;
+    let mid = v["meeting_id"].as_str().unwrap().to_string();
+    let dave_key = p256_pub();
+    for (p, key) in [
+        (&alice, "alicebrowser1"),
+        (&bob, "bobbrowser001"),
+        (&carol, "carolphone01"),
+        (&dave, "davebrowser1"),
+    ] {
+        let pk = if key == "davebrowser1" {
+            dave_key.clone()
+        } else {
+            p256_pub()
+        };
+        let (st, v) = consent(&s, &mid, &p.address, "yes", Some((key, &pk))).await;
+        assert_eq!(st, StatusCode::OK, "{v}");
+    }
+    // Bob withdraws and Carol declines after both had agreed; Dave withdraws and agrees again.
+    assert_eq!(
+        consent(&s, &mid, &bob.address, "withdrawn", None).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        consent(&s, &mid, &carol.address, "no", None).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        consent(&s, &mid, &dave.address, "withdrawn", None).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        consent(
+            &s,
+            &mid,
+            &dave.address,
+            "yes",
+            Some(("davebrowser1", &dave_key))
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+
+    let (st, v) = s
+        .get(
+            &format!("/internal/v1/meetings/{mid}/recipients"),
+            Some(INTEL),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    let mut accounts: Vec<&str> = v["recipients"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["account_id"].as_str().unwrap())
+        .collect();
+    accounts.sort();
+    assert_eq!(
+        accounts,
+        vec![alice.account.as_str(), dave.account.as_str()]
+    );
+
+    // meeting-intel cannot wrap the brief (which carries the transcript) for either of them.
+    let ct = b64(b"opaque brief and transcript");
+    let brief = |wraps: Vec<Value>| json!({ "status": "ready", "alg": "A256GCM", "iv": b64(&[9u8; 12]), "ciphertext": ct, "wraps": wraps });
+    for (who, key) in [(&bob, "bobbrowser001"), (&carol, "carolphone01")] {
+        let (st, v) = s
+            .post(
+                &format!("/internal/v1/meetings/{mid}/brief"),
+                Some(INTEL),
+                brief(vec![
+                    wrap(&alice.account, "alicebrowser1"),
+                    wrap(&who.account, key),
+                ]),
+            )
+            .await;
+        assert_eq!(st, StatusCode::FORBIDDEN, "{v}");
+    }
+    let (st, v) = s
+        .post(
+            &format!("/internal/v1/meetings/{mid}/brief"),
+            Some(INTEL),
+            brief(vec![
+                wrap(&alice.account, "alicebrowser1"),
+                wrap(&dave.account, "davebrowser1"),
+            ]),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(v["notified"], 2);
+    for who in [&bob, &carol] {
+        assert_eq!(events_of(&state, &who.account, "meeting.brief").await, 0);
+        let (st, _) = s
+            .get(&format!("/v1/meetings/{mid}"), Some(&who.token))
+            .await;
+        assert_eq!(st, StatusCode::NOT_FOUND);
+        let (_, v) = s.get("/v1/meetings", Some(&who.token)).await;
+        assert!(v["meetings"].as_array().unwrap().is_empty());
+    }
+    assert_eq!(
+        s.get(&format!("/v1/meetings/{mid}"), Some(&dave.token))
+            .await
+            .0,
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
 async fn service_tokens_are_scoped_and_failures_reach_attendees() {
     let state = state();
     let s = serve(state.clone()).await;
@@ -708,4 +824,93 @@ async fn retention_purges_expired_meetings_and_closes_stale_ones() {
         .await
         .unwrap();
     assert_eq!(states, vec![format!("{stale}:failed")]);
+}
+
+#[test]
+fn the_summaries_policy_defaults_to_d17_and_all_must_be_explicit() {
+    use crate::meetings::{SummariesPolicy as P, D17_MIN_SEATS};
+    let d17 = P::Enterprise {
+        min_seats: D17_MIN_SEATS,
+    };
+    assert_eq!(P::parse(None, None), d17);
+    assert_eq!(P::parse(Some(""), None), d17);
+    assert_eq!(P::parse(Some("enterprise"), None), d17);
+    assert_eq!(
+        P::parse(Some("everyone?"), None),
+        d17,
+        "unrecognised fails restrictive"
+    );
+    assert_eq!(P::parse(Some(" ALL "), None), P::All);
+    assert_eq!(
+        P::parse(Some("enterprise"), Some("50")),
+        P::Enterprise { min_seats: 50 }
+    );
+    assert_eq!(P::parse(None, Some("zero")), d17);
+}
+
+#[tokio::test]
+async fn under_the_enterprise_policy_only_t20_organizations_may_request_notes() {
+    let mut state = state();
+    state.summaries_policy = crate::meetings::SummariesPolicy::Enterprise { min_seats: 20 };
+    let s = serve(state.clone()).await;
+    let free = person(&state, "acct_sum_free").await;
+    let small = person(&state, "acct_sum_small").await;
+    let big = person(&state, "acct_sum_big").await;
+    let member = person(&state, "acct_sum_member").await;
+    for p in [&free, &small, &big, &member] {
+        s.flag(&p.account, true).await;
+    }
+    state
+        .store
+        .group_tx(|tx| -> Result<(), crate::groups::GErr> {
+            for (id, owner, seats) in [("org_sum_small", "acct_sum_small", 10), ("org_sum_big", "acct_sum_big", 20)] {
+                tx.execute(
+                    "INSERT INTO orgs (id, namespace, name, owner_account, status, seats, agent_limit,
+                        storage_bytes, created_at, create_operation_id, create_hash)
+                     VALUES (?1, ?1, 'Synthetic Co', ?2, 'active', ?3, ?3 * 10, 0, 0, ?1, 'h')",
+                    rusqlite::params![id, owner, seats],
+                )?;
+            }
+            tx.execute(
+                "INSERT INTO org_members (id, org_id, account_id, first_name, last_name, status)
+                 VALUES ('om_sum_1', 'org_sum_big', 'acct_sum_member', 'Syn', 'Thetic', 'active')",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    for (p, allowed) in [
+        (&free, false),
+        (&small, false),
+        (&big, true),
+        (&member, true),
+    ] {
+        let (st, v) = s
+            .post(
+                "/internal/v1/meetings",
+                Some(CALLS),
+                json!({ "host": p.address, "check_only": true }),
+            )
+            .await;
+        assert_eq!(st, StatusCode::OK, "{v}");
+        assert_eq!(v["allowed"], allowed, "{}: {v}", p.account);
+        if !allowed {
+            assert_eq!(v["reason"], "not_included");
+            assert_eq!(v["policy"], "enterprise");
+            assert_eq!(v["min_seats"], 20);
+        }
+    }
+    // Not a check: a free account's 1:1 call opens no meeting either.
+    let (_, v) = s
+        .post(
+            "/internal/v1/meetings",
+            Some(CALLS),
+            json!({ "host": free.address, "room_ref": "abcdef0123456789", "kind": "direct" }),
+        )
+        .await;
+    assert_eq!(v["allowed"], false);
+    assert!(v.get("meeting_id").is_none());
+    let (_, v) = open(&s, &big.address).await;
+    assert_eq!(v["allowed"], true, "{v}");
 }

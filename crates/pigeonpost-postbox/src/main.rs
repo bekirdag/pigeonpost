@@ -223,6 +223,8 @@ struct AppState {
     shell: Arc<shell::Runtime>,
     /// Phone numbers, discovery and SMS invitations (SDS §14D): limits, budgets, SMS transport.
     contacts: Arc<contacts::Runtime>,
+    /// Who may request AI meeting notes (D-17): `POSTBOX_MEETING_SUMMARIES_ELIGIBILITY`.
+    summaries_policy: meetings::SummariesPolicy,
 }
 
 /// Namespaces where a name is authorised by proving control of it at an identity provider, rather
@@ -658,6 +660,7 @@ fn build_state(cfg: &Config, master_key: [u8; 32]) -> Result<AppState, store::St
         webhook_egress: Arc::new(webhooks::Egress::system()),
         shell: Arc::new(shell::Runtime::from_env()),
         contacts: Arc::new(contacts::Runtime::from_env()),
+        summaries_policy: meetings::SummariesPolicy::from_env(),
     })
 }
 
@@ -7288,6 +7291,7 @@ mod tests {
             webhook_egress: Arc::new(webhooks::Egress::system()),
             shell: Arc::new(shell::Runtime::default()),
             contacts: Arc::new(contacts::Runtime::for_test()),
+            summaries_policy: meetings::SummariesPolicy::All,
         }
     }
 
@@ -10132,6 +10136,7 @@ mod tests {
             webhook_egress: Arc::new(webhooks::Egress::system()),
             shell: Arc::new(shell::Runtime::default()),
             contacts: Arc::new(contacts::Runtime::for_test()),
+            summaries_policy: meetings::SummariesPolicy::All,
         };
         let _ = build_router(state);
     }

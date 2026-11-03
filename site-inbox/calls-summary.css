@@ -75,3 +75,4 @@
 .notes-transcript b { font-weight: 600; margin-right: 4px; }
 .notes-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; flex-wrap: wrap; }
 .notes-draft { padding: 8px 10px; border-radius: 9px; border: 1px solid var(--rule); font-size: 13px; }
+#call-notes-btn.call-notes-unavailable { opacity: 0.5; }

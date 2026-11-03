@@ -196,6 +196,33 @@ test("a missed call appears as a system line in the 1:1 conversation", async t =
   assert.equal(a.$("messages").querySelectorAll(".system-line").length, 1, "answered calls make no line");
 });
 
+test("a group call reads as the group, never as a 1:1 call with whoever rang", async t => {
+  const a = await app(t, { configure: server => {
+    server.calls_log = [callEntry({ id: "clg_g", room_id: "roomg", group_id: "grp_team", peer: null, peer_handle: null,
+      participants: ["/k/a", "/k/b", "/k/c"] })];
+  } });
+  // The groups module, as far as the calls page uses it.
+  const opened = [];
+  a.w.PigeonpostGroups = { inspect: () => ({ groups: [{ id: "grp_team", name: "Team", state: "active" }] }),
+    _open: async id => { opened.push(id); }, isOpen: () => false, render() {}, onMailbox() {}, onEvent() {},
+    reset() {}, close() {}, dock() {}, undock() {} };
+  a.$("calls-btn").click();
+  await until(() => a.$("call-log").children.length === 1);
+  const row = a.$("call-log").children[0];
+  assert.equal(row.querySelector(".call-name").textContent, "Team");
+  assert.match(row.querySelector(".call-sub").textContent, /Missed · Video · 3 people/);
+  assert.equal(row.querySelector(".call-back").hidden, false, "call back targets the group");
+  row.querySelector(".call-main").click();
+  assert.deepEqual(opened, ["grp_team"]);
+  row.querySelector(".call-more").click();
+  const labels = [...row.querySelectorAll(".call-menu button")].map(b => b.textContent);
+  assert.deepEqual(labels, ["Delete from history"], "no block or report of one person for a group call");
+  a.$("calls-exit").click();
+  await a.clickPeer();
+  await tick(60);
+  assert.equal(a.$("messages").querySelectorAll(".system-line").length, 0, "no missed line in a 1:1 conversation");
+});
+
 test("filtered mail sits at the bottom of the list and can be accepted", async t => {
   const a = await app(t);
   await until(() => !a.$("filtered-entry").hidden);

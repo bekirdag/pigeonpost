@@ -942,11 +942,17 @@ async fn invitations() {
             .await;
         assert_eq!((s, v["ok"].as_bool()), (200, Some(true)));
     }
+    let invites_before = srv.count("SELECT COUNT(*) FROM sms_invites").await;
     let (s, v) = srv
         .post("/v1/sms/opt-out", None, json!({ "code": code }))
         .await;
     assert_eq!((s, v["ok"].as_bool()), (200, Some(true)));
     assert_eq!(srv.count("SELECT COUNT(*) FROM sms_optouts").await, 1);
+    assert_eq!(
+        srv.count("SELECT COUNT(*) FROM sms_invites").await,
+        invites_before,
+        "an opt-out does not give the sender's cap back"
+    );
     srv.sql(
         "UPDATE sms_invites SET created_at = created_at - 40 * 86400",
         vec![],
@@ -1110,6 +1116,12 @@ async fn display_names_follow_their_visibility() {
         )
         .await;
     assert_eq!(v["matches"][0]["display_name"], "Ada");
+    // Lookups are bounded per caller.
+    let mut last = 0;
+    for _ in 0..=crate::profile_names::LOOKUPS_PER_HOUR {
+        last = srv.get(&path, &friend.token).await.0;
+    }
+    assert_eq!(last, 429, "name lookups are rate limited");
 }
 
 #[tokio::test]

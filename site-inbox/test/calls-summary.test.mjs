@@ -292,3 +292,24 @@ test("where the engine cannot store a CryptoKey (WebKit app views), the notes ke
   const opened = await p.w.PigeonpostNotesKeys.open({ id: MEETING, state: "ready", iv: sealed.iv, ciphertext: sealed.ciphertext, keys: sealed.wraps });
   assert.equal(opened.summary, "Fallback works.");
 });
+
+test("a host whose plan doesn't include notes sees why instead of a missing button (D-17)", async (t) => {
+  const p = page(t);
+  p.w.PigeonpostCallsSummary.onEvent({ room: p.room.id, state: "off",
+    you: { participant: p.room.you, consent: null, can_control: true, can_request: false, unavailable: "not_included", min_seats: 20 } });
+  await until(() => p.$("call-notes-btn") && !p.$("call-notes-btn").hidden, "notes button");
+  assert.equal(p.$("call-notes-btn").getAttribute("aria-disabled"), "true");
+  assert.match(p.$("call-notes-btn").title, /20 seats or more/);
+  p.$("call-notes-btn").click();
+  assert.match(p.toasts.at(-1), /aren't included in your plan/);
+  assert.equal(p.$("call-notes-ask").hidden, true, "no request is offered");
+  assert.equal(p.posts.length, 0, "nothing is asked of the server");
+  // A request refused by the service says the same thing.
+  p.w.PigeonpostCallsSummary.onEvent({ room: p.room.id, state: "off",
+    you: { participant: p.room.you, consent: null, can_control: true, can_request: true } });
+  p.onReply(() => { throw Object.assign(new Error("refused"), { code: "notes_not_included" }); });
+  p.$("call-notes-btn").click();
+  p.$("call-notes-ask-go").click();
+  await until(() => p.toasts.length >= 2, "refusal toast");
+  assert.match(p.toasts.at(-1), /aren't included in your plan/);
+});

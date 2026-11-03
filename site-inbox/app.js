@@ -5397,7 +5397,17 @@
   };
   const ARROW = { incoming: "↙", outgoing: "↗" };
 
+  // A group call (audit 2026-11-03): the row is about the group, not about whoever rang.
+  function callGroup(e) {
+    if (!e.group_id) return null;
+    const groups = window.PigeonpostGroups?.inspect?.().groups || [];
+    const g = groups.find((x) => x.id === e.group_id);
+    return { id: e.group_id, name: g ? g.name : null, member: Boolean(g && g.state === "active") };
+  }
+
   function callName(e) {
+    const group = callGroup(e);
+    if (group) return group.name || "Group call";
     const key = callPeerKey(e);
     if (key) return contactFor(key)?.alias || displayName(key);
     const people = (e.participants || []).length;
@@ -5408,7 +5418,8 @@
     const li = document.createElement("li");
     li.className = "call-item";
     li.dataset.callId = e.id;
-    const key = callPeerKey(e);
+    const group = callGroup(e);
+    const key = group ? null : callPeerKey(e);
     const missed = e.direction === "incoming" && (e.outcome === "missed" || e.outcome === "cancelled");
     if (missed) li.classList.add("call-missed");
 
@@ -5417,7 +5428,8 @@
     main.className = "call-main";
     const av = document.createElement("span");
     av.className = "avatar";
-    paintAvatar(av, key || "/guest");
+    if (group) paintAvatar(av, group.id, group.name || "Group");
+    else paintAvatar(av, key || "/guest");
     const text = document.createElement("span");
     text.className = "call-text";
     const name = document.createElement("span");
@@ -5438,8 +5450,12 @@
     time.textContent = e.started_at ? listTime(e.started_at) : "";
     main.append(av, text, time);
     main.setAttribute("aria-label", `${callName(e)}, ${label.toLowerCase()} ${kindWord(e.kind)} call` + (e.started_at ? ", " + listTime(e.started_at) : ""));
-    main.onclick = () => { if (key) openThread(key); };
-    main.disabled = !key;
+    const canOpenGroup = Boolean(group && group.member && window.PigeonpostGroups?._open);
+    main.onclick = () => {
+      if (canOpenGroup) window.PigeonpostGroups._open(group.id);
+      else if (key) openThread(key);
+    };
+    main.disabled = !key && !canOpenGroup;
 
     const back = document.createElement("button");
     back.type = "button";
@@ -5447,8 +5463,8 @@
     back.innerHTML = CALL_ICON[e.kind === "video" ? "video" : "audio"];
     back.title = `Call back (${kindWord(e.kind)})`;
     back.setAttribute("aria-label", `Call ${callName(e)} back, ${kindWord(e.kind)}`);
-    back.hidden = !key;
-    back.onclick = () => callBack(key, e.kind);
+    back.hidden = !key && !canOpenGroup;
+    back.onclick = () => (canOpenGroup ? callGroupBack(group.id, e.kind) : callBack(key, e.kind));
 
     const more = document.createElement("button");
     more.type = "button";
@@ -5505,6 +5521,15 @@
     if (!key) return;
     await openThread(key);
     const button = $(kind === "video" ? "call-video-btn" : "call-audio-btn");
+    if (button && !button.hidden && !button.disabled) button.click();
+    else toast("Calling isn’t available right now.");
+  }
+
+  // Calling a group back opens the group and uses its own call button, which knows whether a call
+  // is already running there (join) or not (ring everyone).
+  async function callGroupBack(groupId, kind) {
+    await window.PigeonpostGroups._open(groupId);
+    const button = $(kind === "video" ? "group-call-video" : "group-call-audio");
     if (button && !button.hidden && !button.disabled) button.click();
     else toast("Calling isn’t available right now.");
   }

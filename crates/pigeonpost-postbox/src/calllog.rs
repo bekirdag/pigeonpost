@@ -328,6 +328,9 @@ impl EventReq {
         {
             return Err("calendar ids must be short tokens");
         }
+        if self.group_id.as_deref().is_some_and(|g| !token_ok(g, 64)) {
+            return Err("group_id must be a short token");
+        }
         if !matches!(self.kind.as_str(), "audio" | "video") {
             return Err("kind must be audio or video");
         }
@@ -376,6 +379,7 @@ impl EventReq {
             at: self.at,
             calendar_event_id: self.calendar_event_id,
             occurrence_id: self.occurrence_id,
+            group_id: self.group_id,
         })
     }
 }

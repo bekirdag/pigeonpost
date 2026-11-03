@@ -59,6 +59,20 @@ CREATE TABLE IF NOT EXISTS call_log_cleared (
 );
 ";
 
+/// Rows written before `group_id` was recorded (audit 2026-11-03 P1-6) read as one-to-one calls.
+/// Recover the group from the call-start notice the group still holds for that room, and drop the
+/// misleading single peer. Idempotent, and a no-op once every such row is fixed; rows whose notice
+/// has expired (disappearing groups) stay as they were.
+pub(super) fn backfill_group_ids(c: &Connection) -> Result<usize, StoreError> {
+    Ok(c.execute(
+        "UPDATE call_log SET group_id = n.gid, peer = NULL, peer_handle = NULL
+           FROM (SELECT group_id AS gid, json_extract(metadata, '$.room') AS room
+                   FROM group_notices WHERE kind = 'call_started') AS n
+          WHERE call_log.room_id = n.room AND call_log.group_id IS NULL",
+        [],
+    )?)
+}
+
 /// How long dedup records and deletion tombstones are kept: longer than the calls service retries.
 pub const REPLAY_WINDOW_SECS: u64 = 7 * 86_400;
 /// Participants kept per entry.
@@ -117,6 +131,9 @@ pub struct CallEvent {
     /// The scheduled meeting this room belongs to (Phase 3B), if any.
     pub calendar_event_id: Option<String>,
     pub occurrence_id: Option<String>,
+    /// The group this call belongs to (Phase 3a). A group row has no single peer: the people are
+    /// in `participants`, and calling back calls the group.
+    pub group_id: Option<String>,
 }
 
 /// One history entry, as the API returns it.
@@ -275,11 +292,18 @@ impl Fold<'_> {
             return Ok(None);
         }
         let id = new_id();
+        // A group call has no one peer: the caller's "callee" is just the first member rung, and
+        // naming the caller as every callee's peer would make "call back" dial one person.
+        let peer = if self.ev.group_id.is_some() {
+            None
+        } else {
+            peer
+        };
         self.c.execute(
             "INSERT INTO call_log (id, owner, room_id, direction, kind, peer, peer_handle,
                                    started_at, seen, last_event_version, calendar_event_id,
-                                   occurrence_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                                   occurrence_id, group_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 id,
                 address,
@@ -294,6 +318,7 @@ impl Fold<'_> {
                 self.ev.seq,
                 self.ev.calendar_event_id,
                 self.ev.occurrence_id,
+                self.ev.group_id,
             ],
         )?;
         self.touch(&id);
@@ -758,7 +783,79 @@ mod tests {
             at,
             calendar_event_id: None,
             occurrence_id: None,
+            group_id: None,
         }
+    }
+
+    #[tokio::test]
+    async fn a_group_call_is_logged_against_the_group_with_no_single_peer() {
+        let store = store_with(&[
+            ("/k/alice", None, Some("acct_a")),
+            ("/k/bob", None, Some("acct_b")),
+            ("/k/carol", None, Some("acct_c")),
+        ])
+        .await;
+        let mut ring = ev("g1", CallEventKind::Ring, 100);
+        ring.group_id = Some("grp_team".into());
+        ring.to = vec!["/k/bob".into(), "/k/carol".into()];
+        store.apply_call_event(ring, 100).await.unwrap();
+        let mut missed = ev("g2", CallEventKind::Missed, 130);
+        missed.group_id = Some("grp_team".into());
+        missed.to = vec!["/k/bob".into(), "/k/carol".into()];
+        store.apply_call_event(missed, 130).await.unwrap();
+        for who in ["/k/alice", "/k/bob", "/k/carol"] {
+            let e = entry(&store, who).await.unwrap();
+            assert_eq!(e.group_id.as_deref(), Some("grp_team"), "{who}");
+            assert_eq!(
+                e.peer, None,
+                "{who}: a group call has no one peer to call back"
+            );
+            assert_eq!(e.peer_handle, None, "{who}");
+        }
+        assert_eq!(
+            entry(&store, "/k/bob").await.unwrap().outcome.as_deref(),
+            Some("missed")
+        );
+    }
+
+    #[tokio::test]
+    async fn backfill_recovers_the_group_from_the_call_notice() {
+        let store = store_with(&[("/k/alice", None, None), ("/k/bob", None, None)]).await;
+        // Written the old way: no group id, the caller as the peer.
+        store
+            .apply_call_event(ev("b1", CallEventKind::Ring, 100), 100)
+            .await
+            .unwrap();
+        let mut other = ev("b2", CallEventKind::Ring, 100);
+        other.room_id = "room_direct".into();
+        store.apply_call_event(other, 100).await.unwrap();
+        {
+            let c = store.conn.lock().unwrap();
+            c.execute(
+                "INSERT INTO groups (id, name, created_by, created_at, last_at)
+                 VALUES ('grp_team', 'Team', '/k/alice', 100, 100)",
+                [],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO group_notices (group_id, seq, event_id, kind, metadata, created_at)
+                 VALUES ('grp_team', 1, 'n1', 'call_started', '{\"room\":\"room1\"}', 100)",
+                [],
+            )
+            .unwrap();
+            assert_eq!(backfill_group_ids(&c).unwrap(), 2, "both sides of room1");
+            assert_eq!(backfill_group_ids(&c).unwrap(), 0, "idempotent");
+        }
+        let (rows, _) = store
+            .call_log("/k/bob".into(), LogFilter::All, None, 10)
+            .await
+            .unwrap();
+        let group = rows.iter().find(|e| e.room_id == "room1").unwrap();
+        assert_eq!(group.group_id.as_deref(), Some("grp_team"));
+        assert_eq!(group.peer, None);
+        let direct = rows.iter().find(|e| e.room_id == "room_direct").unwrap();
+        assert_eq!(direct.group_id, None);
+        assert_eq!(direct.peer.as_deref(), Some("/k/alice"));
     }
 
     async fn entry(store: &Store, owner: &str) -> Option<CallLogEntry> {

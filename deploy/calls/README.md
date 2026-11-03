@@ -97,7 +97,9 @@ a call history. Both are on the postbox's **internal** listener (`127.0.0.1:8991
 Behaviour:
 
 - Unset: rings without asking and reports nothing (the pre-1b behaviour).
-- Admission answers are cached for 30 s per caller, callee and kind. If the postbox is configured
+- Only refusals (`silence`, `block`) are cached, for 30 s per caller, callee and kind. A `ring` is
+  asked afresh for every call, so a new block or filter setting applies to the next call and
+  every attempt reaches the postbox's per-pair throttle (since 2026-11-03). If the postbox is configured
   but cannot answer within 3 s, admission **fails closed**: nothing rings and the caller sees the
   ordinary no-answer.
 - `block` and `silence` are indistinguishable from a genuine no-answer for the caller: same response,

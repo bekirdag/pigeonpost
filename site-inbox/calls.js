@@ -327,7 +327,8 @@
           const missed = ring;
           tellHost("ringEnded", { room: data.room, reason: data.reason });
           dismissRing();
-          if (data.reason !== "answered_elsewhere") toast("Missed " + kindWord(missed.kind) + " call from " + displayName(missed.from.handle || missed.from.address) + ".");
+          if (data.reason === "removed") toast(endedMessage("removed"));
+          else if (data.reason !== "answered_elsewhere") toast("Missed " + kindWord(missed.kind) + " call from " + displayName(missed.from.handle || missed.from.address) + ".");
         } else if (room && room.id === data.room && peers.size === 0) {
           endRoom(endedMessage(data.reason), { notify: false });
         }
@@ -2912,6 +2913,7 @@
       cancelled: "The call was cancelled.",
       ended: "Call ended.",
       max_duration: "The call reached its time limit.",
+      removed: "You were removed from this group, so you left its call.",
     }[reason] || null;
   }
 
