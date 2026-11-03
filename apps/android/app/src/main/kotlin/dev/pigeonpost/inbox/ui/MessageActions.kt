@@ -37,7 +37,7 @@ internal fun MessageReceiptMark(message: ThreadMessage, state: InboxState, meta:
         val animated = ValueAnimator.areAnimatorsEnabled()
         val angle = if (animated) {
             val transition = rememberInfiniteTransition(label = "agentWorking")
-            transition.animateFloat(0f, 360f, infiniteRepeatable(tween(6000, easing = LinearEasing)), label = "agentGear").value
+            transition.animateFloat(0f, 360f, infiniteRepeatable(tween(3000, easing = LinearEasing)), label = "agentGear").value
         } else 0f
         Icon(Icons.Outlined.Settings, "Agent working on this", Modifier.size(15.dp).rotate(angle).testTag("receipt:working"), tint = p.green)
         if (!animated) Text("Working…", style = geist(11.sp), color = p.green)

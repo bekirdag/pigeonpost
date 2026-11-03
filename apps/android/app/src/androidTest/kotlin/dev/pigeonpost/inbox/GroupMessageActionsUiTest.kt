@@ -2,6 +2,7 @@ package dev.pigeonpost.inbox
 
 import android.content.Context
 import android.content.Intent
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.*
@@ -58,6 +59,17 @@ class GroupMessageActionsUiTest {
         ui.waitUntil(30_000) { ui.onAllNodes(message(text), useUnmergedTree = true).fetchSemanticsNodes().size == 1 }
         return ui.onNode(message(text), useUnmergedTree = true).fetchSemanticsNode().config[SemanticsProperties.TestTag].removePrefix("groupMessage:")
     }
+    /** The full menu is the bubble's long-press, announced to TalkBack as "Message actions" (SDS §14C); no button inside the bubble. */
+    private fun openActions(seq: String) {
+        val bubble = ui.onNodeWithTag("groupMessage:$seq")
+        bubble.assert(SemanticsMatcher("long-press labelled Message actions") { it.config.getOrNull(SemanticsActions.OnLongClick)?.label == "Message actions" })
+        bubble.performSemanticsAction(SemanticsActions.OnLongClick)
+    }
+    private val actionIcon = hasContentDescription("Message actions") or hasContentDescription("Copy message") or
+        hasContentDescription("Reply to message") or hasContentDescription("Edit message")
+    private fun assertNoActionInsideBubble(seq: String) =
+        ui.onAllNodes(actionIcon and hasAnyAncestor(hasTestTag("groupMessage:$seq")), useUnmergedTree = true).assertCountEquals(0)
+    private fun bounds(tag: String) = ui.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot
     private fun pressSend() {
         ui.waitUntil(10_000) { SemanticsProperties.Disabled !in ui.onNodeWithContentDescription("Send to the group").fetchSemanticsNode().config }
         ui.onNodeWithContentDescription("Send to the group").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick)
@@ -88,11 +100,31 @@ class GroupMessageActionsUiTest {
         ui.onNodeWithContentDescription("Save group edit").performClick()
         val changed = sequence("Updated group proposal")
         ui.onAllNodes(hasText("Original group proposal") and hasAnyAncestor(hasTestTag("groupHistory"))).assertCountEquals(0)
-        ui.onNode(hasContentDescription("Message actions") and hasAnyAncestor(hasTestTag("groupMessage:$changed"))).performClick()
+        openActions(changed)
         ui.onNodeWithText("Message info").performClick(); tag("groupHistory")
         ui.waitUntil(20_000) { ui.onAllNodesWithText("Versions").fetchSemanticsNodes().isNotEmpty() }
         ui.onNode(hasText("Original group proposal") and hasAnyAncestor(isDialog())).assertExists()
         ui.onNode(hasText("Updated group proposal") and hasAnyAncestor(isDialog())).assertExists()
+    }
+
+    @Test fun actionRowsSitOutsideTheGroupBubbleInContractOrder() = scenario {
+        open(); val parent = sequence(seed); val mine = send("My ordered group note")
+        // Sent: edit, then copy, below the bubble.
+        org.junit.Assert.assertTrue("edit precedes copy", bounds("groupEdit:$mine").right <= bounds("groupCopy:$mine").left)
+        ui.onNode(hasTestTag("groupCopy:$mine") and hasAnyAncestor(hasTestTag("groupMessageActions:$mine"))).assertIsDisplayed()
+        org.junit.Assert.assertTrue("row sits below the bubble", bounds("groupMessage:$mine").bottom <= bounds("groupMessageActions:$mine").top)
+        assertNoActionInsideBubble(mine)
+        // Received: copy, then reply.
+        ui.onNodeWithTag("groupHistory").performScrollToNode(hasTestTag("groupMessage:$parent"))
+        org.junit.Assert.assertTrue("copy precedes reply", bounds("groupCopy:$parent").right <= bounds("groupReply:$parent").left)
+        ui.onNode(hasTestTag("groupReply:$parent") and hasAnyAncestor(hasTestTag("groupMessageActions:$parent"))).assertIsDisplayed()
+        org.junit.Assert.assertTrue("row sits below the bubble", bounds("groupMessage:$parent").bottom <= bounds("groupMessageActions:$parent").top)
+        assertNoActionInsideBubble(parent)
+        ui.onNodeWithTag("groupCopy:$parent").assertContentDescriptionEquals("Copy message")
+        // The full list stays reachable by long-press.
+        openActions(parent)
+        ui.waitUntil(10_000) { ui.onAllNodesWithText("Block sender").fetchSemanticsNodes().isNotEmpty() }
+        for (item in listOf("Reply", "Copy message", "Message info")) ui.onNode(hasText(item) and hasAnyAncestor(isPopup())).assertExists()
     }
 
     @Test fun aReplyQuotesTheVerifiedGroupParent() = scenario {
@@ -117,7 +149,7 @@ class GroupMessageActionsUiTest {
     @Test fun groupSeenTicksAndMemberInfoUseTheReceiptPreference() = scenario {
         open(); val seq = send("Group receipt example")
         tag("groupReceipt:seen")
-        ui.onNode(hasContentDescription("Message actions") and hasAnyAncestor(hasTestTag("groupMessage:$seq"))).performClick()
+        openActions(seq)
         ui.onNodeWithText("Message info").performClick()
         ui.waitUntil(20_000) { ui.onAllNodesWithText("Delivery").fetchSemanticsNodes().isNotEmpty() }
         ui.onNode(hasText("Bob") and hasAnyAncestor(isDialog())).assertExists()
@@ -156,7 +188,7 @@ class GroupMessageActionsUiTest {
         ui.onNodeWithTag("groupEdit:$seq").performClick()
         ui.onNodeWithTag("groupComposer").performTextReplacement("Edited text to delete")
         ui.onNodeWithContentDescription("Save group edit").performClick(); val changed = sequence("Edited text to delete")
-        ui.onNode(hasContentDescription("Message actions") and hasAnyAncestor(hasTestTag("groupMessage:$changed"))).performClick()
+        openActions(changed)
         ui.onNodeWithText("Delete for everyone").performClick()
         ui.onNodeWithText("Delete", useUnmergedTree = true).performClick()
         ui.waitUntil(20_000) { ui.onAllNodes(hasText("Edited text to delete") and hasAnyAncestor(hasTestTag("groupHistory"))).fetchSemanticsNodes().isEmpty() }

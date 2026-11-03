@@ -482,12 +482,12 @@ private fun GroupBubble(x: HistoryItem, g: Group, groups: GroupsState, sender: S
                     x.expiresAt?.let { deadline -> Icon(Icons.Outlined.Timer, "Disappears " + DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(deadline * 1000)), Modifier.size(13.dp), tint = meta) }
                     Text(shortTime(x.createdAt) + if (x.editOf != null && x.actionsVerified) " · edited" else "", style = geist(11.5.sp), color = meta)
                     if (mine) GroupReceiptMark(x, groups, inbox.policy?.readReceipts != false, meta)
+                    // The full action list is the bubble's long-press (TalkBack: "Message actions"); no action icon sits inside the bubble (SDS §14C).
                     Box {
-                        IconButton({ menu = true }, Modifier.size(30.dp)) { Icon(Icons.Outlined.MoreHoriz, "Message actions", Modifier.size(16.dp), tint = meta) }
                         DropdownMenu(menu, { menu = false }, containerColor = p.ground) {
                             if (replyable) DropdownMenuItem({ Text("Reply") }, { menu = false; x.seq?.let { store.beginReply(g.id, it) } }, enabled = canChange)
                             if (editable) DropdownMenuItem({ Text("Edit") }, { menu = false; x.seq?.let { store.beginEdit(g.id, it) } }, enabled = canChange)
-                            if (readable && !x.text.isNullOrEmpty()) DropdownMenuItem({ Text("Copy text") }, { menu = false; clipboard.setText(AnnotatedString(x.text!!)) })
+                            if (readable && !x.text.isNullOrEmpty()) DropdownMenuItem({ Text("Copy message") }, { menu = false; clipboard.setText(AnnotatedString(x.text!!)) })
                             if (x.seq != null && !x.pending) DropdownMenuItem({ Text("Message info") }, { menu = false; info() })
                             if (!x.deleted && x.seq != null && !x.pending && (mine || g.admin)) DropdownMenuItem({ Text("Delete for everyone") }, { menu = false; confirm = true })
                             if (!mine && x.sender != null) DropdownMenuItem({ Text("Block sender", color = p.blockedText) }, { menu = false; askBlock(BlockTarget(x.sender!!, sender)) })
@@ -503,7 +503,7 @@ private fun GroupBubble(x: HistoryItem, g: Group, groups: GroupsState, sender: S
                 Icon(Icons.Outlined.Edit, "Edit message", Modifier.size(18.dp), tint = p.secondary)
             }
             if (!x.text.isNullOrEmpty()) IconButton({ clipboard.setText(AnnotatedString(x.text!!)) }, modifier = Modifier.size(36.dp).testTag("groupCopy:" + (x.seq ?: x.cmid))) {
-                Icon(Icons.Outlined.ContentCopy, "Copy text", Modifier.size(18.dp), tint = p.secondary)
+                Icon(Icons.Outlined.ContentCopy, "Copy message", Modifier.size(18.dp), tint = p.secondary)
             }
             if (!mine && replyable) IconButton({ x.seq?.let { store.beginReply(g.id, it) } }, enabled = canChange, modifier = Modifier.size(36.dp).testTag("groupReply:" + x.seq)) {
                 Icon(Icons.Outlined.Reply, "Reply to message", Modifier.size(18.dp), tint = p.secondary)

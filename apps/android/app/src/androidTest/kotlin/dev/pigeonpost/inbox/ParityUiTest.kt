@@ -67,7 +67,7 @@ class ParityUiTest {
         }
     }
 
-    @Test fun longPressOnTextSelectsAndTheMenuStaysOnItsButton() {
+    @Test fun longPressOnTextSelectsAndTheMenuStaysOnTheFooter() {
         launch().use {
             shown("Inbox")
             ui.onNodeWithText("Demo Builder").performClick()
@@ -76,7 +76,8 @@ class ParityUiTest {
             ui.onNode(hasText("The Android build is ready for review.") and hasAnyAncestor(hasTestTag("conversation-history"))).performTouchInput { longClick(centerLeft + androidx.compose.ui.geometry.Offset(40f, 0f)) }
             ui.waitForIdle()
             ui.onNodeWithText("Original message").assertDoesNotExist()
-            ui.onAllNodesWithContentDescription("Message actions").onLast().performClick()
+            // The menu is the footer's long-press (TalkBack: "Message actions"), not a button inside the bubble.
+            ui.onNode(hasTestTag("messageMeta:m_1") and hasAnyAncestor(hasTestTag("conversation-history"))).performTouchInput { longClick() }
             ui.onNodeWithText("Original message").assertIsDisplayed()
         }
     }
