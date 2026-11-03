@@ -1,0 +1,1287 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Pigeonpost Nests marketplace core API (proposed)",
+    "version": "0.1.0",
+    "summary": "Native Nest jobs, payment authorizations and release review status.",
+    "description": "**Status: proposed design contract. Not implemented and not deployed.** The routes would be\nserved by the postbox under the member API (`/v1`), behind the `nests_marketplace` feature flag,\nwhich is off. A route whose phase is not enabled answers `404 feature_disabled`.\n\nScope: the four core operations of the marketplace build plan. Everything else in the plan\n(catalog, installations, publisher console, credits, mandates, test environments) needs its\nown operation schemas and policy actions before implementation.\n\nConventions (same as the Enterprise API, `openapi/pigeonpost-org.v1.yaml`):\n\n* JSON, `application/json; charset=utf-8`, snake_case; timestamps are ISO 8601 UTC.\n* Success is `{\"data\": …}`; lists are `{\"data\": […], \"next_cursor\": \"…\" | null}`.\n* Errors are `{\"error\": {\"code\", \"message\", \"doc_url\"}}` with stable codes.\n* `Idempotency-Key` is **required** on the two financial or job-creating `POST`s below. It is\n  scoped to the authenticated caller, the acting mailbox and the route, and bound to a hash of\n  the canonical request. A replay returns the original response with `Idempotent-Replayed: true`;\n  the same key with a different request is `409 idempotency_conflict`. Unlike ordinary org API\n  replays (24 h), these keys are kept for the lifetime of the job or financial record.\n* The acting mailbox is chosen with `x-pigeonpost-identity`, checked against the credential\n  exactly as for sending a message.\n\nAuthority is decided by `authorize(actor, action, resource)` in the postbox (`policy.rs`), not by\nthese schemas. A schema validates structure only: it does not establish identity, funding,\nreview state, revocation or time ordering.\n",
+    "contact": {
+      "name": "Pigeonpost",
+      "url": "https://developers.pigeonpost.dev"
+    },
+    "license": {
+      "name": "MIT",
+      "identifier": "MIT"
+    },
+    "x-pigeonpost-status": "proposed"
+  },
+  "servers": [
+    {
+      "url": "https://postbox.pigeonpost.dev",
+      "description": "Proposed placement on the member API. Not deployed."
+    }
+  ],
+  "security": [
+    {
+      "memberToken": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "Nest jobs",
+      "description": "Native, paid or free invocations of a Nest operation over Pigeonpost."
+    },
+    {
+      "name": "Payment authorizations",
+      "description": "Single-use, intent-bound references to reserved marketplace credits."
+    },
+    {
+      "name": "Publisher reviews",
+      "description": "Redacted status of a release candidate's review."
+    }
+  ],
+  "paths": {
+    "/v1/nest-jobs": {
+      "post": {
+        "tags": [
+          "Nest jobs"
+        ],
+        "operationId": "submitNestJob",
+        "summary": "Submit one job to a Nest operation",
+        "description": "Admits one durable job under an exact authorization. The server derives the sender, the\nresolved target and release, the buyer context, the payer and the trace; the body cannot\nsupply them. The target is pinned to the quote's release binding: a handle that moved since\nthe quote never redirects the job.\n\nFree operations still need a zero-priced quote and its payment authorization (which reserves\nnothing), so admission, review state and abuse checks always run.\n\nCredentials: a person (member token), the account key, or the acting mailbox's own\ncapability token. A connector acting for the member gets `credential_not_accepted`.\nA plain message or a group message is never turned into a paid job.\n\nLimits: body at most 256 KiB, JSON depth at most 32, duplicate object keys and non-finite\nnumbers rejected before parsing. `payload` is further validated against the pinned\noperation's input schema.\n",
+        "security": [
+          {
+            "memberToken": []
+          },
+          {
+            "apiKey": []
+          },
+          {
+            "capToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ActingIdentity"
+          },
+          {
+            "$ref": "#/components/parameters/RequiredIdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NestJobRequest"
+              },
+              "examples": {
+                "screening": {
+                  "summary": "Synthetic example; identifiers are illustrative.",
+                  "value": {
+                    "type": "nest.job.request",
+                    "version": 1,
+                    "to": "/example/hr",
+                    "operation": "screen_candidates",
+                    "operation_version": "1.0",
+                    "quote_id": "qte_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "payment_authorization": "payauth_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                    "payload": {
+                      "position": "JOB-1024"
+                    },
+                    "attachments": [
+                      "att_example_1"
+                    ],
+                    "reply_to": "/example/recruiter",
+                    "deadline_at": "2026-12-01T15:00:00Z",
+                    "client_trace_id": "client-demo-001"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Admission acknowledgement. Retries with the same `Idempotency-Key` and the same request\nreturn this same snapshot, even after the payment authorization has expired; they gain\nno new execution authority. Read `GET /v1/nest-jobs/{job}` for current state.\n",
+            "headers": {
+              "Idempotent-Replayed": {
+                "$ref": "#/components/headers/IdempotentReplayed"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/NestJobAccepted"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/FinanceUnavailable"
+          }
+        }
+      }
+    },
+    "/v1/nest-jobs/{job}": {
+      "get": {
+        "tags": [
+          "Nest jobs"
+        ],
+        "operationId": "getNestJob",
+        "summary": "Read one job's current state",
+        "description": "The submitting caller, and anyone the job's reply audience explicitly delegates, can read it.\nAnyone else gets `404 not_found` (no enumeration). Admission, execution, settlement and\nexternal-effect outcomes are separate fields; a finished execution is not automatically\nsettled.\n",
+        "security": [
+          {
+            "memberToken": []
+          },
+          {
+            "apiKey": []
+          },
+          {
+            "capToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ActingIdentity"
+          },
+          {
+            "$ref": "#/components/parameters/Job"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/NestJob"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/nest-payment-authorizations": {
+      "post": {
+        "tags": [
+          "Payment authorizations"
+        ],
+        "operationId": "authorizeNestPayment",
+        "summary": "Reserve credits for one quoted operation",
+        "description": "Turns a server-priced quote into an opaque, single-use payment authorization and reserves\nthe quoted maximum in the buyer's marketplace wallet. The financial authority (the\nmarketplace module behind the billing bridge) mints the reference, stores only its hash and\nbinds it to the environment, the caller, the payer wallet, the target release and operation,\nthe quote and offer versions, the canonical intent digest, the maximum amount, the expiry\nand either an exact human approval or a spend mandate.\n\nWithout `mandate_id`: a person, signed in recently and strongly when the amount is above the\naccount's approval threshold (`step_up_required` otherwise). Automation gets\n`human_required`. With `mandate_id`: the caller consumes a live mandate that a person created\nearlier with step-up; this is the narrow `ConsumeSpendMandate` policy action, not the\n`spend` verb, which stays never-auto.\n\nThe reference expires after at most five minutes if unused. Once a job consumes it, the\nreservation follows the job, not this expiry.\n",
+        "security": [
+          {
+            "memberToken": []
+          },
+          {
+            "apiKey": []
+          },
+          {
+            "capToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ActingIdentity"
+          },
+          {
+            "$ref": "#/components/parameters/RequiredIdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NestPaymentAuthorizationRequest"
+              },
+              "examples": {
+                "human": {
+                  "summary": "Exact human approval of one quote.",
+                  "value": {
+                    "quote_id": "qte_aaaaaaaaaaaaaaaaaaaaaaaaaa"
+                  }
+                },
+                "mandate": {
+                  "summary": "An agent consuming a mandate a person created earlier.",
+                  "value": {
+                    "quote_id": "qte_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "mandate_id": "mnd_aaaaaaaaaaaaaaaaaaaaaaaaaa"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The reference, shown once. It is redacted from logs and telemetry. Possessing it does not\nauthorize anyone else: job submission rechecks that the caller, intent and environment\nmatch the binding.\n",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/CacheControlNoStore"
+              },
+              "Idempotent-Replayed": {
+                "$ref": "#/components/headers/IdempotentReplayed"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/NestPaymentAuthorization"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/InsufficientCredits"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/FinanceUnavailable"
+          }
+        }
+      }
+    },
+    "/v1/publishers/{publisher}/reviews/{review}": {
+      "get": {
+        "tags": [
+          "Publisher reviews"
+        ],
+        "operationId": "getNestReview",
+        "summary": "Read a release candidate's review status",
+        "description": "A redacted, monotonically versioned projection for the publisher's authorized team: a\npersonal publisher's own account, or an org publisher's members holding the publisher role\n(resolved from live org membership). Others get `404 not_found`.\n\n`allowed_actions` are hints for the console; the server re-authorizes every action. An\napproved review is not production admission: security state, revocation, consent, funding\nand capacity are checked separately at installation and at every start.\n",
+        "security": [
+          {
+            "memberToken": []
+          },
+          {
+            "apiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Publisher"
+          },
+          {
+            "$ref": "#/components/parameters/Review"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current review projection.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/NestReviewStatus"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "memberToken": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Keycloak member access token for a signed-in person. Human-only and step-up gates use its validated `auth_time` and `acr`."
+      },
+      "apiKey": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "pk_live_<hex>",
+        "description": "Account API key. Automation, even when the account's owner holds it."
+      },
+      "capToken": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "cap_<hex>",
+        "description": "Capability token bound to exactly one mailbox (for example a Nest's own agent mailbox). Automation."
+      }
+    },
+    "parameters": {
+      "ActingIdentity": {
+        "name": "x-pigeonpost-identity",
+        "in": "header",
+        "required": false,
+        "description": "The acting mailbox (address or handle). Must be a mailbox the credential may act as; a capability token always acts as its own mailbox. Not proof of identity by itself.",
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 320
+        }
+      },
+      "RequiredIdempotencyKey": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": true,
+        "description": "16-128 characters from `A-Z a-z 0-9 . _ : -`. Bound to the caller, the acting mailbox, the route and the canonical request hash for the lifetime of the job or financial record.",
+        "schema": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "example": "screen-job-1024-v1"
+      },
+      "Job": {
+        "name": "job",
+        "in": "path",
+        "required": true,
+        "description": "Job id.",
+        "schema": {
+          "type": "string",
+          "pattern": "^job_[a-z2-7]{26}$"
+        }
+      },
+      "Publisher": {
+        "name": "publisher",
+        "in": "path",
+        "required": true,
+        "description": "Publisher id (a personal account's or an organization's publisher profile).",
+        "schema": {
+          "type": "string",
+          "pattern": "^pub_[a-z2-7]{26}$"
+        }
+      },
+      "Review": {
+        "name": "review",
+        "in": "path",
+        "required": true,
+        "description": "Review id.",
+        "schema": {
+          "type": "string",
+          "pattern": "^rvw_[a-z2-7]{26}$"
+        }
+      }
+    },
+    "headers": {
+      "IdempotentReplayed": {
+        "description": "`true` when this is the recorded response to an earlier request with the same `Idempotency-Key`.",
+        "schema": {
+          "type": "string",
+          "enum": [
+            "true"
+          ]
+        }
+      },
+      "CacheControlNoStore": {
+        "description": "`no-store`: the body carries a one-time reference.",
+        "schema": {
+          "type": "string",
+          "enum": [
+            "no-store"
+          ]
+        }
+      },
+      "RetryAfter": {
+        "description": "Seconds to wait before retrying.",
+        "schema": {
+          "type": "integer"
+        }
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "Malformed request (`bad_request`, `invalid_operation_payload`, `deadline_invalid`).",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "No valid credential (`unauthorized`).",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "The credential kind or the caller's authority does not allow this (`credential_not_accepted`, `human_required`, `step_up_required`, `forbidden`, `not_admitted`, `mandate_revoked`, `mandate_limit`).",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "Unknown, or not visible to this caller (`not_found`), or the feature is off (`feature_disabled`).",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Conflict": {
+        "description": "State or binding conflict (`idempotency_conflict`, `quote_expired`, `authorization_expired`, `authorization_reused`, `authorization_intent_mismatch`, `environment_mismatch`, `currency_mismatch`, `review_required`, `release_revoked`, `security_quarantined`, `access_expired`, `recovery_window_closed`).",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "PayloadTooLarge": {
+        "description": "Body over 256 KiB or deeper than 32 levels (`payload_too_large`).",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "InsufficientCredits": {
+        "description": "The wallet's available credits cannot cover the quoted maximum (`insufficient_credits`). Nothing was reserved and no card is charged.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "RateLimited": {
+        "description": "Too many requests (`rate_limited`).",
+        "headers": {
+          "Retry-After": {
+            "$ref": "#/components/headers/RetryAfter"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "FinanceUnavailable": {
+        "description": "The financial authority cannot confirm funding or revocation state (`financial_authority_unavailable`). New work is denied; nothing was reserved twice.",
+        "headers": {
+          "Retry-After": {
+            "$ref": "#/components/headers/RetryAfter"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "description": "Every refusal. `code` is stable; private resources are never distinguished from missing ones.",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": [
+              "code",
+              "message",
+              "doc_url"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "description": "Stable, machine-readable code. Branch on this.",
+                "enum": [
+                  "bad_request",
+                  "invalid_operation_payload",
+                  "deadline_invalid",
+                  "unauthorized",
+                  "credential_not_accepted",
+                  "human_required",
+                  "step_up_required",
+                  "forbidden",
+                  "not_admitted",
+                  "not_found",
+                  "feature_disabled",
+                  "idempotency_conflict",
+                  "quote_expired",
+                  "authorization_expired",
+                  "authorization_reused",
+                  "authorization_intent_mismatch",
+                  "environment_mismatch",
+                  "currency_mismatch",
+                  "insufficient_credits",
+                  "mandate_revoked",
+                  "mandate_limit",
+                  "review_required",
+                  "release_revoked",
+                  "security_quarantined",
+                  "access_expired",
+                  "recovery_window_closed",
+                  "payload_too_large",
+                  "rate_limited",
+                  "financial_authority_unavailable",
+                  "store_error"
+                ]
+              },
+              "message": {
+                "type": "string",
+                "description": "Human-readable text. May change; do not parse it."
+              },
+              "doc_url": {
+                "type": "string",
+                "format": "uri",
+                "description": "Link to the error reference entry for `code`."
+              },
+              "details": {
+                "type": "object",
+                "description": "Extra machine-readable facts some errors carry.",
+                "additionalProperties": true
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "NestJobRequest": {
+        "title": "Pigeonpost Nest job request v1",
+        "type": "object",
+        "additionalProperties": false,
+        "description": "The client part of a job. The server adds the authenticated sender, the resolved and pinned\ntarget, the buyer context, the payer, the job id and the server trace after authorization.\nFields that would claim those (`from`, `payer`, `amount_minor`, `customer_id`, `approval`,\n`tenant`, `model_budget`) are rejected as unknown properties.\n",
+        "required": [
+          "type",
+          "version",
+          "to",
+          "operation",
+          "operation_version",
+          "quote_id",
+          "payment_authorization",
+          "payload",
+          "deadline_at"
+        ],
+        "properties": {
+          "type": {
+            "const": "nest.job.request"
+          },
+          "version": {
+            "const": 1
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 320,
+            "description": "The Nest's address or readable handle. Resolved and pinned to the quote's release binding."
+          },
+          "operation": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$",
+            "description": "The Nest operation, as published in its reviewed release."
+          },
+          "operation_version": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 32,
+            "pattern": "^[0-9]+\\.[0-9]+(\\.[0-9]+)?$"
+          },
+          "quote_id": {
+            "type": "string",
+            "pattern": "^qte_[a-z2-7]{26}$"
+          },
+          "payment_authorization": {
+            "type": "string",
+            "minLength": 51,
+            "maxLength": 136,
+            "pattern": "^payauth_[A-Za-z0-9_-]{43,128}$",
+            "description": "Opaque single-use reference from `POST /v1/nest-payment-authorizations`. Not a bearer token for anyone else."
+          },
+          "payload": {
+            "type": "object",
+            "description": "Validated additionally against the pinned operation's input schema and the global size and depth limits."
+          },
+          "attachments": {
+            "type": "array",
+            "maxItems": 32,
+            "uniqueItems": true,
+            "description": "Attachment ids already uploaded by the acting mailbox. Their content digests become part of the intent.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "reply_to": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 320,
+            "description": "One of the caller's own mailboxes to receive results. Defaults to the acting mailbox."
+          },
+          "deadline_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Must be in the future and no later than the quote, the mandate and any paid access term allow."
+          },
+          "client_trace_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._:-]+$",
+            "description": "Observability only. Never part of the commercial intent, never authority."
+          }
+        }
+      },
+      "NestJobAccepted": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "job_id",
+          "admission",
+          "accepted_at"
+        ],
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "pattern": "^job_[a-z2-7]{26}$"
+          },
+          "admission": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "admitted"
+            ]
+          },
+          "accepted_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "NestJob": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "job_id",
+          "to",
+          "operation",
+          "operation_version",
+          "admission",
+          "execution",
+          "settlement",
+          "revision",
+          "created_at",
+          "updated_at",
+          "deadline_at"
+        ],
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "pattern": "^job_[a-z2-7]{26}$"
+          },
+          "to": {
+            "type": "string",
+            "description": "The resolved Nest address at admission (not the handle as typed)."
+          },
+          "operation": {
+            "type": "string"
+          },
+          "operation_version": {
+            "type": "string"
+          },
+          "admission": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "authorized",
+              "funded",
+              "admitted",
+              "rejected"
+            ]
+          },
+          "execution": {
+            "type": "string",
+            "enum": [
+              "not_started",
+              "queued",
+              "running",
+              "waiting_input",
+              "reconciling",
+              "succeeded",
+              "failed",
+              "cancelled",
+              "expired",
+              "stopped_security"
+            ]
+          },
+          "settlement": {
+            "type": "string",
+            "enum": [
+              "none",
+              "reserved",
+              "pending_reconciliation",
+              "settled",
+              "released",
+              "disputed"
+            ]
+          },
+          "effects_outcome_unknown": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Number of external effects whose outcome could not be established. They are reconciled, never blindly retried."
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "result_attachments": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Result artifacts readable by this caller."
+          },
+          "error_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "deadline_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "NestPaymentAuthorizationRequest": {
+        "title": "Pigeonpost Nest payment authorization request v1",
+        "type": "object",
+        "additionalProperties": false,
+        "description": "The server derives the caller, the wallet, the amount, the currency, the intent and the\napproval provenance from the quote and the credential. Without `mandate_id` the request is\nan exact human approval, except an independently authorized zero-price operation.\n",
+        "required": [
+          "quote_id"
+        ],
+        "properties": {
+          "quote_id": {
+            "type": "string",
+            "pattern": "^qte_[a-z2-7]{26}$"
+          },
+          "mandate_id": {
+            "type": "string",
+            "pattern": "^mnd_[a-z2-7]{26}$"
+          }
+        }
+      },
+      "NestPaymentAuthorization": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "payment_authorization",
+          "quote_id",
+          "expires_at",
+          "amount_minor",
+          "currency",
+          "reservation_id"
+        ],
+        "properties": {
+          "payment_authorization": {
+            "type": "string",
+            "pattern": "^payauth_[A-Za-z0-9_-]{43,128}$"
+          },
+          "quote_id": {
+            "type": "string",
+            "pattern": "^qte_[a-z2-7]{26}$"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "amount_minor": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991,
+            "description": "Reserved maximum in minor units of the marketplace currency. One credit is one minor unit."
+          },
+          "currency": {
+            "type": "string",
+            "pattern": "^[A-Z]{3}$",
+            "description": "The single configured marketplace currency. Any other value is refused."
+          },
+          "reservation_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^rsv_[a-z2-7]{26}$",
+            "description": "Null for a zero-priced authorization."
+          }
+        }
+      },
+      "NestReviewStage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "status",
+          "attempt",
+          "started_at",
+          "finished_at",
+          "blocker_code"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "enum": [
+              "intake",
+              "deterministic_scan",
+              "ai_analysis",
+              "behavioral_test",
+              "human_review",
+              "attestation"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "running",
+              "passed",
+              "failed",
+              "blocked",
+              "skipped_not_applicable"
+            ]
+          },
+          "attempt": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "started_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "blocker_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "maxLength": 80,
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "evidence_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "required": [
+                "status"
+              ],
+              "properties": {
+                "status": {
+                  "enum": [
+                    "failed",
+                    "blocked",
+                    "skipped_not_applicable"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "reason"
+              ]
+            }
+          },
+          {
+            "if": {
+              "required": [
+                "status"
+              ],
+              "properties": {
+                "status": {
+                  "enum": [
+                    "passed",
+                    "failed",
+                    "skipped_not_applicable"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "finished_at": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "NestReviewStatus": {
+        "title": "Pigeonpost Nest release review status v1",
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Publisher-visible, redacted projection. Approval here is distinct from current security state, revocation and installation admission.",
+        "required": [
+          "review_id",
+          "publisher_id",
+          "release_id",
+          "artifact_digest",
+          "policy_digest",
+          "revision",
+          "status",
+          "stages",
+          "allowed_actions",
+          "updated_at"
+        ],
+        "properties": {
+          "review_id": {
+            "type": "string",
+            "pattern": "^rvw_[a-z2-7]{26}$"
+          },
+          "publisher_id": {
+            "type": "string",
+            "pattern": "^pub_[a-z2-7]{26}$"
+          },
+          "release_id": {
+            "type": "string",
+            "pattern": "^rel_[a-z2-7]{26}$"
+          },
+          "previous_review_id": {
+            "type": "string",
+            "pattern": "^rvw_[a-z2-7]{26}$",
+            "description": "Set on a resubmission; the earlier review stays immutable."
+          },
+          "artifact_digest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$",
+            "description": "Digest of the Pigeonpost-built artifact under review."
+          },
+          "policy_digest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "submitted",
+              "in_review",
+              "approved",
+              "changes_requested",
+              "rejected"
+            ]
+          },
+          "stages": {
+            "type": "array",
+            "minItems": 6,
+            "maxItems": 6,
+            "prefixItems": [
+              {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/NestReviewStage"
+                  },
+                  {
+                    "properties": {
+                      "name": {
+                        "const": "intake"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/NestReviewStage"
+                  },
+                  {
+                    "properties": {
+                      "name": {
+                        "const": "deterministic_scan"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/NestReviewStage"
+                  },
+                  {
+                    "properties": {
+                      "name": {
+                        "const": "ai_analysis"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/NestReviewStage"
+                  },
+                  {
+                    "properties": {
+                      "name": {
+                        "const": "behavioral_test"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/NestReviewStage"
+                  },
+                  {
+                    "properties": {
+                      "name": {
+                        "const": "human_review"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/NestReviewStage"
+                  },
+                  {
+                    "properties": {
+                      "name": {
+                        "const": "attestation"
+                      }
+                    }
+                  }
+                ]
+              }
+            ],
+            "items": false
+          },
+          "findings_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "decision_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "approval_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "description": "Reference to the staff decision. Present only on an approved review; never set by automation."
+          },
+          "allowed_actions": {
+            "type": "array",
+            "uniqueItems": true,
+            "maxItems": 5,
+            "items": {
+              "type": "string",
+              "enum": [
+                "view_findings",
+                "resubmit",
+                "appeal",
+                "withdraw",
+                "publish_listing"
+              ]
+            }
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "required": [
+                "status"
+              ],
+              "properties": {
+                "status": {
+                  "const": "approved"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "decision_ref",
+                "approval_ref"
+              ]
+            }
+          },
+          {
+            "if": {
+              "required": [
+                "status"
+              ],
+              "properties": {
+                "status": {
+                  "enum": [
+                    "changes_requested",
+                    "rejected"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "decision_ref",
+                "findings_ref"
+              ]
+            }
+          }
+        ]
+      }
+    }
+  }
+}

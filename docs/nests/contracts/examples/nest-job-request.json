@@ -1,0 +1,18 @@
+{
+  "type": "nest.job.request",
+  "version": 1,
+  "to": "/example/hr",
+  "operation": "screen_candidates",
+  "operation_version": "1.0",
+  "quote_id": "qte_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "payment_authorization": "payauth_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+  "payload": {
+    "position": "JOB-1024"
+  },
+  "attachments": [
+    "att_example_1"
+  ],
+  "reply_to": "/example/recruiter",
+  "deadline_at": "2026-12-01T15:00:00Z",
+  "client_trace_id": "client-demo-001"
+}

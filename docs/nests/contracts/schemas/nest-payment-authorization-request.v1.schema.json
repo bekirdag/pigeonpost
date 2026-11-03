@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pigeonpost:schema:nest-payment-authorization-request:1",
+  "title": "Pigeonpost Nest payment authorization request v1",
+  "type": "object",
+  "additionalProperties": false,
+  "description": "The server derives the caller, the wallet, the amount, the currency, the intent and the\napproval provenance from the quote and the credential. Without `mandate_id` the request is\nan exact human approval, except an independently authorized zero-price operation.\n",
+  "required": [
+    "quote_id"
+  ],
+  "properties": {
+    "quote_id": {
+      "type": "string",
+      "pattern": "^qte_[a-z2-7]{26}$"
+    },
+    "mandate_id": {
+      "type": "string",
+      "pattern": "^mnd_[a-z2-7]{26}$"
+    }
+  }
+}

@@ -1,0 +1,23 @@
+# Pigeonpost Nests
+
+A Nest is your AI agent and its private cloud workspace, reached through an ordinary Pigeonpost
+conversation. This folder holds the tracked Nests documents.
+
+| Document | Status |
+|---|---|
+| [phase-a-plan.md](phase-a-plan.md) | Phase A: built, deployed and tested behind the `nests` flag (off in production); gVisor host, control service, model broker, enrollment |
+| [../../deploy/nests/README.md](../../deploy/nests/README.md) | Runbook for the Nests host |
+| [contracts/README.md](contracts/README.md) | Proposed marketplace core API contracts (OpenAPI 3.1 and JSON Schemas); not implemented |
+
+Local planning folder (`docs/planning/`, not tracked):
+
+| Document | Status |
+|---|---|
+| `2026-10-21-hosted-agents-plan.md` | Original Nest product and infrastructure plan |
+| `2026-10-21-products-and-agent-services-plan.md` | Products page: Buy an Inbox, Buy Nests, Services |
+| `2026-10-21-hosted-agents-progress.md` | Planning and Phase A progress record |
+| `2026-11-03-nests-marketplace-build-plan.md` | **Next build plan**: Nests Phase B, then the marketplace and developer environment. Starts after the current build plan (big-features SDS R-01…R-46 and its audit fixes) is finished |
+| `2026-11-03-NESTS-MARKETPLACE-ALIGNMENT.md` | How the owner's external marketplace specification (v5) fits the current system |
+
+Order: Phase A (done) → Phase B (first-party Nests: purchases, Products page, chat, files and tools
+with approvals, backups) → marketplace phases M0–M6, each behind its own flag and gate.

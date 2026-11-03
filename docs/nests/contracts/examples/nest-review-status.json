@@ -1,0 +1,20 @@
+{
+  "review_id": "rvw_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "publisher_id": "pub_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "release_id": "rel_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "artifact_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "policy_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "revision": 4,
+  "status": "in_review",
+  "stages": [
+    {"name": "intake", "status": "passed", "attempt": 1, "started_at": "2026-11-03T09:00:00Z", "finished_at": "2026-11-03T09:05:00Z", "blocker_code": null},
+    {"name": "deterministic_scan", "status": "passed", "attempt": 1, "started_at": "2026-11-03T09:05:00Z", "finished_at": "2026-11-03T09:40:00Z", "blocker_code": null},
+    {"name": "ai_analysis", "status": "running", "attempt": 1, "started_at": "2026-11-03T09:40:00Z", "finished_at": null, "blocker_code": null},
+    {"name": "behavioral_test", "status": "pending", "attempt": 0, "started_at": null, "finished_at": null, "blocker_code": null},
+    {"name": "human_review", "status": "pending", "attempt": 0, "started_at": null, "finished_at": null, "blocker_code": null},
+    {"name": "attestation", "status": "pending", "attempt": 0, "started_at": null, "finished_at": null, "blocker_code": null}
+  ],
+  "findings_ref": "fnd_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "allowed_actions": ["view_findings", "withdraw"],
+  "updated_at": "2026-11-03T10:00:00Z"
+}
