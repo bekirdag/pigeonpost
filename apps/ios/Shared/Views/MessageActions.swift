@@ -28,14 +28,14 @@ struct MessageActionIcon: View {
     }
 }
 
-/// Icon-only button for the action row: 30 pt square on the Mac, a compact 28 pt on touch with a
-/// hit area grown to 44 pt so the compact row is still easy to tap.
+/// Icon-only button for the action row: 30 pt square on the Mac. On touch the 18 pt icon sits in
+/// a full 44 pt target laid out side by side, so neighbouring targets never overlap.
 struct MessageIconButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             #if os(iOS)
-            .frame(width: 28, height: 28)
-            .contentShape(Rectangle().inset(by: -8))
+            .frame(width: 44, height: 44)
+            .contentShape(Rectangle())
             #else
             .frame(width: 30, height: 30)
             .contentShape(Rectangle())
