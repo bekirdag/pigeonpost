@@ -48,7 +48,14 @@ final class GroupTests: XCTestCase {
     private func openMenu(onBubbleWith text: String) {
         let words = app.staticTexts[text].firstMatch
         XCTAssertTrue(words.waitForExistence(timeout: 10))
-        words.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: -6, dy: 4)).press(forDuration: 1.0)
+        let settled = expectation(for: NSPredicate(format: "isHittable == true"), evaluatedWith: words)
+        _ = XCTWaiter.wait(for: [settled], timeout: 5)
+        // Every bubble menu offers Copy; a press that lands while the list is still settling opens
+        // nothing, so press once more before the caller asserts on the menu's items.
+        for _ in 0..<2 {
+            words.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: -6, dy: 4)).press(forDuration: 1.0)
+            if app.buttons["Copy"].firstMatch.waitForExistence(timeout: 3) { return }
+        }
     }
 
     private func screenshot(_ name: String) {
