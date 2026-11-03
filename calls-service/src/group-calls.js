@@ -5,6 +5,20 @@
 // rechecked at create, join and resume. When the postbox cannot be asked, group calls are refused:
 // a group's member list is not something this service may guess.
 //
+// Membership is also enforced during the call (SDS §4.7, audit 2026-11-03 P0-2). Every media-server
+// ticket and relay credential asks the postbox again (never from cache), and a sweep asks about
+// everyone in each live group call every `groupCheckMs`. When the postbox says someone is no longer
+// an active member (removed, banned or left), they are taken out at once:
+//   * the others get `participant_left` with reason "removed". In a mesh their browsers close the
+//     peer connection, which ends that pair's DTLS-SRTP keys. On the media server, the remaining
+//     browsers make and hand round a new room key without the removed person (calls.js, leader
+//     rotation), so frames from then on cannot be opened with any key they held;
+//   * the removed person's own sessions get `ended` with reason "removed", and stop ringing;
+//   * on the media server they are removed from the room, and removed again on every sweep until the
+//     last ticket they were given has expired, so a ticket obtained earlier cannot bring them back.
+// If the postbox cannot be asked for longer than `groupBlindMs`, the call ends: removals would go
+// unnoticed (fail closed, like a live stream's heartbeat).
+//
 // Differences from a one-to-one ring:
 //   * every active member is rung (each according to their own call settings and blocks);
 //   * answering does not stop the ring for the others — anyone may still join until the ring
@@ -26,8 +40,10 @@ export function createGroupCalls(ctx) {
     cfg, internal, HttpError, KINDS, LIMITS, now, norm,
     liveSession, mailboxFor, sessionInRoom, limited, makeRoom, addParticipant,
     reportCall, sessionsByName, sessions, send, stopRinging, endRoom, roomView, admitted,
-    participantName,
+    participantName, removeParticipant, sfuEvict,
   } = ctx;
+  const checkMs = Number(cfg.groupCheckMs) > 0 ? Number(cfg.groupCheckMs) : 5_000;
+  const blindMs = Number(cfg.groupBlindMs) > 0 ? Number(cfg.groupBlindMs) : 90_000;
 
   const active = new Map(); // group_id -> room
 
@@ -41,11 +57,11 @@ export function createGroupCalls(ctx) {
     return room;
   }
 
-  async function admission(groupId, from, kind, join) {
+  async function admission(groupId, from, kind, join, fresh = false) {
     if (!internal.configured || typeof internal.groupAdmit !== "function") {
       throw new HttpError(503, "group_calls_unavailable");
     }
-    const verdict = await internal.groupAdmit({ group_id: groupId, from, kind, join });
+    const verdict = await internal.groupAdmit({ group_id: groupId, from, kind, join, fresh });
     if (!verdict) throw new HttpError(503, "group_calls_unavailable");
     if (!verdict.allowed) throw new HttpError(403, "not_member");
     return verdict;
@@ -89,6 +105,7 @@ export function createGroupCalls(ctx) {
     const silenced = verdict.members.filter((m) => m.decision === "silence");
     room.targets = ringing.map((m) => m.address);
     active.set(groupId, room);
+    watch(room);
     const caller = addParticipant(room, session, { name: from.handle || from.address, mailbox: from, e2ee: body.e2ee });
     ring(room, caller, ringing, silenced);
     return roomView(room, caller);
@@ -157,7 +174,7 @@ export function createGroupCalls(ctx) {
     if (!room.ring || !room.ring.ringing.has(session.id)) throw new HttpError(409, "not_ringing");
     const mailbox = mailboxFor(auth, room.ring.ringingFor.get(session.id) || "");
     if (!mailbox) throw new HttpError(403, "not_your_call");
-    await admission(room.group_id, mailbox, room.kind, true);
+    await admission(room.group_id, mailbox, room.kind, true, true);
     if (room.state === "ended") throw new HttpError(404, "no_call");
     return join(room, session, mailbox, body.e2ee);
   }
@@ -195,16 +212,83 @@ export function createGroupCalls(ctx) {
     if (!from) throw new HttpError(403, "not_your_mailbox");
     const room = liveRoom(groupId);
     if (!room) throw new HttpError(404, "no_call");
-    await admission(groupId, from, room.kind, true);
+    await admission(groupId, from, room.kind, true, true);
     if (room.state === "ended") throw new HttpError(404, "no_call");
     return join(room, session, from, body.e2ee);
   }
 
-  // A reload taking its place back: the person must still be a member.
+  // A reload taking its place back, a media-server ticket or relay credentials: the person must
+  // still be a member, asked now. A refusal also takes them out of the call.
   async function recheck(room, p) {
     if (!room.group_id || !p.mailbox) return;
-    await admission(room.group_id, p.mailbox, room.kind, true);
+    try {
+      await admission(room.group_id, p.mailbox, room.kind, true, true);
+    } catch (err) {
+      if (err instanceof HttpError && err.code === "not_member") revoke(room, p.mailbox.address);
+      throw err;
+    }
   }
 
-  return { start, accept, decline, status, join: joinRoute, recheck, active };
+  // Take every participant speaking for `address` out of the call, and stop ringing them.
+  function revoke(room, address) {
+    if (room.state === "ended") return 0;
+    const n = norm(address);
+    let removed = 0;
+    quietMember(room, address, "removed");
+    for (const p of [...room.participants.values()]) {
+      if (!p.mailbox || norm(p.mailbox.address) !== n) continue;
+      if (room.topology === "sfu" && p.ticketExpires && p.ticketExpires > now()) {
+        room.evicted = room.evicted || new Map();
+        room.evicted.set(p.id, p.ticketExpires);
+      }
+      const session = sessions.get(p.sessionId);
+      removeParticipant(room, p, "removed");
+      send(session, "ended", { room: room.id, reason: "removed" });
+      removed++;
+    }
+    if (removed) console.log(`calls: room=${room.id.slice(0, 6)} member removed from group; ${removed} participant(s) taken out`);
+    return removed;
+  }
+
+  // The in-call membership sweep (one at a time per room).
+  function watch(room) {
+    room.groupCheckedAt = now();
+    const tick = setInterval(() => { sweep(room).catch(() => {}); }, checkMs);
+    tick.unref?.();
+    room.timers.push(tick);
+  }
+
+  async function sweep(room) {
+    if (room.state === "ended" || room.sweeping) return;
+    room.sweeping = true;
+    try {
+      // A removed person holding an unexpired media-server ticket could reconnect with it.
+      if (room.evicted) {
+        for (const [pid, until] of [...room.evicted]) {
+          if (until <= now()) room.evicted.delete(pid);
+          else sfuEvict(room, pid);
+        }
+      }
+      const addresses = new Map();
+      for (const p of room.participants.values()) if (p.mailbox) addresses.set(norm(p.mailbox.address), p.mailbox);
+      if (!addresses.size) { room.groupCheckedAt = now(); return; }
+      let blind = false;
+      await Promise.all([...addresses.values()].map(async (mailbox) => {
+        const verdict = await internal.groupAdmit({ group_id: room.group_id, from: mailbox, kind: room.kind, join: true, fresh: true });
+        if (room.state === "ended") return;
+        if (!verdict) { blind = true; return; }
+        if (!verdict.allowed) revoke(room, mailbox.address);
+      }));
+      if (room.state === "ended") return;
+      if (!blind) room.groupCheckedAt = now();
+      else if (now() - room.groupCheckedAt > blindMs) {
+        console.warn(`calls: room=${room.id.slice(0, 6)} group membership unverifiable for ${Math.round(blindMs / 1000)} s; ending the call`);
+        endRoom(room, "membership_unverifiable");
+      }
+    } finally {
+      room.sweeping = false;
+    }
+  }
+
+  return { start, accept, decline, status, join: joinRoute, recheck, revoke, sweep, active };
 }

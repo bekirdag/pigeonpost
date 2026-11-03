@@ -2,7 +2,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
-import { createCallsService, LIMITS } from "../src/server.js";
+import { createRequire } from "node:module";
+import { createCallsService, LIMITS, sfuConfigFromEnv } from "../src/server.js";
+
+const E = createRequire(import.meta.url)("../../site-inbox/calls-e2ee.js");
 
 const TOKEN = "svc_calls_test_token_0123456789abcdef";
 const ACCOUNTS = {
@@ -57,13 +60,14 @@ function fakePostbox({ members = ["/k/alice1", "/k/bob1", "/k/carol1"], decision
 }
 
 let codeSeq = 0;
-async function start(pb, { internal = true, ringMs = 400 } = {}) {
+async function start(pb, { internal = true, ringMs = 400, extra = {}, sfuApi } = {}) {
   const cfg = {
     postbox: "https://postbox.test", turnSecret: "", turnUrls: [], turnTtlSeconds: 3600,
     allowedOrigins: ["https://inbox.test"], ringMs, knockMs: 1500, trustProxy: true,
     postboxInternalUrl: internal ? "http://10.0.0.1:18991" : "", postboxServiceToken: internal ? TOKEN : "",
+    groupCheckMs: 60_000, ...extra,
   };
-  const service = createCallsService(cfg, { fetch: pb.fetch, randomCode: () => "GRPC" + String(10 + (codeSeq++ % 80)) });
+  const service = createCallsService(cfg, { fetch: pb.fetch, randomCode: () => "GRPC" + String(10 + (codeSeq++ % 80)), ...(sfuApi ? { sfuApi } : {}) });
   const server = http.createServer((req, res) => service.handle(req, res));
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -309,5 +313,195 @@ test("removed members cannot join or take their place back; the six-person cap h
     const resumed = await t.req("tok-bob", "POST", `/calls/v1/rooms/${placed.body.room}/resume`, { session: fresh.id, participant: bobPid });
     assert.equal(resumed.status, 403);
     assert.equal(resumed.body.error, "not_member");
+  } finally { await t.stop(); }
+});
+
+// ---- P0-2 (audit 2026-11-03): membership is enforced during the call, SDS §4.7 ------------------
+
+const SEVEN = ["/k/alice1", "/k/bob1", "/k/carol1", "/k/dave1", "/k/erin1", "/k/fred1", "/k/gina1"];
+const SEVEN_TOKS = ["tok-alice", "tok-bob", "tok-carol", "tok-dave", "tok-erin", "tok-fred", "tok-gina"];
+function sfuExtra(more = {}) {
+  const sfu = sfuConfigFromEnv({ CALLS_SFU_URL: "wss://inbox.test/sfu", CALLS_SFU_API_URL: "https://media.test:7443", CALLS_SFU_KEY: "APIkey1", CALLS_SFU_SECRET: "s".repeat(40), CALLS_SFU_BUDGET_MBPS: "200" });
+  return { meshMax: 6, sfu, ...more };
+}
+
+// Everyone in SEVEN_TOKS (or `toks`) joins one group call with frame E2EE; with seven it is on the media server.
+async function groupCall(t, toks = SEVEN_TOKS) {
+  const streams = {};
+  for (const tok of toks) streams[tok] = await t.stream(tok);
+  const placed = await t.req(toks[0], "POST", "/calls/v1/calls", { session: streams[toks[0]].id, from: ACCOUNTS[toks[0]][0].address, group_id: GROUP, kind: "video", e2ee: true });
+  assert.equal(placed.status, 200, JSON.stringify(placed.body));
+  for (const tok of toks.slice(1)) {
+    await streams[tok].until("incoming");
+    const r = await t.req(tok, "POST", `/calls/v1/rooms/${placed.body.room}/accept`, { session: streams[tok].id, e2ee: true });
+    assert.equal(r.status, 200, tok + " " + JSON.stringify(r.body));
+  }
+  const room = t.service.state.rooms.get(placed.body.room);
+  const pid = (address) => [...room.participants.values()].find((p) => p.mailbox && p.mailbox.address === address)?.id;
+  return { streams, roomId: placed.body.room, room, pid };
+}
+
+test("a removed member gets no media-server ticket, is taken out of the call and off the media server", async () => {
+  const pb = fakePostbox({ members: SEVEN });
+  const sfuCalls = [];
+  const t = await start(pb, { ringMs: 5000, extra: sfuExtra(), sfuApi: async (sfu, method, body) => { sfuCalls.push({ method, body }); return 200; } });
+  try {
+    const { streams, roomId, room, pid } = await groupCall(t);
+    assert.equal(room.topology, "sfu");
+    const bobPid = pid("/k/bob1");
+    const ok = await t.req("tok-bob", "POST", `/calls/v1/rooms/${roomId}/sfu`, { session: streams["tok-bob"].id });
+    assert.equal(ok.status, 200, "a member gets a ticket");
+
+    // Bob is removed from the group. His "allowed" verdict is still in the 30 s cache: the ticket
+    // path must not use it.
+    pb.state.members.delete("/k/bob1");
+    const asked = pb.admissions.length;
+    const refused = await t.req("tok-bob", "POST", `/calls/v1/rooms/${roomId}/sfu`, { session: streams["tok-bob"].id });
+    assert.equal(refused.status, 403);
+    assert.equal(refused.body.error, "not_member");
+    assert.ok(pb.admissions.length > asked, "the postbox was asked again, not the cache");
+    assert.equal(room.participants.has(bobPid), false, "taken out of the call");
+    const ended = await streams["tok-bob"].until("ended");
+    assert.equal(ended.data.reason, "removed");
+    const left = await streams["tok-alice"].until("participant_left");
+    assert.deepEqual([left.data.participant, left.data.reason], [bobPid, "removed"]);
+    await settle();
+    assert.ok(sfuCalls.some((c) => c.method === "RemoveParticipant" && c.body.identity === bobPid && c.body.room === roomId), "kicked from the media room");
+
+    // He cannot come back by any door: another ticket, a rejoin, or a resume.
+    const again = await t.req("tok-bob", "POST", `/calls/v1/rooms/${roomId}/sfu`, { session: streams["tok-bob"].id });
+    assert.equal(again.status, 403);
+    const rejoin = await t.req("tok-bob", "POST", `/calls/v1/groups/${GROUP}/join`, { session: streams["tok-bob"].id, from: "/k/bob1", e2ee: true });
+    assert.equal(rejoin.status, 403);
+    assert.equal(rejoin.body.error, "not_member");
+    const resumed = await t.req("tok-bob", "POST", `/calls/v1/rooms/${roomId}/resume`, { session: streams["tok-bob"].id, participant: bobPid });
+    assert.equal(resumed.status, 403);
+    // Members still get tickets.
+    const alice = await t.req("tok-alice", "POST", `/calls/v1/rooms/${roomId}/sfu`, { session: streams["tok-alice"].id });
+    assert.equal(alice.status, 200);
+  } finally { await t.stop(); }
+});
+
+test("removal is noticed within seconds without any request from the removed member (mesh and media server)", async () => {
+  for (const toks of [SEVEN_TOKS.slice(0, 3), SEVEN_TOKS]) {
+    const pb = fakePostbox({ members: SEVEN });
+    const sfuCalls = [];
+    const t = await start(pb, { ringMs: 5000, extra: sfuExtra({ groupCheckMs: 150 }), sfuApi: async (sfu, method, body) => { sfuCalls.push({ method, body }); return 200; } });
+    try {
+      const { streams, roomId, room, pid } = await groupCall(t, toks);
+      const carolPid = pid("/k/carol1");
+      const topology = room.topology;
+      assert.equal(topology, toks.length > 6 ? "sfu" : "mesh");
+      if (topology === "sfu") {
+        const ticket = await t.req("tok-carol", "POST", `/calls/v1/rooms/${roomId}/sfu`, { session: streams["tok-carol"].id });
+        assert.equal(ticket.status, 200);
+      }
+      const removedAt = Date.now();
+      pb.state.members.delete("/k/carol1");
+      const ended = await streams["tok-carol"].until("ended", 3000);
+      const took = Date.now() - removedAt;
+      assert.equal(ended.data.reason, "removed");
+      assert.ok(took < 2000, `kicked after ${took} ms`);
+      const left = await streams["tok-alice"].until("participant_left", 2000);
+      assert.deepEqual([left.data.participant, left.data.reason], [carolPid, "removed"]);
+      assert.equal(room.participants.has(carolPid), false);
+      assert.notEqual(room.state, "ended", "the call goes on for the others");
+      if (topology === "sfu") {
+        // Her ticket is still valid for a while: she is removed from the media room again on every
+        // sweep until it expires, so it cannot bring her back.
+        await settle(400);
+        const kicks = sfuCalls.filter((c) => c.method === "RemoveParticipant" && c.body.identity === carolPid).length;
+        assert.ok(kicks >= 2, `removed from the media room ${kicks} time(s)`);
+      }
+      // Others' signals can no longer reach her: no new room key can be handed to her.
+      const sig = await t.req("tok-alice", "POST", `/calls/v1/rooms/${roomId}/signal`, { session: streams["tok-alice"].id, to: carolPid, type: "mute" });
+      assert.equal(sig.status, 404);
+    } finally { await t.stop(); }
+  }
+});
+
+test("relay credentials for a group call re-check membership", async () => {
+  const pb = fakePostbox({ members: SEVEN });
+  const t = await start(pb, { ringMs: 5000 });
+  try {
+    const { streams, roomId, room, pid } = await groupCall(t, SEVEN_TOKS.slice(0, 3));
+    const ok = await t.req("tok-bob", "GET", `/calls/v1/turn?session=${streams["tok-bob"].id}`);
+    assert.equal(ok.status, 200);
+    const bobPid = pid("/k/bob1");
+    pb.state.members.delete("/k/bob1");
+    const refused = await t.req("tok-bob", "GET", `/calls/v1/turn?session=${streams["tok-bob"].id}`);
+    assert.equal(refused.status, 403);
+    assert.equal(refused.body.error, "not_member");
+    assert.equal(room.participants.has(bobPid), false);
+    assert.equal((await streams["tok-bob"].until("ended")).data.reason, "removed");
+    assert.equal(roomId, room.id);
+  } finally { await t.stop(); }
+});
+
+test("a group call ends when membership cannot be verified for longer than the blind window", async () => {
+  const pb = fakePostbox({ members: SEVEN });
+  const t = await start(pb, { ringMs: 5000, extra: { groupCheckMs: 100, groupBlindMs: 350 } });
+  try {
+    const { streams, room } = await groupCall(t, SEVEN_TOKS.slice(0, 3));
+    pb.state.admissionStatus = 503;
+    const ended = await streams["tok-alice"].until("ended", 3000);
+    assert.equal(ended.data.reason, "membership_unverifiable");
+    assert.equal(room.state, "ended");
+  } finally { await t.stop(); }
+});
+
+test("after a removal the room key rotates to the remaining members only; the removed member cannot decrypt", async () => {
+  const pb = fakePostbox({ members: SEVEN });
+  const t = await start(pb, { ringMs: 5000, extra: sfuExtra({ groupCheckMs: 150 }), sfuApi: async () => 200 });
+  try {
+    const { streams, roomId, room, pid } = await groupCall(t);
+    const ids = {};
+    for (const tok of SEVEN_TOKS) {
+      const me = await E.generateIdentity();
+      ids[tok] = { ...me, pid: pid(ACCOUNTS[tok][0].address) };
+      const r = await t.req(tok, "POST", `/calls/v1/rooms/${roomId}/e2ee`, { session: streams[tok].id, public_key: me.publicKey });
+      assert.equal(r.status, 200);
+    }
+    // The leader (Alice) hands generation `epoch` to everyone the service lists, as calls.js does,
+    // through the service's signal route. Returns what each addressee could unwrap.
+    async function rotate(epoch) {
+      const roomKey = E.randomRoomKey();
+      const roster = [...room.participants.values()];
+      const from = { id: ids["tok-alice"].pid, key: ids["tok-alice"].publicKey };
+      for (const p of roster) {
+        if (p.id === from.id) continue;
+        const wrapped = await E.wrapRoomKey({ privateKey: ids["tok-alice"].privateKey, roomId, epoch, from, to: { id: p.id, key: p.key }, roomKey });
+        const r = await t.req("tok-alice", "POST", `/calls/v1/rooms/${roomId}/signal`, { session: streams["tok-alice"].id, to: p.id, type: "key", data: wrapped });
+        assert.equal(r.status, 200);
+      }
+      return { roomKey, roster: roster.map((p) => p.id) };
+    }
+    const first = await rotate(1);
+    assert.ok(first.roster.includes(ids["tok-bob"].pid));
+    const bobKey1 = await E.dataKey(first.roomKey);
+
+    pb.state.members.delete("/k/bob1");
+    const left = await streams["tok-alice"].until("participant_left", 3000);
+    assert.equal(left.data.reason, "removed");
+    const second = await rotate(2);
+    assert.equal(second.roster.includes(ids["tok-bob"].pid), false, "the new generation is not handed to him");
+
+    // Bob's stream carried generation 1 to him, and nothing after his removal.
+    const keysToBob = streams["tok-bob"].seen.filter((e) => e.event === "signal" && e.data.type === "key").map((e) => e.data.data.epoch);
+    assert.deepEqual(keysToBob, [1]);
+    // A wrapped generation-2 key addressed to someone else does not open with his key either.
+    const toErin = streams["tok-erin"].seen.filter((e) => e.event === "signal" && e.data.type === "key" && e.data.data.epoch === 2);
+    assert.equal(toErin.length, 1);
+    const erinWrapped = toErin[0].data.data;
+    const erinOpens = await E.unwrapRoomKey({ privateKey: ids["tok-erin"].privateKey, roomId, from: { id: ids["tok-alice"].pid, key: ids["tok-alice"].publicKey }, to: { id: ids["tok-erin"].pid, key: ids["tok-erin"].publicKey }, wrapped: erinWrapped });
+    assert.deepEqual(erinOpens, second.roomKey);
+    await assert.rejects(E.unwrapRoomKey({ privateKey: ids["tok-bob"].privateKey, roomId, from: { id: ids["tok-alice"].pid, key: ids["tok-alice"].publicKey }, to: { id: ids["tok-erin"].pid, key: ids["tok-erin"].publicKey }, wrapped: erinWrapped }));
+    // Data sealed under generation 2 does not open with anything he holds.
+    const sealed = await E.sealData(await E.dataKey(second.roomKey), { epoch: 2, roomId, senderId: ids["tok-alice"].pid }, { text: "after removal" });
+    await assert.rejects(E.openData(async (e) => (e === 1 ? bobKey1 : null), { roomId, senderId: ids["tok-alice"].pid }, sealed), /no key/);
+    const forged = sealed.slice(); new DataView(forged.buffer).setUint32(1, 1);
+    await assert.rejects(E.openData(async (e) => (e === 1 ? bobKey1 : null), { roomId, senderId: ids["tok-alice"].pid }, forged));
+    const opened = await E.openData(async (e) => (e === 2 ? await E.dataKey(erinOpens) : null), { roomId, senderId: ids["tok-alice"].pid }, sealed);
+    assert.equal(opened.value.text, "after removal");
   } finally { await t.stop(); }
 });

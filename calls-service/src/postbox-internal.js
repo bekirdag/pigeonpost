@@ -175,11 +175,14 @@ export function createPostboxInternal({ url, token, fetch, now, setTimeout: setT
     };
   }
 
-  async function groupAdmit({ group_id, from, kind, join }) {
+  // `fresh`: skip the cache (every join, accept, resume, media ticket, relay credential and the
+  // in-call membership sweep - audit 2026-11-03 P0-2), and replace the cached verdict with the
+  // answer, so a removal also evicts an earlier "allowed".
+  async function groupAdmit({ group_id, from, kind, join, fresh = false }) {
     if (!configured) return null;
     const cacheable = Boolean(join);
     const key = ["group", group_id, String(from && from.address || "").toLowerCase(), join ? "join" : "start"].join("\n");
-    if (cacheable) {
+    if (cacheable && !fresh) {
       const hit = cache.get(key);
       if (hit && hit.expires > clock()) {
         counters.cache_hits++;
