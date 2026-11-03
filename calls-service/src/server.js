@@ -59,6 +59,10 @@ export function configFromEnv(env = process.env) {
     eventSpool: env.CALLS_EVENT_SPOOL || "",
     // Calls stay a mesh up to this many people; beyond it they move to the media server.
     meshMax: Number(env.CALLS_MESH_MAX || 6),
+    // Group calls: how often everyone in a live group call is re-checked with the postbox, and how
+    // long the postbox may be unreachable before the call ends (SDS §4.7, audit 2026-11-03 P0-2).
+    groupCheckMs: Number(env.CALLS_GROUP_CHECK_MS || 5_000),
+    groupBlindMs: Number(env.CALLS_GROUP_BLIND_MS || 90_000),
     sfu: sfuConfigFromEnv(env),
     streams: streamConfigFromEnv(env), // Phase 6
     // Phase 7: meeting notes. The meeting-intel service on this host; unset = notes unavailable.
@@ -214,6 +218,7 @@ export function createCallsService(cfgIn, deps = {}) {
   const groupCalls = createGroupCalls({ // Phase 3a
     cfg, internal, HttpError, KINDS, LIMITS, now, norm, liveSession, mailboxFor, sessionInRoom, limited, makeRoom, // Phase 3a
     addParticipant, reportCall, sessionsByName, sessions, send, stopRinging, endRoom, roomView, admitted, participantName, // Phase 3a
+    removeParticipant, sfuEvict, // P0-2: membership enforced during the call
   }); // Phase 3a
   const scheduledMeetings = createScheduledMeetings({ // Phase 3B
     cfg, internal, HttpError, LIMITS, now, norm, liveSession, mailboxFor, sessionInRoom, limited, makeRoom, addParticipant, reportCall, sessions, send, endRoom, // Phase 3B
@@ -509,11 +514,16 @@ export function createCallsService(cfgIn, deps = {}) {
   }
 
   // A ticket for the media server: this participant, this room, nothing else, for two minutes.
-  function sfuTicket(auth, room, body) {
+  // In a group call the postbox is asked again first; a removed member gets no ticket and is taken
+  // out of the call (P0-2).
+  async function sfuTicket(auth, room, body) {
     const p = participantFor(room, auth, body.session);
     if (room.topology !== "sfu" || !sfuEnabled()) throw new HttpError(409, "not_large");
     if (limited("sfu:" + p.id, LIMITS.sfuTicketsPerMinute, 60_000)) throw new HttpError(429, "rate_limited");
+    await groupCalls.recheck(room, p);
+    if (room.state === "ended" || !room.participants.has(p.id)) throw new HttpError(403, "not_in_room");
     const t = Math.floor(now() / 1000);
+    p.ticketExpires = Math.max(p.ticketExpires || 0, (t + cfg.sfu.tokenTtlSeconds + 5) * 1000);
     const token = signSfuToken(cfg.sfu, {
       sub: p.id, nbf: t - 5, exp: t + cfg.sfu.tokenTtlSeconds,
       video: {
@@ -549,6 +559,13 @@ export function createCallsService(cfgIn, deps = {}) {
   function sfuRemove(room, p) {
     if (room.topology !== "sfu" || !sfuEnabled() || !cfg.sfu.apiUrl) return;
     sfuAdmin("RemoveParticipant", { room: room.id, identity: p.id }, { roomAdmin: true, room: room.id });
+  }
+
+  // Remove an identity that is no longer a participant (a removed group member who may still hold
+  // an unexpired ticket).
+  function sfuEvict(room, identity) {
+    if (!sfuEnabled() || !cfg.sfu.apiUrl) return;
+    sfuAdmin("RemoveParticipant", { room: room.id, identity }, { roomAdmin: true, room: room.id });
   }
 
   function sfuClose(room) {
@@ -1023,10 +1040,15 @@ export function createCallsService(cfgIn, deps = {}) {
 
   // ---- TURN credentials (coturn "use-auth-secret": HMAC-SHA1 over "<expiry>:<user>") -------------
 
-  function turnCredentials(auth, sessionId) {
+  async function turnCredentials(auth, sessionId) {
     const session = liveSession(auth, sessionId);
+    const inRoom = sessionInRoom(session);
     // A guest gets relay credentials only once somebody has let them in.
-    if (auth.guest && !sessionInRoom(session)) throw new HttpError(403, "not_in_room");
+    if (auth.guest && !inRoom) throw new HttpError(403, "not_in_room");
+    // In a group call, only a current member gets relay credentials (P0-2).
+    if (inRoom && inRoom.group_id) {
+      for (const p of inRoom.participants.values()) if (p.sessionId === session.id) await groupCalls.recheck(inRoom, p);
+    }
     if (!cfg.turnSecret || !cfg.turnUrls.length) return { iceServers: [], ttl: 0 };
     const expires = Math.floor(now() / 1000) + cfg.turnTtlSeconds;
     // Unique per issue: coturn's per-user allocation quota then applies per connection set-up rather
@@ -1095,7 +1117,7 @@ export function createCallsService(cfgIn, deps = {}) {
 
       const auth = await authenticate(req);
       if (req.method === "GET" && path === "/v1/events") return openStream(req, res, auth);
-      if (req.method === "GET" && path === "/v1/turn") return json(res, 200, turnCredentials(auth, url.searchParams.get("session")));
+      if (req.method === "GET" && path === "/v1/turn") return json(res, 200, await turnCredentials(auth, url.searchParams.get("session")));
       if (req.method === "POST" && path === "/v1/calls") return json(res, 200, await startCall(auth, await readJson(req)));
       const group = /^\/v1\/groups\/([A-Za-z0-9_]{1,80})\/(call|join)$/.exec(path); // Phase 3a
       if (req.method === "GET" && group && group[2] === "call") return json(res, 200, await groupCalls.status(auth, group[1], url.searchParams.get("from"))); // Phase 3a

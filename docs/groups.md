@@ -229,8 +229,21 @@ Calls service (`/calls/v1`, same origin as the inbox):
 | POST | `/calls/v1/groups/{group_id}/join` | `{session, from}` | Any active member joins without knocking. |
 
 Membership is rechecked by the postbox (`POST /internal/v1/group-call-admission`, calls-service
-token) at create, ring and join. Calls keep the six-person mesh cap; meeting-link guests stay
-separate and never gain group membership. Start and end appear in the group as `call_started` /
+token) at create, ring and join, and during the call (SDS §4.7):
+
+- Every join, accept, resume, media-server ticket (`/rooms/{id}/sfu`) and relay credential
+  (`/turn`) asks the postbox again and never uses the 30 s admission cache.
+- The calls service also re-checks everyone in a live group call every `CALLS_GROUP_CHECK_MS`
+  (5 s by default).
+- A member who is no longer active (removed, banned or left) is taken out at once. Their sessions
+  get `ended` (`reason: "removed"`); the others get `participant_left` (`reason: "removed"`) and
+  close that peer connection (mesh) or rotate the room key without them (media server). They are
+  also removed from the media room, again on every check until their last ticket has expired.
+- If the postbox cannot be asked for longer than `CALLS_GROUP_BLIND_MS` (90 s by default), the
+  call ends with `membership_unverifiable`.
+
+Calls keep the six-person mesh cap; meeting-link guests stay separate and never gain group
+membership. Start and end appear in the group as `call_started` /
 `call_ended` notices.
 
 ## 7. Push
