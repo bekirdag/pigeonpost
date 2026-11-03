@@ -138,7 +138,14 @@ try {
     $version = Wait-Control 'Message version'
     Check ($version.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.IsReadOnly) 'Version history remains read-only data'
     Capture 'message-info.png'; Invoke-Control 'Done'
-    Invoke-Control 'Reply' 'design-3'
+    Wait-Check { $null -eq (Control 'Message content') } 'Message info closes'
+    # A row action pressed while the dialog is still closing is ignored; press until reply mode shows.
+    $replying = $false
+    for ($n = 0; $n -lt 10 -and -not $replying; $n++) {
+        Invoke-Control 'Reply' 'design-3'
+        for ($m = 0; $m -lt 10 -and -not $replying; $m++) { Start-Sleep -Milliseconds 200; $replying = $null -ne (Control 'Replying to message') }
+    }
+    Check $replying 'Reply from the row enters reply mode after message info closes'
     Set-Text 'Reply via native message controls'; Invoke-Control 'Send'
     Wait-Check { $s = State; $s -and $s.replies -eq 1 -and $s.originalReplyParent -and (Read-Text) -eq '' } 'Native reply sends the original parent and bounded quote and clears the confirmed reply draft'
     $state = State
