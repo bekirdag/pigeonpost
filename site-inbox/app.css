@@ -42,7 +42,7 @@
      blue, which is what the mockup's Send button does. */
   --on-accent: #ffffff;
   --green: #22c55e;
-  --tick-seen: #15a34a;
+  --tick-seen: #1e8a50;
   --amber: #8a5208;
   --ink: #12161c;
   --body: #343c47;
@@ -201,7 +201,7 @@
     --accent-fill-hover: #a5c5ff;
     --on-accent: #0d0f12;
     --green: #7dd3a0;
-    --tick-seen: #4ade80;
+    --tick-seen: #7dd3a0;
     --amber: #f0b860;
     --ink: #e8eaed;
     --body: #d7dce3;
@@ -335,7 +335,7 @@
   --accent-fill-hover: #a5c5ff;
   --on-accent: #0d0f12;
   --green: #7dd3a0;
-  --tick-seen: #4ade80;
+  --tick-seen: #7dd3a0;
   --amber: #f0b860;
   --ink: #e8eaed;
   --body: #d7dce3;
@@ -2477,13 +2477,6 @@ audio.viewer-media { width: min(560px, 100%); background: none; }
   font-size: 12px; color: var(--danger); background: var(--danger-fill);
   border: 1px solid var(--danger-edge); border-radius: 999px; padding: 3px 10px;
 }
-.bubble .meta .msg-block {
-  appearance: none; border: 0; border-radius: 6px; background: none; width: 26px; height: 26px;
-  display: inline-grid; place-items: center; padding: 0; font: inherit; font-size: 14px; line-height: 1;
-  color: var(--faint); cursor: pointer; opacity: .75;
-}
-.bubble .meta .msg-block:hover, .bubble .meta .msg-block:focus-visible { color: var(--danger); background: var(--danger-fill); opacity: 1; }
-
 .blocked-banner:not([hidden]) {
   flex: none; display: flex; align-items: center; justify-content: center; gap: 6px; margin: 0;
   padding: 12px 16px; border-top: 1px solid var(--rule); background: var(--blocked-fill);

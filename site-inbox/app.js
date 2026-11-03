@@ -190,7 +190,18 @@
     return button;
   }
 
-  window.PigeonpostMessageActions = { newMsgRef, isMsgRef, tickState, editable, quoteExcerpt, actionFields, tickNode, actionButton, copyButton, ICONS, EDIT_WINDOW_SECS };
+  // The full action list (docs/message-actions.md §6) opens on right-click / long-press, and from the
+  // keyboard with the menu key or Shift+F10 on anything focused inside the message (its action row).
+  function bindMessageMenu(node, open) {
+    node.addEventListener("contextmenu", open);
+    node.addEventListener("keydown", (e) => {
+      if (e.key !== "ContextMenu" && !(e.shiftKey && e.key === "F10")) return;
+      const box = e.target.getBoundingClientRect();
+      open({ preventDefault: () => e.preventDefault(), clientX: box.left, clientY: box.bottom });
+    });
+  }
+
+  window.PigeonpostMessageActions = { newMsgRef, isMsgRef, tickState, editable, quoteExcerpt, actionFields, tickNode, actionButton, copyButton, bindMessageMenu, ICONS, EDIT_WINDOW_SECS };
 
   // Default inboxes must identify their owner: /alp and /bekir are different people. The rule
   // itself ("/bekir/main" -> "Bekir", "/wodo/hr" -> "Wodo HR") lives in names.js, shared with calls.js.
@@ -2156,7 +2167,6 @@
         meta.append(retry, discard);
       }
     }
-    if (m.kind === "in") meta.append(blockSenderButton(m));
     // Phase 1e: "edited", the time and the ticks sit together at the bubble's bottom right.
     const spacer = document.createElement("span");
     spacer.className = "meta-spacer";
@@ -2184,7 +2194,6 @@
     }
     bubble.append(meta);
     if (m.reply_to) bubble.prepend(replyQuoteNode(m));
-    bubble.addEventListener("contextmenu", (e) => openMessageMenu(e, m));
 
     // The action row lives under the bubble, outside it — the owner's reference look. Received
     // mail offers copy and reply, your own offers edit (while it still can be) and copy.
@@ -2202,6 +2211,9 @@
       if (canReply) actions.append(actionButton("reply", "Reply", () => startReply(m)));
     }
     stack.append(bubble, actions);
+    // The menu opens from the bubble or its action row: right-click, long-press, or the keyboard's
+    // menu key / Shift+F10 on a focused action button — so Block and Report need no icon in the bubble.
+    bindMessageMenu(stack, (e) => openMessageMenu(e, m));
     li.append(stack);
     return li;
   }
@@ -2402,6 +2414,7 @@
     item("Copy", () => navigator.clipboard?.writeText(copyTextOf(m)).catch(() => {}));
     if (editable(m, Date.now() / 1000, flags)) item("Edit", () => startEdit(m));
     if (live && actionsOn()) item("Info", () => openMessageInfo(m));
+    if (m.kind === "in" && m.id) item("Report", () => reportMessage(m));
     if (m.kind === "in" && state.openPeer) item("Block sender", () => askBlock({ peer: state.openPeer, name: $("peer-name").textContent, origin: "message", messageId: m.id }));
     menu.hidden = false;
     const x = Math.min(event.clientX, window.innerWidth - menu.offsetWidth - 8);
@@ -5115,18 +5128,15 @@
     }
   }
 
-  function blockSenderButton(m) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "msg-block";
-    button.title = "Block sender";
-    button.setAttribute("aria-label", "Block sender");
-    button.textContent = "⊘";
-    button.addEventListener("click", () => {
-      if (!state.openPeer) return;
-      askBlock({ peer: state.openPeer, name: $("peer-name").textContent, origin: "message", messageId: m.id });
-    });
-    return button;
+  // Report one received message as spam without blocking its sender (Block is its own menu item).
+  async function reportMessage(m) {
+    const context = mailboxContext();
+    try {
+      await api("/v1/report-spam", { method: "POST", body: { message_id: m.id, identity: context.address }, signal: context.signal });
+      if (context.current()) toast("Reported as spam.");
+    } catch (_) {
+      if (context.current()) toast("Could not send the report.");
+    }
   }
 
   function renderBlockedBanner(conversation) {
@@ -6792,7 +6802,7 @@
     leftView: () => (state.viewingArchive ? "archive" : state.leftView),
     filter: () => state.filter || "",
     onPhone: () => onPhone(),
-    displayName, paintAvatar, toast, listTime, clockTime,
+    displayName, paintAvatar, toast, listTime, clockTime, actionFlags,
     closeConversation: () => {
       if (!state.openPeer) return;
       stashDraft();

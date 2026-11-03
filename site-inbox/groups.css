@@ -82,7 +82,6 @@
 .group-notice.security span { color: var(--amber); }
 .group-warning span { color: var(--danger, #b42318); font-weight: 600; }
 .fingerprint { font-family: var(--mono); font-size: 12px; color: var(--muted); }
-.msg-delete { margin-left: 8px; font-size: 12px; }
 .timer-icon { display: inline-grid; place-items: center; margin-right: 4px; vertical-align: middle; }
 .timer-icon svg { width: 13px; height: 13px; }
 
@@ -154,6 +153,5 @@
 .pill.role-owner, .pill.role-admin { background: var(--mine-chip); color: var(--mine-text); }
 
 /* Phase 1e: group bubbles share the direct-message action row, ticks and quote (app.css). */
-.group-messages .bubble .meta .msg-delete { margin-right: 4px; }
 .msg-info .info-names { list-style: none; margin: 0 0 4px; padding: 0; display: grid; gap: 4px; font-size: 14px; color: var(--ink); }
 .msg-info .info-group + .info-group { margin-top: 4px; }

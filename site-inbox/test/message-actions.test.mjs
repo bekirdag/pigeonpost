@@ -285,7 +285,7 @@ test("right-click opens the full list", async t => {
   await a.open();
   a.row("in-1").querySelector(".bubble").dispatchEvent(new a.w.MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }));
   assert.equal(a.$("msg-menu").hidden, false);
-  assert.deepEqual([...a.$("msg-menu").querySelectorAll("button")].map(b => b.textContent), ["Reply", "Copy", "Info", "Block sender"]);
+  assert.deepEqual([...a.$("msg-menu").querySelectorAll("button")].map(b => b.textContent), ["Reply", "Copy", "Info", "Report", "Block sender"]);
   [...a.$("msg-menu").querySelectorAll("button")][0].click();
   assert.equal(a.$("msg-menu").hidden, true);
   assert.equal(a.$("compose-context").hidden, false);

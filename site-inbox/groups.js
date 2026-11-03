@@ -806,15 +806,13 @@
       }
       const meta = el("div", { class: "meta" });
       if (x.expires_at) meta.append(el("span", { class: "timer-icon", title: "Disappears " + new Date(x.expires_at * 1000).toLocaleString() }, svg(ICON.timer)));
-      if (!x.deleted && x.seq != null && (mine || isAdmin(g)) && !x.pending) {
-        meta.append(el("button", { type: "button", class: "linkish msg-delete", text: "Delete", "aria-label": "Delete this message for everyone", onclick: () => deleteMessage(g.id, x.seq) }));
-      }
       meta.append(el("span", { class: "meta-spacer" }));
       if (x.edit_of) meta.append(el("span", { class: "edited", text: "edited" }));
       meta.append(el("span", { class: "time", text: x.pending ? "Sending…" : (at && h ? h.clockTime(at) : "") }));
       const UI = window.PigeonpostMessageActions;
       if (mine && UI && !x.deleted) {
-        const state = groupTick(g.id, x);
+        // Ticks only where the postbox runs receipts, as in a conversation (tickState in app.js).
+        const state = h && h.actionFlags && h.actionFlags().receipts ? groupTick(g.id, x) : null;
         const ticks = UI.tickNode(state, null);
         if (ticks) {
           if (x.seq != null) {
@@ -827,9 +825,16 @@
         }
       }
       bubble.append(meta);
-      bubble.addEventListener("contextmenu", (e) => groupMenu(e, g, x, mine));
-      // Phase 1e: the action row, under the bubble and outside it.
+      // Phase 1e: the action row, under the bubble and outside it. Delete lives in the menu, which
+      // opens from the bubble or its action row (right-click, menu key or Shift+F10).
       const stack = el("div", { class: "msg-stack" }, bubble);
+      if (UI && UI.bindMessageMenu) UI.bindMessageMenu(stack, (e) => groupMenu(e, g, x, mine));
+      else bubble.addEventListener("contextmenu", (e) => groupMenu(e, g, x, mine));
+      // An unreadable message has no action row; a member who may delete it still reaches the menu.
+      if (x.undecryptable && !x.deleted && canDelete(g, x, mine)) {
+        bubble.tabIndex = 0;
+        bubble.setAttribute("aria-label", "Encrypted message — press Shift+F10 for actions");
+      }
       if (UI && !x.deleted && !x.undecryptable) {
         const actions = el("div", { class: "msg-actions" });
         const copyText = () => x.text || (x.files || []).map((f) => f.name).join("\n");
@@ -953,19 +958,26 @@
     showSheet("group-msg-info-sheet");
   }
 
+  // For everyone: your own message, or anyone's when you run the group.
+  function canDelete(g, x, mine) {
+    return !x.deleted && !x.pending && x.seq != null && (mine || isAdmin(g));
+  }
+
   function groupMenu(event, g, x, mine) {
     if (window.getSelection && String(window.getSelection()).trim()) return;
-    if (x.deleted || x.undecryptable) return;
+    if (x.deleted || (x.undecryptable && !canDelete(g, x, mine))) return;
     const menu = document.getElementById("msg-menu");
     if (!menu) return;
     event.preventDefault();
     menu.textContent = "";
     const item = (label, fn) => menu.append(el("button", { type: "button", role: "menuitem", text: label, onclick: () => { menu.hidden = true; fn(); } }));
-    if (x.seq != null && canPost(g)) item("Reply", () => startGroupCompose("reply", g.id, x));
-    item("Copy", () => navigator.clipboard?.writeText(x.text || "").catch(() => {}));
-    if (groupEditable(g, x)) item("Edit", () => startGroupCompose("edit", g.id, x));
-    if (mine && x.seq != null) item("Info", () => groupMessageInfo(g, x));
-    if (x.seq != null && (mine || isAdmin(g))) item("Delete", () => deleteMessage(g.id, x.seq));
+    if (!x.undecryptable) {
+      if (x.seq != null && canPost(g)) item("Reply", () => startGroupCompose("reply", g.id, x));
+      item("Copy", () => navigator.clipboard?.writeText(x.text || "").catch(() => {}));
+      if (groupEditable(g, x)) item("Edit", () => startGroupCompose("edit", g.id, x));
+      if (mine && x.seq != null) item("Info", () => groupMessageInfo(g, x));
+    }
+    if (canDelete(g, x, mine)) item("Delete", () => deleteMessage(g.id, x.seq));
     menu.hidden = false;
     menu.style.left = Math.max(8, Math.min(event.clientX, window.innerWidth - menu.offsetWidth - 8)) + "px";
     menu.style.top = Math.max(8, Math.min(event.clientY, window.innerHeight - menu.offsetHeight - 8)) + "px";
