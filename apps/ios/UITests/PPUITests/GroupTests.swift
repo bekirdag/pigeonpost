@@ -48,8 +48,10 @@ final class GroupTests: XCTestCase {
     private func openMenu(onBubbleWith text: String) {
         let words = app.staticTexts[text].firstMatch
         XCTAssertTrue(words.waitForExistence(timeout: 10))
-        let settled = expectation(for: NSPredicate(format: "isHittable == true"), evaluatedWith: words)
-        _ = XCTWaiter.wait(for: [settled], timeout: 5)
+        // The group can open above its newest messages; scroll until the bubble is on screen,
+        // since a press below the composer opens nothing.
+        for _ in 0..<6 where !words.isHittable { app.swipeUp() }
+        XCTAssertTrue(words.isHittable, "\(text) is on screen before the long press")
         // Every bubble menu offers Copy; a press that lands while the list is still settling opens
         // nothing, so press once more before the caller asserts on the menu's items.
         for _ in 0..<2 {
