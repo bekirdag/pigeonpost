@@ -26,6 +26,10 @@ struct MessageBubble: View {
     @State private var confirmingReport = false
     @State private var confirmingDelete = false
     @State private var copied = false
+    /// Desktop keeps the action row quiet until the message is hovered or one of its buttons
+    /// has keyboard focus.
+    @State private var hovering = false
+    @FocusState private var focusedAction: MessageActionFocus?
     private enum Sheet: Identifiable {
         case block(BlockTarget), info
         var id: String {
@@ -76,6 +80,9 @@ struct MessageBubble: View {
                 actions
             }
             .frame(maxWidth: 620, alignment: isMine ? .trailing : .leading)
+            #if os(macOS)
+            .onHover { hovering = $0 }
+            #endif
             if !isMine { Spacer(minLength: 36) }
         }
         .padding(.vertical, 2)
@@ -274,14 +281,30 @@ struct MessageBubble: View {
                     .foregroundStyle(metaColor)
                     .accessibilityLabel("Sending")
             }
-            Text(Time.clockTime(message.at))
-                .font(.geist(12))
-                .foregroundStyle(metaColor)
+            if canShowInfo {
+                // Message info lives behind the time and the ticks, and in the menu — not in the row.
+                Button { sheet = .info } label: {
+                    Text(Time.clockTime(message.at))
+                        .font(.geist(12))
+                        .foregroundStyle(metaColor)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Message info, " + Time.clockTime(message.at))
+                .help("Message info")
+                .accessibilityIdentifier("message-info:" + message.id)
+            } else {
+                Text(Time.clockTime(message.at))
+                    .font(.geist(12))
+                    .foregroundStyle(metaColor)
+            }
             if isMine && message.status == .sent {
                 if account.features.agentStatus, let state = message.agentStatus?.state, ["working", "failed"].contains(state) {
-                    MessageAgentMark(state: state).accessibilityIdentifier("agent-status:" + message.id)
+                    MessageAgentMark(state: state)
+                        .onTapGesture { if canShowInfo { sheet = .info } }
+                        .accessibilityIdentifier("agent-status:" + message.id)
                 } else if account.features.receipts {
                     MessageReceiptMark(receipt: message.receipt ?? MessageReceipt(state: "sent", deliveredAt: nil, seenAt: nil))
+                        .onTapGesture { if canShowInfo { sheet = .info } }
                         .accessibilityIdentifier("message-receipt:" + message.id)
                 }
             }
@@ -296,31 +319,39 @@ struct MessageBubble: View {
         actionScope != nil && !message.id.hasPrefix("local_") && (account.features.messageEdit || account.features.receipts)
     }
 
+    /// The row below and outside the card (docs/message-actions.md §6): received → copy, reply;
+    /// sent → edit (only while editable), copy. Icon-only; the names live in the accessibility
+    /// labels. Info is not here — it is in the long-press/right-click menu and behind the time.
     private var actions: some View {
-        HStack(spacing: 14) {
-            if !isMine, canReply, let actionScope {
-                Button { inbox.beginMessageAction(.reply, message: message, in: actionScope) } label: { Label("Reply", systemImage: "arrowshape.turn.up.left") }
-                    .accessibilityIdentifier("message-reply:" + message.id)
-            }
-            if canEdit, let actionScope {
-                Button { inbox.beginMessageAction(.edit, message: message, in: actionScope) } label: { Label("Edit", systemImage: "pencil") }
+        HStack(spacing: 2) {
+            if isMine, canEdit, let actionScope {
+                Button { inbox.beginMessageAction(.edit, message: message, in: actionScope) } label: { MessageActionIcon(systemImage: "pencil") }
+                    .accessibilityLabel("Edit message")
+                    .help("Edit message")
+                    .focused($focusedAction, equals: .edit)
                     .accessibilityIdentifier("message-edit:" + message.id)
             }
             Button {
                 Clipboard.copy(message.copyText)
                 copied = true
                 Task { try? await Task.sleep(nanoseconds: 1_400_000_000); copied = false }
-            } label: { Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc") }
+            } label: { MessageActionIcon(systemImage: copied ? "checkmark" : "doc.on.doc") }
                 .accessibilityLabel(copied ? "Copied" : "Copy message")
-            if canShowInfo {
-                Button { sheet = .info } label: { Label("Info", systemImage: "info.circle") }
-                    .accessibilityIdentifier("message-info:" + message.id)
+                .help("Copy message")
+                .focused($focusedAction, equals: .copy)
+                .accessibilityIdentifier("message-copy:" + message.id)
+            if !isMine, canReply, let actionScope {
+                Button { inbox.beginMessageAction(.reply, message: message, in: actionScope) } label: { MessageActionIcon(systemImage: "arrowshape.turn.up.left") }
+                    .accessibilityLabel("Reply")
+                    .help("Reply")
+                    .focused($focusedAction, equals: .reply)
+                    .accessibilityIdentifier("message-reply:" + message.id)
             }
         }
-        .font(.geist(12.5, .medium))
         .foregroundStyle(Theme.secondary)
-        .buttonStyle(MessageActionButtonStyle())
-        .padding(.horizontal, 8)
+        .buttonStyle(MessageIconButtonStyle())
+        .messageActionsQuiet(engaged: hovering || focusedAction != nil)
+        .padding(.horizontal, 4)
     }
 }
 

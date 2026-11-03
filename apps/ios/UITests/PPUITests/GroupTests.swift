@@ -43,21 +43,66 @@ final class GroupTests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed, file: file, line: line)
     }
 
+    /// Long-press a group bubble on its own padding, beside the words: the text is selectable, and
+    /// the menu belongs to the bubble.
+    private func openMenu(onBubbleWith text: String) {
+        let words = app.staticTexts[text].firstMatch
+        XCTAssertTrue(words.waitForExistence(timeout: 10))
+        words.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: -6, dy: 4)).press(forDuration: 1.0)
+    }
+
+    private func screenshot(_ name: String) {
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = name
+        shot.lifetime = .keepAlways
+        add(shot)
+    }
+
+    /// docs/message-actions.md §6: received → copy, reply; sent → edit (while editable), copy.
+    /// Info, delete and block are not in the row; they are in the menu (and info behind the time).
+    func testGroupActionRowMatchesTheContract() {
+        launch(["-open=" + garden, "-group-actions"])
+        let receivedCopy = element("group-copy:8"), reply = element("group-reply:8")
+        XCTAssertTrue(receivedCopy.waitForExistence(timeout: 10))
+        XCTAssertTrue(reply.exists)
+        XCTAssertEqual(receivedCopy.label, "Copy message")
+        XCTAssertEqual(reply.label, "Reply")
+        XCTAssertLessThan(receivedCopy.frame.minX, reply.frame.minX, "received: copy, then reply")
+        let edit = element("group-edit:10"), sentCopy = element("group-copy:10")
+        XCTAssertTrue(edit.exists && sentCopy.exists)
+        XCTAssertEqual(edit.label, "Edit message")
+        XCTAssertLessThan(edit.frame.minX, sentCopy.frame.minX, "sent: edit, then copy")
+        XCTAssertFalse(element("group-reply:10").exists, "a sent message's row has no reply")
+        XCTAssertFalse(element("group-edit:8").exists, "a received message cannot be edited")
+        XCTAssertFalse(app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "group-more:")).firstMatch.exists,
+                       "no overflow button in the row; the full list is the long-press menu")
+        XCTAssertLessThan(edit.frame.height, 45)
+        XCTAssertTrue(element("group-info:10").exists, "info is reachable from the time")
+        screenshot("group-action-row")
+        sentCopy.tap()
+        XCTAssertTrue(app.buttons["Copied"].waitForExistence(timeout: 3))
+        openMenu(onBubbleWith: "Edited group message")
+        for item in ["Reply", "Edit", "Message info", "Copy", "Delete for everyone"] {
+            XCTAssertTrue(app.buttons[item].firstMatch.waitForExistence(timeout: 5), "menu keeps \(item)")
+        }
+        screenshot("group-message-menu")
+    }
+
     func testGroupReplyPreservesDraftAndShowsAWorkingQuote() {
         launch(["-open=" + garden, "-group-actions"])
-        XCTAssertTrue(element("group-reply:10").waitForExistence(timeout: 10))
+        XCTAssertTrue(element("group-reply:8").waitForExistence(timeout: 10))
         typeInComposer("A group reply")
-        element("group-reply:10").tap()
+        element("group-reply:8").tap()
         XCTAssertEqual(element("groupComposer").value as? String, "A group reply")
         element("cancel-group-action").tap()
         XCTAssertEqual(element("groupComposer").value as? String, "A group reply")
-        element("group-reply:10").tap()
+        element("group-reply:8").tap()
         element("groupSend").tap()
         XCTAssertTrue(app.staticTexts["A group reply"].waitForExistence(timeout: 5))
         let quote = element("group-quote:11")
         XCTAssertTrue(quote.waitForExistence(timeout: 5), "the sent reply retains its authenticated parent")
         quote.tap()
-        XCTAssertTrue(app.staticTexts["Edited group message"].exists, "a quote navigates to its retained parent")
+        XCTAssertTrue(app.staticTexts["Works for me."].exists, "a quote navigates to its retained parent")
     }
 
     func testGroupEditCancelSaveRetainsDraftAndVersionInfo() {
@@ -90,9 +135,7 @@ final class GroupTests: XCTestCase {
 
     func testGroupDeletionDoesNotRevealAnEarlierVersion() {
         launch(["-open=" + garden, "-group-actions"])
-        let more = element("group-more:10")
-        XCTAssertTrue(more.waitForExistence(timeout: 10))
-        more.tap()
+        openMenu(onBubbleWith: "Edited group message")
         let delete = app.buttons["Delete for everyone"].firstMatch
         XCTAssertTrue(delete.waitForExistence(timeout: 5))
         delete.tap()
@@ -105,9 +148,7 @@ final class GroupTests: XCTestCase {
 
     func testGroupMemberMenuCannotDeleteAnotherMembersMessage() {
         launch(["-open=grp_fixtureannounce0000000000"])
-        let more = element("group-more:5")
-        XCTAssertTrue(more.waitForExistence(timeout: 10))
-        more.tap()
+        openMenu(onBubbleWith: "0.9.0 is out: groups and disappearing messages.")
         XCTAssertTrue(app.buttons["Block sender…"].firstMatch.waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["Delete for everyone"].exists, "a member has no admin deletion control")
     }
@@ -118,6 +159,7 @@ final class GroupTests: XCTestCase {
         XCTAssertFalse(element("group-reply:10").exists)
         XCTAssertFalse(element("group-edit:10").exists)
         XCTAssertFalse(element("group-info:10").exists)
+        XCTAssertTrue(element("group-copy:10").exists, "copy needs no capability")
     }
 
     func testGroupUnconfirmedSendCanRetryWithoutClearingAnotherDraft() {

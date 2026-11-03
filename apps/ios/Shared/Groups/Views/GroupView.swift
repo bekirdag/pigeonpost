@@ -659,6 +659,13 @@ struct GroupBubble: View {
 
     @Environment(GroupStore.self) private var groups
     @Environment(Account.self) private var account
+    @State private var copied = false
+    @State private var hovering = false
+    @FocusState private var focusedAction: MessageActionFocus?
+
+    private var showsInfo: Bool {
+        item.seq != nil && item.deleted != true && (account.features.messageEdit || account.features.receipts)
+    }
 
     private var deletable: Bool {
         item.deleted != true && item.seq != nil && item.pending != true
@@ -685,43 +692,46 @@ struct GroupBubble: View {
                 .padding(.horizontal, 8)
             }
             if item.deleted != true, item.undecryptable != true, item.pending != true, let seq = item.seq {
-                HStack(spacing: 12) {
-                    if replyable {
-                        Button(action: onReply) { Label("Reply", systemImage: "arrowshape.turn.up.left") }
-                            .accessibilityIdentifier("group-reply:\(seq)")
-                    }
-                    if editable {
-                        Button(action: onEdit) { Label("Edit", systemImage: "pencil") }
+                // docs/message-actions.md §6: received → copy, reply; sent → edit (while
+                // editable), copy. Info, delete and block stay in the long-press/right-click menu,
+                // and info is also behind the time.
+                HStack(spacing: 2) {
+                    if mine, editable {
+                        Button(action: onEdit) { MessageActionIcon(systemImage: "pencil") }
+                            .accessibilityLabel("Edit message")
+                            .help("Edit message")
+                            .focused($focusedAction, equals: .edit)
                             .accessibilityIdentifier("group-edit:\(seq)")
                     }
-                    if account.features.messageEdit || account.features.receipts {
-                        Button(action: onInfo) { Label("Info", systemImage: "info.circle") }
-                            .accessibilityLabel("Message info")
-                            .accessibilityIdentifier("group-info:\(seq)")
+                    if let text = item.text, !text.isEmpty {
+                        Button {
+                            Clipboard.copy(text)
+                            copied = true
+                            Task { try? await Task.sleep(nanoseconds: 1_400_000_000); copied = false }
+                        } label: { MessageActionIcon(systemImage: copied ? "checkmark" : "doc.on.doc") }
+                            .accessibilityLabel(copied ? "Copied" : "Copy message")
+                            .help("Copy message")
+                            .focused($focusedAction, equals: .copy)
+                            .accessibilityIdentifier("group-copy:\(seq)")
                     }
-                    if deletable || (!mine && item.sender != nil) {
-                        Menu {
-                            if deletable, let target = item.seq {
-                                Button(role: .destructive) { onDelete(target) } label: { Label("Delete for everyone", systemImage: "trash") }
-                            }
-                            if !mine, let sender = item.sender {
-                                Button(role: .destructive) { onBlock(sender) } label: { Label("Block sender…", systemImage: "hand.raised") }
-                            }
-                        } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44) }
-                        #if os(macOS)
-                        .menuStyle(.borderlessButton)
-                        #endif
-                        .accessibilityLabel("More message actions")
-                        .accessibilityIdentifier("group-more:\(seq)")
+                    if !mine, replyable {
+                        Button(action: onReply) { MessageActionIcon(systemImage: "arrowshape.turn.up.left") }
+                            .accessibilityLabel("Reply")
+                            .help("Reply")
+                            .focused($focusedAction, equals: .reply)
+                            .accessibilityIdentifier("group-reply:\(seq)")
                     }
                 }
-                .font(.geist(11.5))
-                .foregroundStyle(Theme.muted)
-                .buttonStyle(MessageActionButtonStyle())
+                .foregroundStyle(Theme.secondary)
+                .buttonStyle(MessageIconButtonStyle())
                 .disabled(busy)
-                .padding(mine ? .trailing : .leading, mine ? 8 : 42)
+                .messageActionsQuiet(engaged: hovering || focusedAction != nil)
+                .padding(mine ? .trailing : .leading, mine ? 4 : 38)
             }
         }
+        #if os(macOS)
+        .onHover { hovering = $0 }
+        #endif
     }
 
     private var bubble: some View {
@@ -791,12 +801,21 @@ struct GroupBubble: View {
                 Image(systemName: "timer")
                     .accessibilityLabel("Disappears " + Date(timeIntervalSince1970: TimeInterval(expires)).formatted(date: .abbreviated, time: .shortened))
             }
-            Text(item.pending == true ? (item.sendFailed == true ? "Delivery unconfirmed" : "Sending…") : (item.createdAt.map(Time.clockTime) ?? ""))
+            if item.pending != true, showsInfo, let seq = item.seq {
+                Button(action: onInfo) { Text(item.createdAt.map(Time.clockTime) ?? "") }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Message info")
+                    .help("Message info")
+                    .accessibilityIdentifier("group-info:\(seq)")
+            } else {
+                Text(item.pending == true ? (item.sendFailed == true ? "Delivery unconfirmed" : "Sending…") : (item.createdAt.map(Time.clockTime) ?? ""))
+            }
             if item.actionsVerified == true, item.editOf != nil { Text("· edited") }
             if mine, item.deleted != true, item.pending != true, let seq = item.seq, account.features.receipts {
                 let state = groups.receipts[group.id]?.state(at: seq) ?? .sent
                 MessageReceiptMark(receipt: MessageReceipt(state: state.rawValue, deliveredAt: nil, seenAt: nil))
                     .accessibilityLabel(state == .seen ? "Seen by members sharing read receipts" : state.rawValue.capitalized)
+                    .onTapGesture { if showsInfo { onInfo() } }
             }
         }
         .font(.geist(11))
