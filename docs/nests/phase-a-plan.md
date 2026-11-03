@@ -258,3 +258,15 @@ Nest management (status header, files, usage); plain conversation (today a Nest 
 archive ingestion; typed tools and approvals; real mswarm tenant and DeepSeek route promotion;
 off-host volume backups and restore rehearsal; off-host LUKS unlock; Prometheus metrics; the
 Firecracker/KVM worker and PostgreSQL ledger.
+
+### What comes next
+
+Phase B and the marketplace that follows it are planned together in the **Nests marketplace build
+plan** (`docs/planning/2026-11-03-nests-marketplace-build-plan.md`, local planning folder, with the
+alignment report `docs/planning/2026-11-03-NESTS-MARKETPLACE-ALIGNMENT.md`). Its tracked API
+contracts are in [contracts/](contracts/README.md); the index is [docs/nests/README.md](README.md).
+
+Work on it starts **after the current build plan is finished**: the big-features SDS (R-01…R-46)
+and its 2026-11-03 audit fix list. Phase B comes first and keeps this gVisor host for first-party
+Nests only. No third-party (publisher) code runs on it: the marketplace phases need the
+Firecracker/KVM worker, the review pipeline and a separate build plane first.

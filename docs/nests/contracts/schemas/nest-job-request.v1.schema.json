@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pigeonpost:schema:nest-job-request:1",
+  "title": "Pigeonpost Nest job request v1",
+  "type": "object",
+  "additionalProperties": false,
+  "description": "The client part of a job. The server adds the authenticated sender, the resolved and pinned\ntarget, the buyer context, the payer, the job id and the server trace after authorization.\nFields that would claim those (`from`, `payer`, `amount_minor`, `customer_id`, `approval`,\n`tenant`, `model_budget`) are rejected as unknown properties.\n",
+  "required": [
+    "type",
+    "version",
+    "to",
+    "operation",
+    "operation_version",
+    "quote_id",
+    "payment_authorization",
+    "payload",
+    "deadline_at"
+  ],
+  "properties": {
+    "type": {
+      "const": "nest.job.request"
+    },
+    "version": {
+      "const": 1
+    },
+    "to": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 320,
+      "description": "The Nest's address or readable handle. Resolved and pinned to the quote's release binding."
+    },
+    "operation": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$",
+      "description": "The Nest operation, as published in its reviewed release."
+    },
+    "operation_version": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 32,
+      "pattern": "^[0-9]+\\.[0-9]+(\\.[0-9]+)?$"
+    },
+    "quote_id": {
+      "type": "string",
+      "pattern": "^qte_[a-z2-7]{26}$"
+    },
+    "payment_authorization": {
+      "type": "string",
+      "minLength": 51,
+      "maxLength": 136,
+      "pattern": "^payauth_[A-Za-z0-9_-]{43,128}$",
+      "description": "Opaque single-use reference from `POST /v1/nest-payment-authorizations`. Not a bearer token for anyone else."
+    },
+    "payload": {
+      "type": "object",
+      "description": "Validated additionally against the pinned operation's input schema and the global size and depth limits."
+    },
+    "attachments": {
+      "type": "array",
+      "maxItems": 32,
+      "uniqueItems": true,
+      "description": "Attachment ids already uploaded by the acting mailbox. Their content digests become part of the intent.",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      }
+    },
+    "reply_to": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 320,
+      "description": "One of the caller's own mailboxes to receive results. Defaults to the acting mailbox."
+    },
+    "deadline_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Must be in the future and no later than the quote, the mandate and any paid access term allow."
+    },
+    "client_trace_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._:-]+$",
+      "description": "Observability only. Never part of the commercial intent, never authority."
+    }
+  }
+}

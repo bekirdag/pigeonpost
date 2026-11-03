@@ -1,0 +1,352 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pigeonpost:schema:nest-review-status:1",
+  "title": "Pigeonpost Nest release review status v1",
+  "type": "object",
+  "additionalProperties": false,
+  "description": "Publisher-visible, redacted projection. Approval here is distinct from current security state, revocation and installation admission.",
+  "required": [
+    "review_id",
+    "publisher_id",
+    "release_id",
+    "artifact_digest",
+    "policy_digest",
+    "revision",
+    "status",
+    "stages",
+    "allowed_actions",
+    "updated_at"
+  ],
+  "properties": {
+    "review_id": {
+      "type": "string",
+      "pattern": "^rvw_[a-z2-7]{26}$"
+    },
+    "publisher_id": {
+      "type": "string",
+      "pattern": "^pub_[a-z2-7]{26}$"
+    },
+    "release_id": {
+      "type": "string",
+      "pattern": "^rel_[a-z2-7]{26}$"
+    },
+    "previous_review_id": {
+      "type": "string",
+      "pattern": "^rvw_[a-z2-7]{26}$",
+      "description": "Set on a resubmission; the earlier review stays immutable."
+    },
+    "artifact_digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "description": "Digest of the Pigeonpost-built artifact under review."
+    },
+    "policy_digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "submitted",
+        "in_review",
+        "approved",
+        "changes_requested",
+        "rejected"
+      ]
+    },
+    "stages": {
+      "type": "array",
+      "minItems": 6,
+      "maxItems": 6,
+      "prefixItems": [
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/NestReviewStage"
+            },
+            {
+              "properties": {
+                "name": {
+                  "const": "intake"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/NestReviewStage"
+            },
+            {
+              "properties": {
+                "name": {
+                  "const": "deterministic_scan"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/NestReviewStage"
+            },
+            {
+              "properties": {
+                "name": {
+                  "const": "ai_analysis"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/NestReviewStage"
+            },
+            {
+              "properties": {
+                "name": {
+                  "const": "behavioral_test"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/NestReviewStage"
+            },
+            {
+              "properties": {
+                "name": {
+                  "const": "human_review"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/NestReviewStage"
+            },
+            {
+              "properties": {
+                "name": {
+                  "const": "attestation"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "items": false
+    },
+    "findings_ref": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "decision_ref": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "approval_ref": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "description": "Reference to the staff decision. Present only on an approved review; never set by automation."
+    },
+    "allowed_actions": {
+      "type": "array",
+      "uniqueItems": true,
+      "maxItems": 5,
+      "items": {
+        "type": "string",
+        "enum": [
+          "view_findings",
+          "resubmit",
+          "appeal",
+          "withdraw",
+          "publish_listing"
+        ]
+      }
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "const": "approved"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "decision_ref",
+          "approval_ref"
+        ]
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "enum": [
+              "changes_requested",
+              "rejected"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "decision_ref",
+          "findings_ref"
+        ]
+      }
+    }
+  ],
+  "$defs": {
+    "NestReviewStage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "status",
+        "attempt",
+        "started_at",
+        "finished_at",
+        "blocker_code"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "enum": [
+            "intake",
+            "deterministic_scan",
+            "ai_analysis",
+            "behavioral_test",
+            "human_review",
+            "attestation"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "running",
+            "passed",
+            "failed",
+            "blocked",
+            "skipped_not_applicable"
+          ]
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "started_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "finished_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "blocker_code": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "evidence_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "status"
+            ],
+            "properties": {
+              "status": {
+                "enum": [
+                  "failed",
+                  "blocked",
+                  "skipped_not_applicable"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "reason"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "status"
+            ],
+            "properties": {
+              "status": {
+                "enum": [
+                  "passed",
+                  "failed",
+                  "skipped_not_applicable"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "finished_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}
