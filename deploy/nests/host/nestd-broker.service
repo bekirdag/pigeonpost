@@ -1,6 +1,7 @@
 [Unit]
 Description=Pigeonpost Nests model broker (sandbox-facing, budget-reserving)
-After=network-online.target systemd-networkd.service
+# After the control service: it creates the ledger and sets its group-write mode first.
+After=network-online.target systemd-networkd.service nestd-control.service
 Wants=network-online.target
 
 [Service]

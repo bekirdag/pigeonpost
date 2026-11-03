@@ -7,8 +7,9 @@ bind = "10.66.0.2:8790"
 # SHA-256 (hex) of POSTBOX_NESTS_TOKEN; the token itself lives only on the postbox host.
 token_sha256_file = "/etc/nests/control-token.sha256"
 idle_stop_secs = 900
-# Admission: resident Nests (running or paused). Measured; see docs/nests/phase-a-plan.md §3.
-max_running = 16
+# Admission: resident Nests (running or paused). 15 x (256 MiB limit + ~1 MiB host overhead)
+# fits the ~4.8 GiB the VMware balloon leaves this guest, with headroom; see phase-a-plan.md §5.
+max_running = 15
 reconcile_secs = 60
 
 [sandbox]
@@ -17,7 +18,7 @@ oci_runtime = "runsc-nests"
 # Pinned by digest; set by deploy/nests/runner/build.sh.
 image = "localhost/pigeonpost-nest-runner@sha256:REPLACE"
 network = "nests"
-memory_mib = 512
+memory_mib = 256
 cpu_weight = 100
 cpu_max_millis = 1000
 pids = 128

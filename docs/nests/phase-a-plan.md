@@ -1,6 +1,6 @@
 # Pigeonpost Nests — Phase A plan (nests-1, gVisor)
 
-**Date:** 2026-11-03 · **Status:** Phase A built behind the `nests` flag (off in production); no sales.
+**Date:** 2026-11-03 · **Status:** Phase A built, deployed and tested end to end behind the `nests` flag (off in production); no sales.
 **Source plan:** `docs/planning/2026-10-21-hosted-agents-plan.md` (local planning folder). This document
 adapts it to the only Nests host that exists, and records what was measured there.
 **Runbook:** [deploy/nests/README.md](../../deploy/nests/README.md).
@@ -75,7 +75,7 @@ Every Nest is started with the same fixed arguments (`GvisorPodman::run_args`, a
 | Kernel boundary | `runsc --platform=systrap --network=sandbox --host-uds=none --host-fifo=none --overlay2=root:memory` (wrapper `/usr/local/sbin/runsc-nests`) |
 | Identity | `--user 10001:10001`, `--cap-drop ALL`, `no-new-privileges`, no `--privileged`, no host PID/IPC/network |
 | Filesystem | `--read-only` image; `/tmp` tmpfs 64 MiB `noexec,nosuid,nodev`; the Nest volume at `/nest` `noexec,nosuid,nodev`; no other host mount, no container socket |
-| Memory | `--memory 512m --memory-swap 512m` (no swap); start at 512 MiB, measured below |
+| Memory | `--memory 256m --memory-swap 256m` (no swap); started at 512 MiB, lowered to 256 MiB after measuring a peak of 14–15 MiB (§5) |
 | CPU | cgroup v2 weight 100 (fair share, no pinned core), cap `--cpus 1.0` per Nest |
 | Processes | `--pids-limit 128` |
 | Disk | one thin LV per Nest, default 5 GiB = the hard quota; sum of quotas ≤ 60 GiB (no thin overcommit) |
@@ -153,12 +153,67 @@ profile" for gVisor. Browser/code/terminal tools wait for the microVM worker.
 
 ## 5. Capacity on this VM (measured 2026-11-03)
 
-**Memory is the binding constraint, and less is available than the VM size suggests.** The VMware
+**Resident memory is tighter than the VM size suggests.** The VMware
 balloon driver holds about **10.2 GiB** of the guest's 15.6 GiB (`vmware-toolbox-cmd stat balloon`:
 2,661,116 pages), so the guest reports ~4.8 GiB available with almost nothing running. The provider
 can return or take more at will; the owner should ask the provider whether the 15 GiB is reserved.
 
-See §8 for the measured per-Nest numbers and the resulting admission settings.
+Measured on nests-1 with the real runner image (agentd + runner inside gVisor, systrap):
+
+| Measurement | Result |
+|---|---|
+| Sandbox start (podman + runsc, volume already open) | 365–530 ms |
+| Create a Nest (thin LV + LUKS2 format + mkfs + mount + start), alone | 1.4–1.8 s |
+| 12 Nests created at once | median 3.8 s, max 4.9 s each (all 12 succeeded) |
+| Postbox create → sandbox enrolled (mailbox credential issued) | 1.5–1.7 s |
+| Question sent → answer received (mock upstream) | 0.8–2.9 s (4.6 s on a cold agentd) |
+| Mail to an idle-stopped Nest → woken and answered | 1.3 s |
+| Pause → resume → queued question answered | 2.4 s after resume; nothing answered while paused |
+| Memory, one idle enrolled Nest, alone | 55 MiB PSS (sentry, gofer, agentd; shared runsc pages counted once per Nest) |
+| Memory, 14 Nests running at once | 258 MiB PSS total = **18 MiB per Nest** marginal, + 0.4 MiB conmon each; MemAvailable fell ~12 MiB per extra Nest |
+| Memory cgroup peak per Nest while answering | 14–15 MiB (limit 256 MiB) |
+| CPU with 14 idle Nests | load 0.6, 96 % idle (long-poll agents) |
+| Delete 12 Nests | 5 s total (LUKS erase + LV removal + key removal each) |
+| Over the memory limit | the whole sandbox is killed by its own cgroup (host and other Nests unaffected); reconcile restarted it as a new generation in 379 ms |
+| Over the disk quota | writes stop at the volume size (958 MiB written into a 1 GiB volume) |
+
+**Capacity on this VM, with these numbers:**
+
+- **Resident (running or paused) Nests: 15.** Admission reserves the full 256 MiB limit plus host
+  overhead per Nest rather than the 18 MiB typically used, so a Nest can always reach its limit
+  without pressuring the host: 15 × ~257 MiB ≈ 3.8 GiB of the ~4.8 GiB the balloon leaves. If the
+  provider guarantees the full 15.6 GiB, the same rule allows about 50.
+- **Stored Nests: 12 at 5 GiB** each (60 GiB of the 62.6 GiB thin pool, no overcommit); 30 at 2 GiB.
+  **Disk, not CPU or RAM, is the first limit** for sold Nests on this host. Stopped Nests cost disk
+  only.
+- **CPU:** agents wait on the model; 7 vCPUs are not the constraint for the text-only profile. CPU
+  weight is equal per Nest and each is capped at one core, so a busy Nest cannot starve others.
+- **Model concurrency:** one request per Nest at a time (broker), plus whatever the mswarm tenant
+  allows; unmeasured until the tenant key exists.
+
+These are measurements of the Phase A text-only profile with a mock model, not a sales commitment.
+
+### End-to-end and escape test results (2026-11-03)
+
+`tests/nests/e2e.mjs` against production postbox (flag on for the synthetic accounts only) and
+nests-1: synthetic accounts each created a Nest through the ops path; the sandbox redeemed its
+enrollment code; the test inbox sent an `answer_question` request; agentd in the sandbox ran the
+nest runner, the broker reserved 411 input / 800 output tokens, the mock upstream answered, the broker
+settled 284 / 41, and the reply arrived in the test inbox. Pause stopped answers; resume answered the
+queued question; idle stop released the Nest and mail woke it; delete erased the volume and key, and
+the sandbox's mailbox credential, valid (200) before delete, was refused (401) after. All synthetic
+accounts were purged afterwards and the flag rows removed.
+
+Escape attempts from inside a Nest (uid 10001, no capabilities), all refused:
+
+| Attempt | Result |
+|---|---|
+| Host paths: `/var/lib/nests`, key directory, `/etc/nests/upstream.key`, `/etc/wireguard`, podman/docker/containerd sockets | absent (gVisor's own filesystem view) |
+| Another Nest's files (a canary written into the other Nest's volume, full-filesystem search) | not found |
+| `mount`, `su`, writing the image | refused (no privilege, read-only root) |
+| Execute from `/tmp` or `/nest` | refused (`noexec`) |
+| Metadata 169.254.169.254, 10/8, 172.16/12, 192.168/16, 100.64/10, loopback, the host via its gateway and its public address, the control API over WireGuard, the neighbouring relay host, the other Nest's address, the internet, DNS | all blocked |
+| Allowed: postbox 443, broker 8788 | open (the broker still requires the per-start token) |
 
 ## 6. Operations
 

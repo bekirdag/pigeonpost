@@ -53,11 +53,12 @@ async fn chat(
         .find(|m| m["role"] == "user")
         .and_then(|m| m["content"].as_str())
         .unwrap_or("");
-    // The question the agent was asked is the last non-empty line agentd put in the prompt.
+    // The question is the last line of text agentd put in the prompt, skipping its `--- … ---`
+    // delimiters.
     let question: String = last
         .lines()
         .rev()
-        .find(|l| !l.trim().is_empty())
+        .find(|l| !l.trim().is_empty() && !l.trim_start().starts_with("---"))
         .unwrap_or("")
         .chars()
         .take(160)

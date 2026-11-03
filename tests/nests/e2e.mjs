@@ -2,7 +2,9 @@
 // Nests Phase A end-to-end test against a live postbox and Nests host, with synthetic accounts.
 //
 //   STATE=/private/scratch/nests-e2e.json OPS_TOKEN=… INTERNAL=http://127.0.0.1:18991 \
-//     node tests/nests/e2e.mjs up [N]      # N synthetic accounts, each: test inbox + one Nest
+//     node tests/nests/e2e.mjs accounts [N] # only mint N synthetic accounts + inboxes into STATE
+//                                           # (no OPS_TOKEN needed; account minting is per-IP limited)
+//     node tests/nests/e2e.mjs up [N]      # N synthetic accounts (or those in STATE), each: test inbox + one Nest
 //     node tests/nests/e2e.mjs ask          # every inbox asks its Nest; waits for each reply
 //     node tests/nests/e2e.mjs pause-resume # the first Nest: paused Nests do not answer; resume does
 //     node tests/nests/e2e.mjs down         # delete Nests, mailboxes, keys, flag rows
@@ -18,23 +20,31 @@ const POSTBOX = process.env.POSTBOX || "https://postbox.pigeonpost.dev";
 const INTERNAL = process.env.INTERNAL || "http://127.0.0.1:18991";
 const OPS = process.env.OPS_TOKEN;
 const STATE = process.env.STATE;
-if (!OPS || !STATE) { console.error("OPS_TOKEN and STATE are required"); process.exit(2); }
+if (!STATE || (!OPS && process.argv[2] !== "accounts")) { console.error("STATE (and OPS_TOKEN) are required"); process.exit(2); }
 const t0 = Date.now();
 const log = (...a) => console.log(((Date.now() - t0) / 1000).toFixed(1).padStart(7), ...a);
 const ops = (method, path, body) => pb(INTERNAL, method, path, OPS, body);
 const load = () => JSON.parse(readFileSync(STATE, "utf8"));
 const save = (s) => writeFileSync(STATE, JSON.stringify(s, null, 2), { mode: 0o600 });
 
-async function up(n) {
+async function accounts(n) {
   const state = { nests: [] };
   for (let i = 0; i < n; i++) {
     const acct = await pb(POSTBOX, "POST", "/v1/accounts", null, await proofOfWork(POSTBOX));
     const inbox = await pb(POSTBOX, "POST", "/v1/identities", acct.api_key, { label: `nests-e2e-inbox-${i}` });
-    await ops("PUT", "/internal/v1/features/nests", { scope: "account", account_id: acct.account_id, enabled: true });
     state.nests.push({ account_id: acct.account_id, api_key: acct.api_key, inbox: inbox.address, inbox_token: inbox.capability_token });
   }
   save(state);
-  log(`${n} synthetic accounts with a test inbox and the nests flag (account scope)`);
+  return state;
+}
+
+async function up(n) {
+  let state;
+  try { state = load(); } catch (_) { state = await accounts(n); }
+  for (const e of state.nests) {
+    await ops("PUT", "/internal/v1/features/nests", { scope: "account", account_id: e.account_id, enabled: true });
+  }
+  log(`${state.nests.length} synthetic accounts with a test inbox and the nests flag (account scope)`);
   const created = await Promise.all(state.nests.map(async (e, i) => {
     const start = Date.now();
     const r = await ops("POST", "/internal/v1/nests", { account_id: e.account_id, label: `e2e ${i}`, allow_senders: [e.inbox] });
@@ -51,13 +61,17 @@ async function up(n) {
 
 async function send(e, question) {
   const body = JSON.stringify({ v: 1, verb: "answer_question", args: { question } });
-  await pb(POSTBOX, "POST", "/v1/send", e.inbox_token, { to: e.address, body, msg_ref: randomBytes(8).toString("hex") });
+  await pb(POSTBOX, "POST", "/v1/send", e.inbox_token, { to: e.address, body });
 }
 
 async function replyFrom(e, after, needle) {
   const { messages } = await pb(POSTBOX, "GET", "/v1/inbox?include_read=false", e.inbox_token);
   const m = (messages || []).find((m) => m.from === e.address && (m.seq || 0) > after && String(m.body || "").includes(needle));
-  if (m) await pb(POSTBOX, "POST", "/v1/ack", e.inbox_token, { message_id: m.message_id }).catch(() => {});
+  if (!m) return null;
+  await pb(POSTBOX, "POST", "/v1/ack", e.inbox_token, { message_id: m.message_id }).catch(() => {});
+  // A run that failed still replies (saying so): that is a failed test, not an answer.
+  if (String(m.body).includes("outcome=failed")) throw new Error(`the Nest reported a failed run: ${String(m.body).slice(-200)}`);
+  if (!String(m.body).includes("model broker")) throw new Error("the reply did not come through the model broker");
   return m;
 }
 
@@ -106,6 +120,6 @@ async function down() {
 }
 
 const [cmd, arg] = process.argv.slice(2);
-const run = { up: () => up(Number(arg || 1)), ask, "pause-resume": pauseResume, down }[cmd];
+const run = { accounts: () => accounts(Number(arg || 1)).then((s) => console.log(JSON.stringify(s))), up: () => up(Number(arg || 1)), ask, "pause-resume": pauseResume, down }[cmd];
 if (!run) { console.error("usage: e2e.mjs up [N] | ask | pause-resume | down"); process.exit(2); }
 run().catch((e) => { console.error("FAILED:", e.message); process.exit(1); });
