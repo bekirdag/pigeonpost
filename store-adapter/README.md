@@ -61,6 +61,20 @@ listed here (a new year, a changed price) **fails closed** until someone reviews
   2. starts the hosted checkout with `client_reference_id: pp-org:<draft>`;
   3. returns to `https://enterprise.pigeonpost.dev/checkout/return?d=<draft>`.
 - `GET /ent/checkout/<draft>` activates the org on a verified payment.
+- Both refuse with `403 feature_disabled` while `orgs` is off for the buyer (read from the postbox's
+  `/v1/capabilities`); the postbox refuses the draft and the activation too.
+- `GET /ent/orgs/<org>/subscription` — the org's card plan, its failed payments and the seat tiers it
+  can move to (same currency and interval). The postbox's `/v1/orgs/<org>/billing` decides who sees it.
+- `POST /ent/orgs/<org>/subscription/{change|cancel|card-update|retry}` — owner or billing admin
+  (`can_manage` from the postbox) **and** the buyer's own token (saas_be scopes the subscription to
+  the person who bought it; anyone else gets `403 not_buyer`):
+  - `change {intent_id, plan_code}` — iyzico Subscription V2 upgrade through saas_be. More seats
+    apply `NOW`; fewer seats apply at `NEXT_PERIOD`. A tier below the seats or agents in use is
+    refused with `409 seats_in_use`; a second pending change with `409 change_pending`;
+  - `cancel` — renewals stop, the paid period stays;
+  - `card-update {intent_id, locale?}` — iyzico's card-update form (subscription scope), returning to
+    `https://enterprise.pigeonpost.dev/checkout/return?card=<org>`;
+  - `retry {intent_id, order_reference_code}` — a failed order of this subscription only.
 
 **Missed returns.** Every 60 s the reconciler reads saas_be's internal access list:
 `GET /v1/internal/tenants/pigeonpost/subscription-packages`, using `SAAS_INTERNAL_TOKEN`. It

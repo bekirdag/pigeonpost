@@ -12,7 +12,7 @@
 
 import { createHash } from "node:crypto";
 import { config } from "./config.js";
-import { isUuid, limitsForPackage, plan, planForLocalId, planForProviderReference } from "./catalog.js";
+import { catalog as catalog_data, isUuid, limitsForPackage, plan, planForLocalId, planForProviderReference } from "./catalog.js";
 import * as saas from "./saas.js";
 import * as postbox from "./postbox.js";
 
@@ -22,6 +22,7 @@ const ORDER = /^[a-zA-Z0-9_-]{1,128}$/;
 const NAMESPACE = /^[a-z0-9][a-z0-9._-]{0,31}$/;
 const YEAR_SECONDS = 400 * 86400;
 const now = () => Math.floor(Date.now() / 1000);
+const catalog_ = () => catalog_data;
 const fingerprint = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const environment = () => (config.iyzicoMode === "live" ? "live" : "test");
 const seconds = (value) => (value ? Math.floor(Date.parse(value) / 1000) : null);
@@ -325,6 +326,14 @@ export function createBilling(state) {
     "identity_number", "tax_office", "e_fatura_alias", "billing_email", "phone", "address"];
   const ADDRESS_FIELDS = ["line1", "line2", "city", "state", "postal_code", "country"];
 
+  /// Nobody pays for an organization the postbox would refuse: `orgs` must be on for the buyer
+  /// (the postbox checks it again when it drafts and activates the org).
+  async function requireOrgs(token) {
+    if (!(await postbox.features(token)).has("orgs")) {
+      fail(403, "Company plans are not open for this account yet.", "feature_disabled");
+    }
+  }
+
   async function enterpriseBillingProfile(token, body) {
     strict(body, ["intent_id", ...PROFILE_FIELDS], ["intent_id", "legal_name", "billing_email", "address"]);
     const id = intentId(body.intent_id);
@@ -335,6 +344,7 @@ export function createBilling(state) {
       if (key !== "address" && value !== null && (typeof value !== "string" || value.length > 512)) fail(400, `${key} is invalid.`, "invalid_request");
     }
     await postbox.accountFor(token);
+    await requireOrgs(token);
     return saas.createBillingProfile(token, profile, `pp-ent-profile-${id}`);
   }
 
@@ -352,6 +362,7 @@ export function createBilling(state) {
     if (!NAMESPACE.test(namespace)) fail(400, "Choose an address of 1–32 letters, numbers, dots, underscores or hyphens.", "invalid_namespace");
     const request = { kind: "ent", plan_code: entry.code, billing_profile_id: body.billing_profile_id, locale: locale(body.locale), name, namespace };
     const account = await postbox.accountFor(token);
+    await requireOrgs(token);
     const intent = await reserve({ id, kind: "ent", account, plan_code: entry.code }, { ...request, account });
     let draftId = intent.draft_id;
     if (!draftId) {
@@ -375,6 +386,142 @@ export function createBilling(state) {
     const { sub, ent } = await syncMember(token, intent.subscription_id);
     const org = ent ? (await postbox.getOrg(draftId))?.org || null : null;
     return { ...view(intent, sub, ent), org };
+  }
+
+  // ---- enterprise plan management (portal Billing page) -----------------------------------
+  //
+  // Who may act is decided twice: the postbox says whether the caller manages this org's billing
+  // (owner or billing admin, `orgs` on), and saas_be says whether the caller's token owns the
+  // iyzico subscription (the person who bought it). Neither is assumed from the other.
+
+  const ENT_OPS = ["change", "cancel", "card-update", "retry"];
+
+  /// The org's current iyzico subscription, as this bridge knows it from checkout or reconciliation.
+  async function orgSubscription(orgId) {
+    const refs = await state.read((data) => Object.entries(data.refs)
+      .filter(([, r]) => r.kind === "ent" && r.draft_id === orgId)
+      .map(([id, r]) => ({ id, ...r })));
+    if (!refs.length) return null;
+    const rank = (r) => [r.status !== "expired" && r.status !== "pending" ? 1 : 0, r.paid_through || 0, r.version || 0];
+    refs.sort((a, b) => { const x = rank(a), y = rank(b); return y[0] - x[0] || y[1] - x[1] || y[2] - x[2]; });
+    return refs[0];
+  }
+
+  async function orgContext(token, orgId, { manage }) {
+    if (!/^org_[a-z0-9]{6,64}$/.test(orgId || "")) fail(404, "Organization not found", "not_found");
+    const account = await postbox.accountFor(token);
+    const billing_ = await postbox.orgBilling(token, orgId);
+    if (manage && billing_.can_manage !== true) fail(403, "Only the owner or a billing admin can change the company plan.", "forbidden");
+    const ref = await orgSubscription(orgId);
+    if (!ref) fail(404, "This organization has no card subscription to manage. Contact support@pigeonpost.dev.", "no_subscription");
+    return { account, billing: billing_, ref };
+  }
+
+  /// saas_be answers 404 to anyone but the buyer; say so instead of "not found".
+  async function asBuyer(fn) {
+    try { return await fn(); } catch (error) {
+      if (error.status === 404 || error.status === 403) {
+        fail(403, "Only the person who bought this plan can change it. Ask them, or contact support@pigeonpost.dev.", "not_buyer");
+      }
+      throw error;
+    }
+  }
+
+  function entView(id, sub, ent, ref, billing_, account) {
+    const current = plan(ent?.plan_code || ref.plan_code);
+    const options = current
+      ? Object.keys(catalog_().plans).map(plan).filter((p) => p.family === "ent" && p.currency === current.currency && p.interval === current.interval)
+        .map((p) => ({ plan_code: p.code, seats: p.seats, agent_limit: p.agent_limit, current: p.code === current.code,
+          fits: p.seats >= Number(billing_.seats_used || 0) && p.agent_limit >= Number(billing_.agents_used || 0),
+          when: p.seats > current.seats ? "now" : "next_period" }))
+        .sort((a, b) => a.seats - b.seats)
+      : [];
+    return { subscription_id: id, plan_code: ent?.plan_code || ref.plan_code, seats: current?.seats ?? ref.seats ?? null,
+      currency: current?.currency || null, interval: current?.interval || null,
+      status: ent?.status || ref.status || "pending", provider_status: sub.provider_status,
+      paid_through: ent?.paid_through || ref.paid_through || null, current_period_end: sub.current_period_end,
+      next_payment_at: sub.next_payment_at || null, recurring_price: sub.recurring_price || null,
+      pending_change: sub.pending_change && Object.keys(sub.pending_change).length ? sub.pending_change : null,
+      cancel_requested_at: ent?.cancel_requested_at || ref.cancel_requested_at || null,
+      failed_orders: (sub.orders || []).filter((o) => o.status === "FAILED").map((o) => ({
+        order_reference_code: o.order_reference_code, amount: o.amount, currency: o.currency, failed_at: o.failed_at || null })),
+      buyer: ref.account ? ref.account === account : null, can_manage: billing_.can_manage === true,
+      seats_used: billing_.seats_used ?? null, agents_used: billing_.agents_used ?? null, options };
+  }
+
+  async function enterpriseSubscription(token, orgId) {
+    const { account, billing: billing_, ref } = await orgContext(token, orgId, { manage: false });
+    let sub;
+    try {
+      sub = saas.validSubscription(await saas.getSubscription(token, ref.id), ref.id);
+    } catch (error) {
+      // Admins who did not buy the plan still see what the postbox knows.
+      if (error.status === 404 || error.status === 403) {
+        return { subscription_id: ref.id, plan_code: ref.plan_code, seats: ref.seats ?? null, status: ref.status,
+          paid_through: ref.paid_through || null, buyer: false, can_manage: billing_.can_manage === true,
+          seats_used: billing_.seats_used ?? null, agents_used: billing_.agents_used ?? null, options: [] };
+      }
+      throw error;
+    }
+    const ent = fromSubscription(sub, ref);
+    if (ent) await push(ref.id, ref, ent);
+    return entView(ref.id, sub, ent, ref, billing_, account);
+  }
+
+  async function enterpriseOperation(token, orgId, operation, body) {
+    if (!ENT_OPS.includes(operation)) fail(404, "not found", "not_found");
+    const { account, billing: billing_, ref } = await orgContext(token, orgId, { manage: true });
+    const id = ref.id;
+    const sub = await asBuyer(async () => saas.validSubscription(await saas.getSubscription(token, id), id));
+    const current = plan(fromSubscription(sub, ref)?.plan_code || ref.plan_code);
+    let payload, saasOp;
+    if (operation === "cancel") {
+      strict(body, ["intent_id"]);
+      payload = {}; saasOp = "cancel";
+    } else if (operation === "retry") {
+      strict(body, ["intent_id", "order_reference_code"]);
+      if (!ORDER.test(body.order_reference_code) || !(sub.orders || []).some((o) => o.status === "FAILED" && o.order_reference_code === body.order_reference_code)) {
+        fail(400, "Choose a failed payment of this plan.", "invalid_order");
+      }
+      payload = { order_reference_code: body.order_reference_code }; saasOp = "retry";
+    } else if (operation === "card-update") {
+      strict(body, ["intent_id", "locale"], ["intent_id"]);
+      payload = { scope: "subscription", return_url: `${config.enterpriseOrigin}/checkout/return?card=${encodeURIComponent(orgId)}`,
+        locale: locale(body.locale) };
+      saasOp = "card-update";
+    } else {
+      strict(body, ["intent_id", "plan_code"]);
+      const target = plan(body.plan_code);
+      if (!current || !target || target.family !== "ent" || target.currency !== current.currency
+        || target.interval !== current.interval || target.code === current.code) {
+        fail(400, "Choose a different seat count with the same billing period and currency. Above 500 seats, contact sales.", "invalid_plan");
+      }
+      const seatsUsed = Number(billing_.seats_used || 0), agentsUsed = Number(billing_.agents_used || 0);
+      if (target.seats < seatsUsed || target.agent_limit < agentsUsed) {
+        fail(409, `The organization uses ${seatsUsed} seats and ${agentsUsed} agents. Remove people or agents above ${target.seats} seats and ${target.agent_limit} agents first.`, "seats_in_use");
+      }
+      if (sub.pending_change && Object.keys(sub.pending_change).length) fail(409, "A plan change is already scheduled.", "change_pending");
+      const selection = await edition(token, target);
+      // More seats start now (iyzico charges the new plan now); fewer seats start at renewal, so
+      // nobody loses seats they already paid for.
+      payload = { plan_id: selection.plan_id, trial_period_days: 0, upgradePeriod: target.seats > current.seats ? "NOW" : "NEXT_PERIOD" };
+      saasOp = "upgrade";
+    }
+    const key = `pp-ent-${operation}-${intentId(body.intent_id)}`;
+    const result = await asBuyer(() => saas.operate(token, id, saasOp, payload, key));
+    if (operation === "card-update") {
+      if (typeof result?.checkout_form_content !== "string" || !result.checkout_form_content.trim() || result.checkout_form_content.length > 200_000) {
+        fail(502, "Billing returned an invalid card form.", "invalid_upstream");
+      }
+      return { subscription_id: id, org_id: orgId, checkout_form_content: result.checkout_form_content };
+    }
+    if (operation === "cancel") await state.update((data) => { data.refs[id].cancel_requested_at ||= now(); });
+    const fresh = saas.validSubscription(await saas.getSubscription(token, id), id);
+    const latest = await state.read((data) => ({ id, ...data.refs[id] }));
+    const ent = fromSubscription(fresh, latest);
+    if (ent) await push(id, latest, ent);
+    return { ...entView(id, fresh, ent, latest, billing_, account), operation,
+      ...(saasOp === "upgrade" ? { effective: payload.upgradePeriod === "NOW" ? "now" : "next_period" } : {}) };
   }
 
   // ---- reconciler -------------------------------------------------------------------------
@@ -439,5 +586,5 @@ export function createBilling(state) {
   }
 
   return { cloudCheckout, cloudStatus, cloudOverview, cloudSubscription, cloudOperation,
-    enterpriseBillingProfile, enterpriseCheckout, enterpriseStatus, reconcile };
+    enterpriseBillingProfile, enterpriseCheckout, enterpriseStatus, enterpriseSubscription, enterpriseOperation, reconcile };
 }

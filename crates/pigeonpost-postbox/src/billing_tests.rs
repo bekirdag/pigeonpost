@@ -304,6 +304,26 @@ async fn org_drafts_activate_once_and_never_take_a_claimed_name() {
         (s, b["error"].as_str()),
         (StatusCode::FORBIDDEN, Some("endpoint_not_allowed"))
     );
+    // While `orgs` is off for the owner nothing drafts an org, so nobody can pay for one.
+    let (s, b) = call(
+        post.clone(),
+        drafts.clone(),
+        Some(BILLING),
+        Some(draft("op_aaaaaaaaaaaaaaaa", "acme")),
+    )
+    .await;
+    assert_eq!(
+        (s, b["error"].as_str()),
+        (StatusCode::FORBIDDEN, Some("feature_disabled"))
+    );
+    let (s, _) = call(
+        put.clone(),
+        format!("{internal}/internal/v1/features/orgs"),
+        Some(OPS),
+        Some(json!({ "scope": "account", "account_id": "acct_owner", "enabled": true })),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
     let (s, b) = call(
         post.clone(),
         drafts.clone(),
@@ -381,6 +401,28 @@ async fn org_drafts_activate_once_and_never_take_a_claimed_name() {
         (s, b["error"].as_str()),
         (StatusCode::CONFLICT, Some("entitlement_inactive"))
     );
+    let owner_flag = |on: bool| {
+        call(
+            put.clone(),
+            format!("{internal}/internal/v1/features/orgs"),
+            Some(OPS),
+            Some(json!({ "scope": "account", "account_id": "acct_owner", "enabled": on })),
+        )
+    };
+    assert_eq!(owner_flag(false).await.0, StatusCode::OK);
+    let (s, b) = call(
+        put.clone(),
+        activate.clone(),
+        Some(BILLING),
+        Some(json!({"operation_id": "op_activate_000001", "entitlement": ent(1, "active")})),
+    )
+    .await;
+    assert_eq!(
+        (s, b["error"].as_str()),
+        (StatusCode::FORBIDDEN, Some("feature_disabled")),
+        "the kill switch also holds activation"
+    );
+    assert_eq!(owner_flag(true).await.0, StatusCode::OK);
     let (s, b) = call(
         put.clone(),
         activate.clone(),

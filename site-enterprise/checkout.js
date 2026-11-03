@@ -30,8 +30,29 @@
     }
   };
 
+  /// Replacing the card of an organization's plan (Billing → Update card): the same isolated form.
+  async function card(pending) {
+    $("#pay-title").textContent = "Update card";
+    try {
+      const r = await PPE.bridge(`/ent/orgs/${encodeURIComponent(pending.org_id)}/subscription/card-update`,
+        { method: "POST", body: { intent_id: pending.intent_id, locale: (document.documentElement.lang || "en").startsWith("tr") ? "tr" : "en" } });
+      PPE.store.del("ppe_ent_card");
+      say("Enter the new card. Future renewals use it; nothing is charged now.");
+      PPE.mountIyzico(r.checkout_form_content, $("#pay-form"), document.querySelector('meta[name="csp-nonce"]')?.content || "");
+    } catch (e) {
+      if (e instanceof PPE.Redirecting) return;
+      PPE.store.del("ppe_ent_card");
+      say("The card form could not be opened: " + PPE.explain(e));
+    }
+  }
+
   async function run() {
     PPE.renderAccount();
+    const update = PPE.store.json("ppe_ent_card");
+    if (update && /^org_[a-z0-9]{6,64}$/.test(update.org_id || "") && /^[a-f0-9]{32}$/.test(update.intent_id || "") && PPE.signedIn()) {
+      await card(update);
+      return;
+    }
     const pending = PPE.store.json("ppe_ent_checkout");
     if (!pending || !/^[a-f0-9]{32}$/.test(pending.intent_id || "") || !PPE.signedIn()) { window.location.replace("/start"); return; }
     try {

@@ -506,6 +506,20 @@ async fn only_owners_and_admins_manage_keys_and_the_flag_gates_everything() {
     );
     srv.global_flag("org_api").await;
     assert_eq!(get(&srv, "/org", &secret).await.status, 200);
+    // `orgs` is the kill switch for the whole enterprise surface, the API included.
+    srv.call(
+        Method::PUT,
+        "/internal/v1/features/orgs",
+        Some(crate::org_tests::OPS),
+        Some(json!({ "scope": "global", "enabled": false })),
+    )
+    .await;
+    assert_eq!(
+        code(&get(&srv, "/org", &secret).await),
+        (404, "feature_disabled")
+    );
+    srv.global_flag("orgs").await;
+    assert_eq!(get(&srv, "/org", &secret).await.status, 200);
 
     // A people admin may not see or create keys.
     let pa = srv.person("pa").await;

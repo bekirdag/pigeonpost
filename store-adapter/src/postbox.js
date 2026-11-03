@@ -37,6 +37,25 @@ export async function memberGet(token, path) {
   return r.body;
 }
 
+/// The signed-in member's view of an organization's billing (`GET /v1/orgs/{id}/billing`). The
+/// postbox decides who may see it (owner, admin, billing admin) and whether `orgs` is on; a
+/// non-member gets the same 404 as an unknown org.
+export async function orgBilling(token, orgId) {
+  const r = await call(`${config.postboxUrl}/v1/orgs/${encodeURIComponent(orgId)}/billing`,
+    { headers: { authorization: `Bearer ${token}`, accept: "application/json" } }, "Your organization");
+  if (r.status === 401) fail(401, "session expired", "unauthorized");
+  if (r.status === 403) fail(403, "Only the owner, admins and billing admins see the company plan.", "forbidden");
+  if (r.status === 404) fail(404, "Organization not found", "not_found");
+  if (!r.ok || !r.body || typeof r.body !== "object") fail(502, "Could not load the organization. Try again.", "postbox_invalid");
+  return r.body;
+}
+
+/// The feature flags the postbox reports for the signed-in account (`GET /v1/capabilities`).
+export async function features(token) {
+  const body = await memberGet(token, "/v1/capabilities");
+  return new Set(Array.isArray(body.features) ? body.features.filter((f) => typeof f === "string") : []);
+}
+
 export async function claimName(token, namespace) {
   const r = await call(`${config.postboxUrl}/v1/claims/plan`, {
     method: "POST",

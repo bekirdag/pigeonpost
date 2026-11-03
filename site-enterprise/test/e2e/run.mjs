@@ -139,7 +139,8 @@ function mockBridge(req, res, p, body) {
     if (++statusPolls >= 2) db.org.status = "active";
     return json(200, { status: db.org.status === "active" ? "active" : "pending", org: db.org.status === "active" ? db.org : null });
   }
-  if (p === "/v1/invoices") return json(200, { invoices: [] });
+  if (p === "/v1/billing/invoices") return json(200, { invoices: [] });
+  if (p.startsWith("/ent/orgs/")) return json(404, { error: "This organization has no card subscription to manage.", code: "no_subscription" });
   return json(404, { error: "not found" });
 }
 

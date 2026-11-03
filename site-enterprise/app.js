@@ -633,31 +633,120 @@
 
   // ---- Billing ---------------------------------------------------------------------------------
 
+  const newIntent = () => {
+    const b = new Uint8Array(16);
+    window.crypto.getRandomValues(b);
+    return Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+  };
+  const subPath = (rest = "") => `/ent/orgs/${encodeURIComponent(app.org.id)}/subscription${rest}`;
+  const INTERVAL = { month: "monthly", year: "yearly" };
+
   async function billing() {
     const b = await PPE.postbox(orgPath("/billing"));
     const m = /^ent-(\d+)-(monthly|yearly)-(usd|try)$/.exec(b.plan_code || "") || [];
     const interval = m[2] || "yearly";
-    const change = el("a", { class: "btn btn-primary", href: `/?seats=${b.seats}&interval=${interval}&currency=${(m[3] || "usd").toUpperCase()}` }, "Change plan");
     const pct = (used, max) => `${Math.min(100, Math.round(((used || 0) / Math.max(1, max || 1)) * 100))}%`;
+    // The card subscription (iyzico through saas_be). A granted plan has none.
+    let sub = null;
+    if (b.source === "iyzico") {
+      try { sub = await PPE.bridge(subPath()); } catch (e) { if (e instanceof PPE.Redirecting) throw e; }
+    }
     let invoices = [];
-    try { invoices = ((await PPE.bridge("/v1/invoices")).invoices || []); } catch (e) { if (e instanceof PPE.Redirecting) throw e; }
+    try { invoices = ((await PPE.bridge("/v1/billing/invoices")).invoices || []); } catch (e) { if (e instanceof PPE.Redirecting) throw e; }
     const rows = invoices.map((i) => {
       const pdf = el("button", { class: "btn btn-small", type: "button" }, "PDF");
-      pdf.addEventListener("click", busy(pdf, async () => { const r = await PPE.bridge(`/v1/invoices/${encodeURIComponent(i.id)}/download`); if (/^https:\/\//.test(r.url || "")) window.open(r.url, "_blank", "noopener"); }));
+      pdf.addEventListener("click", busy(pdf, async () => { const r = await PPE.bridge(`/v1/billing/invoices/${encodeURIComponent(i.id)}/download`); if (/^https:\/\//.test(r.url || "")) window.open(r.url, "_blank", "noopener"); }));
       return el("tr", {}, el("td", {}, String(i.issued_at || i.created_at || "").slice(0, 10)), el("td", {}, i.number || "—"), el("td", {}, i.status || ""),
         el("td", {}, i.total != null ? PPE.money(i.total, i.currency || "USD") : ""), el("td", { class: "row-actions" }, i.id ? pdf : null));
     });
+    const manage = Boolean(sub && sub.can_manage && sub.buyer !== false);
+    const canceled = Boolean(sub && (sub.status === "canceled" || sub.cancel_requested_at));
+    const change = manage && !canceled && (sub.options || []).length
+      ? el("button", { class: "btn btn-primary", type: "button", onclick: () => changePlanSheet(sub) }, "Change plan") : null;
     return el("div", {},
       head("Billing", null, change),
       el("div", { class: "card" },
         el("h2", {}, `${b.seats} seats, ${interval}`),
-        el("p", { class: "muted" }, b.paid_through ? `Paid through ${PPE.date(b.paid_through)}` : b.period_end ? `Renews ${PPE.date(b.period_end)}` : ""),
+        el("p", { class: "muted" }, canceled && b.paid_through ? `Canceled. Paid through ${PPE.date(b.paid_through)}, then the organization stops.`
+          : b.paid_through ? `Paid through ${PPE.date(b.paid_through)}` : b.period_end ? `Renews ${PPE.date(b.period_end)}` : ""),
+        sub && sub.pending_change ? el("p", { class: "note" }, "A seat change is scheduled for the next renewal.") : null,
         el("p", {}, `Seats: ${b.seats_used} of ${b.seats}`), el("div", { class: "meter", role: "img", "aria-label": `${b.seats_used} of ${b.seats} seats used` }, el("span", { style: null, "data-w": pct(b.seats_used, b.seats) })),
-        el("p", {}, `Agents: ${b.agents_used} of ${b.agent_limit}`), el("div", { class: "meter", role: "img", "aria-label": `${b.agents_used} of ${b.agent_limit} agents` }, el("span", { "data-w": pct(b.agents_used, b.agent_limit) })),
-        el("p", { class: "note" }, "To lower the number of seats, first remove people or agents above the new size. To cancel or change the card, contact support@pigeonpost.dev — self-service changes for company plans are coming.")),
+        el("p", {}, `Agents: ${b.agents_used} of ${b.agent_limit}`), el("div", { class: "meter", role: "img", "aria-label": `${b.agents_used} of ${b.agent_limit} agents` }, el("span", { "data-w": pct(b.agents_used, b.agent_limit) }))),
+      paymentCard(b, sub, manage, canceled),
       el("h2", {}, "Invoices"),
       rows.length ? el("div", { class: "table-wrap" }, el("table", {}, el("thead", {}, el("tr", {}, ["Date", "Number", "Status", "Total", ""].map((h) => el("th", { scope: "col" }, h)))), el("tbody", {}, rows)))
         : el("p", { class: "muted" }, "No invoices yet."));
+  }
+
+  /// Card, retries and cancellation. Only the person who bought the plan can change it at iyzico.
+  function paymentCard(b, sub, manage, canceled) {
+    if (!sub) {
+      return el("div", { class: "card" }, el("h2", {}, "Payment"),
+        el("p", { class: "muted" }, b.source === "iyzico" ? "The payment details could not be loaded. Try again shortly."
+          : "This plan isn't paid by card here. To change it, contact support@pigeonpost.dev."));
+    }
+    if (!manage) {
+      return el("div", { class: "card" }, el("h2", {}, "Payment"),
+        el("p", { class: "muted" }, sub.can_manage ? "Only the person who bought this plan can change the card, the seats or cancel it."
+          : "The owner and billing admins manage the plan."));
+    }
+    const card = el("button", { class: "btn", type: "button" }, "Update card");
+    card.addEventListener("click", () => {
+      // The iyzico form runs only on /checkout, the one page whose policy admits it.
+      PPE.store.set("ppe_ent_card", JSON.stringify({ org_id: app.org.id, intent_id: newIntent() }));
+      window.location.assign("/checkout");
+    });
+    const retries = (sub.failed_orders || []).map((o) => {
+      const retry = el("button", { class: "btn btn-small", type: "button" }, "Try again");
+      retry.addEventListener("click", busy(retry, async () => {
+        await PPE.bridge(subPath("/retry"), { method: "POST", body: { intent_id: newIntent(), order_reference_code: o.order_reference_code } });
+        PPE.toast("Payment retried"); go("billing", true);
+      }));
+      return el("div", { class: "setting" }, el("p", {}, `Payment of ${PPE.money(o.amount, o.currency)} failed${o.failed_at ? ` on ${PPE.date(o.failed_at)}` : ""}.`), retry);
+    });
+    const cancel = el("button", { class: "btn btn-danger", type: "button" }, "Cancel plan");
+    cancel.addEventListener("click", busy(cancel, async () => {
+      const until = b.paid_through ? PPE.date(b.paid_through) : "the end of the paid period";
+      if (!window.confirm(`Cancel the plan? Nothing renews. The organization keeps working until ${until}, then company mail stops.`)) return;
+      await PPE.bridge(subPath("/cancel"), { method: "POST", body: { intent_id: newIntent() } });
+      PPE.toast("Plan canceled"); await load(app.org.id); go("billing", true);
+    }));
+    return el("div", { class: "card" }, el("h2", {}, "Payment"),
+      el("p", { class: "muted" }, "Your card details stay with iyzico; Pigeonpost never sees them."),
+      ...retries,
+      el("div", { class: "actions" }, canceled ? null : card, canceled ? null : cancel),
+      canceled ? el("p", { class: "note" }, "This plan is canceled. To keep the organization after the paid period, start a new plan from the packages page.") : null);
+  }
+
+  function changePlanSheet(sub) {
+    PPE.openSheet("Change plan", (body) => {
+      const current = (sub.options || []).find((o) => o.current) || {};
+      const cur = sub.currency || "USD";
+      const per = INTERVAL[sub.interval] || "yearly";
+      const prices = (cfg.prices && cfg.prices[cur] && cfg.prices[cur][per]) || {};
+      const pick = el("select", { "aria-label": "Seats" }, (sub.options || []).map((o) => el("option", { value: o.plan_code, selected: o.current, disabled: !o.fits && !o.current },
+        `${o.seats} seats${prices[o.seats] ? ` — ${PPE.money(prices[o.seats], cur)} ${per === "yearly" ? "per year" : "per month"}` : ""}${o.current ? " (current)" : !o.fits ? " (too small)" : ""}`)));
+      const explain = el("p", { class: "note", role: "status" });
+      const save = el("button", { class: "btn btn-primary", type: "button", disabled: true }, "Change plan");
+      const update = () => {
+        const o = (sub.options || []).find((x) => x.plan_code === pick.value);
+        save.disabled = !o || o.current || !o.fits;
+        explain.textContent = !o || o.current ? "Choose a different number of seats."
+          : !o.fits ? `The organization uses ${sub.seats_used} seats and ${sub.agents_used} agents. Remove people or agents first.`
+          : o.when === "now" ? `More seats start now: iyzico charges the ${o.seats}-seat plan today, and it renews from today.`
+          : `Fewer seats start at the next renewal${sub.next_payment_at ? ` (${PPE.date(sub.next_payment_at)})` : ""}. Until then you keep ${current.seats || sub.seats} seats.`;
+      };
+      pick.addEventListener("change", update);
+      update();
+      save.addEventListener("click", busy(save, async () => {
+        const r = await PPE.bridge(subPath("/change"), { method: "POST", body: { intent_id: newIntent(), plan_code: pick.value } });
+        PPE.closeSheet();
+        PPE.toast(r.effective === "now" ? "Plan changed" : "Seat change scheduled for the next renewal");
+        await load(app.org.id); go("billing", true);
+      }));
+      body.append(el("p", { class: "muted" }, `Same billing period (${per}) and currency (${cur}). To switch either, contact support@pigeonpost.dev. Above 500 seats, talk to sales.`),
+        PPE.field("Seats", pick), explain, el("div", { class: "actions" }, save));
+    });
   }
 
   // ---- SSH to an agent's workspace (Phase 8, SDS §11) -------------------------------------------
@@ -1092,7 +1181,7 @@
       confirm.addEventListener("input", () => { del.disabled = confirm.value.trim() !== o.namespace; });
       del.addEventListener("click", busy(del, () => deleteOrg(confirm.value.trim())));
       parts.push(el("div", { class: "card" }, el("h2", {}, "Delete organization"),
-        el("p", {}, "Mail to every company address stops at once. People keep their personal accounts; their company mailboxes are removed. Agents are disconnected. The address can be recovered for 30 days."),
+        el("p", {}, "Mail to every company address stops at once. People keep their personal accounts; their company mailboxes are removed. Agents are disconnected. A card plan is canceled first, so nothing renews. The address can be recovered for 30 days."),
         PPE.field(`Type ${o.namespace} to confirm`, confirm), el("div", { class: "actions" }, del)));
     }
     return el("div", {}, ...parts);
@@ -1100,6 +1189,15 @@
 
   PPE.onResume("app.delete", async (p) => deleteOrg(p.confirm));
   async function deleteOrg(confirmNamespace) {
+    // Stop the card subscription first, so a deleted organization is never charged again.
+    let sub = null;
+    try { sub = await PPE.bridge(subPath()); } catch (e) { if (e instanceof PPE.Redirecting) throw e; }
+    if (sub && sub.status !== "canceled" && !sub.cancel_requested_at && sub.buyer !== false) {
+      await PPE.bridge(subPath("/cancel"), { method: "POST", body: { intent_id: newIntent() } });
+    } else if (sub && sub.status !== "canceled" && !sub.cancel_requested_at
+      && !window.confirm("The plan was bought by someone else and keeps renewing until they cancel it. Delete anyway?")) {
+      return;
+    }
     await PPE.postbox(orgPath(""), { method: "DELETE", body: { confirm_namespace: confirmNamespace }, resume: { name: "app.delete", payload: { confirm: confirmNamespace } } });
     PPE.store.del("ppe_org");
     gate(el("h1", {}, "Organization deleted"), el("p", { class: "muted" }, "Company mail has stopped. The address can be recovered for 30 days."), el("a", { class: "btn", href: "/" }, "Done"));

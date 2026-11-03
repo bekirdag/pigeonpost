@@ -21,6 +21,8 @@ function fixture() {
   const s = {
     catalog, calls: [], puts: [], orgCalls: [], operations: new Map(), subs: new Map(), list: [], access: [],
     offerOverride: {}, webPlan: { capacity: 0, used: 0, names: [] }, nextSub: 1,
+    features: ["orgs", "enterprise_portal"],
+    orgBilling: { plan_code: "ent-30-yearly-usd", seats: 30, seats_used: 4, agent_limit: 300, agents_used: 2, status: "active", can_manage: true },
   };
   const edition = (code) => catalog.plans[code].editions["2026"];
   const planByPackage = (slug, currency) => Object.entries(catalog.plans).find(([, p]) => p.package_slug === slug && p.currency === currency);
@@ -36,6 +38,12 @@ function fixture() {
     if (p === "/v1/me/handles") return auth === MEMBER ? json(res, 200, { account: ACCOUNT, handles: [] }) : json(res, 401, {});
     if (p === "/v1/me/entitlements") return json(res, 200, { account: ACCOUNT, entitlements: [], web_plan: s.webPlan });
     if (p === "/v1/claims/plan") return json(res, 200, { namespace: `/${body.namespace}`, capacity: 3, used: 1 });
+    if (p === "/v1/capabilities") return auth === MEMBER ? json(res, 200, { api_version: "1.2", features: s.features }) : json(res, 401, {});
+    if ((m = /^\/v1\/orgs\/([^/]+)\/billing$/.exec(p))) {
+      if (auth !== MEMBER) return json(res, 401, {});
+      if (!s.features.includes("orgs")) return json(res, 404, { error: "feature_disabled" });
+      return s.orgBilling ? json(res, 200, s.orgBilling) : json(res, 404, { error: "not_found" });
+    }
     // ---- postbox internal
     if (p.startsWith("/internal/v1/")) {
       if (auth !== SVC) return json(res, 401, { error: "invalid_service_token" });
@@ -82,6 +90,7 @@ function fixture() {
     }
     if (p === "/v1/integrations/iyzico/subscriptions" && req.method === "GET") return json(res, 200, { items: s.list });
     if ((m = /^\/v1\/integrations\/iyzico\/subscriptions\/([^/]+)$/.exec(p)) && req.method === "GET") {
+      if (s.notBuyer) return json(res, 404, { message: "Iyzico subscription not found." });
       const sub = s.subs.get(m[1]);
       return sub ? json(res, 200, typeof s.mangle === "function" ? s.mangle(sub) : sub) : json(res, 404, { message: "Iyzico subscription not found." });
     }
@@ -89,6 +98,10 @@ function fixture() {
       const sub = s.subs.get(m[1]);
       if (m[2] === "cancel") { sub.status = "canceled"; sub.provider_status = "CANCELED"; return json(res, 201, { subscription_id: m[1], status: "canceled" }); }
       if (m[2] === "card-update") return json(res, 201, { subscription_id: m[1], token: "t", checkout_form_content: FORM, expires_in: 1800 });
+      if (m[2] === "upgrade" && body.upgradePeriod === "NOW") {
+        const target = Object.values(catalog.plans).find((pl) => pl.editions["2026"].plan_id === body.plan_id);
+        sub.pricing_plan_reference = target.editions["2026"].provider_plan_reference;
+      }
       return json(res, 201, { subscription_id: m[1], status: sub.status });
     }
     if (p === "/v1/billing/profiles" && req.method === "POST") return json(res, 201, { id: uuid(77), ...body });
@@ -448,4 +461,123 @@ test("a TRY edition provisioned ahead is announced, never sold before January 1 
   assert.equal(jan1.next, null);
   assert.equal(pricingYear(new Date("2026-12-31T21:00:00Z")), 2027);
   assert.equal(currentEdition({ 2026: editions[2026] }, new Date("2027-06-01T00:00:00Z")).year, 2026);
+});
+
+test("enterprise checkout is closed while orgs is off: no draft, no provider call", async (t) => {
+  const { s, call } = await setup(t);
+  s.features = ["enterprise_portal"];
+  const id = "ef".repeat(16);
+  const profile = await call("POST", "/ent/billing-profile", { intent_id: id, legal_name: "Acme Ltd", billing_email: "b@acme.example",
+    address: { line1: "1 Example St", city: "Istanbul", country: "TR" } });
+  assert.equal(profile.status, 403);
+  const r = await call("POST", "/ent/checkout", { intent_id: id, plan_code: "ent-5-yearly-try", billing_profile_id: PROFILE,
+    org: { name: "Acme", namespace: "acme" } });
+  assert.equal(r.status, 403, JSON.stringify(r.body));
+  assert.equal(r.body.code, "feature_disabled");
+  assert.equal(s.orgCalls.length, 0, "no org draft");
+  assert.ok(!s.calls.some((c) => c.path.startsWith("/v1/integrations/iyzico/") || c.path === "/v1/billing/profiles"), "no saas_be call");
+});
+
+async function activeOrg(t, plan = "ent-30-yearly-usd") {
+  const ctx = await setup(t);
+  const { s, call } = ctx;
+  const r = await call("POST", "/ent/checkout", { intent_id: "9a".repeat(16), plan_code: plan, billing_profile_id: PROFILE,
+    org: { name: "Acme", namespace: "acme" } });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  s.activate(r.body.subscription_id);
+  assert.equal((await call("GET", "/ent/checkout/org_draftfixture01")).body.status, "active");
+  return { ...ctx, sid: r.body.subscription_id, org: "org_draftfixture01" };
+}
+
+test("enterprise plan view lists same-period seat tiers and who may act", async (t) => {
+  const { s, call, sid, org } = await activeOrg(t);
+  const v = await call("GET", `/ent/orgs/${org}/subscription`);
+  assert.equal(v.status, 200, JSON.stringify(v.body));
+  assert.equal(v.body.subscription_id, sid);
+  assert.equal(v.body.seats, 30);
+  assert.equal(v.body.buyer, true);
+  assert.equal(v.body.can_manage, true);
+  assert.deepEqual(v.body.options.map((o) => o.plan_code), ["5", "10", "15", "20", "30", "50", "100", "200", "500"].map((n) => `ent-${n}-yearly-usd`));
+  assert.equal(v.body.options.find((o) => o.seats === 50).when, "now");
+  assert.equal(v.body.options.find((o) => o.seats === 20).when, "next_period");
+  assert.equal(v.body.options.find((o) => o.seats === 30).current, true);
+  assert.equal((await call("GET", "/ent/orgs/org_unknownfixture/subscription")).status, 404, "no subscription for another org");
+  s.notBuyer = true;
+  const admin = await call("GET", `/ent/orgs/${org}/subscription`);
+  assert.equal(admin.status, 200);
+  assert.equal(admin.body.buyer, false, "an admin who did not buy sees the plan read-only");
+  s.features = [];
+  assert.equal((await call("GET", `/ent/orgs/${org}/subscription`)).status, 404, "orgs off: the postbox refuses, so does the bridge");
+});
+
+test("enterprise seat changes: more seats now, fewer at renewal, never below what is used", async (t) => {
+  const { s, call, sid, org } = await activeOrg(t);
+  const change = (plan, n = 1) => call("POST", `/ent/orgs/${org}/subscription/change`, { intent_id: String(n).repeat(32).slice(0, 32).replace(/[^a-f0-9]/g, "a"), plan_code: plan });
+  assert.equal((await change("ent-30-monthly-usd")).status, 400, "interval change is a new subscription");
+  assert.equal((await change("ent-30-yearly-try")).status, 400, "currency change");
+  assert.equal((await change("cloud-3names-yearly-usd")).status, 400, "other product");
+  assert.equal((await change("ent-30-yearly-usd")).status, 400, "same plan");
+  s.orgBilling.seats_used = 25;
+  const tooSmall = await change("ent-20-yearly-usd");
+  assert.equal(tooSmall.status, 409);
+  assert.equal(tooSmall.body.code, "seats_in_use");
+  s.orgBilling.seats_used = 4;
+  s.orgBilling.agents_used = 120;
+  assert.equal((await change("ent-10-yearly-usd")).status, 409, "agents above the smaller limit");
+  s.orgBilling.agents_used = 2;
+  assert.equal(s.calls.filter((c) => c.path.endsWith("/upgrade")).length, 0, "refusals never reach saas_be");
+
+  const down = await change("ent-20-yearly-usd", 2);
+  assert.equal(down.status, 200, JSON.stringify(down.body));
+  assert.equal(down.body.effective, "next_period");
+  let up = s.calls.filter((c) => c.path.endsWith("/upgrade")).at(-1);
+  assert.equal(up.path, `/v1/integrations/iyzico/subscriptions/${sid}/upgrade`);
+  assert.deepEqual(up.body, { plan_id: s.edition("ent-20-yearly-usd").plan_id, trial_period_days: 0, upgradePeriod: "NEXT_PERIOD" });
+  assert.equal(up.key, `pp-ent-change-${"2".repeat(32).replace(/[^a-f0-9]/g, "a")}`);
+
+  const more = await change("ent-50-yearly-usd", 3);
+  assert.equal(more.status, 200, JSON.stringify(more.body));
+  assert.equal(more.body.effective, "now");
+  up = s.calls.filter((c) => c.path.endsWith("/upgrade")).at(-1);
+  assert.equal(up.body.upgradePeriod, "NOW");
+  const pushed = s.orgCalls.filter((c) => c.op === "entitlement").at(-1);
+  assert.equal(pushed.body.seats, 50, "the postbox gets the new seat count once iyzico moved the plan");
+  assert.equal(pushed.body.plan_code, "ent-50-yearly-usd");
+  assert.equal(more.body.seats, 50);
+});
+
+test("enterprise cancel, card update and retry: managers only, buyer's token, hosted card form", async (t) => {
+  const { s, call, sid, org } = await activeOrg(t, "ent-5-monthly-try");
+  const card = await call("POST", `/ent/orgs/${org}/subscription/card-update`, { intent_id: "c1".repeat(16), locale: "tr" });
+  assert.equal(card.status, 200, JSON.stringify(card.body));
+  assert.equal(card.body.checkout_form_content, FORM);
+  const cardCall = s.calls.find((c) => c.path === `/v1/integrations/iyzico/subscriptions/${sid}/card-update`);
+  assert.deepEqual(cardCall.body, { scope: "subscription", return_url: `https://enterprise.pigeonpost.dev/checkout/return?card=${org}`, locale: "tr" });
+  assert.equal(cardCall.key, `pp-ent-card-update-${"c1".repeat(16)}`);
+
+  assert.equal((await call("POST", `/ent/orgs/${org}/subscription/retry`, { intent_id: "d1".repeat(16), order_reference_code: "order-1" })).status, 400);
+  s.subs.get(sid).orders.push({ order_reference_code: "order-9", status: "FAILED", amount: "1532.00", currency: "TRY", period_end: future(30) });
+  assert.equal((await call("POST", `/ent/orgs/${org}/subscription/retry`, { intent_id: "d1".repeat(16), order_reference_code: "order-9" })).status, 200);
+
+  s.orgBilling.can_manage = false;
+  const denied = await call("POST", `/ent/orgs/${org}/subscription/cancel`, { intent_id: "e1".repeat(16) });
+  assert.equal(denied.status, 403, "an admin without billing rights cannot cancel");
+  s.orgBilling.can_manage = true;
+  s.notBuyer = true;
+  const other = await call("POST", `/ent/orgs/${org}/subscription/cancel`, { intent_id: "e1".repeat(16) });
+  assert.equal(other.status, 403);
+  assert.equal(other.body.code, "not_buyer");
+  s.notBuyer = false;
+  assert.equal(s.calls.filter((c) => c.path.endsWith("/cancel")).length, 0);
+
+  const paidThrough = s.orgCalls.filter((c) => c.op === "activate" || c.op === "entitlement").at(-1).body.entitlement?.paid_through
+    ?? s.orgCalls.filter((c) => c.op === "entitlement").at(-1).body.paid_through;
+  const cancel = await call("POST", `/ent/orgs/${org}/subscription/cancel`, { intent_id: "e1".repeat(16) });
+  assert.equal(cancel.status, 200, JSON.stringify(cancel.body));
+  assert.equal(cancel.body.status, "canceled");
+  const last = s.orgCalls.filter((c) => c.op === "entitlement").at(-1).body;
+  assert.equal(last.status, "canceled");
+  assert.equal(last.paid_through, paidThrough, "cancellation keeps the paid period");
+  assert.equal((await call("POST", `/ent/orgs/${org}/subscription/pause`, { intent_id: "e2".repeat(16) })).status, 404);
+  assert.equal((await call("POST", `/ent/orgs/${org}/subscription/cancel`, { intent_id: "e3".repeat(16), extra: 1 })).status, 400);
 });

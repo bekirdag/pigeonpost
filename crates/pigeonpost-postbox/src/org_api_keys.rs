@@ -397,7 +397,11 @@ pub(crate) async fn authenticate(
         )
         .await?;
     let (row, o, roles) = found.ok_or_else(unauthorized)?;
-    if !crate::filtering::feature_on(state, Some(&o.owner_account), capabilities::ORG_API).await {
+    // `orgs` is the enterprise kill switch: with it off, no organization surface answers, the API
+    // included (the dashboard routes already require it through `org_ctx`).
+    if !crate::filtering::feature_on(state, Some(&o.owner_account), capabilities::ORGS).await
+        || !crate::filtering::feature_on(state, Some(&o.owner_account), capabilities::ORG_API).await
+    {
         return Err(GErr::new(
             StatusCode::NOT_FOUND,
             "feature_disabled",
