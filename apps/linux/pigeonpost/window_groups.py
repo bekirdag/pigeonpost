@@ -20,7 +20,7 @@ from .features import (DISAPPEARING, E2EE_NOTE, GROUPS, HOSTED_NOTE, LIMITS_NOTE
                        commit_lines, explain, is_admin, notice_text, parse_invite_link, preview_of, spaced, timer_label)
 from .actions import MESSAGE_EDIT, MESSAGE_REPLY, RECEIPTS, group_tick, group_tick_names, quote_text
 from .groups_core import GroupClient, UncertainSend, quote
-from .message_ui import action_row, highlight, mode_bar, quote_block, tick_widget
+from .message_ui import action_row, attach_menu, footer, highlight, mode_bar, quote_block, tick_widget
 from .model import contact_for, display_name, safe_filename, valid_peer
 from .previews import viewer_kind
 from .streams import POLICY_CHOICES, POLL_SECONDS as STREAM_POLL_SECONDS, STREAMING, banner as stream_banner, can_go_live, group_link, live_stream
@@ -680,8 +680,7 @@ class GroupsMixin:
                 opener.set_halign(Gtk.Align.START)
                 opener.update_property([Gtk.AccessibleProperty.LABEL], ["Open " + name])
                 inner.append(opener)
-        meta = box(6, horizontal=True)
-        meta.set_halign(Gtk.Align.END if mine else Gtk.Align.START)
+        meta = footer()  # bottom right of the bubble, after the text and files
         if item.get("expires_at"):
             timer = Gtk.Image(icon_name="alarm-symbolic")
             try:
@@ -700,13 +699,15 @@ class GroupsMixin:
         if item.get("edit_of") and readable:
             meta.append(label("edited", "pp-edited"))
         if mine and readable and not item.get("uncertain"):
+            # Like direct messages: ticks only once the postbox offers receipts (a sending clock
+            # always, so a send in flight is visible).
+            tick = None
             if item.get("pending"):
-                state, accessible = "sending", "Sending"
-            elif RECEIPTS in self.features and isinstance(item.get("seq"), int):
-                state, accessible = group_tick(item["seq"], self.group_receipts.get(gid))
-            else:
-                state, accessible = "sent", "Sent"
-            meta.append(tick_widget(state, accessible))
+                tick = ("sending", "Sending")
+            elif RECEIPTS in self.features:
+                tick = group_tick(item["seq"], self.group_receipts.get(gid)) if isinstance(item.get("seq"), int) else ("sent", "Sent")
+            if tick is not None:
+                meta.append(tick_widget(*tick))
         inner.append(meta)
         bubble.append(inner)
         column.append(bubble)
@@ -732,28 +733,7 @@ class GroupsMixin:
         if row is not None:
             menu = self.group_menu(actions)
             if menu is not None:
-                more = Gtk.MenuButton(icon_name="view-more-symbolic", menu_model=menu)
-                more.add_css_class("flat")
-                more.set_tooltip_text("More actions")
-                more.update_property([Gtk.AccessibleProperty.LABEL], ["More actions"])
-                row.append(more)
-                click = Gtk.GestureClick(button=3)
-
-                def pressed(_, _n, x, y, model=menu, anchor=bubble):
-                    # Made on demand and unparented when it closes, so a redraw leaves nothing behind.
-                    popover = Gtk.PopoverMenu.new_from_model(model)
-                    popover.set_parent(anchor)
-                    popover.set_has_arrow(False)
-                    rect = Gdk.Rectangle()
-                    rect.x, rect.y, rect.width, rect.height = int(x), int(y), 1, 1
-                    popover.set_pointing_to(rect)
-                    popover.connect("closed", lambda p: GLib.idle_add(lambda: (p.unparent() if p.get_parent() else None, False)[1]))
-                    popover.popup()
-                click.connect("pressed", pressed)
-                bubble.add_controller(click)
-                long_press = Gtk.GestureLongPress()
-                long_press.connect("pressed", lambda _, x, y, f=pressed: f(None, 1, x, y))
-                bubble.add_controller(long_press)
+                attach_menu(outer, bubble, menu)
             column.append(row)
         group = Gio.SimpleActionGroup()
         for name, handler in actions.items():

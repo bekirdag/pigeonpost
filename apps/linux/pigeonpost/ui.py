@@ -913,7 +913,7 @@ class Window(MessagesMixin, NotesMixin, PairingMixin, OrgsMixin, CalendarMixin, 
                 self.message_list.append(self.call_line(pending.pop(0)))
             outgoing = message.get("direction") == "out"
             holder = box(4)
-            # (holders are not focusable: their buttons and selectable text are)
+            # (holders are focusable so Shift+F10 / the Menu key opens the full menu on them)
             bubble = box(6)
             bubble.add_css_class("pp-bubble")
             if outgoing:
@@ -929,7 +929,7 @@ class Window(MessagesMixin, NotesMixin, PairingMixin, OrgsMixin, CalendarMixin, 
                 suffix = datetime.datetime.fromtimestamp(when / 1000 if when > 10**11 else when).strftime("%d %b · %H:%M") if when else ""
             except (ValueError, OSError, OverflowError):
                 suffix = ""
-            inner.append(self.message_meta(message, outgoing, who, suffix))
+            inner.append(self.message_header(outgoing, who))
             quoted = self.reply_header(message)
             if quoted is not None:
                 inner.append(quoted)
@@ -959,10 +959,11 @@ class Window(MessagesMixin, NotesMixin, PairingMixin, OrgsMixin, CalendarMixin, 
                               lambda a=attachment: self.save_attachment(a), style="pp-file")
                 save.set_halign(Gtk.Align.START)
                 inner.append(save)
+            inner.append(self.message_footer(message, outgoing, suffix))
             bubble.append(inner)
             holder.append(bubble)
             holder.append(self.bubble_actions(message, outgoing))
-            self.context_menu(bubble, self.message_menu(message, outgoing))
+            self.context_menu(holder, bubble, self.message_menu(message, outgoing))
             holder.add_css_class("pp-message")
             holder.message = message
             holder.set_margin_start(64 if outgoing else 0)

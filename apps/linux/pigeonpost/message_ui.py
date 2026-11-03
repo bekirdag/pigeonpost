@@ -4,14 +4,16 @@ groups alike."""
 
 import gi
 gi.require_version("Gtk", "4.0")
-from gi.repository import Gtk
+from gi.repository import Gdk, GLib, Gtk
 
 from .theme import add_css
 from .widgets import box, label
 
 add_css("""
 .pp-actions button { opacity: 0.7; }
-.pp-actions button:hover, .pp-actions button:focus, .pp-message:hover .pp-actions button { opacity: 1; }
+.pp-actions button:hover, .pp-actions button:focus, .pp-message:hover .pp-actions button,
+.pp-message:focus-within .pp-actions button { opacity: 1; }
+.pp-footer { margin-top: 2px; }
 .pp-actions button { min-height: 30px; min-width: 30px; padding: 0; border-radius: 8px; color: @pp_muted; }
 .pp-actions button:hover { color: @pp_ink; background-color: alpha(@pp_chip, 0.7); }
 .pp-actions button image { -gtk-icon-size: 18px; }
@@ -60,6 +62,57 @@ def tick_widget(state, accessible):
     holder.set_tooltip_text(accessible)
     holder.update_property([Gtk.AccessibleProperty.LABEL], [accessible])
     return holder
+
+
+MENU_TRIGGERS = ("<Shift>F10", "Menu")
+
+
+def attach_menu(holder, anchor, model):
+    """The full message menu (reply, copy, edit, info, delete, report, block) stays reachable
+    without a button in the action row: right-click or long-press on the bubble (`anchor`), and
+    Shift+F10 or the Menu key while the message (`holder`, focusable) or anything in it has focus.
+
+    The popover is made only when asked for and unparented when it closes, so re-rendering never
+    leaves one attached to a removed bubble."""
+    def show(x=None, y=None):
+        if not anchor.get_root():
+            return False
+        popover = Gtk.PopoverMenu.new_from_model(model)
+        popover.set_parent(anchor)
+        popover.set_has_arrow(x is None)
+        if x is not None:
+            rect = Gdk.Rectangle()
+            rect.x, rect.y, rect.width, rect.height = int(x), int(y), 1, 1
+            popover.set_pointing_to(rect)
+        popover.connect("closed", lambda widget: GLib.idle_add(lambda: (widget.unparent() if widget.get_parent() else None, False)[1]))
+        popover.popup()
+        anchor.context_popover = popover
+        return True
+    click = Gtk.GestureClick(button=3)
+    click.connect("pressed", lambda _g, _n, x, y: show(x, y))
+    anchor.add_controller(click)
+    press = Gtk.GestureLongPress()
+    press.connect("pressed", lambda _g, x, y: show(x, y))
+    anchor.add_controller(press)
+    keys = Gtk.ShortcutController()
+    keys.set_scope(Gtk.ShortcutScope.LOCAL)
+    for trigger in MENU_TRIGGERS:
+        keys.add_shortcut(Gtk.Shortcut.new(Gtk.ShortcutTrigger.parse_string(trigger),
+                                           Gtk.CallbackAction.new(lambda *_: show())))
+    holder.add_controller(keys)
+    holder.set_focusable(True)
+    holder.menu_keys = keys
+    holder.show_menu = show
+    return show
+
+
+def footer():
+    """Time, "edited", the disappearing timer and (sent messages) the ticks: inside the bubble,
+    after the body and attachments, at its bottom right."""
+    row = box(6, horizontal=True)
+    row.add_css_class("pp-footer")
+    row.set_halign(Gtk.Align.END)
+    return row
 
 
 def action_button(text, icon, clicked):
