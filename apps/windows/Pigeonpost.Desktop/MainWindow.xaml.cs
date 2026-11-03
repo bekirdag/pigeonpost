@@ -50,13 +50,14 @@ public sealed partial class MainWindow : Window
         else if (roomsState is not null) approvalAccount = new NativeApprovalAccount(); // A rotatable synthetic person for rooms.
         Func<AuthorizationLease?>? fixtureGrant = approvalAccount is { } fixtureAccount ? () => fixtureAccount.Lease : null;
         preview = new PreviewInboxService(longHistory: true, authorization: scheduledFixtureAuthorization,
-            authorizationSource: fixtureGrant, ownerSource: approvalAccount is { } owner ? () => owner.Owner : null);
+            authorizationSource: fixtureGrant, ownerSource: approvalAccount is { } owner ? () => owner.Owner : null,
+            receiptStates: Environment.GetEnvironmentVariable("PIGEONPOST_UI_MESSAGE_MODES_STATE") is not null);
         postbox.Dispose();
         postbox = new PostboxClient(new HttpClient(new AttachmentFixtureHandler(preview)), new AttachmentFixtureTokens(scheduledFixtureAuthorization, fixtureGrant));
         var stand_in = new Pigeonpost.Core.Preview.PreviewPostbox();
         PreviewSideData.Seed(stand_in);
         if (Environment.GetEnvironmentVariable("PIGEONPOST_UI_MESSAGE_MODES_STATE") is not null)
-            stand_in.Features.UnionWith([ServerFeatures.MessageEdit, ServerFeatures.MessageReply, ServerFeatures.Receipts]);
+            stand_in.Features.UnionWith([ServerFeatures.MessageEdit, ServerFeatures.MessageReply, ServerFeatures.Receipts, ServerFeatures.AgentStatus]);
         if (Environment.GetEnvironmentVariable("PIGEONPOST_UI_CALENDAR_STATE") is not null)
             stand_in.Features.Add(ServerFeatures.Calendar);
         if (approvalFixture is not null || roomsState is not null) stand_in.Features.Add(ServerFeatures.Organizations);

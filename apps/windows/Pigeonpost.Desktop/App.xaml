@@ -79,6 +79,9 @@
                     <SolidColorBrush x:Key="OutgoingTextBrush" Color="#172443" />
                     <SolidColorBrush x:Key="OutgoingFooterBorderBrush" Color="#DAE3F6" />
                     <SolidColorBrush x:Key="OutgoingFooterTextBrush" Color="#53628A" />
+                    <!-- §14C receipts: green seen ticks and agent gear, red agent failure. -->
+                    <SolidColorBrush x:Key="TickSeenBrush" Color="#1E8A50" />
+                    <SolidColorBrush x:Key="TickFailedBrush" Color="#B0284B" />
                     <SolidColorBrush x:Key="ChipSurfaceBrush" Color="#EAEDF1" />
                     <SolidColorBrush x:Key="ChipTextBrush" Color="#3F4752" />
                     <SolidColorBrush x:Key="AttachmentSurfaceBrush" Color="#FFFFFF" />
@@ -123,6 +126,8 @@
                     <SolidColorBrush x:Key="OutgoingTextBrush" Color="#E6ECF8" />
                     <SolidColorBrush x:Key="OutgoingFooterBorderBrush" Color="#1F2C47" />
                     <SolidColorBrush x:Key="OutgoingFooterTextBrush" Color="#8C9AB8" />
+                    <SolidColorBrush x:Key="TickSeenBrush" Color="#7DD3A0" />
+                    <SolidColorBrush x:Key="TickFailedBrush" Color="#F29AAE" />
                     <SolidColorBrush x:Key="ChipSurfaceBrush" Color="#1E232B" />
                     <SolidColorBrush x:Key="ChipTextBrush" Color="#C3C9D1" />
                     <SolidColorBrush x:Key="AttachmentSurfaceBrush" Color="#1B1F26" />
@@ -164,6 +169,8 @@
                     <SolidColorBrush x:Key="OutgoingTextBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
                     <SolidColorBrush x:Key="OutgoingFooterBorderBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
                     <SolidColorBrush x:Key="OutgoingFooterTextBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+                    <SolidColorBrush x:Key="TickSeenBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+                    <SolidColorBrush x:Key="TickFailedBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
                     <SolidColorBrush x:Key="ChipSurfaceBrush" Color="{ThemeResource SystemColorWindowColor}" />
                     <SolidColorBrush x:Key="ChipTextBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
                     <SolidColorBrush x:Key="AttachmentSurfaceBrush" Color="{ThemeResource SystemColorButtonFaceColor}" />

@@ -160,18 +160,33 @@ public sealed record ThreadMessage(string Id, string Body, long At, string? Thre
     public string ReplyQuote => HasReply ? ReplyTo!.DisplayQuote : "";
     public string ReplyAccessibility => HasReply ? "Open quoted message: " + ReplyQuote : "";
     public string EditedLabel => EditCount > 0 && EditedAt is > 0 ? "Edited" : "";
-    public string ReceiptLabel => !IsOutgoing || IsSystem || Status != DeliveryStatus.Sent ? "" : Receipt?.State switch
+    // §14C.6: the marks right of the time in a sent bubble. "" when there are none (received mail,
+    // unsent copies, or a postbox that does not report receipts). The agent's gear and failure sit
+    // on top of the receipt; a finished run falls back to the receipt's ticks.
+    public string ReceiptKind
     {
-        "delivered" or "seen" when AgentStatus?.State == "working" => "Working",
-        "delivered" or "seen" when AgentStatus?.State == "done" => "Done",
-        "delivered" or "seen" when AgentStatus?.State == "failed" => "Failed",
-        "seen" => "Seen",
-        "delivered" => "Delivered",
+        get
+        {
+            if (!IsOutgoing || IsSystem || Status != DeliveryStatus.Sent || Receipt?.State is not ("sent" or "delivered" or "seen")) return "";
+            return AgentStatus?.State switch { "working" => "working", "failed" => "agent-failed", _ => Receipt!.State };
+        }
+    }
+    public bool HasReceipt => ReceiptKind.Length > 0;
+    public bool ShowsSentTick => ReceiptKind == "sent";
+    public bool ShowsDeliveredTicks => ReceiptKind == "delivered";
+    public bool ShowsSeenTicks => ReceiptKind == "seen";
+    public bool ShowsAgentGear => ReceiptKind == "working";
+    public bool ShowsAgentFailed => ReceiptKind == "agent-failed";
+    public string ReceiptLabel => ReceiptKind switch
+    {
         "sent" => "Sent",
+        "delivered" => "Delivered",
+        "seen" => Receipt?.SeenAt is { } seen && seen is >= -62135596800 and <= 253402300799
+            ? "Seen " + DateTimeOffset.FromUnixTimeSeconds(seen).ToLocalTime().ToString("t") : "Seen",
+        "working" => "Agent working on this",
+        "agent-failed" => "Agent run failed",
         _ => ""
     };
-    public string ReceiptGlyph => !IsOutgoing || IsSystem || Status != DeliveryStatus.Sent ? "" : Receipt?.State switch
-    { "sent" => "✓", "delivered" or "seen" => "✓✓", _ => "" };
     public bool CanEdit(ServerFeatures features, long now) => features.Has(ServerFeatures.MessageEdit) && IsOutgoing
         && !IsSystem && Status == DeliveryStatus.Sent && At > 0 && now >= At && now - At <= 86400
         && (ExpiresAt is null || ExpiresAt > now);
@@ -181,7 +196,6 @@ public sealed record ThreadMessage(string Id, string Body, long At, string? Thre
         DeliveryStatus.Failed => "Delivery not confirmed",
         _ when IsHeld => "Held for review",
         _ when !IsOutgoing && Autonomy == "auto" => "Allowed by recipient",
-        _ when IsOutgoing => ReceiptLabel,
         _ => ""
     };
     public string FooterTimeLabel => EditedLabel.Length == 0 ? TimeLabel : TimeLabel + " · " + EditedLabel;

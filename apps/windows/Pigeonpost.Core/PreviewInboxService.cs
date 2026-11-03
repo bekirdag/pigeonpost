@@ -24,7 +24,7 @@ public sealed class PreviewInboxService : IInboxService, IConversationSettings
     ];
 
     public PreviewInboxService(bool longHistory = false, AuthorizationLease? authorization = null,
-        Func<AuthorizationLease?>? authorizationSource = null, Func<string?>? ownerSource = null)
+        Func<AuthorizationLease?>? authorizationSource = null, Func<string?>? ownerSource = null, bool receiptStates = false)
     {
         fixedAuthorization = authorization; this.authorizationSource = authorizationSource; this.ownerSource = ownerSource;
         var messages = new List<InboxMessage>
@@ -43,6 +43,23 @@ public sealed class PreviewInboxService : IInboxService, IConversationSettings
                 Attachments = [new MessageAttachment("preview-attachment", "desktop-checklist.pdf", "application/pdf", 40373)]
             }
         };
+        // §14C fixture: one sent copy in every receipt state, including an agent at work and a failed run.
+        if (receiptStates)
+        {
+            InboxMessage Sent(string id, string body, long at, MessageReceipt receipt, MessageAgentStatus? agent = null) => new()
+            {
+                MessageId = id, Direction = "out", From = mailboxes[0].Address, To = "/preview/agent", Peer = "/preview/agent", Body = body,
+                ThreadId = "agent-general", SentAt = at, Receipt = receipt, AgentStatus = agent
+            };
+            messages.AddRange([
+                Received("agent-0", "/preview/agent", "Build agent ready. Send me a task.", "agent-general", Epoch - 2600, true),
+                Sent("agent-1", "Accepted by the server only.", Epoch - 2500, new("sent")),
+                Sent("agent-2", "Delivered to the agent's daemon.", Epoch - 2400, new("delivered", Epoch - 2390)),
+                Sent("agent-3", "Seen by the agent.", Epoch - 2300, new("seen", Epoch - 2290, Epoch - 2280)),
+                Sent("agent-4", "Run the desktop tests, please.", Epoch - 2200, new("seen", Epoch - 2190, Epoch - 2180), new("working", Epoch - 2170)),
+                Sent("agent-5", "Deploy the preview build.", Epoch - 2100, new("seen", Epoch - 2090, Epoch - 2080), new("failed", Epoch - 2000))
+            ]);
+        }
         if (longHistory)
             messages.AddRange(Enumerable.Range(1, 35).Select(i => Received("history-" + i, "/preview/design",
                 $"History message {i}: desktop parity check.", "design-general", Epoch - 10000 + i, true)));
@@ -50,9 +67,11 @@ public sealed class PreviewInboxService : IInboxService, IConversationSettings
         {
             [mailboxes[0].Address] = new(messages,
                 [new("design-general", "/preview/design", IsDefault: true), new("design-release", "/preview/design", "Windows release"),
-                 new("engineering-general", "/preview/engineering", IsDefault: true), new("guide-general", "/preview/guide", IsDefault: true)],
+                 new("engineering-general", "/preview/engineering", IsDefault: true), new("guide-general", "/preview/guide", IsDefault: true),
+                 .. (receiptStates ? new ServerThread[] { new("agent-general", "/preview/agent", IsDefault: true) } : [])],
                 [new("/preview/design", "Design", "allow", "review"), new("/preview/engineering", "Engineering", "allow", "review"),
-                 new("/preview/guide", "Getting started", "allow", "review")], new HashSet<string>(StringComparer.Ordinal)),
+                 new("/preview/guide", "Getting started", "allow", "review"),
+                 .. (receiptStates ? new Contact[] { new("/preview/agent", "Build agent", "allow", "review") } : [])], new HashSet<string>(StringComparer.Ordinal)),
             [mailboxes[1].Address] = new([Received("team-1", "/preview/operations", "This mailbox has its own messages, selection and drafts. Switching back to Main inbox brings your conversation back.", "team-general", Epoch - 100, false)],
                 [new("team-general", "/preview/operations", IsDefault: true)],
                 [new("/preview/operations", "Operations", "allow", "review")], new HashSet<string>(StringComparer.Ordinal))
