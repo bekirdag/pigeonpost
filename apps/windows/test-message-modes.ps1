@@ -151,14 +151,33 @@ try {
     $state = State
     Check ($state.posts -eq 2 -and $state.committed -eq 2 -and $state.infoReads -eq 1) 'Cancelled modes never send and message info only reads'
     # §14C.6: every receipt state, with accessible names, colours and the turning gear.
+    function Reveal([string]$Prefix, [string]$Id) {
+        # Bring the message row into view, then return its receipt marks.
+        $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+        $identity = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::AutomationIdProperty, $Id)
+        for ($n = 0; $n -lt 40; $n++) {
+            foreach ($element in $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $identity)) {
+                if (-not $element.Current.Name.StartsWith($Prefix, [StringComparison]::Ordinal)) { continue }
+                $item = $element
+                while ($item -and $item.Current.ControlType -ne [System.Windows.Automation.ControlType]::ListItem) { $item = $walker.GetParent($item) }
+                if ($item) { try { $item.GetCurrentPattern([System.Windows.Automation.ScrollItemPattern]::Pattern).ScrollIntoView() } catch { } }
+                Start-Sleep -Milliseconds 300
+                return Wait-Prefix $Prefix $Id
+            }
+            Start-Sleep -Milliseconds 250
+        }
+        throw "Receipt marks missing: $Prefix $Id"
+    }
     Select-Conversation 'Build agent'
-    $sent = Wait-Control 'Sent' 'agent-1'; $delivered = Wait-Control 'Delivered' 'agent-2'; $seen = Wait-Prefix 'Seen ' 'agent-3'
-    $working = Wait-Control 'Agent working on this' 'agent-4'; $failed = Wait-Control 'Agent run failed' 'agent-5'
+    $sent = Reveal 'Sent' 'agent-1'; $delivered = Reveal 'Delivered' 'agent-2'
+    Check ($sent.Current.Name -eq 'Sent' -and $delivered.Current.Name -eq 'Delivered') 'Sent and delivered marks carry their accessible names'
     Check ((Green-Count $sent) -eq 0 -and (Green-Count $delivered) -eq 0) 'Sent and delivered ticks are gray'
+    Check ($delivered.Current.BoundingRectangle.Width -gt $sent.Current.BoundingRectangle.Width + 2) 'Delivered shows two ticks where sent shows one'
+    Capture 'message-receipts-sent-delivered.png'
+    $seen = Reveal 'Seen ' 'agent-3'; $working = Reveal 'Agent working on this' 'agent-4'; $failed = Reveal 'Agent run failed' 'agent-5'
     Check ((Green-Count $seen) -gt 3) 'Seen ticks are green and labelled with the seen time'
     Check ((Green-Count $working) -gt 3) 'The working gear is green'
     Check ((Red-Count $failed) -gt 3) 'A failed agent run shows a red warning'
-    Check ($delivered.Current.BoundingRectangle.Width -gt $sent.Current.BoundingRectangle.Width + 2) 'Delivered shows two ticks where sent shows one'
     $turning = $false
     for ($n = 0; $n -lt 6 -and -not $turning; $n++) { $a = Signature $working; Start-Sleep -Milliseconds 350; $turning = (Signature $working) -ne $a }
     Check $turning 'The gear turns while the agent works'
@@ -166,7 +185,7 @@ try {
     Capture 'message-receipts.png'
     [MotionPreference]::Set($false)
     Select-Conversation 'Design'; Select-Conversation 'Build agent'
-    $working = Wait-Control 'Agent working on this' 'agent-4'
+    $working = Reveal 'Agent working on this' 'agent-4'
     Wait-Check { $working.Current.BoundingRectangle.Width -gt $gearWidth + 20 } 'With animation effects off, the gear is joined by the word Working…'
     $still = $true
     for ($n = 0; $n -lt 4; $n++) { $a = Signature $working; Start-Sleep -Milliseconds 350; if ((Signature $working) -ne $a) { $still = $false } }
