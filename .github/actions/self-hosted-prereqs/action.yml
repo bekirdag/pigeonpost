@@ -40,12 +40,26 @@ runs:
           echo "MAKEFLAGS=-j$jobs"
         } >> "$GITHUB_ENV"
 
-        # The image keeps rustup in /opt/cargo, but the runner's job PATH does not include it, so jobs
-        # that use the preinstalled toolchain (no dtolnay/rust-toolchain step) would not find cargo.
-        # rustup still honours each crate's rust-toolchain.toml.
-        if ! command -v cargo >/dev/null 2>&1 && [ -x /opt/cargo/bin/cargo ]; then
+        # Rust: the image installs rustup in /opt/cargo (CARGO_HOME) and toolchains in /opt/rustup
+        # (RUSTUP_HOME), and both persist between jobs. Swatinem/rust-cache's post-job cleanup deletes
+        # every regular file in $CARGO_HOME/bin that this job did not `cargo install`, which removes
+        # the persistent rustup binary and breaks the next job. Give each job a throwaway CARGO_HOME,
+        # as on a fresh hosted VM, and keep the image's rustup proxies on PATH. Toolchains still come
+        # from /opt/rustup and each crate's rust-toolchain.toml.
+        if [ -d /opt/cargo/bin ]; then
+          if [ ! -x /opt/cargo/bin/rustup ]; then
+            echo "Restoring the image's rustup in /opt/cargo (removed by an earlier job)."
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+              | CARGO_HOME=/opt/cargo RUSTUP_HOME="${RUSTUP_HOME:-/opt/rustup}" \
+                sh -s -- -y --no-modify-path --default-toolchain none >/dev/null
+          fi
+          cargo_home="$RUNNER_TEMP/cargo-home"
+          mkdir -p "$cargo_home/bin"
+          echo "CARGO_HOME=$cargo_home" >> "$GITHUB_ENV"
+          # GITHUB_PATH entries are prepended: `cargo install` output wins over the rustup proxies.
           echo /opt/cargo/bin >> "$GITHUB_PATH"
-          echo "Added the image's Rust toolchain (/opt/cargo/bin) to PATH."
+          echo "$cargo_home/bin" >> "$GITHUB_PATH"
+          echo "CARGO_HOME=$cargo_home (per job); rustup from /opt/cargo/bin."
         fi
 
         missing=()
