@@ -15,9 +15,6 @@ concurrency:
   group: android-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# Linux jobs use GitHub-hosted runners unless the repository variable PIGEONPOST_SELF_HOSTED_CI is
-# 'true' (docs/ci-runners.md: the wodo-ci pool is opt-in until it can carry this load). Fork PRs
-# never select the self-hosted pool, whatever the variable says.
 jobs:
   build-and-test:
     name: build-and-test (${{ matrix.device }})
@@ -33,7 +30,11 @@ jobs:
           - device: tablet
             profile: pixel_tablet
             tasks: :app:assembleDebug :app:assembleDebugAndroidTest
-    runs-on: ${{ vars.PIGEONPOST_SELF_HOSTED_CI == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-latest' }}
+    # Always hosted (docs/ci-runners.md). On the wodo-ci worker (3 CPUs, swiftshader GPU) the tablet
+    # emulator missed MeetingLinkWorkflowTest's 10 s Compose wait twice in a row on main
+    # (2026-11-03), and the two emulator legs (16-22 min each) held every other job in the
+    # single runner's queue. The prereqs step stays so the job can return once the pool grows.
+    runs-on: ubuntu-latest
     timeout-minutes: 50
     env:
       PIGEONPOST_FIREBASE_API_KEY: ${{ secrets.PIGEONPOST_FIREBASE_API_KEY }}
