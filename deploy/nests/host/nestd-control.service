@@ -12,7 +12,8 @@ Restart=on-failure
 RestartSec=5
 # Nests keep running when this service restarts; reconcile adopts them.
 KillMode=process
-ProtectHome=read-only
+# No ProtectHome/PrivateTmp/ProtectSystem: any of them gives this service a private mount
+# namespace, and the Nest volumes it mounts must be visible to podman and the host.
 # The ledger is shared with the broker (group nests); secrets are written 0400 explicitly.
 UMask=0007
 MemoryMax=512M

@@ -92,6 +92,17 @@ async fn run_control(args: &[String]) -> Result<(), String> {
         return Err("control token file must hold a SHA-256 hex digest".into());
     }
     let db = db::Db::open(&cfg.db)?;
+    // The broker (its own user, group `nests`) writes reservations to the same ledger. SQLite
+    // gives its -wal/-shm files the database file's mode, so group write is set here.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for suffix in ["", "-wal", "-shm"] {
+            let mut p = cfg.db.clone().into_os_string();
+            p.push(suffix);
+            let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o660));
+        }
+    }
     let sandbox: Arc<dyn sandbox::Sandbox> = Arc::from(sandbox::from_config(&cfg.sandbox)?);
     let volumes: Arc<dyn storage::Volumes> = Arc::from(storage::from_config(&cfg.storage)?);
     let host = std::fs::read_to_string("/etc/hostname")

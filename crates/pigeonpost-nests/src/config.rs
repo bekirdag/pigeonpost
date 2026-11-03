@@ -192,9 +192,11 @@ pub fn read_secret_file(path: &std::path::Path) -> Result<String, String> {
         use std::os::unix::fs::PermissionsExt;
         let meta =
             std::fs::metadata(path).map_err(|e| format!("cannot stat {}: {e}", path.display()))?;
-        if meta.permissions().mode() & 0o077 != 0 {
+        // Group read is allowed: systemd's LoadCredential hands a service its credential 0440,
+        // owned by the service's own user and group.
+        if meta.permissions().mode() & 0o037 != 0 {
             return Err(format!(
-                "{} is readable by group or others; chmod 600 it",
+                "{} is writable by group or readable by others; chmod 600 it",
                 path.display()
             ));
         }
