@@ -63,6 +63,7 @@ Jobs that stay on GitHub-hosted runners even with the variable on:
 | Job | Why |
 |---|---|
 | `linux-desktop.yml` → `build` | `flatpak-builder` needs bubblewrap user namespaces, which Docker's default seccomp profile denies in the runner container; it also installs the built `.deb` system-wide. |
+| `android.yml` → `build-and-test` (phone, tablet) | The emulator legs are too slow on the 3-CPU worker: the tablet leg missed a 10 s Compose wait (`MeetingLinkWorkflowTest`) twice in a row on main, and each leg (16-22 min) blocked the single runner's queue. `group-crypto.yml` → Android AAR stays on the pool. |
 | `linux-desktop.yml` → `release` | Attests build provenance (same rule as the release attestation jobs). |
 | `release.yml` → `container_candidate`, `container_verify` | `docker/setup-qemu-action` registers binfmt handlers in the shared host kernel. |
 | The rest of `release.yml` | Tag-only, never qualified on the worker. It follows its own variable, `PIGEONPOST_SELF_HOSTED_RELEASE` (unset = hosted); its `ci` call still follows `PIGEONPOST_SELF_HOSTED_CI`. |
