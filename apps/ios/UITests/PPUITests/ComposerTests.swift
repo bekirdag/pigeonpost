@@ -38,7 +38,7 @@ final class ComposerTests: XCTestCase {
     func testReplyPreservesDraftAndClearsAfterSend() throws {
         let app = actionApp()
         let field = app.textViews["messageComposer"]
-        field.tap()
+        focusComposer(app, field)
         field.typeText("Keep my draft")
         revealAction("message-reply:m_reply", in: app).tap()
         XCTAssertTrue(app.buttons["Cancel reply"].waitForExistence(timeout: 5))
@@ -56,7 +56,7 @@ final class ComposerTests: XCTestCase {
     func testEditPreservesDraftAndShowsVersionHistory() throws {
         let app = actionApp()
         let field = app.textViews["messageComposer"]
-        field.tap()
+        focusComposer(app, field)
         field.typeText("My unsent draft")
         revealAction("message-edit:m_out2", in: app).tap()
         XCTAssertTrue(app.buttons["Cancel edit"].waitForExistence(timeout: 5))
@@ -151,7 +151,7 @@ final class ComposerTests: XCTestCase {
         let app = openThread()
         let field = app.textViews["messageComposer"]
         XCTAssertTrue(field.waitForExistence(timeout: 15), "no composer")
-        field.tap()
+        focusComposer(app, field)
         field.typeText("still typing after this one")
         Thread.sleep(forTimeInterval: 1)
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5),
@@ -172,7 +172,7 @@ final class ComposerTests: XCTestCase {
         let app = openThread()
         let field = app.textViews["messageComposer"]
         XCTAssertTrue(field.waitForExistence(timeout: 15), "no composer")
-        field.tap()
+        focusComposer(app, field)
         field.typeText("this is a test of the composer clearing after a send is made and it runs long enough to wrap onto several lines")
         Thread.sleep(forTimeInterval: 1)
         XCTAssertTrue(drafted(app).contains("composer"), "typing did not land: \(drafted(app))")
@@ -187,7 +187,7 @@ final class ComposerTests: XCTestCase {
         let app = openThread()
         let field = app.textViews["messageComposer"]
         XCTAssertTrue(field.waitForExistence(timeout: 15), "no composer")
-        field.tap()
+        focusComposer(app, field)
         field.typeText("teh quick brwon fox jumpd")
         Thread.sleep(forTimeInterval: 1)
         // The keyboard's correction bar counts as an interruption, which can invalidate an
@@ -210,7 +210,7 @@ final class ComposerTests: XCTestCase {
         let app = openThread()
         let field = app.textViews["messageComposer"]
         XCTAssertTrue(field.waitForExistence(timeout: 15), "no composer")
-        field.tap()
+        focusComposer(app, field)
         field.typeText("first message")
         app.buttons["Send"].tap()
         Thread.sleep(forTimeInterval: 2)
@@ -229,7 +229,7 @@ final class ComposerTests: XCTestCase {
         let app = openThread()
         let field = app.textViews["messageComposer"]
         XCTAssertTrue(field.waitForExistence(timeout: 15), "no composer")
-        field.tap()
+        focusComposer(app, field)
         field.typeText("line one\nline two\nline three\nline four")
         Thread.sleep(forTimeInterval: 1)
         app.buttons["Send"].tap()
@@ -305,6 +305,20 @@ func sendFirstMessage(_ app: XCUIApplication, to address: String, _ text: String
     let body = app.textFields["newConversationBody"].exists ? app.textFields["newConversationBody"] : app.textViews["newConversationBody"]
     type(text, into: body)
     app.buttons["newConversationSend"].tap()
+}
+
+/// A newer XCTest dispatch snapshot reported this text view at one third of its
+/// actual AX frame and tapped the history. Use window coordinates and require the
+/// keyboard before sending keys, without retrying any typed text or send.
+private func focusComposer(_ app: XCUIApplication, _ field: XCUIElement, file: StaticString = #filePath, line: UInt = #line) {
+    XCTAssertTrue(field.waitForExistence(timeout: 15), "no composer", file: file, line: line)
+    for _ in 0..<3 where !app.keyboards.firstMatch.exists {
+        let frame = field.frame
+        app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: frame.midX, dy: frame.midY)).tap()
+        if app.keyboards.firstMatch.waitForExistence(timeout: 2) { break }
+    }
+    XCTAssertTrue(app.keyboards.firstMatch.exists, "composer never accepted keyboard focus", file: file, line: line)
 }
 
 /// A form field in a sheet can miss the first tap while the sheet is still settling.

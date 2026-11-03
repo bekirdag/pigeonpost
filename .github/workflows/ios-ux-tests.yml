@@ -122,7 +122,9 @@ jobs:
     # The iPad layout audit (SDS 19.2): every screen in portrait and landscape, failing on controls
     # drawn over one another or bar titles cut short.
     runs-on: macos-26
-    timeout-minutes: 60
+    # Build (~13 min) plus the layout and calendar suites (~47 min) sat at the old 60-minute limit;
+    # on 2026-11-03 three runs passed every test and were still cut off during cleanup.
+    timeout-minutes: 75
     defaults:
       run:
         working-directory: apps/ios
