@@ -71,7 +71,9 @@ child = spawn(bin, [], {
     REGISTRY_URL: `http://127.0.0.1:${issuerPort}`, OIDC_ISSUER: issuer, POSTBOX_SVC_TOKEN_OPS: ops,
     ...(mode === "orgs" ? { POSTBOX_SVC_TOKEN_BILLING: billing, POSTBOX_STEP_UP_ACR_VALUES: "fixture-mfa",
       PIGEONPOST_RESERVED_NAMES: path.join(work, "reserved-names") } : {}),
-    ...(mode === "notes" ? { POSTBOX_SVC_TOKEN_CALLS: callsToken, POSTBOX_SVC_TOKEN_MEETING_INTEL: intelToken } : {}) },
+    // Synthetic accounts have no organization; D-17's default (enterprise >= 20 seats) refuses them.
+    ...(mode === "notes" ? { POSTBOX_SVC_TOKEN_CALLS: callsToken, POSTBOX_SVC_TOKEN_MEETING_INTEL: intelToken,
+      POSTBOX_MEETING_SUMMARIES_ELIGIBILITY: "all" } : {}) },
   stdio: ["ignore", "ignore", "inherit"],
 });
 child.once("error", () => { console.error("Could not start the fixture binary."); process.exit(1); });

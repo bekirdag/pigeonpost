@@ -46,6 +46,11 @@ Every job that can select the pool now provisions what it used to take from the 
   requested packages that are missing (`ruby` for the lint policy checks and the Cubemeld catalog,
   `sqlite3 systemd` for acceptance). It never upgrades packages. Installs persist only in this
   repository's runner container; recreating the container removes them.
+- The same action gives each job a throwaway `CARGO_HOME` under `$RUNNER_TEMP` and puts the image's
+  rustup (`/opt/cargo/bin`) on `PATH`. `Swatinem/rust-cache`'s post-job cleanup deletes every regular
+  file in `$CARGO_HOME/bin` that the job did not `cargo install`; with the persistent `/opt/cargo` it
+  deleted `rustup` and the next job failed with `rustc -vV` / `cargo: command not found`. The action
+  reinstalls rustup there if an older job already removed it.
 - `inbox web` installs Chrome for Testing with `browser-actions/setup-chrome` (self-hosted only) and
   the Linux test runners pass `--no-sandbox`, because Chrome's sandbox needs user namespaces.
 - `setup-dotnet` installs into `$RUNNER_TEMP/dotnet`; the Android Gradle calls pass
