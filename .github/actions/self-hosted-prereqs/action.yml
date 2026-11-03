@@ -40,6 +40,14 @@ runs:
           echo "MAKEFLAGS=-j$jobs"
         } >> "$GITHUB_ENV"
 
+        # The image keeps rustup in /opt/cargo, but the runner's job PATH does not include it, so jobs
+        # that use the preinstalled toolchain (no dtolnay/rust-toolchain step) would not find cargo.
+        # rustup still honours each crate's rust-toolchain.toml.
+        if ! command -v cargo >/dev/null 2>&1 && [ -x /opt/cargo/bin/cargo ]; then
+          echo /opt/cargo/bin >> "$GITHUB_PATH"
+          echo "Added the image's Rust toolchain (/opt/cargo/bin) to PATH."
+        fi
+
         missing=()
         for package in $APT_PACKAGES; do
           dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -q 'install ok installed' \
