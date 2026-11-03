@@ -291,6 +291,12 @@ and cancellation messages also attach `invite.ics`. Every such message the postb
 `crates/pigeonpost-postbox/src/mail_layout.rs` (the same design as the Keycloak sign-in code theme,
 versioned logos on pigeonpost.dev, no tracking pixel), and its saas_be payload is checked in tests against
 a mirror of saas_be's `PIGEONPOST_PAYLOAD_SCHEMAS`.
+The sender is "<name> via Pigeonpost" (the organizer's self-set name, else the Phase 1d name of a
+paid handle: `/bekir/main` → "Bekir"), or "Invitation via Pigeonpost" (invitations, reminders) /
+"Pigeonpost Calendar" (updates, cancellations) for a key-only organizer; greetings and the calendar
+file's organizer name follow the same rule, so a `/k/…` address never reaches a guest. Names are
+stripped of controls, quotes, angle brackets and address punctuation, capped at 40 characters and
+RFC 2047-encoded when not ASCII. Organization invitations use the inviter's member name the same way.
 The page must read the fragment, remove it from the address bar, and send the token only in POST
 bodies. Unsubscribe links are `…/m/u#u=<token>`.
 

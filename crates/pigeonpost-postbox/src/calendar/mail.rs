@@ -224,6 +224,10 @@ struct Words {
     attached: &'static str,
     authoritative: &'static str,
     why: &'static str,
+    invited_anon: &'static str,
+    updated_anon: &'static str,
+    cancelled_anon: &'static str,
+    why_anon: &'static str,
     stop_from: &'static str,
     stop_all: &'static str,
     no_reply: &'static str,
@@ -255,6 +259,10 @@ const EN: Words = Words {
     attached: "A calendar file is attached so you can add this to your calendar app.",
     authoritative: "Answer with the buttons above. Answers sent from your calendar app's own buttons do not reach Pigeonpost.",
     why: "You received this because {organizer} entered this address as a guest on Pigeonpost.",
+    invited_anon: "You're invited",
+    updated_anon: "This event was changed",
+    cancelled_anon: "This event was cancelled",
+    why_anon: "You received this because the organizer entered this address as a guest on Pigeonpost.",
     stop_from: "Don't send me invitations from this person",
     stop_all: "Don't send me invitations from anyone on Pigeonpost",
     no_reply: "Replies to this message are not read.",
@@ -286,6 +294,10 @@ const TR: Words = Words {
     attached: "Takvim uygulamanıza ekleyebilmeniz için bir takvim dosyası ektedir.",
     authoritative: "Yukarıdaki düğmelerle yanıt verin. Takvim uygulamanızın kendi düğmeleriyle verilen yanıtlar Pigeonpost'a ulaşmaz.",
     why: "Bu mesajı, {organizer} bu adresi Pigeonpost'ta konuk olarak girdiği için aldınız.",
+    invited_anon: "Davet edildiniz",
+    updated_anon: "Bu etkinlik değiştirildi",
+    cancelled_anon: "Bu etkinlik iptal edildi",
+    why_anon: "Bu mesajı, düzenleyen bu adresi Pigeonpost'ta konuk olarak girdiği için aldınız.",
     stop_from: "Bu kişiden davet gönderilmesin",
     stop_all: "Pigeonpost'taki hiç kimseden davet gönderilmesin",
     no_reply: "Bu mesaja verilen yanıtlar okunmaz.",
@@ -441,6 +453,10 @@ pub(crate) fn render(kind: Kind, v: &View) -> (String, String, String) {
         .collect();
     let lead = fill(
         match kind {
+            // No name to show (a key-only organizer): never print the raw address.
+            Kind::Invite if v.organizer.is_empty() => w.invited_anon,
+            Kind::Update if v.organizer.is_empty() => w.updated_anon,
+            Kind::Cancel if v.organizer.is_empty() => w.cancelled_anon,
             Kind::Invite => w.invited,
             Kind::Update => w.updated,
             Kind::Cancel => w.cancelled,
@@ -580,7 +596,14 @@ pub(crate) fn render(kind: Kind, v: &View) -> (String, String, String) {
     let mut foot = String::from(FOOTER_BRAND);
     t.push_str("\n--\n");
     if kind != Kind::Verify {
-        let why = fill(w.why, v);
+        let why = fill(
+            if v.organizer.is_empty() {
+                w.why_anon
+            } else {
+                w.why
+            },
+            v,
+        );
         foot.push_str(&format!("<br>{}<br>{}", e(&why), e(w.no_reply)));
         t.push_str(&format!("{why}\n{}\n", w.no_reply));
         if let Some(u) = &v.unsubscribe_organizer {
@@ -611,14 +634,18 @@ pub(crate) fn render(kind: Kind, v: &View) -> (String, String, String) {
 const FOOTER_BRAND: &str =
     "Pigeonpost · Private messaging for people and AI agents · pigeonpost.dev";
 
-/// A display name for the From header: "<organizer> via Pigeonpost", cleaned.
-pub(crate) fn sender_name(organizer: &str) -> String {
-    let clean: String = organizer
-        .chars()
-        .filter(|c| !c.is_control() && !matches!(c, '"' | '<' | '>' | '@' | ','))
-        .take(60)
-        .collect();
-    format!("{} via Pigeonpost", clean.trim())
+/// The `From` display name for a calendar message: "<name> via Pigeonpost" when the organizer
+/// has a name (their self-set name or a name-shaped handle; see `worker.rs`), otherwise
+/// "Invitation via Pigeonpost" for invitations and reminders and "Pigeonpost Calendar" for
+/// updates and cancellations. Never a raw `/k/…` address. Header-safe and RFC 2047-encoded by
+/// [`crate::mail_layout::sender_display`].
+pub(crate) fn sender_name(organizer: Option<&str>, kind: Kind) -> String {
+    let fallback = match kind {
+        Kind::Update | Kind::Cancel => "Pigeonpost Calendar",
+        Kind::Verify => "Pigeonpost",
+        Kind::Invite | Kind::Reminder => "Invitation via Pigeonpost",
+    };
+    crate::mail_layout::sender_display(organizer, fallback)
 }
 
 #[cfg(test)]
@@ -668,9 +695,40 @@ mod tests {
 
     #[test]
     fn sender_names_cannot_inject_headers() {
+        let from = sender_name(Some("Evil\r\nBcc: x@y <a>"), Kind::Invite);
+        assert_eq!(from, "Evil Bcc xy a via Pigeonpost");
+        assert!(!from.contains(['\r', '\n', '<', '>', '@', ':', '"']));
+    }
+
+    #[test]
+    fn key_only_organizers_get_neutral_senders_and_wording() {
+        assert_eq!(sender_name(None, Kind::Invite), "Invitation via Pigeonpost");
         assert_eq!(
-            sender_name("Evil\r\nBcc: x@y <a>"),
-            "EvilBcc: xy a via Pigeonpost"
+            sender_name(None, Kind::Reminder),
+            "Invitation via Pigeonpost"
         );
+        assert_eq!(sender_name(None, Kind::Update), "Pigeonpost Calendar");
+        assert_eq!(sender_name(None, Kind::Cancel), "Pigeonpost Calendar");
+        assert_eq!(
+            sender_name(Some("Bekir"), Kind::Cancel),
+            "Bekir via Pigeonpost"
+        );
+        let mut v = view("en");
+        v.organizer = String::new();
+        let (_, html, text) = render(Kind::Invite, &v);
+        assert!(text.starts_with("You're invited\n"));
+        assert!(text.contains("because the organizer entered this address"));
+        assert!(!html.contains("{organizer}") && !text.contains("{organizer}"));
+        let (_, _, text) = render(Kind::Cancel, &v);
+        assert!(text.starts_with("This event was cancelled\n"));
+        let (_, _, text) = render(Kind::Update, &view("tr"));
+        assert!(text.starts_with("/bekir bu etkinliği"));
+    }
+
+    #[test]
+    fn non_ascii_names_are_encoded_for_the_header() {
+        let from = sender_name(Some("Çağrı Dağ"), Kind::Invite);
+        assert!(from.starts_with("=?UTF-8?B?") && from.ends_with("?= via Pigeonpost"));
+        assert!(from.is_ascii());
     }
 }

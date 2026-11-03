@@ -377,6 +377,31 @@ pub(crate) fn organizer_name(c: &Connection, ev: &Ev) -> GResult<String> {
     Ok(handle_of(c, &ev.organizer)?.unwrap_or_else(|| ev.organizer.clone()))
 }
 
+/// The organizer as a person reads it in a message to a contact address: their self-set display
+/// name (they are the sender, as for an invitation SMS), else the Phase 1d name of a name-shaped
+/// handle (`/bekir/main` -> "Bekir"). `None` for a key-only mailbox, so `/k/…` never reaches a
+/// header, greeting or calendar file sent to someone outside Pigeonpost.
+pub(crate) fn organizer_display(c: &Connection, ev: &Ev) -> GResult<Option<String>> {
+    let own: Option<String> = c
+        .query_row(
+            "SELECT display_name FROM profile_names WHERE address = ?1",
+            params![ev.organizer],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if let Some(name) = own
+        .as_deref()
+        .and_then(crate::mail_layout::header_safe_name)
+    {
+        return Ok(Some(name));
+    }
+    Ok(handle_of(c, &ev.organizer)?
+        .as_deref()
+        .and_then(crate::mail_layout::handle_name)
+        .as_deref()
+        .and_then(crate::mail_layout::header_safe_name))
+}
+
 /// "Add to my calendar app": the caller's own projection, `METHOD:PUBLISH`.
 pub(crate) fn export(
     c: &Connection,
