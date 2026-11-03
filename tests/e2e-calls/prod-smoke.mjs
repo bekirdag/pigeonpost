@@ -62,9 +62,10 @@ async function proofOfWork() {
   for (let i = 0; ; i++) if (zeroBits(createHash("sha256").update(challenge + ":" + i).digest()) >= bits) return { pow_challenge: challenge, pow_solution: String(i) };
 }
 async function makeAccounts() {
+  // One account with two mailboxes: the postbox allows 5 new accounts an hour from one address.
   const out = [];
+  const { api_key } = await pb("POST", "/v1/accounts", null, await proofOfWork());
   for (let i = 0; i < 2; i++) {
-    const { api_key } = await pb("POST", "/v1/accounts", null, await proofOfWork());
     const { address } = await pb("POST", "/v1/identities", api_key, { label: "call-smoke-" + i });
     out.push({ api_key, address, created: true });
   }
@@ -74,6 +75,7 @@ async function makeAccounts() {
 async function removeAccounts(accounts) {
   for (const a of accounts.filter((x) => x.created)) {
     try { await pb("DELETE", "/v1/identities?identity=" + encodeURIComponent(a.address), a.api_key); } catch (e) { log("cleanup: mailbox", e.message); }
+    if (a !== accounts.filter((x) => x.created).at(-1)) continue; // the shared key goes last
     try {
       const { keys } = await pb("GET", "/v1/api-keys", a.api_key);
       for (const k of keys || []) await pb("DELETE", "/v1/api-keys/" + encodeURIComponent(k.id), a.api_key);
