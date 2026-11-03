@@ -6,6 +6,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+        AA00000000000000000000A1 /* PeopleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000A2; };
 		AA0000000000000000000091 /* OrganizationRoomTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000092 /* OrganizationRoomTests.swift */; };
 		AA0000000000000000000081 /* DeviceApprovalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000082 /* DeviceApprovalTests.swift */; };
 		AA0000000000000000000071 /* CalendarTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000072 /* CalendarTests.swift */; };
@@ -18,6 +19,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+        AA00000000000000000000A2 /* PeopleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PeopleTests.swift; sourceTree = "<group>"; };
 		AA0000000000000000000092 /* OrganizationRoomTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrganizationRoomTests.swift; sourceTree = "<group>"; };
 		AA0000000000000000000082 /* DeviceApprovalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceApprovalTests.swift; sourceTree = "<group>"; };
 		AA0000000000000000000072 /* CalendarTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarTests.swift; sourceTree = "<group>"; };
@@ -36,7 +38,7 @@
 
 /* Begin PBXGroup section */
 		AA0000000000000000000005 = {isa = PBXGroup; children = (AA0000000000000000000006 /* PPUITests */, AA0000000000000000000007 /* Products */); sourceTree = "<group>"; };
-		AA0000000000000000000006 /* PPUITests */ = {isa = PBXGroup; children = (AA0000000000000000000092 /* OrganizationRoomTests.swift */, AA0000000000000000000082 /* DeviceApprovalTests.swift */, AA0000000000000000000002 /* ComposerTests.swift */, AA0000000000000000000011 /* AttachmentTests.swift */, AA0000000000000000000021 /* HandlePurchaseTests.swift */, AA0000000000000000000041, AA0000000000000000000051 /* Phase1bTests.swift */, AA0000000000000000000062 /* GroupTests.swift */, AA0000000000000000000072 /* CalendarTests.swift */); path = PPUITests; sourceTree = "<group>"; };
+		AA0000000000000000000006 /* PPUITests */ = {isa = PBXGroup; children = (AA00000000000000000000A2, AA0000000000000000000092 /* OrganizationRoomTests.swift */, AA0000000000000000000082 /* DeviceApprovalTests.swift */, AA0000000000000000000002 /* ComposerTests.swift */, AA0000000000000000000011 /* AttachmentTests.swift */, AA0000000000000000000021 /* HandlePurchaseTests.swift */, AA0000000000000000000041, AA0000000000000000000051 /* Phase1bTests.swift */, AA0000000000000000000062 /* GroupTests.swift */, AA0000000000000000000072 /* CalendarTests.swift */); path = PPUITests; sourceTree = "<group>"; };
 		AA0000000000000000000007 /* Products */ = {isa = PBXGroup; children = (AA0000000000000000000003 /* PPUITests.xctest */); name = Products; sourceTree = "<group>"; };
 /* End PBXGroup section */
 
@@ -75,7 +77,7 @@
 /* End PBXProject section */
 
 /* Begin PBXSourcesBuildPhase section */
-		AA000000000000000000000A /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (AA0000000000000000000091 /* OrganizationRoomTests.swift in Sources */, AA0000000000000000000081 /* DeviceApprovalTests.swift in Sources */, AA0000000000000000000001 /* ComposerTests.swift in Sources */, AA0000000000000000000010 /* AttachmentTests.swift in Sources */, AA0000000000000000000020 /* HandlePurchaseTests.swift in Sources */, AA0000000000000000000040, AA0000000000000000000050 /* Phase1bTests.swift in Sources */, AA0000000000000000000061 /* GroupTests.swift in Sources */, AA0000000000000000000071 /* CalendarTests.swift in Sources */); runOnlyForDeploymentPostprocessing = 0; };
+		AA000000000000000000000A /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (AA00000000000000000000A1, AA0000000000000000000091 /* OrganizationRoomTests.swift in Sources */, AA0000000000000000000081 /* DeviceApprovalTests.swift in Sources */, AA0000000000000000000001 /* ComposerTests.swift in Sources */, AA0000000000000000000010 /* AttachmentTests.swift in Sources */, AA0000000000000000000020 /* HandlePurchaseTests.swift in Sources */, AA0000000000000000000040, AA0000000000000000000050 /* Phase1bTests.swift in Sources */, AA0000000000000000000061 /* GroupTests.swift in Sources */, AA0000000000000000000071 /* CalendarTests.swift in Sources */); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */

@@ -470,7 +470,7 @@ struct DesktopInboxView: View {
                             .textCase(.uppercase)
                             .kerning(0.66)
                             .foregroundStyle(Theme.muted)
-                        Text(conversation.name)
+                        ContactTitle(peer: conversation.peer, fallback: conversation.name, legacyName: conversation.peopleLegacyName)
                             .font(.geistMono(12.5))
                             .foregroundStyle(Theme.quiet)
                             .lineLimit(1)
@@ -586,7 +586,7 @@ struct DesktopInboxView: View {
                         Button { showPeer(conversation) } label: {
                             HStack(spacing: 10) {
                                 Avatar(peer: conversation.peer, size: 28, name: conversation.name)
-                                Text(conversation.name)
+                                ContactTitle(peer: conversation.peer, fallback: conversation.name, legacyName: conversation.peopleLegacyName)
                                     .font(.geistMono(14, .semibold))
                                     .foregroundStyle(Theme.ink)
                                     .lineLimit(1)
@@ -821,7 +821,7 @@ private struct DesktopConversationRow: View {
             Avatar(peer: conversation.peer, size: 38, name: conversation.name)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(conversation.name)
+                    ContactTitle(peer: conversation.peer, fallback: conversation.name, legacyName: conversation.peopleLegacyName)
                         .font(.geistMono(13, .semibold))
                         .foregroundStyle(Theme.ink)
                         .lineLimit(1)

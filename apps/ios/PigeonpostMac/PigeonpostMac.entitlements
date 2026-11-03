@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>com.apple.security.personal-information.addressbook</key>
+	<true/>
 	<!-- Sandboxed from the first build rather than retrofitted: what the app may reach is easier to
 	     keep narrow than to make narrow later, and the App Store requires it. -->
 	<key>com.apple.security.app-sandbox</key>

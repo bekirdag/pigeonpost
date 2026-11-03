@@ -15,6 +15,7 @@ struct PeerInfoSheet: View {
 
     @Environment(Account.self) private var account
     @Environment(Inbox.self) private var inbox
+    @Environment(PeopleStore.self) private var people: PeopleStore?
     @Environment(\.dismiss) private var dismiss
     /// One sheet at a time, for the reason `ConversationsView` gives.
     @State private var sheet: InfoSheet?
@@ -82,6 +83,7 @@ struct PeerInfoSheet: View {
                     }
                     if conversation.mine { row("Mailbox", "yours — on this account") }
                 }
+                LocalAliasSection(peer: conversation.peer)
                 // The decisions, first — this panel is opened to change them, not to read an
                 // address.
                 //
@@ -153,7 +155,7 @@ struct PeerInfoSheet: View {
                 }
             }
             .sheetSurface()
-            .navigationTitle(conversation.name)
+            .navigationTitle(people?.displayName(conversation.peer, legacyName: conversation.peopleLegacyName) ?? conversation.name)
             .inlineTitle()
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
             .sheet(item: $sheet) { which in

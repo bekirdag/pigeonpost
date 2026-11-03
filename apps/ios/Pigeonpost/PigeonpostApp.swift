@@ -12,6 +12,7 @@ struct PigeonpostApp: App {
     // Phase 1b: call history, filtered mail and profile pictures, per acting mailbox.
     @State private var callLog: CallLog
     @State private var filtered: FilteredMail
+    @State private var people: PeopleStore
     @State private var avatars: AvatarStore
     @State private var calendar: CalendarStore
     @State private var calendarLinks = CalendarLinkRouter()
@@ -33,6 +34,7 @@ struct PigeonpostApp: App {
         _callLog = State(initialValue: callLog)
         _filtered = State(initialValue: filtered)
         _avatars = State(initialValue: AvatarStore(account: account))
+        _people = State(initialValue: PeopleStore(account: account))
         #if DEBUG
         _calendar = State(initialValue: CalendarStore(account: account, client: CalendarFixtures.client(account: account), now: CalendarFixtures.now))
         #else
@@ -67,6 +69,7 @@ struct PigeonpostApp: App {
         WindowGroup {
             RootView()
                 .calendarLifecycle()
+                .peopleLifecycle()
                 .signedOutCalendarGuests()
                 .environment(session)
                 .environment(account)
@@ -77,6 +80,7 @@ struct PigeonpostApp: App {
                 .environment(callLog)
                 .environment(filtered)
                 .environment(avatars)
+                .environment(people)
                 .environment(calendar)
                 .environment(calendarLinks)
                 .environment(deviceApprovals)

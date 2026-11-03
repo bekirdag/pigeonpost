@@ -74,7 +74,12 @@ final class Phase1bTests: XCTestCase {
         waitForExpectations(timeout: 5)
 
         app.buttons["callMore:c4"].tap()
-        app.buttons["Block"].tap()
+        let blockAction = app.buttons["Block"]
+        XCTAssertTrue(blockAction.waitForExistence(timeout: 5))
+        XCTAssertTrue(blockAction.isHittable && blockAction.isEnabled)
+        // The iOS 26 menu's AX row extends beyond the short label. Tap within the label;
+        // the confirmation, report-default and cancellation checks below remain required.
+        blockAction.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.5)).tap()
         XCTAssertTrue(app.navigationBars.staticTexts["Block /k/eeee5555ffff…?"].waitForExistence(timeout: 5)
                       || app.buttons["blockConfirm"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.switches["blockReport"].value as? String, "0", "report is off by default from the log")

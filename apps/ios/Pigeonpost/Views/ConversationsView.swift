@@ -11,6 +11,7 @@ import SwiftUI
 struct ConversationsView: View {
     @Environment(Account.self) private var account
     @Environment(Inbox.self) private var inbox
+    @Environment(PeopleStore.self) private var people: PeopleStore?
     @Environment(PushService.self) private var push
     @Environment(GroupStore.self) private var groups
     @Environment(\.scenePhase) private var scenePhase
@@ -30,6 +31,7 @@ struct ConversationsView: View {
     @State private var subthread: String?
     /// A mailbox chosen from a sender's panel, switched to once that panel has gone.
     @State private var pendingMailbox: Mailbox?
+    @State private var newContact: String?
     @State private var pendingMeeting: (request: CallHost.ScheduledJoin, scope: UUID)?
     /// One sheet at a time, named.
     ///
@@ -42,6 +44,7 @@ struct ConversationsView: View {
     @State private var didStageFixtures = false
 
     private enum Sheet: Identifiable {
+        case freeName
         case identities, settings, new, scanner, newGroup, joinLink, calls, filtered, calendar, organizationRooms, meetingNotes
         case peer(Conversation)
         case join(GroupStore.JoinLink)
@@ -51,7 +54,7 @@ struct ConversationsView: View {
         init?(staged: String) {
             switch staged {
             case "identities": self = .identities
-            case "settings", "privacy", "blocked", "profile": self = .settings
+            case "settings", "privacy", "blocked", "profile", "name", "phone", "find-people": self = .settings
             case "calls": self = .calls
             case "filtered": self = .filtered
             case "new": self = .new
@@ -69,6 +72,7 @@ struct ConversationsView: View {
             switch self {
             case .identities: return "identities"
             case .settings: return "settings"
+            case .freeName: return "free-name"
             case .new: return "new"
             case .scanner: return "scanner"
             case .newGroup: return "new-group"
@@ -167,8 +171,13 @@ struct ConversationsView: View {
         .calendarNotices(canPresent: sheet == nil || sheet?.id == "calendar", open: { sheet = .calendar }, visit: visit)
         .calendarMeetingLinks(canPresent: sheet == nil) { sheet = .meetingLink($0) }
         .deviceApprovalLinks(canPresent: sheet == nil) { sheet = .deviceApproval($0) }
+        .onChange(of: people?.state.nameLoaded, initial: true) { _, loaded in
+            if loaded == true, people?.has("display_names") == true, people?.state.ownName == nil,
+               people?.state.promptSeen == false, Fixtures.sheet == nil, sheet == nil, calls.mode == .hidden { sheet = .freeName }
+        }
         .sheet(item: $sheet, onDismiss: finishMailboxVisit) { which in
             switch which {
+            case .freeName: NavigationStack { DisplayNamePage(onboarding: true).id(people?.scope) }.interactiveDismissDisabled()
             case .identities:
                 IdentityPickerSheet { mailbox in visit(mailbox) }
             case .settings: SettingsSheet()
@@ -198,7 +207,7 @@ struct ConversationsView: View {
                 }
             case .filtered:
                 if let filtered { FilteredSheet(filtered: filtered) }
-            case .new: NewConversationSheet()
+            case .new: NewConversationSheet(initialPeer: newContact)
             case .newGroup: NewGroupSheet { id in selection = id }
             case .organizationRooms:
                 if account.features.orgs && account.features.groups {
@@ -267,6 +276,12 @@ struct ConversationsView: View {
     }
 
     private func finishMailboxVisit() {
+        if let contact = people?.takeConversationRequest() {
+            newContact = contact
+            sheet = .new
+            return
+        }
+        newContact = nil
         if let meeting = pendingMeeting {
             pendingMeeting = nil
             guard account.me?.address == meeting.request.mailbox, calendar?.scopeId == meeting.scope,
@@ -513,7 +528,7 @@ struct ConversationRow: View {
             Avatar(peer: conversation.peer, size: 40, name: conversation.name)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(conversation.name)
+                    ContactTitle(peer: conversation.peer, fallback: conversation.name, legacyName: conversation.peopleLegacyName)
                         .font(.geistMono(14.5, .semibold))
                         .foregroundStyle(Theme.ink)
                         .lineLimit(1)

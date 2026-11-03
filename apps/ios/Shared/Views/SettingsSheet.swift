@@ -9,6 +9,7 @@ import SwiftUI
 struct SettingsSheet: View {
     @Environment(Account.self) private var account
     @Environment(Inbox.self) private var inbox
+    @Environment(PeopleStore.self) private var people: PeopleStore?
     @Environment(Session.self) private var session
     @Environment(CalendarLinkRouter.self) private var calendarLinks: CalendarLinkRouter?
     @Environment(DeviceApprovalRouter.self) private var deviceApprovals: DeviceApprovalRouter?
@@ -45,6 +46,9 @@ struct SettingsSheet: View {
         case help = "Help and about"
         // Phase 1b. Each is its own list, not rows inside this one.
         case profile = "Profile"
+        case name = "Your name"
+        case phone = "Phone numbers"
+        case findPeople = "Find people"
         case privacy = "Privacy & filtering"
         case blocked = "Blocked"
 
@@ -52,6 +56,9 @@ struct SettingsSheet: View {
         init?(staged: String?) {
             switch staged {
             case "profile": self = .profile
+            case "name": self = .name
+            case "phone": self = .phone
+            case "find-people": self = .findPeople
             case "privacy": self = .privacy
             case "blocked": self = .blocked
             default: return nil
@@ -77,6 +84,9 @@ struct SettingsSheet: View {
                     if account.features.avatars {
                         destination(.profile, icon: "person.crop.square", detail: "Your picture and who can see it")
                     }
+                    if people?.has("display_names") == true { destination(.name, icon: "person.text.rectangle", detail: "A free name for your inbox") }
+                    if people?.has("phone_numbers") == true { destination(.phone, icon: "phone", detail: "Verify a number and choose discovery") }
+                    if people?.has("contact_discovery") == true { destination(.findPeople, icon: "person.2.badge.plus", detail: "Find and invite people you know") }
                     #if os(iOS)
                     Button { sheet = .scan } label: { Label("Scan code", systemImage: "qrcode.viewfinder") }
                         .accessibilityIdentifier("scan-code")
@@ -116,6 +126,7 @@ struct SettingsSheet: View {
                     .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
             }
         }
+        .onChange(of: people?.state.conversationRequest) { _, peer in if peer != nil { dismiss() } }
         .onAppear { if path.isEmpty, let staged = Page(staged: Fixtures.sheet) { path = [staged] } }
         // Keep one store alive while moving between pages, including an unfinished purchase.
         .task {
@@ -146,6 +157,7 @@ struct SettingsSheet: View {
         .confirmationDialog("Sign out of Pigeonpost?", isPresented: $confirmSignOut, titleVisibility: .visible) {
             Button("Sign out", role: .destructive) {
                 dismiss()
+                people?.clearLocalAccount()
                 inbox.reset()
                 Task { await account.signOut() }
             }
@@ -171,6 +183,9 @@ struct SettingsSheet: View {
     @ViewBuilder private func pageList(_ page: Page) -> some View {
         switch page {
         case .profile: ProfilePage()
+        case .name: DisplayNamePage().id(people?.scope)
+        case .phone: PhoneNumbersPage().id(people?.scope)
+        case .findPeople: FindPeoplePage().id(people?.scope)
         case .privacy: PrivacyPage()
         case .blocked: BlockedPage()
         default:
@@ -181,7 +196,7 @@ struct SettingsSheet: View {
 
     @ViewBuilder private func pageContent(_ page: Page) -> some View {
         switch page {
-        case .profile, .privacy, .blocked:
+        case .profile, .privacy, .blocked, .name, .phone, .findPeople:
             EmptyView()
         case .account:
             Section("Your account") {
@@ -265,6 +280,7 @@ struct ContactSheet: View {
     let existing: Contact?
 
     @Environment(Inbox.self) private var inbox
+    @Environment(PeopleStore.self) private var people: PeopleStore?
     @Environment(\.dismiss) private var dismiss
 
     @State private var peer = ""

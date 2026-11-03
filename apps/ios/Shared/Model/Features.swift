@@ -11,6 +11,10 @@ import Observation
 @MainActor
 @Observable
 final class Features {
+    static let displayNames = "display_names"
+    static let phoneNumbers = "phone_numbers"
+    static let contactDiscovery = "contact_discovery"
+    static let smsInvites = "sms_invites"
     /// Phase 1b.
     static let messageFiltering = "message_filtering"
     static let callAdmission = "call_admission"
