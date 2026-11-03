@@ -362,7 +362,10 @@ fn plan_for(
         att.contact_sealed.as_ref().expect("checked"),
     );
     let hash = att.contact_hash.clone().unwrap_or_default();
+    // The handle or address stays in the payload's routing metadata only; everything a guest
+    // reads uses the display name, or neutral wording when there is none.
     let organizer_name = super::ics::organizer_name(tx, &ev)?;
+    let organizer_shown = super::ics::organizer_display(tx, &ev)?;
 
     if row.workflow == "verify" {
         let code = row
@@ -381,7 +384,7 @@ fn plan_for(
         let view = mail::View {
             lang: ev.locale.clone(),
             code: Some(code),
-            organizer: organizer_name.clone(),
+            organizer: organizer_shown.clone().unwrap_or_default(),
             ..mail::View::default()
         };
         let (subject, html, text) = mail::render(Kind::Verify, &view);
@@ -530,7 +533,7 @@ fn plan_for(
     let view = mail::View {
         lang: ev.locale.clone(),
         title,
-        organizer: organizer_name.clone(),
+        organizer: organizer_shown.clone().unwrap_or_default(),
         when,
         location: shown
             .as_ref()
@@ -591,7 +594,9 @@ fn plan_for(
             }),
             only: only_occ.as_ref(),
             overrides,
-            organizer_name: organizer_name.clone(),
+            organizer_name: organizer_shown
+                .clone()
+                .unwrap_or_else(|| "Pigeonpost".into()),
             inbox,
             busy_only: false,
             no_description: false,
@@ -621,7 +626,7 @@ fn plan_for(
         text,
         workflow,
         transaction_id: id.to_string(),
-        sender_name: mail::sender_name(&organizer_name),
+        sender_name: mail::sender_name(organizer_shown.as_deref(), kind),
         payload,
         attachments,
     })))

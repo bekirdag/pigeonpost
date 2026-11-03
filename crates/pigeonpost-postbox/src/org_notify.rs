@@ -108,6 +108,7 @@ pub(crate) fn render(
 
 /// The saas_be internal email request for one invitation (`pigeonpost-org-invite`).
 pub(crate) fn request_body(
+    sender_name: &str,
     delivery_id: &str,
     org_id: &str,
     invite_id: &str,
@@ -122,7 +123,7 @@ pub(crate) fn request_body(
         "transaction_id": delivery_id,
         "to": to,
         "from": from,
-        "sender_name": "Pigeonpost",
+        "sender_name": sender_name,
         "subject": subject,
         "html": html,
         "text": text,
@@ -228,7 +229,14 @@ pub(crate) async fn deliver_due(state: &AppState) {
                     d.inviter.clone()
                 };
                 let handle = d.handle.clone().unwrap_or_default();
+                // "<inviter> via Pigeonpost" from the inviter's org member name, header-safe;
+                // "Invitation via Pigeonpost" when the member has none.
+                let sender = crate::mail_layout::sender_display(
+                    Some(d.inviter.as_str()),
+                    "Invitation via Pigeonpost",
+                );
                 let body = request_body(
+                    &sender,
                     &d.id,
                     &d.org_id,
                     &d.invite_id,
@@ -379,6 +387,7 @@ mod tests {
     #[test]
     fn the_request_satisfies_saas_be_org_invite_schema() {
         let body = request_body(
+            "Jane via Pigeonpost",
             "dlv_1",
             "org_1",
             "inv_1",

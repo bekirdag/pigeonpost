@@ -156,6 +156,110 @@ pub(crate) fn document(
     )
 }
 
+// ---- who a message is from ----------------------------------------------------------------------
+
+/// Short handle segments that read as acronyms (the Phase 1d list in `site-inbox/names.js` and the
+/// native clients; edit them together).
+const ACRONYMS: [&str; 12] = [
+    "hr", "it", "qa", "ui", "ux", "pr", "ai", "ceo", "cto", "cfo", "ops", "dev",
+];
+
+/// The Phase 1d name for a handle: `/bekir/main` -> "Bekir", `/wodo/hr` -> "Wodo HR",
+/// `/acme/john-doe` -> "Acme John Doe". `None` for key addresses (`/k/…`) and for anything that is
+/// not a name-shaped handle (address-style handles, non-slash strings), so a raw key or address
+/// never reaches a message header or greeting.
+pub(crate) fn handle_name(handle: &str) -> Option<String> {
+    let handle = handle.trim();
+    if !handle.starts_with('/') || handle.starts_with("/k/") || handle.contains('@') {
+        return None;
+    }
+    let mut parts: Vec<&str> = handle.split('/').filter(|p| !p.is_empty()).collect();
+    if parts.first() == Some(&"github") {
+        return parts.get(1).map(|s| s.to_string());
+    }
+    if parts.len() > 1 && parts.last() == Some(&"main") {
+        parts.pop();
+    }
+    let word = |w: &str| {
+        let lower = w.to_lowercase();
+        if ACRONYMS.contains(&lower.as_str()) {
+            lower.to_uppercase()
+        } else {
+            let mut c = lower.chars();
+            c.next()
+                .map(|f| f.to_uppercase().collect::<String>() + c.as_str())
+                .unwrap_or_default()
+        }
+    };
+    let name = parts
+        .iter()
+        .flat_map(|p| p.split(['-', '_']))
+        .filter(|w| !w.is_empty())
+        .map(word)
+        .collect::<Vec<_>>()
+        .join(" ");
+    (!name.is_empty()).then_some(name)
+}
+
+/// Longest name shown before " via Pigeonpost", in characters.
+pub(crate) const SENDER_NAME_MAX: usize = 40;
+
+/// Invisible, reordering and structure-faking characters (as `profile_names.rs` refuses them).
+fn invisible(c: char) -> bool {
+    c.is_control()
+        || matches!(c,
+            '\u{00AD}' | '\u{034F}' | '\u{061C}' | '\u{115F}' | '\u{1160}' | '\u{17B4}' | '\u{17B5}'
+            | '\u{180B}'..='\u{180F}' | '\u{200B}'..='\u{200F}' | '\u{2028}'..='\u{202E}'
+            | '\u{2060}'..='\u{206F}' | '\u{2800}' | '\u{3164}' | '\u{FE00}'..='\u{FE0F}'
+            | '\u{FEFF}' | '\u{FFA0}' | '\u{FFF0}'..='\u{FFFB}' | '\u{E0000}'..='\u{E007F}')
+}
+
+/// A person's name made safe for a `From` display name and a greeting: no CR/LF or other
+/// controls, no invisible characters, none of `" \ < > @ , ; : ( ) [ ]` (which could close the
+/// display name, add an address or a second mailbox, or pose as one), whitespace collapsed,
+/// at most [`SENDER_NAME_MAX`] characters. `None` when nothing printable is left.
+pub(crate) fn header_safe_name(raw: &str) -> Option<String> {
+    let cleaned: String = raw
+        .chars()
+        .map(|c| {
+            if c.is_whitespace() {
+                ' '
+            } else if invisible(c)
+                || matches!(
+                    c,
+                    '"' | '\\' | '<' | '>' | '@' | ',' | ';' | ':' | '(' | ')' | '[' | ']'
+                )
+            {
+                '\u{0}'
+            } else {
+                c
+            }
+        })
+        .filter(|c| *c != '\u{0}')
+        .collect();
+    let name: String = cleaned
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(SENDER_NAME_MAX)
+        .collect::<String>()
+        .trim()
+        .to_string();
+    (!name.is_empty()).then_some(name)
+}
+
+/// The `From` display name: "<name> via Pigeonpost" for a known name, else `fallback`
+/// (e.g. "Invitation via Pigeonpost"). The name is cleaned with [`header_safe_name`] and sent
+/// as plain UTF-8: saas_be builds the header (`pigeonpostFromHeader`), quoting ASCII names and
+/// RFC 2047-encoding the others as unquoted encoded-words.
+pub(crate) fn sender_display(name: Option<&str>, fallback: &str) -> String {
+    match name.and_then(header_safe_name) {
+        Some(n) => format!("{n} via Pigeonpost"),
+        None => fallback.to_string(),
+    }
+}
+
 /// A mirror of saas_be's `PIGEONPOST_PAYLOAD_SCHEMAS` (sealunit/saas_be
 /// `src/modules/notifications/pigeonpost-novu-workflows.ts`): the Novu trigger payload is the
 /// request's `payload` merged with `tenant_id`, `subject`, `html` and `text`
@@ -292,5 +396,62 @@ mod tests {
         assert!(html.contains("prefers-color-scheme: dark"));
         // Only the two logos are images: no pixel.
         assert_eq!(html.matches("<img").count(), 2);
+    }
+}
+
+#[cfg(test)]
+mod sender_tests {
+    use super::*;
+
+    #[test]
+    fn test_handle_name() {
+        assert_eq!(handle_name("/bekir/main"), Some("Bekir".to_string()));
+        assert_eq!(handle_name("/wodo/hr"), Some("Wodo HR".to_string()));
+        assert_eq!(
+            handle_name("/acme/john-doe"),
+            Some("Acme John Doe".to_string())
+        );
+        assert_eq!(handle_name("/k/h30jr50e4km9x5j7ad1xtv28mr"), None);
+        assert_eq!(handle_name("/alex@example.com"), None);
+        assert_eq!(handle_name("bekir"), None);
+    }
+
+    #[test]
+    fn test_header_safe_name() {
+        let result = header_safe_name("Evil\r\nBcc: x@y.com <a@b>");
+        assert!(result.is_some());
+        let s = result.unwrap();
+        assert!(!s.contains('\r'));
+        assert!(!s.contains('\n'));
+        assert!(!s.contains('<'));
+        assert!(!s.contains('>'));
+        assert!(!s.contains('@'));
+        assert!(!s.contains(':'));
+        assert!(!s.contains('"'));
+
+        assert_eq!(header_safe_name("\u{202E}\u{200B}  "), None);
+
+        let long_name = "a".repeat(100);
+        let truncated = header_safe_name(&long_name).unwrap();
+        assert!(truncated.len() <= SENDER_NAME_MAX);
+    }
+
+    #[test]
+    fn test_sender_display() {
+        assert_eq!(
+            sender_display(Some("Bekir"), "Invitation via Pigeonpost"),
+            "Bekir via Pigeonpost"
+        );
+        assert_eq!(
+            sender_display(None, "Invitation via Pigeonpost"),
+            "Invitation via Pigeonpost"
+        );
+        assert_eq!(
+            sender_display(Some("\r\n<>"), "Invitation via Pigeonpost"),
+            "Invitation via Pigeonpost"
+        );
+
+        // Non-ASCII stays plain UTF-8 here; saas_be encodes it for the header.
+        assert_eq!(sender_display(Some("Çağrı"), "X"), "Çağrı via Pigeonpost");
     }
 }

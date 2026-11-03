@@ -881,6 +881,9 @@ async fn guests_preview_answer_verify_and_join_with_scoped_credentials() {
     let m = &sent[0];
     assert_eq!(m.to, "guest@example.com");
     assert_eq!(m.workflow, "pigeonpost-meeting-invite");
+    // The organizer is named the Phase 1d way, never by a raw address.
+    assert_eq!(m.sender_name, "Orge via Pigeonpost");
+    assert!(m.text.starts_with("Orge invited you"));
     let (_, ctype, ics) = &m.attachments[0];
     assert_eq!(ctype, "text/calendar; charset=utf-8; method=REQUEST");
     let ics = String::from_utf8(ics.clone()).unwrap();
@@ -1590,4 +1593,48 @@ async fn calendar_routes_are_off_without_the_flag() {
     assert_eq!(s, 200);
     let (s, v) = srv.call(Method::GET, "/v1/calendars", &org, None).await;
     assert_eq!((s, v["error"].as_str()), (404, Some("feature_disabled")));
+}
+
+#[tokio::test]
+async fn key_only_organizers_never_show_their_address_to_guests() {
+    let srv = serve().await;
+    let org = person(&srv, "keyonly").await;
+    srv.flag("calendar_email", &org.account).await;
+    // The same mailbox without its handle: only the key address is left.
+    let addr = org.address.clone();
+    srv.state
+        .store
+        .group_tx(move |tx| -> crate::groups::GResult<()> {
+            tx.execute(
+                "UPDATE identities SET handle = NULL WHERE address = ?1",
+                [&addr],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    create(
+        &srv,
+        &org,
+        meeting_body(json!([{"contact": "guest@example.com", "name": "Guest"}])),
+    )
+    .await;
+    super::worker::run_once(&srv.state, now_unix())
+        .await
+        .unwrap();
+    let sent = srv.state.calendar.notifier.sent();
+    let m = sent
+        .iter()
+        .find(|m| m.workflow == "pigeonpost-meeting-invite")
+        .unwrap();
+    assert_eq!(m.sender_name, "Invitation via Pigeonpost");
+    assert!(m.text.starts_with("You're invited"));
+    for body in [&m.html, &m.text, &m.subject] {
+        assert!(
+            !body.contains(&org.address),
+            "no raw key address in the message"
+        );
+    }
+    let ics = String::from_utf8(m.attachments[0].2.clone()).unwrap();
+    assert!(ics.contains("ORGANIZER;CN=\"Pigeonpost\":") && !ics.contains(&org.address));
 }
