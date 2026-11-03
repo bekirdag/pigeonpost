@@ -4,7 +4,9 @@ import android.content.Context
 import android.content.Intent
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.text.AnnotatedString
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
@@ -56,6 +58,17 @@ class MessageActionsUiTest {
     private fun scrollMessage(id: String) {
         ui.onNodeWithTag("conversation-history").performScrollToNode(hasTestTag("message:" + id))
     }
+    /** The full menu is a long-press on the bubble's footer, announced to TalkBack as "Message actions" (SDS §14C). */
+    private fun openActions(id: String) {
+        val meta = ui.onNode(hasTestTag("messageMeta:$id") and hasAnyAncestor(hasTestTag("conversation-history")))
+        meta.assert(SemanticsMatcher("long-press labelled Message actions") { it.config.getOrNull(SemanticsActions.OnLongClick)?.label == "Message actions" })
+        meta.performTouchInput { longClick() }
+    }
+    private val actionIcon = hasContentDescription("Message actions") or hasContentDescription("Copy message") or
+        hasContentDescription("Reply to message") or hasContentDescription("Edit message")
+    private fun assertNoActionInsideBubble(id: String) =
+        ui.onAllNodes(actionIcon and hasAnyAncestor(hasTestTag("bubble:$id")), useUnmergedTree = true).assertCountEquals(0)
+    private fun bounds(tag: String) = ui.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot
     // Phone chips identify the subject by ID; the existing tablet list uses its display title.
     private fun subject(id: String, title: String) = ui.onNode(hasTestTag("subject:$id") or hasTestTag("subject:$title"))
 
@@ -85,7 +98,7 @@ class MessageActionsUiTest {
                 ui.onAllNodes(hasText("Updated proposal") and hasAnyAncestor(hasTestTag("conversation-history"))).fetchSemanticsNodes().size == 1 }
             scrollMessage("actions_failed")
             ui.onNodeWithTag("message:actions_failed").assertExists()
-            ui.onNode(hasContentDescription("Message actions") and hasAnyAncestor(hasTestTag("message:actions_failed"))).performClick()
+            openActions("actions_failed")
             ui.waitUntil(10_000) { ui.onAllNodesWithText("Message info").fetchSemanticsNodes().isNotEmpty() }
             ui.onNodeWithText("Message info").performClick()
             ui.waitUntil(15_000) { ui.onAllNodesWithText("Versions").fetchSemanticsNodes().isNotEmpty() }
@@ -93,6 +106,29 @@ class MessageActionsUiTest {
             ui.onNodeWithText("Edit 1", substring = true).assertExists()
             ui.onNodeWithText("Please check the attached proposal.").assertExists()
             ui.onNode(hasText("Updated proposal") and hasAnyAncestor(isDialog())).assertExists()
+        }
+    }
+
+    @Test fun actionRowsSitOutsideTheBubbleInContractOrder() {
+        runCase {
+            open(); scrollMessage("actions_failed")
+            // Sent: edit, then copy, below the bubble.
+            for (button in listOf("edit:actions_failed", "copy:actions_failed"))
+                ui.onNode(hasTestTag(button) and hasAnyAncestor(hasTestTag("messageActions:actions_failed"))).assertIsDisplayed()
+            org.junit.Assert.assertTrue("edit precedes copy", bounds("edit:actions_failed").right <= bounds("copy:actions_failed").left)
+            org.junit.Assert.assertTrue("row sits below the bubble", bounds("bubble:actions_failed").bottom <= bounds("messageActions:actions_failed").top)
+            assertNoActionInsideBubble("actions_failed")
+            // Received: copy, then reply.
+            subject("actions_earlier", "Earlier discussion").performClick(); tag("reply:actions_parent")
+            for (button in listOf("copy:actions_parent", "reply:actions_parent"))
+                ui.onNode(hasTestTag(button) and hasAnyAncestor(hasTestTag("messageActions:actions_parent"))).assertIsDisplayed()
+            org.junit.Assert.assertTrue("copy precedes reply", bounds("copy:actions_parent").right <= bounds("reply:actions_parent").left)
+            org.junit.Assert.assertTrue("row sits below the bubble", bounds("bubble:actions_parent").bottom <= bounds("messageActions:actions_parent").top)
+            assertNoActionInsideBubble("actions_parent")
+            // The full list stays reachable by long-press.
+            openActions("actions_parent")
+            ui.waitUntil(10_000) { ui.onAllNodesWithText("Report message").fetchSemanticsNodes().isNotEmpty() }
+            for (item in listOf("Reply", "Copy message", "Message info", "Delete message", "Report message", "Block sender")) ui.onNode(hasText(item) and hasAnyAncestor(isPopup())).assertExists()
         }
     }
 

@@ -72,12 +72,12 @@ class PolicyUiTest {
             shown("Inbox")
             ui.onNodeWithText("Demo Builder").performClick()
             shown("The Android build is ready for review.")
-            ui.onNode(hasContentDescription("Message actions") and hasAnyAncestor(hasTestTag("message:m_1"))).performClick()
+            ui.onNode(hasTestTag("messageMeta:m_1") and hasAnyAncestor(hasTestTag("conversation-history"))).performTouchInput { longClick() }
             ui.onNodeWithText("Report message").performClick()
             shown("Report this message?")
             ui.onNodeWithText("Cancel").performClick()
             shown("The Android build is ready for review.")
-            ui.onNode(hasContentDescription("Message actions") and hasAnyAncestor(hasTestTag("message:m_1"))).performClick()
+            ui.onNode(hasTestTag("messageMeta:m_1") and hasAnyAncestor(hasTestTag("conversation-history"))).performTouchInput { longClick() }
             ui.onNodeWithText("Report message").performClick()
             ui.onNodeWithText("Report", substring = false).performClick()
             shown("The Android build is ready for review.")

@@ -250,7 +250,7 @@ fun MessageBubble(message: ThreadMessage, highlighted: Boolean, current: Boolean
         if (mine) Spacer(Modifier.width(36.dp))
         Column(Modifier.weight(1f, fill = false).widthIn(max = 620.dp)) {
         Column(Modifier.fillMaxWidth().clip(shape).background(fill)
-            .border(if (current) 2.dp else 1.dp, if (current) p.found else if (highlighted) p.found.copy(alpha = .6f) else stroke, shape)) {
+            .border(if (current) 2.dp else 1.dp, if (current) p.found else if (highlighted) p.found.copy(alpha = .6f) else stroke, shape).testTag("bubble:" + message.id)) {
             val decision = !mine && message.verb != null
             if (decision || message.display.unattended) {
                 Row(Modifier.fillMaxWidth().combinedClickable(onClick = {}, onLongClick = openMenu, onLongClickLabel = "Message actions")
@@ -277,8 +277,9 @@ fun MessageBubble(message: ThreadMessage, highlighted: Boolean, current: Boolean
                 message.attachments.forEach { file -> AttachmentTile(file, identity, model, mine, attachment) }
             }
             Seam(Modifier.fillMaxWidth().height(1.dp), divider)
+            // The full action list is a long-press (TalkBack: the "Message actions" action); no action icon sits inside the bubble (SDS §14C).
             Row(Modifier.fillMaxWidth().combinedClickable(onClick = {}, onLongClick = openMenu, onLongClickLabel = "Message actions")
-                .padding(start = 6.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                .testTag("messageMeta:" + message.id).heightIn(min = 36.dp).padding(start = 6.dp, end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Spacer(Modifier.weight(1f))
                 if ((message.editCount ?: 0) > 0 || (message.editedAt ?: 0) > 0) Text("edited", Modifier.padding(end = 6.dp), style = geist(11.sp), color = meta)
                 message.expiresAt?.let { at -> Icon(Icons.Outlined.Timer, "Disappears " + java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT).format(java.util.Date(at * 1000)),
@@ -293,11 +294,10 @@ fun MessageBubble(message: ThreadMessage, highlighted: Boolean, current: Boolean
                 Spacer(Modifier.width(5.dp))
                 MessageReceiptMark(message, state, meta)
                 Box {
-                    IconButton(openMenu, Modifier.size(36.dp)) { Icon(Icons.Outlined.MoreHoriz, "Message actions", Modifier.size(18.dp), tint = meta) }
                     DropdownMenu(menu, { menu = false }, containerColor = p.ground) {
                         if (replyable) DropdownMenuItem({ Text("Reply") }, { menu = false; store.beginReply(message.id) }, enabled = canChangeMode)
                         if (editable) DropdownMenuItem({ Text("Edit") }, { menu = false; store.beginEdit(message.id) }, enabled = canChangeMode)
-                        DropdownMenuItem({ Text("Copy text") }, { menu = false; clipboard.setText(AnnotatedString(message.display.text)) })
+                        DropdownMenuItem({ Text("Copy message") }, { menu = false; clipboard.setText(AnnotatedString(message.display.text)) })
                         if (state.features.any { it in Features.MESSAGE_ACTIONS } && state.messages.any { it.id == message.id })
                             DropdownMenuItem({ Text("Message info") }, { menu = false; store.showMessageInfo(message.id) })
                         DropdownMenuItem({ Text("Original message") }, { menu = false; original = true })
@@ -311,14 +311,15 @@ fun MessageBubble(message: ThreadMessage, highlighted: Boolean, current: Boolean
         }
         Row(Modifier.fillMaxWidth().testTag("messageActions:" + message.id), horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start,
             verticalAlignment = Alignment.CenterVertically) {
-            if (!mine && replyable) IconButton({ store.beginReply(message.id) }, enabled = canChangeMode, modifier = Modifier.size(36.dp).testTag("reply:" + message.id)) {
-                Icon(Icons.AutoMirrored.Outlined.Reply, "Reply to message", Modifier.size(18.dp), tint = p.secondary)
-            }
+            // Contract §6: sent → edit (while editable), copy; received → copy, reply.
             if (mine && editable) IconButton({ store.beginEdit(message.id) }, enabled = canChangeMode, modifier = Modifier.size(36.dp).testTag("edit:" + message.id)) {
                 Icon(Icons.Outlined.Edit, "Edit message", Modifier.size(18.dp), tint = p.secondary)
             }
-            IconButton({ clipboard.setText(AnnotatedString(message.display.text)); copied = true }, Modifier.size(36.dp)) {
+            IconButton({ clipboard.setText(AnnotatedString(message.display.text)); copied = true }, Modifier.size(36.dp).testTag("copy:" + message.id)) {
                 Icon(if (copied) Icons.Outlined.Check else Icons.Outlined.ContentCopy, "Copy message", Modifier.size(18.dp), tint = p.secondary)
+            }
+            if (!mine && replyable) IconButton({ store.beginReply(message.id) }, enabled = canChangeMode, modifier = Modifier.size(36.dp).testTag("reply:" + message.id)) {
+                Icon(Icons.AutoMirrored.Outlined.Reply, "Reply to message", Modifier.size(18.dp), tint = p.secondary)
             }
             if (message.status == Delivery.FAILED && state.unconfirmedSend != pendingId && store.canRetrySend(pendingId))
                 TextButton({ store.retrySend(pendingId) }) { Text("Retry", style = geist(12.sp)) }
