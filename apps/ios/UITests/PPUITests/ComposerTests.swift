@@ -353,6 +353,9 @@ private func focusComposer(_ app: XCUIApplication, _ field: XCUIElement, file: S
         if app.keyboards.firstMatch.waitForExistence(timeout: 2) { break }
     }
     XCTAssertTrue(app.keyboards.firstMatch.exists, "composer never accepted keyboard focus", file: file, line: line)
+    // The keyboard can be up a moment before the field owns it; keys sent then are lost.
+    let focused = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hasKeyboardFocus == true"), object: field)
+    XCTAssertEqual(XCTWaiter.wait(for: [focused], timeout: 3), .completed, "the composer owns the keyboard", file: file, line: line)
 }
 
 /// A form field in a sheet can miss the first tap while the sheet is still settling.
