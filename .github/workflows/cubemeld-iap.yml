@@ -40,6 +40,11 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Prepare the self-hosted worker (no-op on GitHub-hosted runners)
+        uses: ./.github/actions/self-hosted-prereqs
+        with:
+          apt-packages: ruby
+
       - name: Test the fail-closed App Store broker
         run: python3 .github/scripts/test_cubemeld_iap.py
 

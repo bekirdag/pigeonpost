@@ -223,7 +223,7 @@ log("portal at", ORIGIN, REAL ? `against postbox ${REAL}` : "with mock postbox")
 
 async function browser(label) {
   const dir = path.join(work, "chrome-" + label);
-  const proc = spawn(CHROME, ["--headless=new", "--remote-debugging-port=0", `--user-data-dir=${dir}`, "--no-first-run", "--no-default-browser-check", "--disable-gpu", "--window-size=1280,900", "about:blank"], { stdio: "ignore" });
+  const proc = spawn(CHROME, ["--headless=new", "--remote-debugging-port=0", `--user-data-dir=${dir}`, "--no-first-run", "--no-default-browser-check", "--disable-gpu", ...(process.platform === "linux" ? ["--no-sandbox"] : []), "--window-size=1280,900", "about:blank"], { stdio: "ignore" });
   children.push(proc);
   const port = await until(() => { const f = path.join(dir, "DevToolsActivePort"); return existsSync(f) && readFileSync(f, "utf8").split("\n")[0]; }, "chrome start " + label, 20000);
   const target = await until(async () => (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find((t) => t.type === "page"), "page target");

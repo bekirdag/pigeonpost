@@ -35,6 +35,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Prepare the self-hosted worker (no-op on GitHub-hosted runners)
+        uses: ./.github/actions/self-hosted-prereqs
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: crates/pigeonpost-groupcrypto
@@ -64,6 +66,8 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Prepare the self-hosted worker (no-op on GitHub-hosted runners)
+        uses: ./.github/actions/self-hosted-prereqs
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: groupcrypto-native-x86_64
@@ -103,7 +107,11 @@ jobs:
             arch: x86_64
           - runner: ubuntu-24.04-arm
             arch: aarch64
-    runs-on: ${{ startsWith(matrix.runner, 'ubuntu-') && !endsWith(matrix.runner, '-arm') && vars.PIGEONPOST_SELF_HOSTED_CI == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || matrix.runner }}
+    # Always hosted: flatpak-builder runs every build step in bubblewrap, which needs unprivileged
+    # user namespaces. Docker's default seccomp profile denies them inside the wodo-ci runner
+    # container ("bwrap: No permissions to create new namespace", checked 2026-11-03), and this job
+    # also installs the built .deb system-wide, which would persist in that container.
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 35
     defaults:
       run:
@@ -174,7 +182,9 @@ jobs:
   release:
     if: startsWith(github.ref, 'refs/tags/linux-desktop-')
     needs: build
-    runs-on: ${{ vars.PIGEONPOST_SELF_HOSTED_CI == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
+    # Always hosted: it attests build provenance, and verifiers can reject self-hosted attestations
+    # (the same rule ci.yml enforces for release.yml's attestation jobs).
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
       id-token: write

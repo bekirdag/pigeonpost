@@ -1,0 +1,57 @@
+name: Self-hosted runner prerequisites
+description: >-
+  On the wodo-ci worker only: size build parallelism from the container's cgroup limits and install
+  the Ubuntu packages a job expects from GitHub's hosted image. On GitHub-hosted runners this action
+  does nothing, so hosted jobs keep their exact image. See docs/ci-runners.md.
+inputs:
+  apt-packages:
+    description: Space-separated Ubuntu packages the job needs (preinstalled on the hosted image).
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Size parallelism and install missing packages
+      if: runner.environment == 'self-hosted'
+      shell: bash
+      env:
+        APT_PACKAGES: ${{ inputs.apt-packages }}
+      run: |
+        set -euo pipefail
+        # The worker is a container capped at a few CPUs and a few GiB, but nproc reports every host
+        # core (16 on wodomini). Derive the limits from cgroup v2 instead, as saas_be does for Jest.
+        cpus=$(nproc)
+        if read -r quota period < /sys/fs/cgroup/cpu.max 2>/dev/null && [ "$quota" != max ]; then
+          cpus=$(( (quota + period - 1) / period ))
+        fi
+        mem_gib=0
+        if read -r mem < /sys/fs/cgroup/memory.max 2>/dev/null && [ "$mem" != max ]; then
+          mem_gib=$(( mem / 1073741824 ))
+        fi
+        jobs=$cpus
+        # Allow roughly 3 GiB per parallel compiler/linker or Gradle worker.
+        if [ "$mem_gib" -gt 0 ] && [ $(( mem_gib / 3 )) -lt "$jobs" ]; then jobs=$(( mem_gib / 3 )); fi
+        [ "$jobs" -ge 1 ] || jobs=1
+        echo "Runner limits: ${cpus} CPU(s), ${mem_gib} GiB -> build jobs: ${jobs}"
+        {
+          echo "CARGO_BUILD_JOBS=$jobs"
+          echo "GRADLE_MAX_WORKERS=$jobs"
+          echo "CMAKE_BUILD_PARALLEL_LEVEL=$jobs"
+          echo "MAKEFLAGS=-j$jobs"
+        } >> "$GITHUB_ENV"
+
+        missing=()
+        for package in $APT_PACKAGES; do
+          dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -q 'install ok installed' \
+            || missing+=("$package")
+        done
+        if [ "${#missing[@]}" -eq 0 ]; then
+          echo "All requested packages are present."
+          exit 0
+        fi
+        # Installs land in this repository's runner container only (recreating the container removes
+        # them); never upgrade existing host or image packages.
+        echo "Installing: ${missing[*]}"
+        export DEBIAN_FRONTEND=noninteractive
+        sudo -E apt-get update -qq
+        sudo -E apt-get install -y -qq --no-install-recommends --no-upgrade "${missing[@]}"
