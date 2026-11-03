@@ -2,6 +2,7 @@
 modes, message info, unconfirmed-delivery review, read receipts and login binding."""
 import copy
 import json
+import os
 import sys
 import tempfile
 import threading
@@ -22,6 +23,23 @@ NOW = int(time.time())
 REF_A = "mref_" + "a" * 26
 REF_B = "mref_" + "b" * 26
 REF_C = "mref_" + "c" * 26
+
+
+def walk_children(widget):
+    child = widget.get_first_child()
+    while child:
+        yield child
+        child = child.get_next_sibling()
+
+
+def menu_labels(model):
+    return [model.get_item_attribute_value(i, "label").unpack() for i in range(model.get_n_items())]
+
+
+def menu_shortcuts(holder):
+    """(trigger, action) for every shortcut of the message's keyboard menu controller."""
+    keys = holder.menu_keys
+    return [(keys.get_item(i).get_trigger().to_string(), keys.get_item(i).get_action()) for i in range(keys.get_n_items())]
 
 
 class ActionsAPI(FakeAPI):
@@ -123,6 +141,12 @@ class MessageActionTests(unittest.TestCase):
     def holder(self, message_id):
         return next(w for w in walk(self.window.message_list) if getattr(w, "message", {}).get("message_id") == message_id)
 
+    def row_widget(self, holder):
+        return next(w for w in walk(holder) if w.has_css_class("pp-actions"))
+
+    def row(self, holder):
+        return [w.get_tooltip_text() for w in walk_children(self.row_widget(holder))]
+
     def buffer_text(self):
         buffer = self.window.composer.get_buffer()
         return buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), False)
@@ -138,6 +162,31 @@ class MessageActionTests(unittest.TestCase):
         actions = next(w for w in walk(sent) if w.has_css_class("pp-actions"))
         self.assertIsNot(actions.get_parent(), next(w for w in walk(sent) if w.has_css_class("pp-bubble")),
                          "the action row is below and outside the bubble")
+        # Exactly the §6 row, nothing more (the full list is the menu): received → copy, reply;
+        # sent → edit (while editable), copy.
+        self.assertEqual(self.row(received), ["Copy message", "Reply"])
+        self.assertEqual(self.row(sent), ["Edit message", "Copy message"])
+        self.assertEqual(self.row(old), ["Copy message"], "edit only while editable")
+        for holder in (received, sent, working, old):
+            self.assertFalse(any(isinstance(w, Gtk.MenuButton) for w in walk(holder)), "no More button in the row")
+        self.assertEqual(self.row_widget(received).get_halign(), Gtk.Align.START)
+        self.assertEqual(self.row_widget(sent).get_halign(), Gtk.Align.END)
+        # Time, "edited" and the ticks sit inside the bubble at its bottom right, after the body.
+        for holder in (received, sent, working):
+            bubble = next(w for w in walk(holder) if w.has_css_class("pp-bubble"))
+            inner = bubble.get_first_child()
+            children = list(walk_children(inner))
+            footer = children[-1]
+            self.assertTrue(footer.has_css_class("pp-footer"), "the footer is the bubble's last line")
+            self.assertEqual(footer.get_halign(), Gtk.Align.END)
+            body = next(i for i, w in enumerate(children) if isinstance(w, Gtk.Label) and w.has_css_class("pp-body"))
+            self.assertLess(body, len(children) - 1, "the footer comes after the body")
+            self.assertTrue(any(isinstance(w, Gtk.Label) and w.has_css_class("pp-meta") and w.get_text() for w in walk(footer)),
+                            "the time is in the footer")
+        sent_footer = list(walk_children(next(w for w in walk(sent) if w.has_css_class("pp-bubble")).get_first_child()))[-1]
+        line = list(walk_children(sent_footer))
+        self.assertTrue(hasattr(line[-1], "tick_state"), "ticks right of the time")
+        self.assertIn("edited", [w.get_text() for w in line if isinstance(w, Gtk.Label)])
         ticks = {w.tick_state: w.get_tooltip_text() for w in walk(self.window.message_list) if hasattr(w, "tick_state")}
         self.assertTrue(ticks["seen"].startswith("Seen "))
         self.assertEqual(ticks["working"], "Agent working on this")
@@ -149,6 +198,64 @@ class MessageActionTests(unittest.TestCase):
         model = body.get_extra_menu()
         labels = [model.get_item_attribute_value(i, "label").unpack() for i in range(model.get_n_items())]
         self.assertEqual(labels, ["Reply", "Copy message", "Message info", "Delete message", "Report spam", "Block sender"])
+
+    def test_full_menu_from_the_keyboard(self):
+        """Without a More button the full menu stays reachable: Shift+F10 or the Menu key on the
+        focused message (and right-click / long-press on the bubble)."""
+        for message_id, expected in (("in1", ["Reply", "Copy message", "Message info", "Delete message", "Report spam", "Block sender"]),
+                                     ("out1", ["Reply", "Copy message", "Edit message", "Message info", "Delete message"])):
+            holder = self.holder(message_id)
+            self.assertTrue(holder.get_focusable(), "the message itself takes keyboard focus")
+            controllers = holder.observe_controllers()
+            self.assertIn(holder.menu_keys, [controllers.get_item(i) for i in range(controllers.get_n_items())])
+            self.assertEqual(holder.menu_keys.get_scope(), Gtk.ShortcutScope.LOCAL)
+            shortcuts = dict(menu_shortcuts(holder))
+            self.assertEqual(set(shortcuts), {"<Shift>F10", "Menu"})
+            holder.grab_focus()
+            self.assertTrue(shortcuts["<Shift>F10"].activate(Gtk.ShortcutActionFlags(0), holder, None))
+            pump(timeout=0.05)
+            bubble = next(w for w in walk(holder) if w.has_css_class("pp-bubble"))
+            popover = bubble.context_popover
+            self.assertTrue(popover.get_visible())
+            self.assertEqual(menu_labels(popover.get_menu_model()), expected)
+            popover.popdown()
+            pump(timeout=0.05)
+            self.assertTrue(shortcuts["Menu"].activate(Gtk.ShortcutActionFlags(0), holder, None))
+            pump(timeout=0.05)
+            self.assertIsNot(bubble.context_popover, popover)
+            self.assertTrue(bubble.context_popover.get_visible())
+            bubble.context_popover.popdown()
+            pump(timeout=0.05)
+        controllers = bubble.observe_controllers()
+        click = [c for c in (controllers.get_item(i) for i in range(controllers.get_n_items()))
+                 if isinstance(c, Gtk.GestureClick) and c.get_button() == 3]
+        self.assertEqual(len(click), 1, "right-click still opens the menu")
+
+    def test_no_ticks_without_receipts_or_agent_status(self):
+        self.window.features = frozenset({"message_edit", "message_reply"})
+        self.window.render_messages()
+        pump(timeout=0.05)
+        self.assertFalse(any(hasattr(w, "tick_state") for w in walk(self.window.message_list)))
+        self.assertTrue(any(w.has_css_class("pp-footer") for w in walk(self.holder("out1"))), "the time stays")
+
+    def test_visual_evidence(self):
+        directory = os.environ.get("PIGEONPOST_SCREENSHOT_DIR")
+        if not directory:
+            self.skipTest("Screenshot capture requested only in GUI CI")
+        import subprocess
+        os.makedirs(directory, exist_ok=True)
+        for theme in ("light", "dark"):
+            Adw.StyleManager.get_default().set_color_scheme(Adw.ColorScheme.FORCE_LIGHT if theme == "light" else Adw.ColorScheme.FORCE_DARK)
+            pump(timeout=0.4)
+            subprocess.run(["import", "-window", "root", f"{directory}/message-actions-{theme}.png"], check=True)
+        holder = self.holder("in1")
+        holder.grab_focus()
+        holder.show_menu()
+        pump(timeout=0.4)
+        subprocess.run(["import", "-window", "root", f"{directory}/message-actions-menu-dark.png"], check=True)
+        next(w for w in walk(holder) if w.has_css_class("pp-bubble")).context_popover.popdown()
+        Adw.StyleManager.get_default().set_color_scheme(Adw.ColorScheme.DEFAULT)
+        pump(timeout=0.05)
 
     def test_quote_jumps_to_parent_and_highlights_it(self):
         quote = next(w for w in walk(self.holder("out1")) if isinstance(w, Gtk.Button) and w.has_css_class("flat")

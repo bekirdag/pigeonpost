@@ -10,14 +10,14 @@ import datetime
 
 import gi
 gi.require_version("Gtk", "4.0")
-from gi.repository import Gdk, Gio, GLib, Gtk
+from gi.repository import Gio, GLib, Gtk
 
 from .actions import (AGENT_STATUS, MESSAGE_EDIT, MESSAGE_REPLY, RECEIPTS, can_reply, editable, quote_text, ref_of,
                       seconds, tick_state)
 from .api import APIError
 from .binding import Retired
 from .delivery import Coordinator, DeliveryConflict, DeliveryLimit, load_drafts, save_draft, uncertain
-from .message_ui import action_row, highlight, mode_bar, quote_block, tick_widget
+from .message_ui import action_row, attach_menu, footer, highlight, mode_bar, quote_block, tick_widget
 from .model import contact_for, display_name, message_text, subjects, target_thread
 from .protected import MemoryProtectedStore, ProtectedUnavailable
 from .widgets import box, button, clear, label
@@ -157,13 +157,19 @@ class MessagesMixin:
 
     # ---- bubbles -------------------------------------------------------------------------------
 
-    def message_meta(self, message, outgoing, who, suffix):
-        """Sender, time, "edited", the disappearing timer and, on sent messages, the ticks."""
-        meta = box(6, horizontal=True)
-        name = label(who + "   " + suffix, "pp-meta")
+    def message_header(self, outgoing, who):
+        """The sender, above the text."""
+        name = label(who, "pp-meta")
         if not outgoing:
             name.add_css_class("pp-mono")
-        meta.append(name)
+        name.set_halign(Gtk.Align.START)
+        return name
+
+    def message_footer(self, message, outgoing, suffix):
+        """Inside the bubble at its bottom right, after the body and attachments: the time,
+        "edited", the disappearing timer and, on sent messages, the ticks right of the time."""
+        meta = footer()
+        meta.append(label(suffix, "pp-meta"))
         if message.get("edited_at") or message.get("edit_count"):
             edited = label("edited", "pp-edited")
             edited.set_tooltip_text("Edited — open Message info for the versions")
@@ -205,24 +211,14 @@ class MessagesMixin:
 
     def bubble_actions(self, message, outgoing):
         """Below and outside the bubble: received → copy, reply; sent → edit (while editable), copy.
-        A More menu keeps the full list (as the right-click menu does)."""
+        Nothing else: the full list is the right-click / long-press / Shift+F10 menu (attach_menu)."""
         buttons = []
         if outgoing and editable(message, self.features):
             buttons.append(("Edit message", "document-edit-symbolic", lambda m=message: self.start_edit(m)))
         buttons.append(("Copy message", "edit-copy-symbolic", lambda m=message: self.get_clipboard().set(message_text(m))))
         if not outgoing and can_reply(message, self.features):
             buttons.append(("Reply", "mail-reply-sender-symbolic", lambda m=message: self.start_reply(m)))
-        row = action_row(outgoing, buttons)
-        more = Gtk.MenuButton(icon_name="view-more-symbolic")
-        more.add_css_class("flat")
-        more.set_tooltip_text("More actions")
-        more.update_property([Gtk.AccessibleProperty.LABEL], ["More actions"])
-        more.set_menu_model(self.message_menu(message, outgoing))
-        if outgoing:
-            row.prepend(more)
-        else:
-            row.append(more)
-        return row
+        return action_row(outgoing, buttons)
 
     def message_menu(self, message, outgoing):
         menu = Gio.Menu()
@@ -239,28 +235,10 @@ class MessagesMixin:
             menu.append("Block sender", "message.block")
         return menu
 
-    def context_menu(self, bubble, menu):
-        """Right-click (or long-press) anywhere on the bubble opens the full menu. The popover is
-        made only when asked for and unparented when it closes, so re-rendering never leaves one
-        attached to a removed bubble."""
-        def show(x, y):
-            if not bubble.get_root():
-                return
-            popover = Gtk.PopoverMenu.new_from_model(menu)
-            popover.set_parent(bubble)
-            popover.set_has_arrow(False)
-            rect = Gdk.Rectangle()
-            rect.x, rect.y, rect.width, rect.height = int(x), int(y), 1, 1
-            popover.set_pointing_to(rect)
-            popover.connect("closed", lambda widget: GLib.idle_add(lambda: (widget.unparent() if widget.get_parent() else None, False)[1]))
-            popover.popup()
-            bubble.context_popover = popover
-        click = Gtk.GestureClick(button=3)
-        click.connect("pressed", lambda _g, _n, x, y: show(x, y))
-        bubble.add_controller(click)
-        press = Gtk.GestureLongPress()
-        press.connect("pressed", lambda _g, x, y: show(x, y))
-        bubble.add_controller(press)
+    def context_menu(self, holder, bubble, menu):
+        """The full menu: right-click or long-press on the bubble, Shift+F10 or the Menu key on the
+        focused message (see message_ui.attach_menu)."""
+        return attach_menu(holder, bubble, menu)
 
     def extra_actions(self, message, outgoing, handlers):
         if can_reply(message, self.features):
@@ -435,14 +413,15 @@ class MessagesMixin:
         inner = box(8, margin=14)
         inner.set_margin_start(16)
         inner.set_margin_end(16)
-        meta = box(6, horizontal=True)
-        meta.append(label("You   " + ("edit · " if attempt.is_edit else "") + "not confirmed", "pp-meta"))
-        meta.append(tick_widget("sending", "Not confirmed"))
-        inner.append(meta)
+        inner.append(self.message_header(True, "You"))
         text = label(attempt.body, "pp-body", wrap=True)
         text.set_selectable(True)
         text.set_use_markup(False)
         inner.append(text)
+        meta = footer()
+        meta.append(label(("edit · " if attempt.is_edit else "") + "not confirmed", "pp-meta"))
+        meta.append(tick_widget("sending", "Not confirmed"))
+        inner.append(meta)
         bubble.append(inner)
         holder.append(bubble)
         note = label("Pigeonpost didn’t confirm this message. Retry sends exactly this text, and never twice.", "pp-status", wrap=True)
