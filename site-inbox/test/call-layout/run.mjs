@@ -333,6 +333,25 @@ try {
   }
   await sleep(1500);
 
+  // Each side hears and sees the other: the other person's voice element and video tile are
+  // playing, not only attached. 2026-11-03: Chromium never started an <audio> attached to a stream
+  // that was still empty, so every voice was silent in Chrome, Edge and the Android/Windows apps
+  // while packets arrived and every other check here passed.
+  const PLAYING = `({ voices: [...document.querySelectorAll("#call-audio audio")].filter((a) => a.srcObject && a.srcObject.getAudioTracks().length).map((a) => a.currentTime),
+    videos: [...document.querySelectorAll(".call-tile-video")].filter((v) => v.srcObject && v.srcObject.getVideoTracks().length && v.videoWidth).map((v) => v.currentTime) })`;
+  for (const [who, p] of Object.entries(people)) {
+    try {
+      await until(async () => {
+        const a = await p.evaluate(PLAYING); await sleep(1500); const b = await p.evaluate(PLAYING);
+        const on = (later, earlier) => later.some((t, i) => t > (earlier[i] ?? 0) + 0.5);
+        return on(b.voices, a.voices) && on(b.videos, a.videos);
+      }, who + " to hear and see the other", 20000);
+      report.push({ name: who + ": voice and video playing", layout: SFU ? "sfu" : "mesh", count: "-", acts: "-", problems: [] });
+    } catch (_) {
+      failures.push(`${who}: the other person's voice or video is not playing ${JSON.stringify(await p.evaluate(PLAYING))}`);
+    }
+  }
+
   async function check(state, expect) {
     for (const v of VIEWPORTS) {
       for (const [who, p] of Object.entries(people)) {
