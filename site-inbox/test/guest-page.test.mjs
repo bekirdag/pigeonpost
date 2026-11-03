@@ -123,6 +123,29 @@ test("a preselected answer is highlighted and only sent after Confirm", async (t
   assert.deepEqual(a.calls.find((c) => c.path === "/v1/calendar/guest/ics").body, { token: TOKEN });
 });
 
+test("the invitation message's Add to calendar link downloads the file once, with the token in the body only", async (t) => {
+  const a = page(t, { hash: "#t=" + TOKEN + "&a=ics" });
+  assert.equal(a.w.location.href, "https://inbox.pigeonpost.dev/m/ABCDEFGHJK", "fragment removed first");
+  await until(() => a.calls.some((c) => c.download));
+  await tick(60);
+  const ics = a.calls.filter((c) => c.path === "/v1/calendar/guest/ics");
+  assert.equal(ics.length, 1);
+  assert.deepEqual(ics[0].body, { token: TOKEN });
+  assert.equal(ics[0].method, "POST");
+  assert.equal(a.calls.find((c) => c.download).download, "invitation.ics");
+  assert.equal(a.calls.filter((c) => c.path === "/v1/calendar/guest/rsvp").length, 0, "nothing is answered");
+  for (const c of a.calls) assert.ok(!String(c.url || "").includes(TOKEN), "never in a URL");
+});
+
+test("Add to calendar does nothing for a cancelled event", async (t) => {
+  const p = preview();
+  p.event.status = "cancelled";
+  const a = page(t, { hash: "#t=" + TOKEN + "&a=ics", previewBody: p });
+  await until(() => a.$("m-when"));
+  await tick(60);
+  assert.equal(a.calls.filter((c) => c.path === "/v1/calendar/guest/ics").length, 0);
+});
+
 test("confirming it's you signs the exact proof messages, then joins with the ticket", async (t) => {
   const a = page(t, { hash: "#t=" + TOKEN });
   await until(() => a.$("m-verify-start"));

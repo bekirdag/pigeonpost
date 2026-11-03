@@ -90,6 +90,7 @@ mod groups_tests;
 mod inbox_paging_tests;
 mod internal_api;
 mod limits;
+mod mail_layout;
 mod mcp;
 mod meetings;
 #[cfg(test)]

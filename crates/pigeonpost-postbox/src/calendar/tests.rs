@@ -888,6 +888,25 @@ async fn guests_preview_answer_verify_and_join_with_scoped_credentials() {
     assert!(ics.contains("BEGIN:VTIMEZONE") && ics.contains("RSVP=FALSE"));
     assert_eq!(ics.matches("ATTENDEE").count(), 1);
     assert!(!ics.contains("#t="), "no credentials in calendar files");
+    // saas_be accepts the payload, and the message offers "Add to calendar" through the guest
+    // page (the token stays in the fragment) beside the attached file.
+    let contract = |m: &super::mail::Outgoing| {
+        crate::mail_layout::contract::check(
+            m.workflow,
+            &crate::mail_layout::contract::merged(
+                &m.payload,
+                "pigeonpost",
+                &m.subject,
+                &m.html,
+                &m.text,
+            ),
+        )
+    };
+    assert_eq!(contract(m), Ok(()));
+    assert!(m.text.contains("Add to calendar: https://") && m.text.contains("&a=ics"));
+    assert!(m.html.contains(">Add to calendar</a>") && m.html.contains("&amp;a=ics\""));
+    assert!(m.html.contains(crate::mail_layout::LOGO_LIGHT));
+    assert!(!m.html.contains("pigeonpost.dev/logo.png"));
     let token = m
         .text
         .split("#t=")
@@ -972,6 +991,11 @@ async fn guests_preview_answer_verify_and_join_with_scoped_credentials() {
         .find(|m| m.workflow == "pigeonpost-meeting-verify")
         .unwrap();
     assert_eq!(verify.to, "guest@example.com");
+    // The guest code must satisfy saas_be's `pigeonpost-meeting-verify` schema, or no guest
+    // could ever verify once `calendar_email` is on.
+    assert_eq!(contract(verify), Ok(()));
+    assert_eq!(verify.payload["event_id"].as_str(), Some(id.as_str()));
+    assert_eq!(verify.payload["challenge_id"].as_str(), Some(cid.as_str()));
     let code6: String = verify
         .text
         .lines()
@@ -1073,6 +1097,9 @@ async fn guests_preview_answer_verify_and_join_with_scoped_credentials() {
         .unwrap();
     let ics = String::from_utf8(cancel.attachments[0].2.clone()).unwrap();
     assert!(ics.contains("METHOD:CANCEL") && ics.contains("STATUS:CANCELLED"));
+    assert_eq!(contract(&cancel), Ok(()));
+    // A cancellation offers nothing to add.
+    assert!(!cancel.html.contains("a=ics") && !cancel.text.contains("a=ics"));
 }
 
 #[tokio::test]
