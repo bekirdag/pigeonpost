@@ -239,8 +239,10 @@ GROUP_ERRORS = {
     "invite_required": "This group is invite only.", "already_member": "Already a member.",
     "group_deleted": "This group was deleted.", "revision_conflict": "Someone else changed this at the same time. Try again.",
     "not_member": "You are not a member of this group.", "rate_limited": "Too many requests. Wait a moment and try again.",
-    "quota_exceeded": "This group is out of storage.", "feature_disabled": "Groups are not enabled for this account.",
-    "not_found": "Not found.", "key_activation_pending": "Waiting for a member’s device to finish a security update. Try again in a moment.",
+    "quota_exceeded": "This group is out of storage.",
+    "not_found": "Not found.", "org_read_only": "Your organization is read-only until its payment is settled.",
+    "unknown_device": "This computer is no longer one of your devices in this group. Open the group again to rejoin it.",
+    "device_revoked": "This computer was removed from your devices. Sign in again to use groups here.", "key_activation_pending": "Waiting for a member’s device to finish a security update. Try again in a moment.",
     "network_error": "Could not reach Pigeonpost. Check your connection and try again.",
 }
 
@@ -258,9 +260,49 @@ HOSTED_NOTE = ("Hosted mailboxes’ keys are held by the postbox, so it could ad
 E2EE_NOTE = "Group messages are end-to-end encrypted. People you add see messages from when they join, not before."
 
 
-def explain(error):
+# Refusals of a message edit or reply (SDS §14C), in groups and 1:1 conversations alike. The postbox
+# answers `feature_disabled` both when groups are off (404) and when only editing or replying is off
+# (403), so the request decides which one is meant.
+EDIT_ERRORS = {
+    "feature_disabled": "Editing messages is not turned on for this account yet.",
+    "not_editable": "This message can no longer be edited. You can edit your own messages for 24 hours after "
+                    "sending them, unless they have disappeared.",
+    "edit_window_closed": "This message can no longer be edited. Messages can be edited for 24 hours after they "
+                          "were sent.",
+    "edit_has_attachments": "An edit changes the text only. Send files in a new message.",
+    "reference_not_found": "That message is no longer in this conversation.",
+}
+REPLY_ERRORS = {
+    "feature_disabled": "Replying to a message is not turned on for this account yet.",
+    "reference_not_found": "The message you replied to is no longer in this conversation.",
+}
+GROUPS_OFF = "Groups are not enabled for this account."
+
+
+def refusal(error, action=None):
+    """The accurate message for an edit or reply refusal, or None when `error` is not one."""
+    code = getattr(error, "code", None)
+    if getattr(error, "status", None) == 429 or code == "rate_limited":
+        return GROUP_ERRORS["rate_limited"]
+    table = EDIT_ERRORS if action == "edit" else REPLY_ERRORS if action == "reply" else {}
+    if code == "feature_disabled" and getattr(error, "status", None) == 404:
+        return GROUPS_OFF  # the whole feature is off, whatever the request was
+    return table.get(code)
+
+
+def explain(error, action=None):
+    """`action` is "edit" or "reply" when the refused request was one."""
     code = getattr(error, "code", None)
     body = getattr(error, "body", None) or {}
+    specific = refusal(error, action)
+    if specific:
+        return specific
+    if code == "feature_disabled":
+        if getattr(error, "status", None) == 404:
+            return GROUPS_OFF
+        # A 403 names the one thing that is off (editing, replying, live streams…): say that, not "groups".
+        text = str(body.get("message") or "").strip()
+        return (text[:1].upper() + text[1:].rstrip(".") + ".") if text else "This is not enabled for this account."
     return GROUP_ERRORS.get(code) or body.get("message") or str(error) or "Something went wrong."
 
 

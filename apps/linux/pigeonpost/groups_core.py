@@ -885,6 +885,12 @@ class GroupClient:
     def _outbox_get(self, cmid):
         return next((e for e in self._outbox() if e.get("cmid") == cmid), None)
 
+    def outbox_doc(self, cmid):
+        """The plaintext document of an unconfirmed send (its reply_to/edit_of say what it was), or {}."""
+        with self.lock:
+            entry = self._outbox_get(cmid)
+            return dict((entry or {}).get("doc") or {})
+
     def _outbox_put(self, entry):
         box = self._outbox()
         for i, e in enumerate(box):

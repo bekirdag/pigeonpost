@@ -16,7 +16,7 @@ from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 
 from . import groupcrypto
 from .api import MAX_FILE, APIError
-from .features import (DISAPPEARING, E2EE_NOTE, GROUPS, HOSTED_NOTE, LIMITS_NOTE, ROLE_LABEL, SAFETY_NOTE, TIMERS, WARNINGS, can_post,
+from .features import (DISAPPEARING, refusal, E2EE_NOTE, GROUPS, HOSTED_NOTE, LIMITS_NOTE, ROLE_LABEL, SAFETY_NOTE, TIMERS, WARNINGS, can_post,
                        commit_lines, explain, is_admin, notice_text, parse_invite_link, preview_of, spaced, timer_label)
 from .actions import MESSAGE_EDIT, MESSAGE_REPLY, RECEIPTS, group_tick, group_tick_names, quote_text
 from .groups_core import GroupClient, UncertainSend, quote
@@ -45,8 +45,16 @@ ACTION_ERRORS = {
 }
 
 
-def group_explain(error):
-    return ACTION_ERRORS.get(getattr(error, "code", None)) or explain(error)
+def group_action(doc):
+    """"edit" or "reply" for a message document that is one, else None."""
+    doc = doc or {}
+    return "edit" if doc.get("edit_of") is not None else "reply" if doc.get("reply_to") is not None else None
+
+
+def group_explain(error, action=None):
+    """The toast text for a refused group send. `action` ("edit"/"reply") picks the right meaning of
+    codes the postbox shares, so a refused edit never reads as "Groups are not enabled"."""
+    return refusal(error, action) or ACTION_ERRORS.get(getattr(error, "code", None)) or explain(error, action)
 
 
 add_css("""
@@ -1052,7 +1060,7 @@ class GroupsMixin:
                 self.restore_group_draft()
                 self.render_group_view()
             self.keep_group_composer_focus(gid)
-            self.toast("Not sent: " + group_explain(error))
+            self.toast("Not sent: " + group_explain(error, group_action(doc)))
         self._work(lambda: client.send(gid, doc), sent, failed)
         self.render_group_view()
 
@@ -1085,7 +1093,7 @@ class GroupsMixin:
                 return
             self.update_group_send()
             self.keep_group_composer_focus(gid)
-            self.toast("Not saved: " + group_explain(error))
+            self.toast("Not saved: " + group_explain(error, "edit"))
         self._work(lambda: client.edit(gid, mode["seq"], text), done, failed)
 
     def keep_group_composer_focus(self, gid):
@@ -1108,7 +1116,8 @@ class GroupsMixin:
         def failed(error):
             if gid == self.group_open:
                 self.render_group_view()
-            self.toast("Still not confirmed. Try again later." if isinstance(error, UncertainSend) else "Not sent: " + group_explain(error))
+            self.toast("Still not confirmed. Try again later." if isinstance(error, UncertainSend)
+                       else "Not sent: " + group_explain(error, group_action(client.outbox_doc(cmid))))
         self._work(lambda: client.retry_outbox(cmid), done, failed)
 
     def group_dismiss(self, gid, cmid):
