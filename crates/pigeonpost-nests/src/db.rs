@@ -151,7 +151,21 @@ pub enum ReserveError {
     Busy,
     /// The monthly input or output allowance cannot cover this request's reservation.
     Exhausted(&'static str),
+    /// The operator's host-wide monthly cap (all Nests together) cannot cover this reservation.
+    PlatformCap(&'static str),
     Store(String),
+}
+
+/// Operator spend caps from `nestd.toml` `[broker]`, applied on top of each Nest's own allowance.
+/// `None` means no cap. All are monthly token counts in the same period as the allowances.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Caps {
+    /// Ceiling on any one Nest's monthly allowance, whatever the postbox granted it.
+    pub nest_input: Option<i64>,
+    pub nest_output: Option<i64>,
+    /// Ceiling on all Nests together this month: used + reserved + platform (unknown-outcome) tokens.
+    pub global_input: Option<i64>,
+    pub global_output: Option<i64>,
 }
 
 /// How a reserved request ended.
@@ -477,6 +491,25 @@ impl Db {
         output_tokens: i64,
         model: &str,
     ) -> Result<Reservation, ReserveError> {
+        self.reserve_capped(
+            token_sha256,
+            input_tokens,
+            output_tokens,
+            model,
+            Caps::default(),
+        )
+    }
+
+    /// [`Db::reserve`] with the operator's per-Nest and host-wide monthly caps applied in the same
+    /// transaction, so concurrent Nests cannot together overdraw the global cap.
+    pub fn reserve_capped(
+        &self,
+        token_sha256: &str,
+        input_tokens: i64,
+        output_tokens: i64,
+        model: &str,
+        caps: Caps,
+    ) -> Result<Reservation, ReserveError> {
         let t = now();
         let period = period_of(t);
         let id = format!("res_{}", random_hex(12));
@@ -510,6 +543,8 @@ impl Db {
         let Some((nest_id, token_gen, state, nest_gen, in_limit, out_limit)) = found else {
             return Err(ReserveError::Unauthorized);
         };
+        let in_limit = caps.nest_input.map_or(in_limit, |c| in_limit.min(c));
+        let out_limit = caps.nest_output.map_or(out_limit, |c| out_limit.min(c));
         if token_gen != nest_gen {
             return Err(ReserveError::Unauthorized);
         }
@@ -544,6 +579,26 @@ impl Db {
         }
         if out_used + out_res + output_tokens > out_limit {
             return Err(ReserveError::Exhausted("output"));
+        }
+        if caps.global_input.is_some() || caps.global_output.is_some() {
+            let (all_in, all_out): (i64, i64) = tx
+                .query_row(
+                    "SELECT COALESCE(SUM(input_used + input_reserved + platform_input), 0),
+                        COALESCE(SUM(output_used + output_reserved + platform_output), 0)
+                     FROM usage WHERE period = ?1",
+                    params![period],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .map_err(se)?;
+            if caps.global_input.is_some_and(|c| all_in + input_tokens > c) {
+                return Err(ReserveError::PlatformCap("input"));
+            }
+            if caps
+                .global_output
+                .is_some_and(|c| all_out + output_tokens > c)
+            {
+                return Err(ReserveError::PlatformCap("output"));
+            }
         }
         tx.execute(
             "INSERT INTO reservations (id, nest_id, period, generation, input_reserved, output_reserved,
@@ -728,6 +783,34 @@ mod tests {
             db.reserve(&tok, 10, 50, "m"),
             Err(ReserveError::Exhausted("output"))
         );
+    }
+
+    #[test]
+    fn operator_caps_bound_each_nest_and_all_nests() {
+        let db = Db::open_memory().unwrap();
+        let tok_a = running_nest(&db, "nst_00000000000000a1", 10_000, 1_000);
+        let tok_b = running_nest(&db, "nst_00000000000000b2", 10_000, 1_000);
+        let caps = Caps {
+            nest_input: Some(500),
+            nest_output: Some(100),
+            global_input: Some(800),
+            global_output: Some(1_000),
+        };
+        // The per-Nest cap (500) wins over the Nest's own allowance (10,000).
+        assert_eq!(
+            db.reserve_capped(&tok_a, 600, 10, "m", caps),
+            Err(ReserveError::Exhausted("input"))
+        );
+        let r = db.reserve_capped(&tok_a, 400, 10, "m", caps).unwrap();
+        db.settle(&r.id, Outcome::Ok, 400, 10, None).unwrap();
+        // 400 used by A + 450 for B > 800 for all Nests together.
+        assert_eq!(
+            db.reserve_capped(&tok_b, 450, 10, "m", caps),
+            Err(ReserveError::PlatformCap("input"))
+        );
+        assert!(db.reserve_capped(&tok_b, 400, 10, "m", caps).is_ok());
+        // Without caps only the Nest's own allowance applies.
+        assert!(db.reserve(&tok_a, 50, 10, "m").is_ok());
     }
 
     #[test]

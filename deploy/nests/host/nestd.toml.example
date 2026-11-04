@@ -42,11 +42,21 @@ sandbox_uid = 10001
 
 [broker]
 bind = "10.67.255.1:8788"
-# Until the mswarm Pigeonpost tenant exists: the local mock. Then
-# https://api.mswarm.org/v1/chat/completions with the tenant's key.
-upstream_url = "http://127.0.0.1:8789/v1/chat/completions"
+# mswarm (OpenAI-compatible, key sent as x-api-key). The key is in /etc/nests/upstream.key (0600
+# root), handed to the broker by systemd LoadCredential. For a local test without mswarm, use the
+# mock: http://127.0.0.1:8789/v1/chat/completions and `systemctl start nestd-mock-upstream`.
+upstream_url = "https://api.mswarm.org/v1/chat/completions"
 upstream_key_file = "/run/credentials/nestd-broker.service/upstream.key"
-model = "deepseek/deepseek-v4.1-flash-1017"
+# The model id as mswarm's cloud catalog names it (GET /v1/swarm/cloud/agents, field model_id).
+model = "deepseek/deepseek-v4-flash"
 max_input_tokens = 16384
 max_output_tokens = 1024
 upstream_timeout_secs = 120
+# Operator spend caps, monthly tokens. Each Nest gets the lower of its own allowance and the
+# per-Nest cap; all Nests together stop at the global cap (reserved, used and unknown-outcome
+# tokens all count). Refusals are 429 `allowance_exhausted` / `platform_limit`. Omit one for no cap.
+# At DeepSeek V4 Flash list prices the global cap is a few US dollars a month.
+nest_monthly_input_cap = 1000000
+nest_monthly_output_cap = 100000
+global_monthly_input_cap = 5000000
+global_monthly_output_cap = 500000

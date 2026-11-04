@@ -1,6 +1,11 @@
 [Unit]
-Description=Nests ledger backup
+Description=Nests backup (ledger copy; borg archive to the backup target when configured)
+After=nests-pool.service wg-quick@wg-backup.service
+Wants=wg-quick@wg-backup.service
 
 [Service]
 Type=oneshot
 ExecStart=/usr/local/sbin/nests-backup
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=6h

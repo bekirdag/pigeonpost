@@ -1,0 +1,13 @@
+[Unit]
+Description=nftables table inet nestsbak (confines the Nests backup tunnel)
+Before=wg-quick@wg-nestsbak.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/nestsbak/nestsbak.nft
+ExecReload=/usr/sbin/nft -f /etc/nestsbak/nestsbak.nft
+ExecStop=/usr/sbin/nft delete table inet nestsbak
+
+[Install]
+WantedBy=multi-user.target

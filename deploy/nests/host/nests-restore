@@ -1,0 +1,47 @@
+#!/bin/bash
+# /usr/local/sbin/nests-restore — restore Nest volumes from a borg archive (nests-1).
+# Design and the full disaster-recovery order: docs/nests/backups.md.
+#
+#   nests-restore list                              # archives on the target
+#   nests-restore show <archive>                    # what one archive holds
+#   nests-restore volume <archive> <nest_id> [<as_id>]
+#       Recreate nests/nest-<as_id> (default: the same id) as a thin LV of the original size from
+#       the archived LUKS image, and its key file. Refuses to overwrite an existing LV or key.
+#       Open it with the control service (start) or by hand (cryptsetup open --key-file).
+#   nests-restore ledger <archive> <dest.db>         # the ledger copy from that archive
+set -euo pipefail
+umask 077
+set -a; . /etc/nests/backup.env; set +a
+VG=nests
+KEYS=/var/lib/nests/keys
+STAGE_PATH=var/backups/nests/stage
+
+case "${1:-}" in
+  list) borg list --short ;;
+  show) borg list --format '{size:>14} {path}{NL}' "::$2" ;;
+  ledger)
+    [ -e "$3" ] && { echo "refusing to overwrite $3" >&2; exit 1; }
+    borg extract --stdout "::$2" "$STAGE_PATH/nestd.db" > "$3"
+    sqlite3 "$3" 'PRAGMA integrity_check;'
+    ;;
+  volume)
+    archive=$2; id=$3; as=${4:-$3}
+    case "$id$as" in *[!a-z0-9_]*) echo "bad nest id" >&2; exit 2 ;; esac
+    if lvs "$VG/nest-$as" >/dev/null 2>&1 || [ -e "$KEYS/$as.key" ]; then
+      echo "nest-$as or its key already exists; delete it first or restore under another id" >&2
+      exit 1
+    fi
+    bytes=$(borg list --format '{size}' "::$archive" "dev/$VG/bak-$id")
+    [ -n "$bytes" ] && [ "$bytes" -gt 0 ] || { echo "no image of $id in $archive" >&2; exit 1; }
+    lvcreate -qq -V "${bytes}b" -T "$VG/pool" -n "nest-$as"
+    # conv=sparse skips all-zero blocks, so the restored LV stays thin.
+    borg extract --stdout "::$archive" "dev/$VG/bak-$id" \
+      | dd of="/dev/$VG/nest-$as" bs=4M conv=sparse status=none
+    install -d -m 0700 "$KEYS"
+    borg extract --stdout "::$archive" "$STAGE_PATH/keys/$id.key" > "$KEYS/$as.key"
+    chmod 0400 "$KEYS/$as.key"
+    cryptsetup isLuks "/dev/$VG/nest-$as"
+    echo "restored nest-$as ($bytes bytes) and its key from $archive"
+    ;;
+  *) sed -n '2,13p' "$0"; exit 2 ;;
+esac

@@ -1,7 +1,7 @@
 [Unit]
-Description=Nests sandbox egress policy (nftables tables inet nests, bridge nests_l2)
+Description=Nests egress policy (nftables tables inet nests, inet nests_backup, bridge nests_l2)
 After=network-pre.target
-Before=network-online.target nestd-control.service nestd-broker.service
+Before=network-online.target nestd-control.service nestd-broker.service wg-quick@wg-backup.service
 Wants=network-pre.target
 
 [Service]
