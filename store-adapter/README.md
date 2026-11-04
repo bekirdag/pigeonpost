@@ -20,8 +20,8 @@ against local fixtures for saas_be and the postbox; nothing calls a real provide
   - `cloud-<n>names-yearly-<usd|eur|try>` (n = 1–10);
   - `ent-<seats>-<monthly|yearly>-<usd|eur|try>` (5, 10, 15, 20, 30, 50, 100, 200, 500 seats);
   - `nest-<ai-starter|ai-plus|host-starter>-monthly-<usd|eur|try>`. Their prices are proposals
-    pending owner approval, and their editions have no ids until saas_be provisions them, so they
-    fail closed;
+    pending owner approval. They are provisioned in saas_be (product `PP_NEST`, 2026-11-05) and stay
+    unsold while the postbox `nests` flag is off;
   USD and EUR are fixed prices with one edition (2026) that stays on sale every year; TRY has one
   edition per calendar year;
 - for each code, the editions provisioned in saas_be: pricing year, amount, local plan id and iyzico
