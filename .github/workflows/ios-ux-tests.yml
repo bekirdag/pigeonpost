@@ -221,8 +221,9 @@ jobs:
           devices = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'devices', 'available', '--json']))['devices']
           phones = [d for runtime, entries in devices.items()
                     if runtime.startswith('com.apple.CoreSimulator.SimRuntime.iOS-18-')
-                    for d in entries if 'iPhone' in d['name']
-                    and (os.environ['SELF_HOSTED'] != 'true' or d['name'].startswith(os.environ['PP_CI_SIM_PREFIX']))]
+                    for d in entries
+                    if (os.environ['SELF_HOSTED'] == 'true' and d['name'].startswith(os.environ['PP_CI_SIM_PREFIX']))
+                    or (os.environ['SELF_HOSTED'] != 'true' and 'iPhone' in d['name'])]
           assert phones, 'No iOS 18 iPhone simulator available for StoreKit testing'
           device = phones[0]
           with open(os.environ['GITHUB_ENV'], 'a') as out:

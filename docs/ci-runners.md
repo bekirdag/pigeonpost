@@ -85,12 +85,13 @@ job back to its hosted image at once.
 | Routed job | Hosted fallback |
 |---|---|
 | `ci.yml` → `test (macos-14)` | `macos-14` |
-| `mac-desktop-tests.yml` → `native (macos-14)`, `groups-e2e` | `macos-14` |
+| `mac-desktop-tests.yml` → `groups-e2e` | `macos-14` |
 | `ios-ux-tests.yml` → `native-storekit` (iOS 18 StoreKit) | `macos-14` |
 | `group-crypto.yml` → macOS interop + XCFramework | `macos-15` |
 
 These macOS jobs stay hosted:
 - Anything that needs Xcode 26, the iOS/iPadOS 26 SDK or `macos-26`: the iOS UX shards, `native-ipad`, and mac-desktop's `macos-26` leg.
+- `mac-desktop-tests.yml` → `native (macos-14)`: `mac-inbox.sh` launches a test app with `open`. From the runner's LaunchDaemon (no GUI login session) that fails with `OSLaunchdErrorDomain Code=125`. Its model and call-host steps do pass there.
 - TestFlight, App Store, notarization and other signing jobs.
 - `release.yml`, including its macOS builds and the attestations.
 

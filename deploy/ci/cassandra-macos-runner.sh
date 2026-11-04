@@ -29,7 +29,10 @@ if [ ! -x ./config.sh ]; then
     "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-osx-arm64-${RUNNER_VERSION}.tar.gz"
   sudo -u "$CI_USER" -H tar xzf runner.tgz && rm runner.tgz
 fi
-sudo -u "$CI_USER" -H ./config.sh --unattended --replace --url https://github.com/bekirdag/pigeonpost \
+# config.sh records PATH and the environment into .path/.env for every job; start it from a clean
+# environment so the owner's PATH (entries under /Users/bekirdag) never reaches the CI user.
+sudo -u "$CI_USER" -H env -i HOME="/Users/$CI_USER" LANG=en_US.UTF-8 \
+  PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin ./config.sh --unattended --replace --url https://github.com/bekirdag/pigeonpost \
   --token "$REG_TOKEN" --name "$NAME" --labels cassandra-pigeonpost --work _work
 unset REG_TOKEN
 # The tarball ships the service wrapper in bin/; `svc.sh install` normally copies it next to
