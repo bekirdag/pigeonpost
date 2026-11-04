@@ -5890,21 +5890,13 @@ async fn require_account(state: &AppState, headers: &HeaderMap) -> Result<String
 /// namespace would be helping itself to paid handles. It replaces the public `PUT /v1/namespaces`
 /// and its `NAMESPACE_GRANT_TOKEN` shared secret, retired 2026-11-04 (audit 2026-11-03 P3-10):
 /// no client called it, and production never configured the secret.
+/// The caller (`internal_api::grant_namespace`) has already authorized the ops service.
 pub(crate) async fn grant_namespace(
-    State(state): State<AppState>,
+    state: AppState,
     headers: HeaderMap,
     client_ip: Option<Extension<ClientIp>>,
-    Json(req): Json<GrantNamespaceReq>,
+    req: GrantNamespaceReq,
 ) -> Response {
-    if let Err(resp) = internal_api::authorize_service(
-        &state,
-        &headers,
-        internal_api::Endpoint::Namespaces,
-        policy::Action::GrantNamespace,
-    ) {
-        return *resp;
-    }
-
     // Canonicalise through core, so a grant for "Bekir" and a mint of "/bekir/x" agree.
     let probe = format!("/{}/probe", req.namespace.trim_start_matches('/'));
     let Ok(destination) = Destination::for_handle(&probe) else {

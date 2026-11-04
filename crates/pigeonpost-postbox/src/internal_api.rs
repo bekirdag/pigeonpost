@@ -312,7 +312,7 @@ pub(crate) fn router(state: AppState) -> Router {
             post(crate::shell::broker_closed),
         )
         .route("/internal/v1/accounts/{id}/purge", post(purge_account))
-        .route("/internal/v1/namespaces", put(crate::grant_namespace))
+        .route("/internal/v1/namespaces", put(grant_namespace))
         .route(
             "/internal/v1/account-deletions/{request_id}/cancel-calendar",
             post(crate::calendar::erasure::cancel_for_deletion),
@@ -483,6 +483,25 @@ pub(crate) struct PurgeReq {
     confirm: bool,
     /// Why, for the audit record: a short operator label such as `test_cleanup`.
     reason: String,
+}
+
+/// `PUT /internal/v1/namespaces` — bind a namespace to an account by hand (ops token only; the
+/// public `PUT /v1/namespaces` it replaces was retired, audit 2026-11-03 P3-10).
+async fn grant_namespace(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    client_ip: Option<Extension<crate::ClientIp>>,
+    Json(req): Json<crate::GrantNamespaceReq>,
+) -> Response {
+    if let Err(resp) = authorize_service(
+        &state,
+        &headers,
+        Endpoint::Namespaces,
+        Action::GrantNamespace,
+    ) {
+        return *resp;
+    }
+    crate::grant_namespace(state, headers, client_ip, req).await
 }
 
 /// `POST /internal/v1/accounts/{id}/purge` — remove an **empty** account and its empty mailboxes
