@@ -406,6 +406,32 @@ test("anyone in the call can mute anyone else; reports log counts only", async (
   } finally { await t.stop(); }
 });
 
+test("media reports log flags and fixed words only", async () => {
+  const t = await start();
+  try {
+    const { bob, room, alicePid } = await connectedPair(t);
+    const logs = [];
+    const orig = console.log;
+    console.log = (line) => logs.push(line);
+    try {
+      // The answering iPhone of 2026-11-04: sending nothing, hearing nothing, only a picture arriving.
+      assert.equal((await t.req("tok-bob", "POST", `/calls/v1/rooms/${room}/report`, { session: bob.id, to: alicePid, state: "media", media: {
+        at: 6, host: "native", vis: "visible", mic: "ended", sent: "raw", cam: "later",
+        out_audio: false, out_video: false, in_audio: true, in_energy: false, in_video: true, voice: "paused", revived: ["voice", "mic", "secret"],
+      } })).status, 200);
+      // Anything outside the fixed words becomes "-"; no free text reaches the log.
+      assert.equal((await t.req("tok-bob", "POST", `/calls/v1/rooms/${room}/report`, { session: bob.id, to: alicePid, state: "media", media: {
+        at: 99999, host: "203.0.113.5", vis: "x", mic: "Built-in Microphone", sent: 1, cam: {}, out_audio: "yes", voice: "v=0 secret",
+      } })).status, 200);
+      assert.equal((await t.req("tok-bob", "POST", `/calls/v1/rooms/${room}/report`, { session: bob.id, to: alicePid, state: "media", media: "loud" })).status, 400);
+    } finally { console.log = orig; }
+    assert.equal(logs.length, 2);
+    assert.match(logs[0], /^calls: media room=\S{6} \S{6}>\S{6} at=6s host=native vis=visible mic=ended sent=raw cam=later out=a0v0 in=a1e0v1 voice=paused revived=voice,mic$/);
+    assert.match(logs[1], /at=999s host=- vis=- mic=- sent=- cam=- out=a0v0 in=a0e0v0 voice=- revived=-$/);
+    assert.ok(!logs.join("\n").match(/203\.0\.113|Built-in|secret/));
+  } finally { await t.stop(); }
+});
+
 // ---- large calls on the media server ----------------------------------------------------------------
 
 const SFU_SECRET = "s".repeat(40);

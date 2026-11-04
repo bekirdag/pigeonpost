@@ -994,10 +994,26 @@ export function createCallsService(cfgIn, deps = {}) {
     const to = room.participants.get(String(body.to || ""));
     if (!to) throw new HttpError(404, "no_participant");
     if (limited("report:" + from.id, 30, 60_000)) throw new HttpError(429, "rate_limited");
+    if (body.state === "media") return reportMedia(room, from, to, body.media);
     const counts = (o) => ["host", "srflx", "prflx", "relay"].map((k) => k[0] + Math.min(99, Number((o || {})[k]) || 0)).join("");
     const state = ["connected", "stalled", "failed"].includes(body.state) ? body.state : "other";
     const route = ["relay", "direct"].includes(body.route) ? body.route : "-";
     console.log(`calls: pair room=${room.id.slice(0, 6)} ${from.id.slice(0, 6)}>${to.id.slice(0, 6)} size=${room.participants.size} state=${state} route=${route} relay_only=${body.relay_only === true} restarts=${Math.min(9, Number(body.restarts) || 0)} local=${counts(body.local)} remote=${counts(body.remote)}`);
+    return { ok: true };
+  }
+
+  // Whether media flows on one end of a pair, a few seconds after it connected (calls.js
+  // mediaSummary): track states, yes/no flags and what the page restarted. Only values from fixed
+  // lists are logged; anything else becomes "-". Connected pairs that nobody could hear (iPhones
+  // answering from CallKit, 2026-10-30 and 2026-11-04) left no trace in this log before.
+  function reportMedia(room, from, to, m) {
+    if (!m || typeof m !== "object" || Array.isArray(m)) throw new HttpError(400, "bad_report");
+    const pick = (v, allowed) => (allowed.includes(v) ? v : "-");
+    const flag = (v) => (v === true ? "1" : "0");
+    const TRACK = ["live", "muted", "ended", "off", "none", "later"];
+    const revived = Array.isArray(m.revived) ? m.revived.filter((x) => ["noise", "mic", "camera", "voice"].includes(x)).slice(-6).join(",") : "";
+    const at = Math.min(999, Math.max(0, Math.round(Number(m.at) || 0)));
+    console.log(`calls: media room=${room.id.slice(0, 6)} ${from.id.slice(0, 6)}>${to.id.slice(0, 6)} at=${at}s host=${pick(m.host, ["native", "inbox", "join", "meeting"])} vis=${pick(m.vis, ["visible", "hidden"])} mic=${pick(m.mic, TRACK)} sent=${pick(m.sent, ["raw", "noise"])} cam=${pick(m.cam, TRACK)} out=a${flag(m.out_audio)}v${flag(m.out_video)} in=a${flag(m.in_audio)}e${flag(m.in_energy)}v${flag(m.in_video)} voice=${pick(m.voice, ["playing", "stalled", "paused", "none"])} revived=${revived || "-"}`);
     return { ok: true };
   }
 
