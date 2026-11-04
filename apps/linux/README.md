@@ -23,10 +23,10 @@ POSTBOX_BIN=../../target/debug/pigeonpost-postbox node tests/live_interop.mjs   
 python3 package-deb.py       # needs pigeonpost/native/x86_64 and aarch64 (CI builds both)
 flatpak remote-add --if-not-exists --user flathub https://dl.flathub.org/repo/flathub.flatpakrepo
 flatpak-builder --user --install-deps-from=flathub --force-clean --repo=repo build-dir dev.pigeonpost.Desktop.json
-flatpak build-bundle repo dist/Pigeonpost-Desktop-1.0.11-x86_64.flatpak dev.pigeonpost.Desktop --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo
+flatpak build-bundle repo dist/Pigeonpost-Desktop-1.0.12-x86_64.flatpak dev.pigeonpost.Desktop --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo
 ```
 
-Install the Debian package with `sudo apt install ./pigeonpost-desktop_1.0.11_all.deb` so native dependencies are resolved. Install the Flatpak with `flatpak install --user ./Pigeonpost-Desktop-1.0.11-x86_64.flatpak`, then launch Pigeonpost from the application menu or `flatpak run dev.pigeonpost.Desktop`. The first Flatpak installation also downloads the GNOME runtime. This is a direct release bundle, not a Flathub listing; install a newer bundle to update.
+Install the Debian package with `sudo apt install ./pigeonpost-desktop_1.0.12_all.deb` so native dependencies are resolved. Install the Flatpak with `flatpak install --user ./Pigeonpost-Desktop-1.0.12-x86_64.flatpak`, then launch Pigeonpost from the application menu or `flatpak run dev.pigeonpost.Desktop`. The first Flatpak installation also downloads the GNOME runtime. This is a direct release bundle, not a Flathub listing; install a newer bundle to update.
 
 ## Authentication and payments
 
@@ -82,6 +82,12 @@ Each feature appears only when `GET /v1/capabilities` lists its flag. Ledger: `d
 - **Approve a machine** (`orgs`): paste a pairing code or link; the confirmation screen shows the organization, agent, machine label, requested access, the network hint and its limits, the expiry and the confirmation number, with hold-to-approve and Deny. Approval needs a strong sign-in: the app verifies it in the system browser (Authorization Code + PKCE S256, loopback return on `127.0.0.1`), reads the request again and asks for another explicit approval; it never approves by itself.
 
 Live protocol tests against a disposable loopback postbox: `tests/e2e-messages/linux.sh /absolute/pigeonpost-postbox [calendar|orgs|groups]`.
+
+## 1.0.12: message actions and first messages
+
+- Message actions sit in one row outside the bubble (Copy and Reply; Edit and Copy on your own messages), with a keyboard menu, the time and ticks at the bottom right, and group ticks only where the group shares receipts.
+- A new conversation opens as soon as its first message is sent.
+- Refused edits and replies, and meeting notes that cannot be read, say exactly why.
 
 ## Round three (1.0.11): live streams and meeting notes
 

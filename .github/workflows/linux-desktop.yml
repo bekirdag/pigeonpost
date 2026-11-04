@@ -146,7 +146,7 @@ jobs:
           desktop-file-validate data/dev.pigeonpost.Desktop.desktop
           appstreamcli validate --no-net data/dev.pigeonpost.Desktop.metainfo.xml
           python3 package-deb.py
-          sudo apt-get install -y ./dist/pigeonpost-desktop_1.0.11_all.deb
+          sudo apt-get install -y ./dist/pigeonpost-desktop_1.0.12_all.deb
           pigeonpost-desktop --version
           python3 -I -c "import sys; sys.path.insert(0, '/usr/share/pigeonpost-desktop'); from pigeonpost import groupcrypto; gc = groupcrypto.load(); assert gc, groupcrypto.reason(); print('Installed package loads group encryption:', gc.enc_scheme())"
           python3 -I -c "import sys, json; sys.path.insert(0, '/usr/share/pigeonpost-desktop'); from pigeonpost import meeting_notes as mn; v = json.load(open('tests/notes_vector.json')); b = mn.open_brief(v['meeting'], mn.NotesKey.from_record(v['key'])); assert b['title'] == 'Release review'; print('Installed package opens meeting notes:', b['title'])"
@@ -154,7 +154,7 @@ jobs:
         run: |
           flatpak remote-add --if-not-exists --user flathub https://dl.flathub.org/repo/flathub.flatpakrepo
           flatpak-builder --user --install-deps-from=flathub --force-clean --repo=repo --install build-dir dev.pigeonpost.Desktop.json
-          flatpak build-bundle repo dist/Pigeonpost-Desktop-1.0.11-${{ matrix.arch }}.flatpak dev.pigeonpost.Desktop --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak build-bundle repo dist/Pigeonpost-Desktop-1.0.12-${{ matrix.arch }}.flatpak dev.pigeonpost.Desktop --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo
       - name: Native GTK and installed Flatpak desktop integration
         env:
           GSK_RENDERER: cairo
@@ -207,10 +207,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cat > notes.md <<'EOF'
-          Native GTK 4/libadwaita desktop for Linux, with browser sign-in, conversations and subjects, attachments, contact permissions, handles and account management. It includes end-to-end encrypted groups, call history, the Filtered list, privacy filters, blocking, profile pictures, disappearing messages, message edits, replies and receipts, a calendar with scheduled meetings, organization rooms and machine sign-in approval. 1.0.11 adds live stream banners in groups (watching and going live open the browser) and a Meeting notes reader that decrypts consented call summaries and transcripts on this computer.
+          Native GTK 4/libadwaita desktop for Linux, with browser sign-in, conversations and subjects, attachments, contact permissions, handles and account management. It includes end-to-end encrypted groups, call history, the Filtered list, privacy filters, blocking, profile pictures, disappearing messages, message edits, replies and receipts, a calendar with scheduled meetings, organization rooms and machine sign-in approval. It also has live stream banners in groups and a Meeting notes reader that decrypts consented call summaries on this computer. 1.0.12 moves message actions into one row outside the bubble with a keyboard menu, opens a new conversation as soon as its first message is sent, and explains exactly why an edit, a reply or a meeting note cannot be shown.
 
-          Install the Debian package with `sudo apt install ./pigeonpost-desktop_1.0.11_all.deb` on Debian 12+ or Ubuntu 24.04+ (x86_64 and ARM64). For other distributions, install the x86_64 Flatpak using `flatpak install --user ./Pigeonpost-Desktop-1.0.11-x86_64.flatpak` (use the aarch64 bundle on ARM64). The first Flatpak install downloads the GNOME runtime. A desktop Secret Service keyring is required. Direct bundles are updated by installing a newer release; this app is not yet listed on Flathub.
+          Install the Debian package with `sudo apt install ./pigeonpost-desktop_1.0.12_all.deb` on Debian 12+ or Ubuntu 24.04+ (x86_64 and ARM64). For other distributions, install the x86_64 Flatpak using `flatpak install --user ./Pigeonpost-Desktop-1.0.12-x86_64.flatpak` (use the aarch64 bundle on ARM64). The first Flatpak install downloads the GNOME runtime. A desktop Secret Service keyring is required. Direct bundles are updated by installing a newer release; this app is not yet listed on Flathub.
 
           Handle purchases open the Pigeonpost website. Messages remain in memory; drafts and unconfirmed sends are sealed on this computer with a key in the desktop keyring and are removed at sign-out. Closing the app stops notifications and reminders. See the build plan and validation ledger in apps/linux.
           EOF
-          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title 'Pigeonpost Desktop for Linux 1.0.11' --notes-file notes.md --latest=false dist/*.deb dist/*.flatpak dist/SHA256SUMS
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title 'Pigeonpost Desktop for Linux 1.0.12' --notes-file notes.md --latest=false dist/*.deb dist/*.flatpak dist/SHA256SUMS

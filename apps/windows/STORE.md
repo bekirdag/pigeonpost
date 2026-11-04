@@ -8,8 +8,8 @@ Product: **Pigeonpost Desktop** (the shorter Pigeonpost name was unavailable).
 - Publisher display name: `Wodo Teknoloji A.Ş.`
 - Package family: `WodoTeknolojiA.PigeonpostDesktop_80zy2mk5xaxza`
 - First submission: `1152921505702010327`
-- Current public package: `1.0.11.0` (Submission 10); update in certification: `1.0.12.0` (Submission 11,
-  `1152921505702264712`, submitted October 29, 2026), Windows 11, x64 and ARM64.
+- Previous packages: `1.0.11.0` (Submission 10), `1.0.12.0` (Submission 11, `1152921505702264712`).
+  Next: `1.0.13.0` (Submission 12, November 4, 2026), Windows 11, x64 and ARM64.
 
 ## Listing copy
 
@@ -70,6 +70,17 @@ different from Explorer's account, so the taskbar overlay API is denied there; t
 disabling the tray or native alerts. Overlay display in a normal same-user Explorer session was not
 visually tested. Evidence and package hashes are recorded in
 `docs/planning/2026-10-16-desktop-notifications-progress.md`.
+
+### Version 1.0.13 release notes
+
+Message actions sit outside the bubble with green seen ticks and the agent working indicator. Groups
+gain reply, edit and read receipts. A new conversation opens as soon as its first message is sent.
+Choose a free profile name, and give contacts private names only you see. On the free plan, Meeting
+notes opens the plans (summaries are included in every paid plan).
+
+1.0.13 adds no capabilities; the manifest changes only its version. The certification note is
+shortened to make room for the push sentence: incoming calls use Windows App SDK push notifications,
+so the app can ring while it is closed.
 
 ### Version 1.0.12 release notes
 
