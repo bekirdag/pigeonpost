@@ -86,12 +86,14 @@ job back to its hosted image at once.
 |---|---|
 | `ci.yml` → `test (macos-14)` | `macos-14` |
 | `mac-desktop-tests.yml` → `groups-e2e` | `macos-14` |
-| `ios-ux-tests.yml` → `native-storekit` (iOS 18 StoreKit) | `macos-14` |
 | `group-crypto.yml` → macOS interop + XCFramework | `macos-15` |
 
 These macOS jobs stay hosted:
 - Anything that needs Xcode 26, the iOS/iPadOS 26 SDK or `macos-26`: the iOS UX shards, `native-ipad`, and mac-desktop's `macos-26` leg.
 - `mac-desktop-tests.yml` → `native (macos-14)`: `mac-inbox.sh` launches a test app with `open`. From the runner's LaunchDaemon (no GUI login session) that fails with `OSLaunchdErrorDomain Code=125`. Its model and call-host steps do pass there.
+- `ios-ux-tests.yml` → `native-storekit`: requires the iOS 18 simulator runtime; Cassandra lacks it after a
+  2026-11-04 disk cleanup. Routing resumes after installing the runtime via
+  `xcodebuild -downloadPlatform iOS` (~8 GB). Creating simulators works from the LaunchDaemon.
 - TestFlight, App Store, notarization and other signing jobs.
 - `release.yml`, including its macOS builds and the attestations.
 
@@ -116,8 +118,7 @@ this runner. It:
 - points `DOTNET_INSTALL_DIR` at the tool cache;
 - removes simulators named `pp-ci-<runner>-*` left behind by earlier jobs.
 
-`native-storekit` creates its own uniquely named simulator and deletes it afterwards. DerivedData
-lives under `$RUNNER_TEMP`.
+A job that needs a simulator should create its own, with a name starting with `$PP_CI_SIM_PREFIX`, and delete it afterwards. Keep DerivedData under `$RUNNER_TEMP`.
 
 **Owner notes.**
 - One runner serializes the routed jobs.
