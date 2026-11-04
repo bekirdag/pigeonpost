@@ -69,7 +69,12 @@ struct SettingsSheet: View {
     @State private var confirmSignOut = false
     @State private var path: [Page] = []
     /// A page to open on, as `-sheet=` names it (`plans` for the Pigeonpost Cloud page).
-    var openOn: String? = nil
+    private let openOn: String?
+
+    /// Explicit, because the `@State private` properties make the memberwise initializer private.
+    init(openOn: String? = nil) {
+        self.openOn = openOn
+    }
 
     var body: some View {
         NavigationStack(path: $path) {
