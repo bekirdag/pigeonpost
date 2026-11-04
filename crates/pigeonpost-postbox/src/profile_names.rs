@@ -423,6 +423,9 @@ pub(crate) async fn lookup_names(
     let mailboxes: Vec<(String, Option<String>)> = match &principal {
         Principal::Identity(id) => vec![(id.address.clone(), id.handle.clone())],
         Principal::Account(account, _) => {
+            // Bounded for cost. The mailboxes only ever *grant* sight of a "people I know" name
+            // (the owner knows one of them), so a cap can hide a name, never reveal one (audit
+            // 2026-11-03 P3-4); blocks are judged elsewhere over every mailbox.
             match state.store.list_by_account(account.clone()).await {
                 Ok(list) => list
                     .into_iter()
