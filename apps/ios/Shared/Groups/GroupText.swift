@@ -217,8 +217,36 @@ enum GroupText {
         return out
     }
 
+    /// What a refused send, edit or reply means. The postbox answers `feature_disabled` both when
+    /// groups are off (404) and when editing or replying is off for the account (403), so the
+    /// request decides which one it was; saying "Groups are not enabled" for a refused edit is wrong.
+    static func explainSend(_ error: Error, editing: Bool, replying: Bool) -> String {
+        guard let api = error as? APIError else { return "Something went wrong." }
+        switch api.code {
+        case "feature_disabled" where api.status != 404:
+            if editing { return "Editing messages is not turned on for this account." }
+            if replying { return "Replying to messages is not turned on for this account." }
+            return "This is not turned on for this account."
+        case "not_editable", "edit_window_closed":
+            return "This message can no longer be edited. You can edit your own messages for 24 hours, until they expire or are deleted."
+        case "edit_has_attachments": return "An edit can change only the text, not the files."
+        case "reference_not_found", "not_found":
+            return replying ? "The message you replied to is no longer here." : (editing ? "That message is no longer here." : explain(error))
+        case "org_read_only": return "This organization is read-only until its payment is settled."
+        case "unknown_device", "device_revoked": return "This device is no longer in the group. Reopen the group to rejoin with this device."
+        case "rate_limited": return "You are sending too fast. Wait a moment and try again."
+        default:
+            if api.status == 429 { return "You are sending too fast. Wait a moment and try again." }
+            return explain(error)
+        }
+    }
+
     static func explain(_ error: Error) -> String {
         guard let api = error as? APIError else { return "Something went wrong." }
+        if api.code == "feature_disabled", api.status != 404, api.status != 0 {
+            // A 403 is a single feature switched off for the account, never groups as a whole.
+            return api.detail.map { $0.prefix(1).uppercased() + $0.dropFirst() + "." } ?? "This is not turned on for this account."
+        }
         switch api.code {
         case "not_admin": return "Only admins can do that."
         case "owner_only": return "Only the owner can do that."
@@ -239,6 +267,7 @@ enum GroupText {
         case "send_unavailable": return "This send cannot be retried on this device. Check whether it arrived before copying it into a new message."
         case "feature_disabled": return "Groups are not enabled for this account."
         case "not_found": return "Not found."
+        case "org_read_only": return "This organization is read-only until its payment is settled."
         default: return api.detail ?? "Something went wrong."
         }
     }
