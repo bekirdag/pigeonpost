@@ -85,6 +85,22 @@ public sealed class GroupApi(PostboxClient transport, string mailbox)
 
     public Task LeaveAsync(string id, CancellationToken ct) => postbox.SendAsync(HttpMethod.Post, G(id) + "/leave", new { }, mailbox, ct);
 
+    // DELETE /v1/groups/{id}/bans/{address} (admins): lifts a ban; the mailbox may be invited again.
+    public Task UnbanAsync(string id, string address, CancellationToken ct) =>
+        postbox.SendAsync(HttpMethod.Delete, G(id) + "/bans/" + Uri.EscapeDataString(address), null, mailbox, ct);
+
+    // POST /v1/groups/{id}/transfer (owner only): ownership goes to an active admin; the old owner stays an admin.
+    public Task TransferAsync(string id, string to, long expectedRevision, CancellationToken ct) =>
+        postbox.SendAsync(HttpMethod.Post, G(id) + "/transfer", new { to, expected_revision = expectedRevision }, mailbox, ct);
+
+    // POST /v1/groups/resolve: a link's or listing's group, before anything is joined.
+    public async Task<GroupPreview> ResolveAsync(string id, string? linkToken, CancellationToken ct)
+    {
+        var preview = await postbox.SendJsonAsync<GroupPreview>(HttpMethod.Post, "/v1/groups/resolve", new { group_id = id, link_token = linkToken }, mailbox, ct);
+        if (preview.Id != id) throw new PostboxException(502, "bad_response");
+        return preview;
+    }
+
     public Task<GroupLink> SetLinkAsync(string id, bool enabled, CancellationToken ct) =>
         postbox.SendJsonAsync<GroupLink>(HttpMethod.Post, G(id) + "/link", new { enabled }, mailbox, ct);
 

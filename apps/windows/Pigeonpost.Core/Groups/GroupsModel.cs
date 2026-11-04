@@ -840,12 +840,96 @@ public sealed class GroupsModel(PostboxClient postbox, Func<string, IGroupStateS
         return results;
     }
 
-    public Task SetMemberAsync(GroupMemberRow member, string? role, string? state) => Act(async (c, row) =>
+    // ---- administration (audit 2026-11-03 P1-14, P3-6) ----------------------------------------
+
+    public Task SetJoinPolicyAsync(bool isPublic) => Update(new Dictionary<string, object?> { ["join_policy"] = isPublic ? "public" : "private" });
+    public Task SetMembersCanChangeTimerAsync(bool allowed) => Update(new Dictionary<string, object?> { ["members_can_change_timer"] = allowed });
+
+    // Creates or resets (enabled) or turns off the public group's join link. The URL is shown
+    // once: the postbox keeps only a hash of the token.
+    public async Task<GroupLink?> SetLinkAsync(bool enabled)
     {
-        await c.Api.UpdateMemberAsync(row.Id, member.Address, member.Revision, role, state, scope.Token);
-        // A removal is committed by any member device; this one does it straight away.
-        if (state is "removed" or "banned") await c.ProcessPendingAsync(row.Id, scope.Token, noJitter: true);
+        GroupLink? made = null;
+        await Act(async (c, row) =>
+        {
+            made = await c.Api.SetLinkAsync(row.Id, enabled, scope.Token);
+            c.Api.RequireActive();
+            Status = enabled ? "New invite link made. Any earlier link stopped working." : "Invite link turned off.";
+        });
+        return made;
+    }
+
+    public Task TransferOwnershipAsync(GroupMemberRow to) => Act(async (c, row) =>
+    {
+        try { await c.Api.TransferAsync(row.Id, to.Address, row.Info.Revision ?? 0, scope.Token); }
+        catch (PostboxException ex) when (ex.Code == "revision_conflict")
+        {
+            var fresh = await c.Api.GetAsync(row.Id, scope.Token);
+            await c.Api.TransferAsync(row.Id, to.Address, fresh.Revision ?? 0, scope.Token);
+        }
+        c.Api.RequireActive();
+        Status = to.Name + " is now the owner. You stay an admin.";
     });
+
+    public Task MemberActionAsync(GroupMemberRow member, GroupMemberAction action)
+    {
+        if (action == GroupMemberAction.Unban)
+            return Act(async (c, row) =>
+            {
+                await c.Api.UnbanAsync(row.Id, member.Address, scope.Token);
+                c.Api.RequireActive();
+                Status = member.Name + " is no longer banned. They can be invited again.";
+            });
+        var (role, state) = GroupAdmin.Change(action);
+        return Act(async (c, row) =>
+        {
+            await c.Api.UpdateMemberAsync(row.Id, member.Address, member.Revision, role, state, scope.Token);
+            if (state is "removed" or "banned") await c.ProcessPendingAsync(row.Id, scope.Token, noJitter: true);
+            c.Api.RequireActive();
+            if (action == GroupMemberAction.StepDown) Status = "You are no longer an admin of this group.";
+            else if (action == GroupMemberAction.Ban) Status = member.Name + " was removed and banned.";
+        });
+    }
+
+    // A /g/ link's group, before anything is joined. Null with Error set when the link is refused.
+    public async Task<GroupPreview?> PreviewLinkAsync(string groupId, string? token)
+    {
+        if (ActiveClient is not { } c) return null;
+        var version = generation; var ct = scope.Token;
+        Error = null;
+        try
+        {
+            var preview = await c.Api.ResolveAsync(groupId, token, ct);
+            return IsCurrent(c, version) ? preview : null;
+        }
+        catch (OperationCanceledException) { return null; }
+        catch (PostboxException ex) { if (IsCurrent(c, version)) Error = GroupAdmin.ExplainLinkFailure(ex); return null; }
+        catch (Exception ex) { if (IsCurrent(c, version)) Error = Describe(ex); return null; }
+    }
+
+    // Joins with the link (or as a listed public group) and opens the group, which waits for a
+    // member's device to add this one to the encryption.
+    public async Task<bool> JoinByLinkAsync(string groupId, string? token)
+    {
+        if (ActiveClient is not { } c) return false;
+        var version = generation; var intent = selectionGeneration; var ct = scope.Token;
+        Error = null;
+        try
+        {
+            await c.Api.JoinAsync(groupId, token, ct);
+            c.Api.RequireActive();
+            if (!IsCurrent(c, version)) return false;
+            Status = "Joined. A member's device adds you to the encryption in a moment.";
+            await RefreshAsync();
+            if (!IsCurrent(c, version)) return false;
+            if (intent == selectionGeneration) await SelectAsync(Groups.FirstOrDefault(g => g.Id == groupId));
+            NotifyAll();
+            return IsCurrent(c, version);
+        }
+        catch (OperationCanceledException) { return false; }
+        catch (PostboxException ex) { if (IsCurrent(c, version)) Error = GroupAdmin.ExplainLinkFailure(ex); return false; }
+        catch (Exception ex) { if (IsCurrent(c, version)) Error = Describe(ex); return false; }
+    }
 
     private async Task Act(Func<GroupClient, GroupRow, Task> work)
     {

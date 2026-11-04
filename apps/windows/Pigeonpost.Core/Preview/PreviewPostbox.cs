@@ -146,6 +146,9 @@ public sealed class PreviewPostbox : HttpMessageHandler
         public string StreamPolicy { get; set; } = "admins";
         public string? RequestKey { get; set; }
         public string? RequestHash { get; set; }
+        // The current join link's token (the real postbox keeps only its hash) and the bans.
+        public string? LinkToken { get; set; }
+        public HashSet<string> Bans { get; } = new(StringComparer.Ordinal);
         public Dictionary<string, Member> Members { get; } = new(StringComparer.Ordinal);
         public HashSet<(string Mailbox, string Device)> Leaves { get; } = [];
         public List<JsonObject> Items { get; } = [];
@@ -220,6 +223,7 @@ public sealed class PreviewPostbox : HttpMessageHandler
             case ("POST", "/v1/groups/resolve"):
             {
                 if (!groups.TryGetValue((string?)body?["group_id"] ?? "", out var g) || g.DeletedAt is not null) throw new Fail(404, "not_found");
+                if (g.OrgId is null) break; // personal groups: links and listings, below
                 if (g.OrgId is { } orgId) MemberOrg(orgId, me);
                 var state = g.Members.TryGetValue(me.Address, out var m) ? m.State : null;
                 return new JsonObject { ["id"] = g.Id, ["name"] = g.Name, ["description"] = g.Description, ["member_count"] = g.Members.Values.Count(x => x.State is "active" or "keying"),
@@ -579,6 +583,8 @@ public sealed class PreviewPostbox : HttpMessageHandler
                     .OrderByDescending(g => g.Items.Count == 0 ? g.CreatedAt : (long)g.Items[^1]["created_at"]!).Select(g => GroupJson(g, me)).ToArray()),
             };
         }
+        if (method == "POST" && parts.Length == 3 && parts[2] == "resolve") return ResolvePersonal(me, body);
+        if (method == "POST" && parts.Length == 4 && parts[3] == "join") return JoinPersonal(parts[2], me, body);
         var grp = GroupOf(parts[2], me);
         var mine = grp.Members[me.Address];
         var action = parts.Length > 3 ? parts[3] : "";
@@ -648,12 +654,30 @@ public sealed class PreviewPostbox : HttpMessageHandler
             }
             case ("PATCH", "members"):
             {
+                // The postbox's rules (groups.rs patch_member): nobody changes the owner; only the
+                // owner demotes an admin, or an admin resigns; admins remove or ban, never the
+                // owner, and other admins only when the owner acts.
                 var target = Uri.UnescapeDataString(parts[4]);
-                if (!grp.Members.TryGetValue(target, out var row)) throw new Fail(404, "not_found");
+                if (!grp.Members.TryGetValue(target, out var row)) throw new Fail(404, "not_member");
+                if (row.Role == "owner") throw new Fail(403, "owner_only");
                 if ((long)body!["expected_revision"]! != row.Revision) throw new Fail(409, "revision_conflict", new JsonObject { ["current_revision"] = row.Revision });
-                if (!(mine.Role is "owner" or "admin")) throw new Fail(403, "not_admin");
-                if ((string?)body["role"] is { } role) { row.Role = role; Notice(grp, "role_changed", me.Address, new JsonObject { ["address"] = target, ["role"] = role }); }
-                if ((string?)body["state"] is { } state) { row.State = state; Notice(grp, state == "banned" ? "member_banned" : "member_removed", me.Address, new JsonObject { ["address"] = target }); }
+                if (mine.State is not ("active" or "keying")) throw new Fail(403, "not_member");
+                if ((string?)body["role"] is { } role)
+                {
+                    if (row.State is not ("active" or "keying")) throw new Fail(400, "not_member");
+                    var resign = target == me.Address && row.Role == "admin" && role == "member";
+                    var allowed = role == "admin" ? mine.Role is "owner" or "admin" : row.Role == "admin" ? mine.Role == "owner" || resign : mine.Role is "owner" or "admin";
+                    if (!allowed) throw new Fail(403, row.Role == "admin" ? "owner_only" : "not_admin");
+                    row.Role = role; Notice(grp, "role_changed", me.Address, new JsonObject { ["address"] = target, ["role"] = role });
+                }
+                if ((string?)body["state"] is { } state)
+                {
+                    if (!(mine.Role is "owner" or "admin") || row.Role == "admin" && mine.Role != "owner" || target == me.Address) throw new Fail(403, "not_admin");
+                    if (state == "banned") grp.Bans.Add(target);
+                    if (row.State == "invited" && state == "removed") grp.Members.Remove(target);
+                    else row.State = state;
+                    Notice(grp, state == "banned" ? "member_banned" : "member_removed", me.Address, new JsonObject { ["address"] = target });
+                }
                 row.Revision++;
                 grp.Revision++;
                 return new JsonObject { ["address"] = target };
@@ -674,7 +698,39 @@ public sealed class PreviewPostbox : HttpMessageHandler
                 if (mine.State != "active") throw new Fail(403, "not_member");
                 return new JsonObject { ["streams"] = new JsonArray(streams.Values.Where(x => x.GroupId == grp.Id && x.State == "live").Select(StreamJson).ToArray()) };
             case ("POST", "link"):
-                return new JsonObject { ["link_token"] = (bool)body!["enabled"]! ? "tok" + ++counter : null, ["url"] = null };
+            {
+                if (!(mine.Role is "owner" or "admin") || mine.State != "active") throw new Fail(403, "not_admin");
+                var enabled = (bool)body!["enabled"]!;
+                if (enabled && grp.JoinPolicy != "public") throw new Fail(400, "invite_required");
+                grp.LinkToken = enabled ? "lnk" + GroupApi.RandomId(29) : null;
+                grp.Revision++;
+                Notice(grp, "link_reset", me.Address, new JsonObject { ["enabled"] = enabled });
+                return new JsonObject
+                {
+                    ["link_token"] = grp.LinkToken, ["revision"] = grp.Revision,
+                    ["url"] = grp.LinkToken is { } t ? $"https://inbox.pigeonpost.dev/g/{grp.Id}#{t}" : null,
+                };
+            }
+            case ("POST", "transfer"):
+            {
+                if (mine.Role != "owner") throw new Fail(403, "owner_only");
+                if ((long)body!["expected_revision"]! != grp.Revision) throw new Fail(409, "revision_conflict", new JsonObject { ["current_revision"] = grp.Revision });
+                var to = Resolve((string)body["to"]!) ?? (string)body["to"]!;
+                if (!grp.Members.TryGetValue(to, out var heir) || heir.State != "active" || heir.Role != "admin") throw new Fail(400, "not_admin");
+                mine.Role = "admin"; mine.Revision++;
+                heir.Role = "owner"; heir.Revision++;
+                grp.Revision++;
+                Notice(grp, "ownership_transferred", me.Address, new JsonObject { ["from"] = me.Address, ["to"] = to });
+                return new JsonObject { ["owner"] = to, ["revision"] = grp.Revision };
+            }
+            case ("DELETE", "bans"):
+            {
+                if (!(mine.Role is "owner" or "admin") || mine.State != "active") throw new Fail(403, "not_admin");
+                var target = Uri.UnescapeDataString(parts[4]);
+                var lifted = grp.Bans.Remove(target);
+                if (grp.Members.TryGetValue(target, out var was) && was.State == "banned") grp.Members.Remove(target);
+                return new JsonObject { ["unbanned"] = lifted };
+            }
             case ("GET", "crypto"):
             {
                 var d = DeviceOf(me, deviceId);
@@ -1038,6 +1094,40 @@ public sealed class PreviewPostbox : HttpMessageHandler
         return [0x04, .. p.Q.X!, .. p.Q.Y!];
     }
 
+    // POST /v1/groups/resolve and /join for personal groups (groups.rs resolve, join_in).
+    private JsonObject ResolvePersonal(Box me, JsonNode? body)
+    {
+        var token = (string?)body?["link_token"];
+        if (!groups.TryGetValue((string?)body?["group_id"] ?? "", out var g) || g.DeletedAt is not null || g.Activation != "active" || g.OrgId is not null)
+            throw token is null ? new Fail(404, "not_found") : new Fail(404, "invalid_link");
+        var linkOk = g.JoinPolicy == "public" && g.LinkToken is not null && token == g.LinkToken;
+        var listed = g.JoinPolicy == "public" && g.Visibility == "listed";
+        var state = g.Members.TryGetValue(me.Address, out var m) ? m.State : null;
+        if (!(linkOk || listed || state is "active" or "keying" or "invited"))
+            throw token is null ? new Fail(404, "not_found") : new Fail(404, "invalid_link");
+        if (g.Bans.Contains(me.Address)) state = "banned";
+        var canJoin = (linkOk || listed) && state is not ("active" or "keying" or "banned");
+        return new JsonObject
+        {
+            ["id"] = g.Id, ["name"] = g.Name, ["description"] = g.Description, ["member_count"] = g.Members.Values.Count(x => x.State is "active" or "keying"),
+            ["join_policy"] = g.JoinPolicy, ["visibility"] = g.Visibility, ["my_state"] = state, ["can_join"] = canJoin,
+            ["needs"] = state == "invited" ? "invitation" : canJoin ? "join" : "nothing",
+        };
+    }
+    private JsonObject JoinPersonal(string id, Box me, JsonNode? body)
+    {
+        var token = (string?)body?["link_token"];
+        if (!groups.TryGetValue(id, out var g) || g.DeletedAt is not null || g.OrgId is not null) throw new Fail(404, "not_found");
+        if (g.Members.TryGetValue(me.Address, out var m) && m.State is "active" or "keying") throw new Fail(409, "already_member");
+        if (g.Activation != "active") throw new Fail(404, "not_found");
+        if (g.JoinPolicy != "public") throw new Fail(403, token is null ? "invite_required" : "invalid_link");
+        if (!(g.Visibility == "listed" || g.LinkToken is not null && token == g.LinkToken)) throw new Fail(403, "invalid_link");
+        if (g.Bans.Contains(me.Address)) throw new Fail(403, "banned");
+        g.Members[me.Address] = new Member { Address = me.Address, State = "keying", JoinedAt = Now, Revision = (m?.Revision ?? 0) + 1 };
+        Notice(g, "member_joined", me.Address, new JsonObject { ["address"] = me.Address });
+        return new JsonObject { ["group"] = GroupJson(g, me) };
+    }
+
     private JsonNode GroupJson(Grp g, Box me)
     {
         var m = g.Members[me.Address];
@@ -1056,7 +1146,7 @@ public sealed class PreviewPostbox : HttpMessageHandler
             ["ephemeral_secs"] = g.EphemeralSecs, ["revision"] = g.Revision, ["epoch"] = g.Epoch, ["activation_state"] = g.Activation,
             ["member_count"] = g.Members.Values.Count(x => x.State is "active" or "keying"), ["max_members"] = 1000, ["created_by"] = g.CreatedBy,
             ["created_at"] = g.CreatedAt, ["last_at"] = g.Items.Count == 0 ? g.CreatedAt : (long)g.Items[^1]["created_at"]!, ["last_seq"] = g.Seq,
-            ["deleted_at"] = g.DeletedAt, ["has_link"] = false, ["org_id"] = g.OrgId, ["stream_policy"] = g.StreamPolicy, ["my"] = my,
+            ["deleted_at"] = g.DeletedAt, ["has_link"] = g.LinkToken is not null, ["org_id"] = g.OrgId, ["stream_policy"] = g.StreamPolicy, ["my"] = my,
         };
     }
 

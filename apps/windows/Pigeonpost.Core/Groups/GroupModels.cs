@@ -61,7 +61,8 @@ public sealed record GroupInfo
     [JsonIgnore] public bool AnnouncementOnly => PostPolicy == "admins";
     [JsonIgnore] public bool CanPost => IsActive && Role != "restricted" && (!AnnouncementOnly || IsAdmin);
     [JsonIgnore] public bool CanInvite => IsActive && (IsAdmin || MembersCanInvite == true);
-    [JsonIgnore] public bool CanChangeTimer => IsActive && (IsAdmin || MembersCanChangeTimer == true);
+    // A restricted member cannot change the timer even when members may (groups.rs patch).
+    [JsonIgnore] public bool CanChangeTimer => IsActive && (IsAdmin || MembersCanChangeTimer == true && Role != "restricted");
     // Mirrors the postbox's rule (docs/streaming.md §1); the postbox still decides every start.
     [JsonIgnore] public bool CanGoLive => IsActive && Role != "restricted" && (StreamPolicy == "everyone" || IsAdmin);
     [JsonIgnore] public bool EveryoneCanGoLive => StreamPolicy == "everyone";

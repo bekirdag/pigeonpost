@@ -343,6 +343,7 @@ public sealed partial class MainWindow
         dialogOpen = true;
         GroupSettings? settings = null;
         string[] invite = [];
+        var joinInstead = false;
         try
         {
             var who = new TextBox { Header = "Who", PlaceholderText = "/jane, /acme/ops …  (one or more, separated by commas)", AcceptsReturn = false };
@@ -372,15 +373,19 @@ public sealed partial class MainWindow
             var dialog = new ContentDialog
             {
                 XamlRoot = Root.XamlRoot, RequestedTheme = Root.ActualTheme, Resources = DialogTheme(), Title = "New group",
-                Content = new ScrollViewer { Content = panel, MaxHeight = 600 }, PrimaryButtonText = "Create", CloseButtonText = "Cancel", IsPrimaryButtonEnabled = false,
+                Content = new ScrollViewer { Content = panel, MaxHeight = 600 }, PrimaryButtonText = "Create", SecondaryButtonText = "Join with a link…",
+                CloseButtonText = "Cancel", IsPrimaryButtonEnabled = false,
             };
             name.TextChanged += (_, _) => dialog.IsPrimaryButtonEnabled = name.Text.Trim().Length is >= 1 and <= 80;
-            if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+            var result = await dialog.ShowAsync();
+            if (result == ContentDialogResult.Secondary) { joinInstead = true; return; }
+            if (result != ContentDialogResult.Primary) return;
             invite = Addresses(who.Text);
             settings = new GroupSettings(name.Text.Trim(), string.IsNullOrWhiteSpace(description.Text) ? null : description.Text.Trim(),
                 (string)((ComboBoxItem)join.SelectedItem).Tag, (string)((ComboBoxItem)post.SelectedItem).Tag);
         }
         finally { dialogOpen = false; }
+        if (joinInstead) { await JoinByLinkAsync(); return; }
         if (settings is null) return;
         if (sideView != SideView.Groups) ShowSideView(SideView.Groups);
         AccountStatus.Text = "Creating the group and its keys…";
@@ -424,57 +429,29 @@ public sealed partial class MainWindow
             panel.Children.Add(security);
 
             panel.Children.Add(new TextBlock { Text = $"Members ({members.Count(m => m.State is "active" or "keying")})", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
-            foreach (var member in members)
-            {
-                var row = new Grid { ColumnSpacing = 10 };
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-                var face = new Border { Width = 32, Height = 32, CornerRadius = new CornerRadius(16), Tag = groupsModel.KeyOf(member.Address), Background = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(0x33, 0x80, 0x88, 0x99)) };
-                face.Child = new TextBlock { Text = member.Initials, FontSize = 11, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, IsHitTestVisible = false };
-                face.Loaded += Avatar_Loaded;
-                face.Unloaded += Avatar_Unloaded;
-                row.Children.Add(face);
-                var text = new StackPanel();
-                text.Children.Add(new TextBlock { Text = member.Name + (member.IsMe ? " (you)" : "") + (member.RoleLabel.Length > 0 ? " · " + member.RoleLabel : ""), FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
-                text.Children.Add(new TextBlock { Text = groupsModel.KeyOf(member.Address), FontSize = 11.5, Opacity = 0.75, IsTextSelectionEnabled = true });
-                var devices = new TextBlock { Text = member.DevicesLabel, FontSize = 11.5, FontFamily = (FontFamily)Application.Current.Resources["MonoFont"], IsTextSelectionEnabled = true, TextWrapping = TextWrapping.Wrap };
-                AutomationProperties.SetName(devices, $"{member.Name} devices: {member.DevicesLabel}");
-                text.Children.Add(devices);
-                Grid.SetColumn(text, 1);
-                row.Children.Add(text);
-                if (!member.IsMe)
-                {
-                    var more = new Button { Content = new FontIcon { Glyph = "", FontSize = 13 }, Style = (Style)Root.Resources["QuietIconButton"] };
-                    AutomationProperties.SetName(more, "Actions for " + member.Name);
-                    var menu = new MenuFlyout();
-                    if (info.IsAdmin && member.Role != "owner")
-                    {
-                        if (member.Role != "admin") Item(menu, "Make admin", () => groupsModel.SetMemberAsync(member, "admin", null));
-                        else if (info.IsOwner) Item(menu, "Remove admin role", () => groupsModel.SetMemberAsync(member, "member", null));
-                        if (member.Role != "restricted") Item(menu, "Stop from posting", () => groupsModel.SetMemberAsync(member, "restricted", null));
-                        else Item(menu, "Allow posting", () => groupsModel.SetMemberAsync(member, "member", null));
-                        if (member.Role != "admin" || info.IsOwner) Item(menu, member.State == "invited" ? "Revoke invitation" : "Remove from group", () => groupsModel.SetMemberAsync(member, null, "removed"));
-                    }
-                    var key = groupsModel.KeyOf(member.Address);
-                    Item(menu, "Message", () => OpenPeerAsync(key));
-                    Item(menu, "Block…", async () =>
-                    {
-                        dialogOpen = false;
-                        await ConfirmBlockAsync(key, member.Name, report: false);
-                        groupsModel.SetContacts(ViewModel.Contacts);
-                        await groupsModel.SelectAsync(groupsModel.Selected);
-                    });
-                    more.Flyout = menu;
-                    Grid.SetColumn(more, 2);
-                    row.Children.Add(more);
-                }
-                panel.Children.Add(row);
-            }
+            foreach (var member in members.Where(m => m.State != "banned")) panel.Children.Add(MemberRow(member));
             panel.Children.Add(new TextBlock { Text = "Blocking a member hides their messages on your devices. It doesn't remove them from the group or hide the group from them.", TextWrapping = TextWrapping.Wrap, FontSize = 12, Opacity = 0.8 });
+            var banned = members.Where(m => m.State == "banned").ToArray();
+            if (banned.Length > 0)
+            {
+                panel.Children.Add(new TextBlock { Text = $"Banned ({banned.Length})", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+                panel.Children.Add(new TextBlock { Text = "Banned people cannot join again, even with a link, until an admin unbans them.", TextWrapping = TextWrapping.Wrap, FontSize = 12, Opacity = 0.8 });
+                foreach (var member in banned) panel.Children.Add(MemberRow(member));
+            }
 
             var actions = new StackPanel { Spacing = 8 };
             if (info.CanInvite) actions.Children.Add(Action("Add people…", async () => { dialogOpen = false; await InviteToGroupAsync(); }));
+            if (GroupAdmin.ManagesLink(info))
+            {
+                actions.Children.Add(new TextBlock { Text = info.HasLink == true ? "Anyone with the current invite link can join. Resetting makes the old link stop working."
+                    : "Create a link anyone can use to join this public group.", TextWrapping = TextWrapping.Wrap, FontSize = 12, Opacity = 0.8 });
+                actions.Children.Add(Action(info.HasLink == true ? "Reset invite link" : "Create invite link", async () =>
+                {
+                    dialogOpen = false;
+                    if (await groupsModel.SetLinkAsync(true) is { Url: { Length: > 0 } url }) await ShowGroupLinkAsync(url);
+                }));
+                if (info.HasLink == true) actions.Children.Add(Action("Turn off invite link", async () => { await groupsModel.SetLinkAsync(false); }));
+            }
             if (info.CanChangeTimer) actions.Children.Add(Action("Disappearing messages: " + Timers.Label(info.EphemeralSecs), async () =>
             {
                 dialogOpen = false;
@@ -483,13 +460,30 @@ public sealed partial class MainWindow
             }));
             if (info.IsAdmin)
             {
+                actions.Children.Add(Action(info.JoinPolicy == "public" ? "Make the group invite only" : "Let anyone with the link join", async () =>
+                {
+                    dialogOpen = false;
+                    if (info.JoinPolicy != "public") { await groupsModel.SetJoinPolicyAsync(true); return; }
+                    if (await ConfirmAsync("Make the group invite only?", info.HasLink == true
+                            ? "Only invited people can join. The current invite link stops working at once."
+                            : "Only invited people can join.", "Make invite only")) await groupsModel.SetJoinPolicyAsync(false);
+                }));
                 actions.Children.Add(Action(info.AnnouncementOnly ? "Let everyone post" : "Only admins can post", () => groupsModel.SetPostPolicyAsync(!info.AnnouncementOnly)));
                 actions.Children.Add(Action(info.MembersCanInvite == true ? "Only admins can add people" : "Let members add people", () => groupsModel.SetMembersCanInviteAsync(info.MembersCanInvite != true)));
+                actions.Children.Add(Action(info.MembersCanChangeTimer == true ? "Only admins can change the timer" : "Let members change the timer",
+                    () => groupsModel.SetMembersCanChangeTimerAsync(info.MembersCanChangeTimer != true)));
                 actions.Children.Add(Action("Edit name and description…", async () => { dialogOpen = false; await RenameGroupAsync(info); }));
                 if (groupsModel.CanChooseWhoGoesLive)
                     actions.Children.Add(Action(info.EveryoneCanGoLive ? "Only admins can go live" : "Let everyone go live", () => groupsModel.SetStreamPolicyAsync(!info.EveryoneCanGoLive)));
             }
-            if (!info.IsOwner || info.MemberCount <= 1) actions.Children.Add(Action("Leave group", async () =>
+            if (info.IsOwner)
+            {
+                var candidates = GroupAdmin.TransferCandidates(info, members);
+                if (candidates.Count > 0) actions.Children.Add(Action("Transfer ownership…", async () => { dialogOpen = false; await TransferGroupAsync(candidates); }));
+                else if (!GroupAdmin.MayLeave(info))
+                    actions.Children.Add(new TextBlock { Text = "To leave, first make another member an admin and transfer ownership to them.", TextWrapping = TextWrapping.Wrap, FontSize = 12, Opacity = 0.8 });
+            }
+            if (GroupAdmin.MayLeave(info)) actions.Children.Add(Action("Leave group", async () =>
             {
                 dialogOpen = false;
                 if (await ConfirmAsync($"Leave {info.DisplayName}?", "You stop receiving its messages. Messages already on this device stay.", "Leave")) await groupsModel.LeaveAsync();
@@ -506,6 +500,54 @@ public sealed partial class MainWindow
                 XamlRoot = Root.XamlRoot, RequestedTheme = Root.ActualTheme, Resources = DialogTheme(), Title = info.DisplayName,
                 Content = new ScrollViewer { Content = panel, MaxHeight = 620 }, CloseButtonText = "Close",
             };
+            FrameworkElement MemberRow(GroupMemberRow member)
+            {
+                var row = new Grid { ColumnSpacing = 10 };
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                var face = new Border { Width = 32, Height = 32, CornerRadius = new CornerRadius(16), Tag = groupsModel.KeyOf(member.Address), Background = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(0x33, 0x80, 0x88, 0x99)) };
+                face.Child = new TextBlock { Text = member.Initials, FontSize = 11, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, IsHitTestVisible = false };
+                face.Loaded += Avatar_Loaded;
+                face.Unloaded += Avatar_Unloaded;
+                row.Children.Add(face);
+                var text = new StackPanel();
+                var badge = member.State == "banned" ? "Banned" : member.RoleLabel;
+                text.Children.Add(new TextBlock { Text = member.Name + (member.IsMe ? " (you)" : "") + (badge.Length > 0 ? " · " + badge : ""), FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
+                text.Children.Add(new TextBlock { Text = groupsModel.KeyOf(member.Address), FontSize = 11.5, Opacity = 0.75, IsTextSelectionEnabled = true });
+                if (member.State != "banned")
+                {
+                    var devices = new TextBlock { Text = member.DevicesLabel, FontSize = 11.5, FontFamily = (FontFamily)Application.Current.Resources["MonoFont"], IsTextSelectionEnabled = true, TextWrapping = TextWrapping.Wrap };
+                    AutomationProperties.SetName(devices, $"{member.Name} devices: {member.DevicesLabel}");
+                    text.Children.Add(devices);
+                }
+                Grid.SetColumn(text, 1);
+                row.Children.Add(text);
+                var menu = new MenuFlyout();
+                foreach (var action in GroupAdmin.ActionsFor(info, member))
+                    Item(menu, GroupAdmin.Label(action), () => MemberActionAsync(member, action));
+                if (!member.IsMe)
+                {
+                    var key = groupsModel.KeyOf(member.Address);
+                    Item(menu, "Message", () => OpenPeerAsync(key));
+                    Item(menu, "Block…", async () =>
+                    {
+                        dialogOpen = false;
+                        await ConfirmBlockAsync(key, member.Name, report: false);
+                        groupsModel.SetContacts(ViewModel.Contacts);
+                        await groupsModel.SelectAsync(groupsModel.Selected);
+                    });
+                }
+                if (menu.Items.Count > 0)
+                {
+                    var more = new Button { Content = new FontIcon { Glyph = "\uE712", FontSize = 13 }, Style = (Style)Root.Resources["QuietIconButton"] };
+                    AutomationProperties.SetName(more, "Actions for " + member.Name + (member.IsMe ? " (you)" : ""));
+                    more.Flyout = menu;
+                    Grid.SetColumn(more, 2);
+                    row.Children.Add(more);
+                }
+                return row;
+            }
             Button Action(string label, Func<Task> run)
             {
                 var button = new Button { Content = label, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Left };
@@ -522,6 +564,129 @@ public sealed partial class MainWindow
             dialogOpen = false;
             if (pending is not null) await pending();
             UpdateGroupPage();
+        }
+        finally { dialogOpen = false; }
+    }
+
+    private async Task MemberActionAsync(GroupMemberRow member, GroupMemberAction action)
+    {
+        dialogOpen = false;
+        if (action == GroupMemberAction.Ban && !await ConfirmAsync($"Remove and ban {member.Name}?",
+                $"{member.Name} loses access at once and cannot join again, even with a link, until an admin unbans them. Messages they already saw stay on their devices.", "Ban"))
+            return;
+        if (action == GroupMemberAction.Remove && !await ConfirmAsync($"Remove {member.Name} from the group?",
+                $"{member.Name} loses access at once. Messages they already saw stay on their devices.", "Remove"))
+            return;
+        if (action == GroupMemberAction.StepDown && !await ConfirmAsync("Step down as admin?",
+                "You stay in the group as a member. Only an admin can make you an admin again.", "Step down"))
+            return;
+        await groupsModel.MemberActionAsync(member, action);
+        UpdateGroupPage();
+    }
+
+    // The new invite link, shown once: the postbox keeps only its hash.
+    private async Task ShowGroupLinkAsync(string url)
+    {
+        if (dialogOpen) return;
+        dialogOpen = true;
+        try
+        {
+            var box = new TextBox { Text = url, IsReadOnly = true, FontFamily = (FontFamily)Application.Current.Resources["MonoFont"], TextWrapping = TextWrapping.Wrap };
+            AutomationProperties.SetName(box, "Invite link");
+            var panel = new StackPanel { Spacing = 10, MinWidth = 380, MaxWidth = 520 };
+            panel.Children.Add(box);
+            panel.Children.Add(new TextBlock { Text = "Shown once. Anyone with this link can join while it is on. Reset it to stop the old link working.", TextWrapping = TextWrapping.Wrap, FontSize = 12, Opacity = 0.8 });
+            var dialog = new ContentDialog
+            {
+                XamlRoot = Root.XamlRoot, RequestedTheme = Root.ActualTheme, Resources = DialogTheme(), Title = "Invite link",
+                Content = panel, PrimaryButtonText = "Copy link", CloseButtonText = "Done",
+            };
+            if (await dialog.ShowAsync() == ContentDialogResult.Primary) CopyText(url);
+        }
+        finally { dialogOpen = false; }
+    }
+
+    private async Task TransferGroupAsync(IReadOnlyList<GroupMemberRow> candidates)
+    {
+        if (dialogOpen || groupsModel.Info is not { } info) return;
+        dialogOpen = true;
+        GroupMemberRow? chosen = null;
+        try
+        {
+            var pick = new ComboBox { Header = "New owner", MinWidth = 300 };
+            foreach (var candidate in candidates) pick.Items.Add(new ComboBoxItem { Content = candidate.Name + " · " + groupsModel.KeyOf(candidate.Address), Tag = candidate });
+            pick.SelectedIndex = 0;
+            AutomationProperties.SetName(pick, "New owner");
+            var panel = new StackPanel { Spacing = 10, MinWidth = 380 };
+            panel.Children.Add(pick);
+            panel.Children.Add(new TextBlock { Text = "Ownership goes to an admin. You stay an admin, and only the new owner can remove you.", TextWrapping = TextWrapping.Wrap, FontSize = 12, Opacity = 0.8 });
+            var dialog = new ContentDialog
+            {
+                XamlRoot = Root.XamlRoot, RequestedTheme = Root.ActualTheme, Resources = DialogTheme(), Title = $"Transfer ownership of {info.DisplayName}",
+                Content = panel, PrimaryButtonText = "Transfer", CloseButtonText = "Cancel",
+            };
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+            chosen = (pick.SelectedItem as ComboBoxItem)?.Tag as GroupMemberRow;
+        }
+        finally { dialogOpen = false; }
+        if (chosen is null) return;
+        await groupsModel.TransferOwnershipAsync(chosen);
+        UpdateGroupPage();
+    }
+
+    // Join by a /g/ link: paste it, see the group, then join (docs/groups.md §2, resolve then join).
+    private async Task JoinByLinkAsync()
+    {
+        if (dialogOpen || !groupsModel.Enabled || ViewModel.SelectedMailbox is not { } mailbox) return;
+        dialogOpen = true;
+        (string GroupId, string? Token)? parsed = null;
+        try
+        {
+            var link = new TextBox { Header = "Invite link", PlaceholderText = "https://inbox.pigeonpost.dev/g/…" };
+            AutomationProperties.SetName(link, "Group invite link");
+            var dialog = new ContentDialog
+            {
+                XamlRoot = Root.XamlRoot, RequestedTheme = Root.ActualTheme, Resources = DialogTheme(), Title = "Join with a link",
+                Content = link, PrimaryButtonText = "Open link", CloseButtonText = "Cancel", IsPrimaryButtonEnabled = false,
+            };
+            link.TextChanged += (_, _) => dialog.IsPrimaryButtonEnabled = GroupAdmin.ParseInviteLink(link.Text) is not null;
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+            parsed = GroupAdmin.ParseInviteLink(link.Text);
+        }
+        finally { dialogOpen = false; }
+        if (parsed is not { } target) return;
+        if (sideView != SideView.Groups) ShowSideView(SideView.Groups);
+        var preview = await groupsModel.PreviewLinkAsync(target.GroupId, target.Token);
+        if (preview is null) { UpdateGroupPage(); return; }
+        if (preview.MyState is "active" or "keying")
+        {
+            await groupsModel.SelectAsync(groupsModel.Groups.FirstOrDefault(g => g.Id == preview.Id));
+            UpdateGroupPage();
+            return;
+        }
+        var body = GroupAdmin.PreviewText(preview, mailbox.Key);
+        if (preview.CanJoin != true) { await ShowNoticeAsync(preview.DisplayName, body); return; }
+        if (!await ConfirmAsync($"Join {preview.DisplayName}?", body, "Join")) return;
+        AccountStatus.Text = "Joining the group…";
+        var joined = await groupsModel.JoinByLinkAsync(target.GroupId, target.Token);
+        AccountStatus.Text = joined ? "Joined " + preview.DisplayName + "." : groupsModel.Error ?? "Could not join the group.";
+        compactConversation = joined;
+        UpdateLayoutMode();
+        UpdateGroupPage();
+    }
+
+    private async Task ShowNoticeAsync(string title, string text)
+    {
+        if (dialogOpen) return;
+        dialogOpen = true;
+        try
+        {
+            var dialog = new ContentDialog
+            {
+                XamlRoot = Root.XamlRoot, RequestedTheme = Root.ActualTheme, Resources = DialogTheme(), Title = title,
+                Content = new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap }, CloseButtonText = "OK",
+            };
+            await dialog.ShowAsync();
         }
         finally { dialogOpen = false; }
     }
