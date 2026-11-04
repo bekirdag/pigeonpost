@@ -192,6 +192,88 @@ try {
     Check $still 'With animation effects off, the gear stands still'
     Capture 'message-receipts-reduced-motion.png'
     [MotionPreference]::Set($true)
+
+    # §14C in groups: a real second MLS device (/preview/reader) joins, asks, and its cursors give
+    # one seen, one delivered and one sent message; reply, edit and message info run through the UI.
+    function Set-Named([string]$Name, [string]$Value) { (Wait-Control $Name).GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($Value); Start-Sleep -Milliseconds 150 }
+    function Read-Named([string]$Name) { (Wait-Control $Name).GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value }
+    function Named-Like([string]$Pattern) { @($root.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition) | Where-Object { $_.Current.Name -like $Pattern }) }
+    function Wait-Long([scriptblock]$Predicate, [string]$Detail) {
+        for ($n = 0; $n -lt 150; $n++) { if (& $Predicate) { $checks.Add($Detail); return }; Start-Sleep -Milliseconds 400 }
+        throw $Detail
+    }
+    function Group-Receipts {
+        $list = Control 'Group messages'
+        if (-not $list) { return @() }
+        $button = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)
+        @($list.FindAll([System.Windows.Automation.TreeScope]::Descendants, $button) | Where-Object { $_.Current.Name -in @('Sending', 'Sent', 'Delivered', 'Seen') })
+    }
+    # Row controls are looked up inside the group's message list only, never the hidden chat list.
+    function In-Group([string]$Name) {
+        $list = Control 'Group messages'
+        if (-not $list) { return @() }
+        $named = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, $Name)
+        @($list.FindAll([System.Windows.Automation.TreeScope]::Descendants, $named) | Where-Object { -not $_.Current.IsOffscreen })
+    }
+    function Invoke-InGroup([string]$Name) {
+        for ($n = 0; $n -lt 40; $n++) {
+            $found = @(In-Group $Name)
+            if ($found.Count -gt 0) { $found[0].GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke(); Start-Sleep -Milliseconds 300; return }
+            Start-Sleep -Milliseconds 250
+        }
+        throw "Group row control unavailable: $Name"
+    }
+    function Send-Group([string]$Text) {
+        Set-Named 'Group message' $Text; Invoke-Control 'Send to group'
+        Wait-Check { @(In-Group $Text).Count -gt 0 } "Group message sent: $Text"
+    }
+    Invoke-Control 'Groups'
+    Invoke-Control 'New group'
+    Set-Named 'Group members' '/preview/reader'
+    Set-Named 'Group name' 'Receipts check'
+    $create = Wait-Control 'Create'; $create.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    Wait-Long { @(In-Group 'Question from the reader').Count -gt 0 } 'A second real MLS device joins the group and its message arrives'
+    Check (@(Group-Receipts).Count -eq 0) 'A received group message shows no ticks'
+    Send-Group 'Group one'; Send-Group 'Group two'; Send-Group 'Group three'
+    Wait-Long { ((@(Group-Receipts) | ForEach-Object { $_.Current.Name }) -join ',') -eq 'Seen,Delivered,Sent' } 'Group ticks follow the members: seen, delivered, sent'
+    $marks = @(Group-Receipts)
+    Check ((Green-Count $marks[0]) -gt 3) 'Seen group ticks are green'
+    Check ((Green-Count $marks[1]) -eq 0 -and (Green-Count $marks[2]) -eq 0) 'Delivered and sent group ticks are gray'
+    Check ($marks[1].Current.BoundingRectangle.Width -gt $marks[2].Current.BoundingRectangle.Width + 2) 'Delivered shows two ticks where sent shows one'
+    Capture 'group-receipts.png'
+    # Received: copy then reply, outside the bubble. Sent: edit then copy.
+    $question = (In-Group 'Question from the reader')[0].Current.BoundingRectangle
+    $reply = (In-Group 'Reply')[0].Current.BoundingRectangle
+    Check ($reply.Top -ge $question.Bottom + 8) 'The group reply button sits below the received bubble'
+    Check (@(In-Group 'Edit message').Count -eq 3 -and @(In-Group 'Reply').Count -eq 1) 'Own group messages offer edit, the received one reply'
+    Invoke-InGroup 'Reply'
+    Wait-Check { @(Named-Like 'Replying to *').Count -gt 0 -and $null -ne (Control 'Group composer action') } 'Reply shows who and what is being replied to'
+    Invoke-Control 'Cancel group message action'
+    Wait-Check { @(Named-Like 'Replying to *').Count -eq 0 } 'Cancelling a group reply leaves reply mode'
+    Invoke-InGroup 'Reply'
+    Send-Group 'Answer to the reader'
+    $quote = @(Named-Like 'Replying to: *Question from the reader*' | Where-Object { -not $_.Current.IsOffscreen })
+    Check ($quote.Count -eq 1) 'The sent reply quotes its parent inside the bubble'
+    $quote[0].GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    Capture 'group-reply.png'
+    Set-Named 'Group message' 'Kept group draft'
+    Invoke-InGroup 'Edit message'
+    Wait-Check { (Read-Named 'Group message') -eq 'Group one' -and $null -ne (Control 'Editing message') } 'Group edit prefills the oldest own message'
+    Check (-not (Control 'Attach encrypted files…').Current.IsEnabled) 'A group edit cannot add files'
+    Invoke-Control 'Cancel group message action'
+    Wait-Check { (Read-Named 'Group message') -eq 'Kept group draft' } 'Cancelling a group edit restores the draft'
+    Invoke-InGroup 'Edit message'
+    Set-Named 'Group message' 'Group one, edited'
+    Capture 'group-edit.png'
+    Invoke-Control 'Save group edit'
+    Wait-Check { @(In-Group 'Group one, edited').Count -eq 1 -and @(In-Group 'Group one').Count -eq 0 -and (Read-Named 'Group message') -eq 'Kept group draft' } 'The group edit folds into one row and the draft returns'
+    Check (@(In-Group 'Edited').Count -eq 1) 'The edited group bubble says Edited'
+    (@(Group-Receipts) | Select-Object -Last 1).GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    Wait-Check { @(Named-Like 'Message version').Count -eq 2 } 'Group message info lists both versions'
+    $states = @(Named-Like '* · Seen') + @(Named-Like '* · Delivered') + @(Named-Like '* · Sent')
+    Check ($states.Count -ge 1) 'Group message info lists each member state'
+    Capture 'group-message-info.png'; Invoke-Control 'Done'
+    Wait-Check { @(Named-Like 'Message version').Count -eq 0 } 'Group message info closes'
     Capture 'message-modes-complete.png'
     @{ passed = $true; checks = $checks } | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $directory 'message-modes-ui.json')
 } catch {

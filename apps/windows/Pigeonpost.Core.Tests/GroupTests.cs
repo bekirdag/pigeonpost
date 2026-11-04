@@ -282,6 +282,69 @@ internal static class GroupTests
             Require(!(await w.Client.GetCapabilitiesAsync(default)).Has(ServerFeatures.Groups), "Capabilities follow the flag.");
             Equal((await Refused(() => a.Api.ListAsync(default))).Code, "feature_disabled");
         });
+
+        yield return ("Group replies and edits: verified references fold, a text edit keeps its files, flags and the 24-hour window apply", async () =>
+        {
+            using var w = new World();
+            w.Server.Features.UnionWith([ServerFeatures.MessageEdit, ServerFeatures.MessageReply, ServerFeatures.Receipts]);
+            var alice = w.Server.AddMailbox(PreviewPostbox.Seed(91), "/alice/main");
+            var bob = w.Server.AddMailbox(PreviewPostbox.Seed(92), "/bob/main");
+            var a = await w.Ready(alice); var b = await w.Ready(bob);
+            var gid = (await a.CreateGroupAsync(new GroupSettings("Actions"), ["/bob/main"], default)).Group.Id;
+            await b.Api.AnswerInvitationAsync(gid, true, default);
+            await a.ProcessPendingAsync(gid, default, noJitter: true);
+            await b.ProcessWelcomesAsync(default);
+
+            var file = Encoding.UTF8.GetBytes("Kept across the edit");
+            var root = await a.SendAsync(gid, "Original group text", [new GroupClient.OutgoingFile("plan.txt", "text/plain", file)], default);
+            await b.SyncAsync(gid, default);
+            var reply = await b.SendAsync(gid, "Reply from Bob", [], default, replyTo: root.Seq);
+            await a.SyncAsync(gid, default);
+            var replied = Messages(a, gid).Single(l => l.Seq == reply.Seq);
+            Require(replied.ActionsVerified && GroupActions.Sequence(replied.ReplyTo) == root.Seq, "The reply reference is read from the encrypted body.");
+            Require(ReferenceEquals(GroupActions.ReplyParent(replied, a.HistoryOf(gid), w.Now), Messages(a, gid).Single(l => l.Seq == root.Seq)), "The reply quotes its parent.");
+
+            var mine = Messages(a, gid).Single(l => l.Seq == root.Seq);
+            Require(GroupActions.Editable(mine, a.HistoryOf(gid), alice, w.Now), "Alice may edit her recent message.");
+            Require(!GroupActions.Editable(mine, a.HistoryOf(gid), bob, w.Now), "Nobody else may.");
+            var edited = await a.SendAsync(gid, "Updated group text", [], default, editOf: root.Seq, keep: mine.Files);
+            await b.SyncAsync(gid, default);
+            var bobRoot = Messages(b, gid).Single(l => l.Seq == root.Seq);
+            var bobEdit = Messages(b, gid).Single(l => l.Seq == edited.Seq);
+            Equal(bobRoot.ReplacedBy, edited.Seq);
+            Equal(string.Join("|", GroupActions.Versions(bobEdit, b.HistoryOf(gid)).Select(v => v.Text)), "Original group text|Updated group text");
+            Require((await b.OpenFileAsync(gid, bobEdit.Files!.Single(), default)).SequenceEqual(file), "A text edit keeps the sealed file and its key.");
+            Equal((await Refused(() => b.SendAsync(gid, "Not mine", [], default, editOf: edited.Seq))).Code, "not_editable");
+            Equal((await Refused(() => a.SendAsync(gid, "Stale version", [], default, editOf: root.Seq))).Code, "not_editable");
+
+            // A postbox that claims an edit the encrypted body does not make replaces nothing.
+            var plain = await a.SendAsync(gid, "Plain message", [], default);
+            w.Server.SetGroupItemField(gid, plain.Seq, "edit_of", edited.Seq);
+            await b.SyncAsync(gid, default);
+            var forged = Messages(b, gid).Single(l => l.Seq == plain.Seq);
+            Require(!forged.ActionsVerified && forged.EditOf is null, "A mismatched envelope reference is not trusted.");
+            Require(Messages(b, gid).Single(l => l.Seq == edited.Seq).ReplacedBy is null, "The forged reference did not hide the real edit.");
+
+            // Receipts: Bob listed everything (delivered) and read up to the edit (seen).
+            await b.Api.MarkReadAsync(gid, edited.Seq, default);
+            var receipts = await a.Api.ReceiptsAsync(gid, default);
+            Equal(receipts.Members!.Single().Address, bob);
+            Equal(GroupActions.Receipt(Messages(a, gid).Single(l => l.Seq == edited.Seq), receipts), "seen");
+            Equal(GroupActions.Receipt(Messages(a, gid).Single(l => l.Seq == plain.Seq), receipts), "delivered");
+            w.Server.ReadReceipts = false;
+            Equal(GroupActions.Receipt(Messages(a, gid).Single(l => l.Seq == edited.Seq), await a.Api.ReceiptsAsync(gid, default)), "delivered");
+
+            // The postbox's flags: edits and replies off are refusals of that action only.
+            w.Server.Features.Remove(ServerFeatures.MessageEdit);
+            var off = await Refused(() => a.SendAsync(gid, "No edits", [], default, editOf: plain.Seq));
+            Require(off.StatusCode == 403 && off.Code == "feature_disabled" && GroupActions.RefusalText(off, GroupComposerKind.Edit).StartsWith("Editing messages", StringComparison.Ordinal), "Edit off.");
+            w.Server.Features.Remove(ServerFeatures.MessageReply);
+            Equal((await Refused(() => a.SendAsync(gid, "No replies", [], default, replyTo: plain.Seq))).Code, "feature_disabled");
+            w.Server.Features.UnionWith([ServerFeatures.MessageEdit, ServerFeatures.MessageReply]);
+            w.Now += GroupActions.EditWindowSeconds;
+            Require(!GroupActions.Editable(Messages(a, gid).Single(l => l.Seq == plain.Seq), a.HistoryOf(gid), alice, w.Now), "The window closed locally.");
+            Equal((await Refused(() => a.SendAsync(gid, "Too late", [], default, editOf: plain.Seq))).Code, "not_editable");
+        });
     }
 }
 
@@ -384,6 +447,75 @@ internal static class GroupsModelTests
             b.SetContacts([new Contact("/alice/main", "Alice A.", "block", "review")]);
             await b.SelectAsync(b.Groups.Single());
             Require(b.Lines.Where(l => l.IsMessage).All(l => l.Text == "Hidden: you blocked this sender."), "Blocked sender's messages are hidden.");
+        });
+
+        yield return ("Groups page §14C: row actions follow the features, reply and edit bind to the group and selection, ticks follow receipts", async () =>
+        {
+            var server = new PreviewPostbox();
+            var alice = server.AddMailbox(PreviewPostbox.Seed(101), "/alice/main");
+            var bob = server.AddMailbox(PreviewPostbox.Seed(102), "/bob/main");
+            using var client = new PostboxClient(new HttpClient(server), new Tokens(), new Uri("http://127.0.0.1:9"));
+            var plain = await client.GetCapabilitiesAsync(default);
+            server.Features.UnionWith([ServerFeatures.MessageEdit, ServerFeatures.MessageReply, ServerFeatures.Receipts]);
+            var features = await client.GetCapabilitiesAsync(default);
+            using var a = new GroupsModel(client, _ => new MemoryGroupStateStore());
+            using var b = new GroupsModel(client, _ => new MemoryGroupStateStore());
+            const long now = 1_789_113_600 + 60; // the stand-in postbox's clock
+            a.Clock = b.Clock = () => now;
+            var aBox = new Mailbox(alice, "/alice/main"); var bBox = new Mailbox(bob, "/bob/main");
+            await a.ActivateAsync(aBox, features, [aBox], []);
+            await b.ActivateAsync(bBox, features, [bBox], [new Contact("/alice/main", "Alice A.", "allow", "review")]);
+            var group = await a.CreateAsync(new GroupSettings("Row actions"), ["/bob/main"]);
+            var other = await a.CreateAsync(new GroupSettings("Elsewhere"), []);
+            await b.RefreshAsync(); await b.SelectAsync(b.Groups.Single()); await b.AnswerInvitationAsync(true);
+            await a.RefreshAsync(); await b.RefreshAsync();
+            await a.SelectAsync(a.Groups.Single(g => g.Id == group!.Id)); await b.SelectAsync(b.Groups.Single());
+
+            a.Draft = "First from Alice";
+            Require(await a.SendAsync(), "Alice sends.");
+            await b.RefreshAsync();
+            var received = b.Lines.Last(l => l.IsMessage);
+            Require(received.CanReply && !received.CanEdit && !received.HasReceipt, "A received line offers reply, not edit or ticks.");
+            Require(b.BeginReply(received) && b.HasComposerMode && b.ComposerModeTitle == "Replying to Alice A." && b.ComposerModeExcerpt == "First from Alice", "Bob replies with the quoted context.");
+            b.Draft = "Answer from Bob";
+            Require(await b.SendAsync() && !b.HasComposerMode && b.Draft == "", "The reply is sent and the composer returns to normal.");
+            await a.RefreshAsync();
+            var answer = a.Lines.Last(l => l.IsMessage);
+            Require(answer.HasReply && answer.ReplyQuote == "You: First from Alice", "The reply bubble quotes its parent: " + answer.ReplyQuote);
+            Require(a.ReplyParentRow(answer)?.Text == "First from Alice", "The quote leads to the parent's row.");
+
+            var mine = a.Lines.First(l => l.IsMessage && l.Mine);
+            Require(mine.CanEdit && mine.Receipt is "delivered" or "seen", "Alice's line is editable and shows delivery: " + mine.Receipt);
+            await b.MarkReadAsync(); await a.RefreshAsync();
+            mine = a.Lines.First(l => l.IsMessage && l.Mine);
+            Require(mine.ShowsSeenTicks && mine.ReceiptLabel == "Seen", "Bob's read cursor turns the ticks green: " + mine.Receipt);
+
+            // Edit: borrows the box, restores the draft on cancel and after saving.
+            a.Draft = "Ordinary group draft";
+            Require(a.BeginEdit(mine) && a.IsEditing && a.Draft == "First from Alice" && a.SendLabel == "Save edit" && !a.CanAttach, "Edit prefills the text.");
+            Require(a.CancelComposerMode() && a.Draft == "Ordinary group draft" && !a.HasComposerMode, "Cancel restores the draft.");
+            Require(a.BeginEdit(mine), "Edit again.");
+            a.Draft = "First from Alice, corrected";
+            Require(await a.SendAsync() && a.Draft == "Ordinary group draft", "Saving gives the draft back.");
+            var folded = a.Lines.Where(l => l.IsMessage && l.Mine).ToArray();
+            Require(folded.Length == 1 && folded[0].Text == "First from Alice, corrected" && folded[0].Edited && folded[0].EditedLabel == "Edited", "The edit folds into one row.");
+            await b.RefreshAsync();
+            Require(b.Lines.Count(l => l.IsMessage && l.Text.StartsWith("First from Alice", StringComparison.Ordinal)) == 1 && b.Lines.Any(l => l.Text == "First from Alice, corrected" && l.Edited), "Bob sees one edited row.");
+            var info = a.MessageInfoFor(folded[0]);
+            Require(info is { ShowsDelivery: true, DeliveryKnown: true } && info.Versions.Count == 2 && info.Versions[0].Label == "Original" && info.Members.Single().Name == "Bob", "Message info lists versions and members.");
+
+            // A stale row, another group or a switched-off feature never starts or sends an action.
+            var stale = folded[0] with { Text = "an old rendering" };
+            Require(!a.BeginEdit(stale), "A row that is not on screen is refused.");
+            Require(a.BeginEdit(folded[0]), "Edit the current row.");
+            await a.SelectAsync(a.Groups.Single(g => g.Id == other!.Id));
+            Require(!a.HasComposerMode && a.Draft == "", "Selecting another group drops the action.");
+            await a.SelectAsync(a.Groups.Single(g => g.Id == group!.Id));
+            var current = a.Lines.First(l => l.IsMessage && l.Mine);
+            Require(a.BeginEdit(current), "Edit once more.");
+            await a.ActivateAsync(aBox, plain, [aBox], []);
+            Require(!a.HasComposerMode && a.Lines.Where(l => l.IsMessage).All(l => !l.CanEdit && !l.CanReply && l.Receipt is "" or "sending"), "Features off: no row actions and no ticks.");
+            Require(!a.BeginReply(a.Lines.Last(l => l.IsMessage)), "Reply is refused while off.");
         });
     }
 }

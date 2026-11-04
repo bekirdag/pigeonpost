@@ -147,6 +147,7 @@ public sealed partial class MainWindow
         AutomationProperties.SetName(groupAnnouncement, "Posting restricted");
         bottom.Children.Add(groupAnnouncement);
         groupComposer = new StackPanel { Spacing = 6 };
+        groupComposer.Children.Add(BuildGroupModeBar());
         groupFiles = new StackPanel { Spacing = 4 };
         groupComposer.Children.Add(groupFiles);
         groupDraft = new TextBox { PlaceholderText = "Write to the group…", AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 56, MaxHeight = 144, MaxLength = 20000 };
@@ -155,6 +156,13 @@ public sealed partial class MainWindow
         groupDraft.TextChanged += (_, _) => { groupsModel.Draft = groupDraft.Text; groupDraftSeen = groupsModel.Draft; groupSend!.IsEnabled = groupsModel.CanSend; };
         groupDraft.PreviewKeyDown += async (_, e) =>
         {
+            // Escape leaves a reply or an edit; an edit gives the box its earlier draft back.
+            if (e.Key == Windows.System.VirtualKey.Escape && groupsModel.HasComposerMode)
+            {
+                e.Handled = true;
+                if (groupsModel.CancelComposerMode()) UpdateGroupPage();
+                return;
+            }
             if (e.Key != Windows.System.VirtualKey.Enter || !Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Control)
                 .HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down)) return;
             e.Handled = true;
@@ -165,7 +173,7 @@ public sealed partial class MainWindow
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        var attach = new Button { Content = new SymbolIcon(Symbol.Attach), Style = (Style)Root.Resources["QuietIconButton"] };
+        var attach = groupAttach = new Button { Content = new SymbolIcon(Symbol.Attach), Style = (Style)Root.Resources["QuietIconButton"] };
         AutomationProperties.SetName(attach, "Attach encrypted files…");
         ToolTipService.SetToolTip(attach, "Files are encrypted on this device before upload");
         attach.Click += async (_, _) => await AttachGroupFilesAsync();
@@ -234,6 +242,7 @@ public sealed partial class MainWindow
             if (groupDraft!.Text != m.Draft) { groupDraft.Text = m.Draft; groupDraft.SelectionStart = m.Draft.Length; }
         }
         groupDraft.IsEnabled = !m.IsSending;
+        UpdateGroupModeBar();
         if (groupList is not null && !ReferenceEquals(groupList.SelectedItem, m.Selected)) groupList.SelectedItem = m.Selected;
         UpdateLiveControls();
         _ = UpdateGroupCallAsync();

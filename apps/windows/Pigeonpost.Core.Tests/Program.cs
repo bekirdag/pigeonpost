@@ -1079,6 +1079,7 @@ tests.AddRange(CallRingTests.All());
 tests.AddRange(PrivacyTests.All());
 tests.AddRange(GroupTests.All());
 tests.AddRange(GroupsModelTests.All());
+tests.AddRange(GroupActionsTests.All());
 // The Windows job also exercises the same session/socket cases on its own runtime.
 // The default complete suite still requires the real MLS library and runs every case.
 if (args.SequenceEqual(new[] { "--strong-signin" }))

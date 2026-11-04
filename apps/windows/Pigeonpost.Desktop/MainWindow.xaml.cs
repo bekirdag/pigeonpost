@@ -57,7 +57,12 @@ public sealed partial class MainWindow : Window
         var stand_in = new Pigeonpost.Core.Preview.PreviewPostbox();
         PreviewSideData.Seed(stand_in);
         if (Environment.GetEnvironmentVariable("PIGEONPOST_UI_MESSAGE_MODES_STATE") is not null)
+        {
             stand_in.Features.UnionWith([ServerFeatures.MessageEdit, ServerFeatures.MessageReply, ServerFeatures.Receipts, ServerFeatures.AgentStatus]);
+            // Group edit windows are judged on the real clock, so the stand-in keeps real time here.
+            stand_in.Clock = () => DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            PreviewGroupActions.Seed(stand_in, lifetime.Token);
+        }
         if (Environment.GetEnvironmentVariable("PIGEONPOST_UI_CALENDAR_STATE") is not null)
             stand_in.Features.Add(ServerFeatures.Calendar);
         if (approvalFixture is not null || roomsState is not null) stand_in.Features.Add(ServerFeatures.Organizations);

@@ -121,6 +121,8 @@ public sealed class PreviewPostbox : HttpMessageHandler
         public long? JoinedAt { get; set; }
         public long FirstSeq { get; set; } = long.MaxValue;
         public long ReadCursor { get; set; }
+        // Advanced when this member's client lists messages (receipts: delivered).
+        public long DeliveredSeq { get; set; }
     }
 
     private sealed class Grp
@@ -248,6 +250,13 @@ public sealed class PreviewPostbox : HttpMessageHandler
     public IReadOnlyList<string> CiphertextsOf(string gid) { lock (sync) return groups[gid].Items.Where(i => (string?)i["type"] == "application").Select(i => (string?)i["ciphertext"] ?? "").ToArray(); }
     public IReadOnlyList<byte[]> AttachmentBlobsOf(string gid) { lock (sync) return groups[gid].Attachments.Values.ToArray(); }
     public void RevokeDevice(string mailbox, string device) { lock (sync) devices[(mailbox, device)].Revoked = true; }
+    // Tests only: rewrite one envelope field of a stored group item, as a misbehaving postbox could.
+    public void SetGroupItemField(string gid, long seq, string field, JsonNode? value)
+    { lock (sync) groups[gid].Items.First(i => (long)i["seq"]! == seq)[field] = value; }
+    public bool ReadReceipts { get; set; } = true;
+    // UI tests only: the receipt rows of a group by name, given its application seqs in order; null
+    // keeps the members' real cursors.
+    public Func<string, IReadOnlyList<long>, IReadOnlyList<(string Address, long Delivered, long? Seen)>?>? ReceiptsFixture { get; set; }
     public string? DeviceIdOf(string mailbox) { lock (sync) return devices.Values.FirstOrDefault(d => d.Mailbox == mailbox && !d.Revoked)?.Id; }
 
     // ---- HTTP --------------------------------------------------------------------------------
@@ -712,9 +721,29 @@ public sealed class PreviewPostbox : HttpMessageHandler
                 var visible = grp.Items.Where(i => (long)i["seq"]! > after && (long)i["seq"]! >= mine.FirstSeq
                     && !((long?)i["expires_at"] is { } exp && exp <= Now)).ToArray();
                 var page = visible.Take(100).Select(i => i.DeepClone()).ToArray();
+                if (page.Length > 0) mine.DeliveredSeq = Math.Max(mine.DeliveredSeq, (long)page[^1]["seq"]!);
                 return new JsonObject { ["items"] = new JsonArray(page), ["last_seq"] = grp.Seq, ["epoch"] = grp.Epoch, ["more"] = visible.Length > 100 };
             }
             case ("POST", "messages"): return Post(grp, me, mine, DeviceOf(me, deviceId), body!);
+            case ("GET", "receipts"):
+            {
+                if (!Features.Contains(ServerFeatures.Receipts)) throw new Fail(404, "feature_disabled");
+                if (mine.State != "active") throw new Fail(403, "not_member");
+                var rows = new JsonArray(grp.Members.Values.Where(m => m.State == "active" && m.Address != me.Address)
+                    .Select(m => (JsonNode)new JsonObject
+                    {
+                        ["address"] = m.Address, ["handle"] = boxes.GetValueOrDefault(m.Address)?.Handle,
+                        ["delivered_seq"] = m.DeliveredSeq, ["seen_seq"] = ReadReceipts ? m.ReadCursor : null,
+                    }).ToArray());
+                var appSeqs = grp.Items.Where(i => (string?)i["type"] == "application").Select(i => (long)i["seq"]!).ToArray();
+                if (ReceiptsFixture?.Invoke(grp.Name, appSeqs) is { } fixture)
+                {
+                    rows.Clear();
+                    foreach (var (address, delivered, seen) in fixture)
+                        rows.Add(new JsonObject { ["address"] = address, ["handle"] = boxes.GetValueOrDefault(address)?.Handle, ["delivered_seq"] = delivered, ["seen_seq"] = ReadReceipts ? seen : null });
+                }
+                return new JsonObject { ["members"] = rows, ["read_receipts"] = ReadReceipts };
+            }
             case ("DELETE", "messages"):
             {
                 var seq = long.Parse(parts[4]);
@@ -821,6 +850,11 @@ public sealed class PreviewPostbox : HttpMessageHandler
         if (mine.Role == "restricted" || g.PostPolicy == "admins" && mine.Role is not ("owner" or "admin")) throw new Fail(403, "posting_restricted");
         var cmid = (string)body["client_message_id"]!;
         if (g.Cmids.TryGetValue(me.Address + "|" + cmid, out var existing)) return (201, new JsonObject { ["seq"] = existing, ["id"] = "gm_" + existing });
+        // Edits and replies follow the same flags as in direct threads (SDS §14C).
+        var editOf = (long?)body["edit_of"];
+        var replyTo = (long?)body["reply_to"];
+        if (editOf is not null && !Features.Contains(ServerFeatures.MessageEdit)) throw new Fail(403, "feature_disabled");
+        if (replyTo is not null && !Features.Contains(ServerFeatures.MessageReply)) throw new Fail(403, "feature_disabled");
         var ciphertext = Convert.FromBase64String((string)body["ciphertext"]!);
         GC.VerifyEnvelopeSignature(d.SignatureKey, ciphertext, Convert.FromBase64String((string)body["envelope_signature"]!));
         var info = GC.InspectEnvelope(ciphertext);
@@ -829,8 +863,26 @@ public sealed class PreviewPostbox : HttpMessageHandler
         if ((long)body["epoch"]! != g.Epoch) throw new Fail(409, "epoch_conflict", new JsonObject { ["current_epoch"] = g.Epoch });
         if (Pending(g).Any(p => p.Kind == "remove")) throw new Fail(409, "key_activation_pending");
         if ((string?)body["enc_scheme"] != GC.EncScheme()) throw new Fail(400, "encryption_unsupported");
+        // The postbox's edit rule: own, the latest unexpired, undeleted version of a chain whose original
+        // is under 24 hours old. The edit inherits the chain's earliest deadline, if any.
+        JsonNode? target = null;
+        long? chainExpiry = null;
+        if (editOf is { } previous)
+        {
+            var chain = new List<JsonNode>();
+            for (var at = (long?)previous; at is { } n && g.Items.FirstOrDefault(i => (long)i["seq"]! == n && (string?)i["type"] == "application") is { } item; at = (long?)item["edit_of"])
+            { chain.Add(item); if (chain.Count > 64) break; }
+            target = chain.FirstOrDefault();
+            var root = chain.LastOrDefault();
+            var editable = target is not null && root is not null && (long?)root["edit_of"] is null && (string?)root["sender"] == me.Address
+                && target["replaced_by"] is null && Now - (long)root["created_at"]! < 86_400
+                && chain.All(v => v["deleted_at"] is null && !((long?)v["expires_at"] is { } e && e <= Now));
+            if (!editable) throw new Fail(403, "not_editable");
+            chainExpiry = chain.Select(v => (long?)v["expires_at"]).Where(e => e is not null).Min();
+        }
         var seq = ++g.Seq;
-        long? expires = g.EphemeralSecs is { } secs ? Now + secs : null;
+        long? expires = editOf is not null ? chainExpiry : g.EphemeralSecs is { } secs ? Now + secs : null;
+        if (target is not null) target["replaced_by"] = seq;
         g.Items.Add(new JsonObject
         {
             ["seq"] = seq, ["type"] = "application", ["id"] = "gm_" + seq, ["epoch"] = g.Epoch, ["sender"] = me.Address, ["sender_device"] = d.Id,
