@@ -141,6 +141,7 @@ extension Notification.Name {
             await startedConversationIsSelected(window: window, host: host, account: account, inbox: inbox)
             await clipboardMessages(window: window, account: account, inbox: inbox)
             await composerSizing(window: window, account: account, inbox: inbox)
+            await windowToast(host: host, inbox: inbox)
             await idleCallOverlay(window: window)
             print("Mac inbox integration: \(InboxLoadingTests.checks) checks, \(InboxLoadingTests.failures) failures")
             watchdog.cancel()
@@ -148,6 +149,25 @@ extension Notification.Name {
             exit(InboxLoadingTests.failures == 0 ? 0 : 1)
         }
         app.run()
+    }
+
+    /// `inbox.toast` is how failed actions and the call page's closing words ("You were removed
+    /// from this group…", handed over by `CallHost` once the call screen is gone) reach the window.
+    static func windowToast(host: NSView, inbox: Inbox) async {
+        let words = "You were removed from this group, so you left its call."
+        inbox.toast = words
+        await settle()
+        func says(_ element: Any, _ depth: Int) -> Bool {
+            guard depth < 40, let node = element as? NSObject else { return false }
+            let label = node.value(forKey: "accessibilityLabel") as? String
+            let value = node.value(forKey: "accessibilityValue") as? String
+            if label == words || value == words { return true }
+            return (node.value(forKey: "accessibilityChildren") as? [Any])?.contains { says($0, depth + 1) } ?? false
+        }
+        InboxLoadingTests.check(says(host, 0), "the Mac window shows the inbox toast")
+        snapshot(host, name: "mac-inbox-toast")
+        inbox.toast = nil
+        await settle()
     }
 
     /// An idle call stays loaded over the window but must never take a click meant for the mail.

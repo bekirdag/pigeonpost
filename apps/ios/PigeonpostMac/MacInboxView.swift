@@ -97,6 +97,10 @@ struct MacInboxView: View {
             peer = arrived
             subthread = nil
         }
+        // The window's own line of feedback: failed actions, and what the call page says once its
+        // screen has closed ("You were removed from this group…"), which `CallHost` hands over as
+        // `inbox.toast`. The iPhone and iPad show it from `ConversationsView`; the Mac never did.
+        .toast($inbox.toast)
         .task {
             if let staged = Fixtures.openPeer, peer == nil { peer = staged }
             switch Fixtures.sheet {
