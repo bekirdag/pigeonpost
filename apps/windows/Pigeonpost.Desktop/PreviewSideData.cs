@@ -97,6 +97,77 @@ internal static class PreviewGroupActions
     }
 }
 
+// Group administration (test-group-admin.ps1, audit 2026-11-03 P1-14): /preview/helper and
+// /preview/third accept an invitation to "Admin check" and key in with real MLS devices, so the
+// person can promote, ban, unban, transfer and step down. "Open studio" is somebody else's public
+// group with a known link, for joining by link. The server's view of both groups is written to the
+// state file for the script to check.
+internal static class PreviewGroupAdmin
+{
+    public const string GroupName = "Admin check";
+    public const string StudioName = "Open studio";
+    public const string StudioToken = "uitestlinktoken0123456789abcdef";
+    private sealed class Tokens(string token) : IAccessTokenProvider
+    {
+        public Task<string> GetTokenAsync(CancellationToken cancel) => Task.FromResult(token);
+        public Task<string> RefreshTokenAsync(CancellationToken cancel) => Task.FromResult(token);
+    }
+    public static void Seed(PreviewPostbox server, string statePath, CancellationToken stop)
+    {
+        var helper = server.AddMailbox(PreviewPostbox.Seed(0xE1), "/preview/helper");
+        var third = server.AddMailbox(PreviewPostbox.Seed(0xE2), "/preview/third");
+        var opener = server.AddMailbox(PreviewPostbox.Seed(0xE3), "/preview/opener");
+        var studio = server.SeedPublicGroup(opener, StudioName, "Synthetic studio for joining by link", StudioToken);
+        var link = $"https://inbox.pigeonpost.dev/g/{studio}#{StudioToken}";
+        _ = Task.Run(() => RunMemberAsync(server, helper, stop));
+        _ = Task.Run(() => RunMemberAsync(server, third, stop));
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                while (!stop.IsCancellationRequested)
+                {
+                    var state = new System.Text.Json.Nodes.JsonObject
+                    {
+                        ["studio_link"] = link, ["helper"] = helper, ["third"] = third,
+                        ["group"] = server.GroupSnapshot(GroupName), ["studio"] = server.GroupSnapshot(StudioName),
+                    };
+                    var temporary = statePath + ".new";
+                    await File.WriteAllTextAsync(temporary, state.ToJsonString(), stop);
+                    File.Move(temporary, statePath, overwrite: true);
+                    await Task.Delay(300, stop);
+                }
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex) { DesktopLog.Error("Preview group admin state stopped", ex); }
+        });
+    }
+    // A member device: accepts the invitation to "Admin check" and joins from the welcome.
+    private static async Task RunMemberAsync(PreviewPostbox server, string mailbox, CancellationToken stop)
+    {
+        try
+        {
+            using var client = new PostboxClient(new HttpClient(server, disposeHandler: false), new Tokens("preview-" + mailbox), new Uri("http://127.0.0.1:9"));
+            using var device = new Pigeonpost.Core.Groups.GroupClient(new Pigeonpost.Core.Groups.GroupApi(client, mailbox), new Pigeonpost.Core.Groups.MemoryGroupStateStore());
+            await device.InitAsync(stop);
+            await device.TopUpKeyPackagesAsync(stop);
+            while (!stop.IsCancellationRequested)
+            {
+                try
+                {
+                    foreach (var g in await device.Api.ListAsync(stop))
+                        if (g.IsInvited && g.Name == GroupName) await device.Api.AnswerInvitationAsync(g.Id, true, stop);
+                    await device.ProcessWelcomesAsync(stop);
+                }
+                catch (PostboxException) { } // banned, removed or racing a change: keep polling
+                await Task.Delay(700, stop);
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) { DesktopLog.Error("Preview group member stopped", ex); }
+    }
+}
+
 internal static class PreviewRooms
 {
     public const string OrganizationId = "org_preview";

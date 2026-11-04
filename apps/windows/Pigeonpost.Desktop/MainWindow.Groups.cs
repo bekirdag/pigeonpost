@@ -541,7 +541,7 @@ public sealed partial class MainWindow
                 if (menu.Items.Count > 0)
                 {
                     var more = new Button { Content = new FontIcon { Glyph = "\uE712", FontSize = 13 }, Style = (Style)Root.Resources["QuietIconButton"] };
-                    AutomationProperties.SetName(more, "Actions for " + member.Name + (member.IsMe ? " (you)" : ""));
+                    AutomationProperties.SetName(more, member.IsMe ? "Your actions" : "Actions for " + member.Name);
                     more.Flyout = menu;
                     Grid.SetColumn(more, 2);
                     row.Children.Add(more);

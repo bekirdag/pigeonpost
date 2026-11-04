@@ -191,6 +191,33 @@ public sealed class PreviewPostbox : HttpMessageHandler
             groups[g.Id] = g; return g.Id;
         }
     }
+    // UI tests: an active personal public group whose owner device keys joiners later, with a
+    // known join-link token.
+    public string SeedPublicGroup(string ownerInbox, string name, string description, string linkToken)
+    {
+        lock (sync)
+        {
+            var g = new Grp { Id = "grp_" + GroupApiIdSafe(), CreatedBy = ownerInbox, CreatedAt = Now, Name = name, Description = description,
+                JoinPolicy = "public", Visibility = "unlisted", Activation = "active", Epoch = 1, LinkToken = linkToken };
+            g.Members[ownerInbox] = new Member { Address = ownerInbox, Role = "owner", State = "active" };
+            groups[g.Id] = g; return g.Id;
+        }
+    }
+    // UI tests: the server's view of a group by name (settings, roles and bans), for assertions.
+    public JsonObject? GroupSnapshot(string name)
+    {
+        lock (sync)
+        {
+            if (groups.Values.FirstOrDefault(g => g.Name == name && g.DeletedAt is null) is not { } g) return null;
+            var roles = new JsonObject();
+            foreach (var m in g.Members.Values) roles[m.Address] = m.Role + ":" + m.State;
+            return new JsonObject
+            {
+                ["id"] = g.Id, ["join_policy"] = g.JoinPolicy, ["members_can_change_timer"] = g.MembersCanChangeTimer, ["has_link"] = g.LinkToken is not null,
+                ["link_token"] = g.LinkToken, ["roles"] = roles, ["bans"] = new JsonArray(g.Bans.Select(b => (JsonNode)b).ToArray()),
+            };
+        }
+    }
     private Org MemberOrg(string? id, Box me) => id is not null && orgs.TryGetValue(id, out var org) && org.Members.ContainsKey(me.Address) && org.Status is "active" or "read_only"
         ? org : throw new Fail(403, "forbidden");
     private object? OrganizationRoute(string method, string path, Box me, JsonNode? body, System.Collections.Specialized.NameValueCollection query)
@@ -674,7 +701,7 @@ public sealed class PreviewPostbox : HttpMessageHandler
                 {
                     if (!(mine.Role is "owner" or "admin") || row.Role == "admin" && mine.Role != "owner" || target == me.Address) throw new Fail(403, "not_admin");
                     if (state == "banned") grp.Bans.Add(target);
-                    if (row.State == "invited" && state == "removed") grp.Members.Remove(target);
+                    if (row.State == "invited") grp.Members.Remove(target); // an invitation is withdrawn; a ban is kept apart
                     else row.State = state;
                     Notice(grp, state == "banned" ? "member_banned" : "member_removed", me.Address, new JsonObject { ["address"] = target });
                 }

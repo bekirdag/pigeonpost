@@ -65,6 +65,8 @@ public sealed partial class MainWindow : Window
         }
         if (Environment.GetEnvironmentVariable("PIGEONPOST_UI_CALENDAR_STATE") is not null)
             stand_in.Features.Add(ServerFeatures.Calendar);
+        if (Environment.GetEnvironmentVariable("PIGEONPOST_UI_GROUP_ADMIN_STATE") is { } groupAdminState)
+            PreviewGroupAdmin.Seed(stand_in, groupAdminState, lifetime.Token);
         if (approvalFixture is not null || roomsState is not null) stand_in.Features.Add(ServerFeatures.Organizations);
         if (roomsState is not null) PreviewSideData.SeedRooms(stand_in);
         if (Environment.GetEnvironmentVariable("PIGEONPOST_UI_LIVE_NOTES") is not null) PreviewSideData.SeedLiveAndNotes(stand_in);
