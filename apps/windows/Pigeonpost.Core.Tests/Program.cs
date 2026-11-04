@@ -1052,6 +1052,8 @@ tests.AddRange(GroupStateAuthorizationTests.All());
 tests.AddRange(GroupClientAuthorizationTests.All());
 tests.AddRange(AvatarAuthorizationTests.All());
 tests.AddRange(PeopleNameTests.All());
+tests.AddRange(ContactImportTests.All());
+tests.AddRange(ContactImportTests.StandIn());
 tests.AddRange(CallHistoryAuthorizationTests.All());
 tests.AddRange(NativeCallSessionTests.All());
 tests.AddRange(InboxAuthorizationTests.All());

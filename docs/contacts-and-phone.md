@@ -329,6 +329,14 @@ locally (§6.2); add `phone.*` and `profile.name` event handling; update the sto
 4. **Hash:** `SHA256.HashData`, first 16 bytes, hex.
 5. Phone verification, invites, names, aliases (`ApplicationData.Current.LocalSettings`) as above.
 
+**Shipped on Windows (2026-11-04):** Account → *Phone number…* (`phone_numbers`: add, 6-digit code, discoverable off by
+default, unlink) and *Find people I know…* (`contact_discovery`: `.vcf`/`.csv` through `FileOpenPicker`, parsed by
+`Pigeonpost.Core/ContactImport.cs`, a port of `contacts.js` with the same test tables; batches of 200, stop at the daily
+allowance; *Start chat* on matches and, with `sms_invites` and a verified number on the acting inbox, a per-row *Invite by
+SMS* confirmation that shows the exact text). No `contacts` capability and no People access: the manual import is the
+only path, so the Store privacy text needs only the phone number. Aliases are encrypted with DPAPI under Local App Data
+(`LocalAliasFile`), not `LocalSettings`. Tests: `ContactImportTests` (core) and `test-contacts.ps1` (UI).
+
 ### Linux (`apps/linux`)
 
 1. **vCard import:** `Gtk.FileDialog` (GTK 4.10+; goes through the file-chooser portal under Flatpak, so no extra
