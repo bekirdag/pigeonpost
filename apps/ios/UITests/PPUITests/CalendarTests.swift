@@ -358,8 +358,13 @@ final class CalendarUITests: XCTestCase {
         tap(app.staticTexts["Team invitation"].firstMatch)
         XCTAssertTrue(app.navigationBars["Event"].waitForExistence(timeout: 5))
         tapRow(app.buttons["calendar-move-invitation"], in: "calendar-event-details")
-        tap(element("calendar-placement-picker"))
-        tapPopup(app.buttons["Personal"].firstMatch)
+        // A menu can swallow the tap that lands while it is still presenting, which leaves the
+        // picker on Work and moves nothing. Choose until the picker itself shows Personal.
+        let openPlacements = { self.tap(self.element("calendar-placement-picker")) }
+        let personal = app.buttons.matching(NSPredicate(
+            format: "identifier == 'calendar-placement-picker' AND (value == 'Personal' OR label ENDSWITH 'Personal')")).firstMatch
+        openPlacements()
+        tapPopup(app.buttons["Personal"].firstMatch, until: personal, reopen: openPlacements)
         tap(app.buttons["calendar-save-placement"])
         XCTAssertTrue(app.navigationBars["Event"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["In Personal"].waitForExistence(timeout: 5))
