@@ -219,6 +219,7 @@ export function createCallsService(cfgIn, deps = {}) {
     cfg, internal, HttpError, KINDS, LIMITS, now, norm, liveSession, mailboxFor, sessionInRoom, limited, makeRoom, // Phase 3a
     addParticipant, reportCall, sessionsByName, sessions, send, stopRinging, endRoom, roomView, admitted, participantName, // Phase 3a
     removeParticipant, sfuEvict, // P0-2: membership enforced during the call
+    alerts, mailboxEngaged, // P1-11: group rings reach closed apps
   }); // Phase 3a
   const scheduledMeetings = createScheduledMeetings({ // Phase 3B
     cfg, internal, HttpError, LIMITS, now, norm, liveSession, mailboxFor, sessionInRoom, limited, makeRoom, addParticipant, reportCall, sessions, send, endRoom, // Phase 3B
@@ -707,8 +708,16 @@ export function createCallsService(cfgIn, deps = {}) {
     clearTimeout(room.ring.timer);
     for (const id of room.ring.ringing) if (id !== exceptSession) send(sessions.get(id), "ring_ended", { room: room.id, reason });
     // Phase 1c: a device woken by a push may still ask about this ring; it learns how it ended.
-    room.lastRing = { tokenHash: room.ring.tokenHash, reason };
-    if (room.ring.pushed) alerts.cancel({ room: room.id, to: room.ring.to, kind: room.kind, from: room.ring.from }, reason);
+    room.lastRing = { tokenHash: room.ring.tokenHash, tokens: room.ring.tokens, reason };
+    if (room.ring.group) {
+      // P1-11: every member whose devices were pushed and not yet told.
+      for (const key of room.ring.pushed || []) {
+        const t = room.ring.tokens.get(key);
+        if (t && !t.ended) t.ended = reason;
+        alerts.cancel({ room: room.id, to: t ? t.address : key, kind: room.kind, from: room.ring.from }, reason);
+      }
+      room.ring.pushed?.clear();
+    } else if (room.ring.pushed) alerts.cancel({ room: room.id, to: room.ring.to, kind: room.kind, from: room.ring.from }, reason);
     room.ring = null;
   }
 
@@ -717,6 +726,7 @@ export function createCallsService(cfgIn, deps = {}) {
   function ringLateSession(session) {
     for (const room of rooms.values()) {
       const r = room.ring;
+      if (r && r.group) { groupCalls.ringLate(room, session); continue; } // P1-11
       if (room.state !== "ringing" || !r || !r.live || !session.names.has(r.toName)) continue;
       if (session.id === r.callerSession || r.ringing.has(session.id) || sessionInRoom(session)) continue;
       r.ringing.add(session.id);
@@ -731,18 +741,28 @@ export function createCallsService(cfgIn, deps = {}) {
     const room = rooms.get(String(roomId || ""));
     if (room && room.ring && ringTokenMatches(room.ring.tokenHash, presented)) return { room, live: true };
     if (room && room.lastRing && ringTokenMatches(room.lastRing.tokenHash, presented)) return { room, live: false };
+    // P1-11: a group ring's per-member tokens, live while that member is still rung.
+    for (const r of room ? [room.ring, room.lastRing] : []) {
+      for (const t of (r && r.tokens && r.tokens.values()) || []) {
+        if (ringTokenMatches(t.hash, presented)) return { room, live: r === room.ring && !t.ended, member: t };
+      }
+    }
     throw new HttpError(404, "no_ring");
   }
 
   function ringState(req, roomId, presented) {
-    const { room, live } = ringFor(req, roomId, presented);
-    if (live && room.state === "ringing") return { state: "ringing", kind: room.kind, expires_at: Math.floor(room.ring.expiresAt / 1000) };
-    return { state: "ended", reason: (room.lastRing && room.lastRing.reason) || "ended" };
+    const { room, live, member } = ringFor(req, roomId, presented);
+    if (live && (room.state === "ringing" || member)) return { state: "ringing", kind: room.kind, expires_at: Math.floor(room.ring.expiresAt / 1000) };
+    return { state: "ended", reason: (member && member.ended) || (room.lastRing && room.lastRing.reason) || "ended" };
   }
 
   function declineByToken(req, roomId, body) {
-    const { room, live } = ringFor(req, roomId, body.ring_token);
+    const { room, live, member } = ringFor(req, roomId, body.ring_token);
     if (!live) return { ok: true, state: "ended" };
+    if (member) { // P1-11: only this member stops ringing
+      groupCalls.declineMember(room, member.address, body.reason === "busy" ? "busy" : "declined");
+      return { ok: true, state: room.state };
+    }
     const reason = body.reason === "busy" ? "busy" : "declined";
     // Phase 1b history: the same event a session's decline reports.
     const by = (room.targets && room.targets[0]) || null;
