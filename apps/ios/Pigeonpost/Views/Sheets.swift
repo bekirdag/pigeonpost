@@ -53,11 +53,13 @@ struct IdentityPickerSheet: View {
 }
 
 struct MailboxRow: View {
+    @Environment(Account.self) private var account
     let mailbox: Mailbox
 
     var body: some View {
         HStack(spacing: 11) {
             Avatar(peer: mailbox.key)
+                .orgBadge(org, size: 16)
             VStack(alignment: .leading, spacing: 2) {
                 Text(name)
                     .font(.geistMono(14.5, .semibold))
@@ -79,13 +81,20 @@ struct MailboxRow: View {
 
     /// An unnamed mailbox is worth flagging rather than padded over: handle-based trust will never
     /// match one, so a fleet that expects to be trusted by name needs to know.
-    private var sub: String { mailbox.handle ?? "\(mailbox.address) · no handle" }
+    private var sub: String {
+        // SDS §5.4: a member mailbox says whose it is.
+        if let org { return org.profileLine }
+        return mailbox.handle ?? "\(mailbox.address) · no handle"
+    }
+
+    private var org: OrganizationMembership? { account.organization(for: mailbox.address) }
 }
 
 /// Writing to somebody who has never written in. A handle, a whole namespace, or a key address —
 /// the server resolves which mailbox that is, and the conversation is filed under what it says.
 struct NewConversationSheet: View {
     @Environment(Inbox.self) private var inbox
+    @Environment(Account.self) private var account
     @Environment(\.dismiss) private var dismiss
 
     init(initialPeer: String? = nil) {
@@ -113,6 +122,10 @@ struct NewConversationSheet: View {
                         .autocorrectionDisabled()
                         .font(.geistMono(15))
                         .accessibilityIdentifier("newConversationPeer")
+                    // SDS §5.4: colleagues and company agents as the address is typed.
+                    if !account.organizations.isEmpty, OrganizationSurface.directoryQuery(peer) != nil {
+                        OrgDirectorySuggestions(text: peer) { peer = $0 }
+                    }
                 } header: {
                     Text("Their address")
                 } footer: {

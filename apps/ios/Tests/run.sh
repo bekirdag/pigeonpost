@@ -10,11 +10,11 @@ swiftc -O -parse-as-library -o "$out/authorization-lease" Tests/AuthorizationLea
 "$out/authorization-lease"
 swiftc -O -parse-as-library -o "$out/account-scope" Tests/AccountScopeTests.swift Shared/Config.swift \
   Shared/API/Models.swift Shared/API/APIError.swift Shared/API/PostboxClient.swift \
-  Shared/Auth/AuthorizationLease.swift Shared/Model/Account.swift Shared/Model/Features.swift
+  Shared/Auth/AuthorizationLease.swift Shared/Model/Account.swift Shared/Model/Features.swift Shared/Enterprise/OrganizationMembership.swift
 "$out/account-scope"
 swiftc -O -parse-as-library -o "$out/group-store-scope" Tests/GroupStoreScopeTests.swift Shared/Config.swift \
   Shared/API/Models.swift Shared/API/APIError.swift Shared/API/PostboxClient.swift Shared/Auth/AuthorizationLease.swift \
-  Shared/Model/Account.swift Shared/Model/Features.swift Shared/Groups/GroupModels.swift Shared/Groups/GroupAPI.swift \
+  Shared/Model/Account.swift Shared/Model/Features.swift Shared/Enterprise/OrganizationMembership.swift Shared/Groups/GroupModels.swift Shared/Groups/GroupAPI.swift \
   Shared/Groups/GroupVault.swift Shared/Groups/GroupEngine.swift Shared/Groups/GroupText.swift Shared/Groups/GroupStreams.swift Shared/Groups/GroupStore.swift
 "$out/group-store-scope"
 swiftc -O -DDEBUG -parse-as-library -o "$out/people" Tests/PeopleTests.swift Shared/Config.swift \
@@ -48,6 +48,9 @@ swiftc -O -parse-as-library -o "$out/organization-room-store" Tests/Organization
   Shared/Groups/GroupModels.swift Shared/Groups/GroupAPI.swift \
   Shared/Enterprise/OrganizationRoomModels.swift Shared/Enterprise/OrganizationRoomAPI.swift Shared/Enterprise/OrganizationRoomStore.swift
 "$out/organization-room-store"
+swiftc -O -parse-as-library -o "$out/organization-surface" Tests/OrganizationSurfaceTests.swift Shared/Config.swift \
+  Shared/API/Models.swift Shared/API/APIError.swift Shared/API/PostboxClient.swift Shared/Enterprise/OrganizationMembership.swift
+"$out/organization-surface"
 swiftc -O -o "$out/thread-model" \
   Tests/main.swift \
   Shared/API/Models.swift \

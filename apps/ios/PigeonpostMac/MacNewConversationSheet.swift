@@ -9,6 +9,7 @@ struct MacNewConversationSheet: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(Inbox.self) private var inbox
+    @Environment(Account.self) private var account
     init(initialPeer: String? = nil, opened: @escaping (String) -> Void) {
         self.opened = opened
         _peer = State(initialValue: initialPeer ?? "/")
@@ -32,6 +33,11 @@ struct MacNewConversationSheet: View {
                 .background(Theme.wash, in: RoundedRectangle(cornerRadius: 10))
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.strokeStrong, lineWidth: 1))
                 .onSubmit(go)
+            // SDS §5.4: colleagues and company agents as the address is typed.
+            if !account.organizations.isEmpty, OrganizationSurface.directoryQuery(peer) != nil {
+                OrgDirectorySuggestions(text: peer) { peer = $0 }
+                    .frame(width: 340, alignment: .leading)
+            }
             // Addressing somebody and writing to them are one intention. Without this field the
             // sheet could only open an empty conversation, so the shortest way to send a first
             // message was to type the address, dismiss, find the conversation and start again.

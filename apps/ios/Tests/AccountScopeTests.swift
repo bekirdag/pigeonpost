@@ -84,12 +84,19 @@ private final class ScopeTransport: URLProtocol, @unchecked Sendable {
                 try who.complete(200, ["address": address, "handle": "/" + name + "/" + address.dropFirst(3)])
             }
             try await request("/v1/capabilities").complete(200, ["features": ["groups", "orgs", "calendar"]])
+            // SDS §5.4: the person's organizations follow the capabilities.
+            try await request("/v1/orgs").complete(200, ["orgs": [[
+                "id": "org_" + name, "name": name.capitalized + " Inc.", "namespace": "/" + name, "status": "active",
+                "my_roles": [], "my_mailbox": ["address": addresses[0], "handle": "/" + name + "/main"],
+            ]], "operated": []])
         }
         let original = Task { await account.loadIdentities() }
         try await finishLoad("first", addresses: ["/k/main", "/k/other"])
         await original.value
         check(account.mailboxes.count == 2 && account.me?.address == "/k/main", "real identities and whoami populate the account")
         check(account.features.groups && account.features.orgs, "capabilities belong to the loaded person")
+        check(account.organization(for: "/k/main")?.profileLine == "First Inc. · Member", "the member mailbox carries its org")
+        check(account.organization(for: "/k/other") == nil, "another mailbox of the person is not the org's")
         let beforeSwitch = account.actingGeneration
         account.act(as: Mailbox(address: "/k/foreign", handle: "/forged/main", label: nil))
         check(account.me?.address == "/k/main" && account.actingGeneration == beforeSwitch, "unknown inbox cannot become the actor")
@@ -110,11 +117,13 @@ private final class ScopeTransport: URLProtocol, @unchecked Sendable {
         let obsolete = try await request("/v1/identities")
         session.authorize("second")
         check(account.me == nil && account.mailboxes.isEmpty && !account.features.orgs, "new person immediately hides old identities and capabilities")
+        check(account.organizations.isEmpty, "new person never sees the old person's organizations")
         let replacement = Task { await account.loadIdentities() }
         try await finishLoad("second", addresses: ["/k/second"])
         await replacement.value
         try obsolete.complete(401, ["error": "unauthorized"]); await late.value
         check(account.me?.address == "/k/second" && account.load == .ready, "late old load cannot overwrite the new person")
+        check(account.organizations.map(\.id) == ["org_second"], "only the new person's organizations")
         check(session.renewals == 0 && account.features.orgs, "late old 401 neither renews nor clears new capabilities")
 
         let frozen = account.scopedClient()

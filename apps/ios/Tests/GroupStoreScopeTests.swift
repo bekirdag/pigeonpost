@@ -127,6 +127,7 @@ private actor SuspendedGroupEngine: GroupCrypting {
             try await request("/v1/identities").complete(["identities": addresses.map { ["address": $0] }])
             for _ in addresses { try await request("/v1/whoami").complete([:]) }
             try await request("/v1/capabilities").complete(["features": ["groups", "orgs", "receipts"]])
+            try await request("/v1/orgs").complete(["orgs": [], "operated": []])
             await load.value
         }
         try await loadAccount(["/k/first", "/k/other"])

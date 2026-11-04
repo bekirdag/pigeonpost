@@ -25,9 +25,20 @@ final class Account {
     @ObservationIgnored private var actorLease: AuthorizationLease?
     @ObservationIgnored private var actorLeaseAuthorization: UUID?
     private(set) var actingGeneration = UUID()
+    /// SDS §5.4: the organizations this person belongs to. Display only; see OrganizationSurface.
+    private var cachedOrganizations: [OrganizationMembership] = []
+    private var organizationsRequest: UUID?
 
     var mailboxes: [Mailbox] { hasCurrentOwner ? cachedMailboxes : [] }
     var me: Mailbox? { hasCurrentOwner ? cachedMe : nil }
+    /// Only while `orgs` is on for this account, and only this person's.
+    var organizations: [OrganizationMembership] {
+        hasCurrentOwner && features.orgs ? cachedOrganizations.filter(\.readable) : []
+    }
+    /// The org whose member mailbox `address` is ("Acme Inc. · Member"), or nil.
+    func organization(for address: String?) -> OrganizationMembership? {
+        OrganizationSurface.membership(for: address, in: organizations)
+    }
     var load: Load { hasCurrentOwner || loadAuthorization == session.authorizationId ? cachedLoad : .idle }
     /// A first mailbox is being minted. Its own flag rather than `load`, because `loadIdentities`
     /// declines to run while `load` is `.loading` and creating ends by calling it.
@@ -110,7 +121,7 @@ final class Account {
         if loadAuthorization == authorization, case .loading = cachedLoad { return }
         let request = UUID()
         let client = scopedClient()
-        if !hasCurrentOwner { features.reset() }
+        if !hasCurrentOwner { features.reset(); cachedOrganizations = [] }
         loadAuthorization = authorization
         loadRequest = request
         cachedLoad = .loading
@@ -147,6 +158,8 @@ final class Account {
             cachedSubject = session.subject
             cachedLoad = .ready
             await features.load(using: client, ifCurrent: owns)
+            guard owns() else { return }
+            await refreshOrganizations(using: client, ifCurrent: owns)
         } catch let error as APIError {
             guard owns() else { return }
             cachedLoad = .failed(error.errorDescription ?? "Could not reach the postbox.")
@@ -235,7 +248,37 @@ final class Account {
         return mailbox(inNamespace: namespace)
     }
 
+    /// Ask `/v1/orgs` again. A failure keeps what was known (an older postbox, or no network);
+    /// `orgs` being off clears it, because then nothing org-shaped may be drawn.
+    func refreshOrganizations(using client: PostboxClient? = nil, ifCurrent: (() -> Bool)? = nil) async {
+        guard !Fixtures.enabled else { return }
+        let authorization = session.authorizationId
+        guard current(authorization) else { return }
+        guard features.orgs else { cachedOrganizations = []; return }
+        let request = UUID()
+        organizationsRequest = request
+        let client = client ?? scopedClient()
+        func owns() -> Bool {
+            current(authorization) && organizationsRequest == request && (ifCurrent?() ?? true) && hasCurrentOwner
+        }
+        do {
+            let orgs = try await client.organizationMemberships()
+            guard owns() else { return }
+            cachedOrganizations = orgs
+        } catch let error as APIError where [403, 404].contains(error.status) {
+            guard owns() else { return }
+            cachedOrganizations = []
+        } catch {
+            // Keep what we had.
+        }
+    }
+
     #if DEBUG
+    /// `-org-surface`: this mailbox is a member mailbox of a fixture org (SDS §5.4 screens).
+    func installOrganizationFixture(_ orgs: [OrganizationMembership]) {
+        cachedOrganizations = orgs
+    }
+
     func installFixtures(mailboxes: [Mailbox], me: Mailbox) {
         cachedMailboxes = mailboxes
         cachedMe = me
@@ -336,6 +379,8 @@ final class Account {
         purchaseStore?.reset()
         purchaseStore = nil
         features.reset()
+        cachedOrganizations = []
+        organizationsRequest = nil
         cachedMailboxes = []
         cachedMe = nil
         cachedAuthorization = nil

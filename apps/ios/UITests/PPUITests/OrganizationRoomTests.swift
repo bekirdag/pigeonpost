@@ -148,4 +148,70 @@ final class OrganizationRoomUITests: XCTestCase {
         XCTAssertFalse(element("org-rooms-directory").exists)
         XCTAssertTrue(app.staticTexts["Planning room"].firstMatch.waitForExistence(timeout: 10))
     }
+
+    // ---- SDS §5.4: the org inside the ordinary inbox -------------------------------------------
+
+    func testCompanySectionListsOrgRoomsAndBrowsesTheRest() {
+        launch(["-org-surface"], staged: false)
+        let section = element("company-section")
+        XCTAssertTrue(section.waitForExistence(timeout: 15), "org rooms sit under a Company heading")
+        XCTAssertTrue(app.staticTexts["General"].firstMatch.waitForExistence(timeout: 5), "the org room is listed")
+        XCTAssertTrue(app.staticTexts["Garden club"].firstMatch.exists, "personal groups stay where they were")
+        let browse = element("company-browse-rooms")
+        XCTAssertTrue(browse.exists && browse.isHittable)
+        browse.tap()
+        XCTAssertTrue(app.navigationBars["Organization rooms"].waitForExistence(timeout: 10), "Browse rooms opens the directory")
+    }
+
+    func testCompanySectionNeedsBothCapabilities() {
+        launch(["-org-surface"], staged: false, features: "groups")
+        XCTAssertTrue(app.staticTexts["Garden club"].firstMatch.waitForExistence(timeout: 15))
+        XCTAssertFalse(element("company-section").exists, "no Company heading while orgs is off")
+    }
+
+    func testMemberMailboxCarriesItsOrganization() {
+        launch(["-org-surface"], staged: false)
+        let line = element("mailboxOrganization")
+        if line.waitForExistence(timeout: 8) {
+            // The desktop layout (iPad) says it under the mailbox in the sidebar.
+            XCTAssertEqual(line.label, "Example Co · Member")
+        } else {
+            // The phone says it in the mailbox switcher.
+            let acting = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Acting as")).firstMatch
+            XCTAssertTrue(acting.waitForExistence(timeout: 5))
+            XCTAssertTrue(acting.label.contains("Example Co · Member"), acting.label)
+            acting.tap()
+            XCTAssertTrue(app.staticTexts["Example Co · Member"].firstMatch.waitForExistence(timeout: 10))
+        }
+    }
+
+    func testComposeSuggestsColleaguesFromTheDirectory() {
+        launch(["-org-surface"], staged: false)
+        openComposeMenu()
+        let new = app.buttons.matching(NSPredicate(format: "label ==[c] %@", "New conversation")).firstMatch
+        app.choose(new, until: app.textFields["newConversationPeer"]) { self.openComposeMenu() }
+        let field = app.textFields["newConversationPeer"]
+        XCTAssertTrue(field.waitForExistence(timeout: 10))
+        field.tap(); field.typeText("ad")
+        let ada = element("org-directory:/example/ada")
+        XCTAssertTrue(ada.waitForExistence(timeout: 10), "a colleague matching what was typed")
+        XCTAssertFalse(element("org-directory:/example/build").exists, "non-matching entries are not offered")
+        ada.tap()
+        XCTAssertEqual(field.value as? String, "/example/ada", "picking a colleague fills in their handle")
+    }
+
+    func testGroupsChipShowsOnlyGroupsOnTheDesktopLayout() throws {
+        launch(["-org-surface"], staged: false)
+        let chip = element("sideGroups")
+        guard chip.waitForExistence(timeout: 8) else { throw XCTSkip("The Groups chip belongs to the desktop (iPad) layout") }
+        let conversations = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "conversation:"))
+        XCTAssertGreaterThan(conversations.count, 0)
+        chip.tap()
+        XCTAssertTrue(app.staticTexts["Garden club"].firstMatch.waitForExistence(timeout: 5))
+        let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "count == 0"), object: conversations)
+        XCTAssertEqual(XCTWaiter.wait(for: [gone], timeout: 5), .completed, "one-to-one conversations are filtered out")
+        element("sideInbox").tap()
+        let back = XCTNSPredicateExpectation(predicate: NSPredicate(format: "count > 0"), object: conversations)
+        XCTAssertEqual(XCTWaiter.wait(for: [back], timeout: 5), .completed, "Inbox shows everything again")
+    }
 }

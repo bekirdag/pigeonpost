@@ -108,6 +108,9 @@ enum Fixtures {
 
         session.installFixtureSession()
         account.installFixtures(mailboxes: fleet, me: me)
+        if OrganizationSurfaceFixtures.enabled {
+            account.installOrganizationFixture(OrganizationSurfaceFixtures.memberships(me: me.address))
+        }
         inbox.installFixtures(
             messages: messages,
             contacts: contactsBody?.contacts ?? [],

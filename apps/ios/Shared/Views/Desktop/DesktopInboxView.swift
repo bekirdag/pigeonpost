@@ -46,6 +46,8 @@ struct DesktopInboxView: View {
     @Environment(CalendarStore.self) private var calendar: CalendarStore?
     /// The sidebar shows the call history instead of the conversations (the web's left view).
     @State private var showingCalls = false
+    /// The Groups chip: only groups (and org rooms) in the conversations column (SDS §4, desktop).
+    @State private var showingGroups = false
 
     @State private var openingThread: ThreadTarget?
     /// The subject a right-click asked to delete, held until the question is answered. Deleting mail
@@ -129,7 +131,9 @@ struct DesktopInboxView: View {
             openingThread = nil
             deletingThread = nil
             showingCalls = false
+            showingGroups = false
         }
+        .onChange(of: groups.enabled) { _, on in if !on { showingGroups = false } }
         .sheet(item: $openingThread) { target in
             NewThreadSheet(peer: target.id) { id in
                 peer = target.id
@@ -171,7 +175,7 @@ struct DesktopInboxView: View {
             if account.features.meetingSummaries, let openNotes {
                 MeetingNotesEntry(open: openNotes).padding(.horizontal, 16)
             }
-            if callLog != nil, account.features.callHistory { sideSwitch }
+            if (callLog != nil && account.features.callHistory) || groups.enabled { sideSwitch }
             if inbox.loading {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
@@ -344,6 +348,18 @@ struct DesktopInboxView: View {
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
             }
+            // SDS §5.4: the org's rooms under a Company heading, with the way to browse the rest.
+            if !companyOrgs.isEmpty {
+                Section {
+                    ForEach(companyRooms) { group in
+                        GroupRow(group: group, isSelected: group.id == peer, compact: true)
+                            .selectable(group.id == peer, radius: 10) { peer = group.id }
+                    }
+                } header: {
+                    CompanyHeader(orgs: companyOrgs) { openRooms?() }
+                        .padding(.horizontal, 10)
+                }
+            }
             ForEach(entries) { entry in
                 if case let .group(group) = entry {
                     GroupRow(group: group, isSelected: group.id == peer, compact: true)
@@ -386,9 +402,26 @@ struct DesktopInboxView: View {
         .overlay { emptyConversations }
     }
 
-    /// Conversations and groups together; the archive holds no groups.
+    /// Conversations and groups together; the archive holds no groups. With the Groups chip on,
+    /// groups only. Org rooms are listed under Company when there is a Company heading.
     private var entries: [InboxEntry] {
-        InboxEntry.merge(inbox.visible, groups.enabled && !inbox.viewingArchive ? groups.listed(filter: inbox.filter) : [])
+        let listed = groups.enabled && !inbox.viewingArchive ? groups.listed(filter: inbox.filter) : []
+        let orgs = companyOrgs
+        let rest = listed.filter { !OrganizationSurface.isCompanyRoom(orgId: $0.orgId, orgs: orgs) }
+        if showingGroups && groups.enabled { return rest.map { .group($0) } }
+        return InboxEntry.merge(inbox.visible, rest)
+    }
+
+    /// The person's orgs, when org rooms can be shown at all (both `orgs` and `groups` on, and
+    /// somewhere to browse them from).
+    private var companyOrgs: [OrganizationMembership] {
+        account.features.orgs && groups.enabled && !inbox.viewingArchive && openRooms != nil ? account.organizations : []
+    }
+
+    private var companyRooms: [GroupSummary] {
+        let orgs = companyOrgs
+        guard !orgs.isEmpty else { return [] }
+        return groups.listed(filter: inbox.filter).filter { OrganizationSurface.isCompanyRoom(orgId: $0.orgId, orgs: orgs) }
     }
 
     @ViewBuilder
@@ -411,7 +444,10 @@ struct DesktopInboxView: View {
 
     @ViewBuilder
     private var emptyConversations: some View {
-        if inbox.hasLoaded, entries.isEmpty, !(groups.enabled && !groups.invitations.isEmpty) {
+        if showingGroups, groups.enabled, entries.isEmpty, companyRooms.isEmpty, groups.invitations.isEmpty {
+            ContentUnavailableView(inbox.filter.isEmpty ? "No groups yet" : "No matching groups", systemImage: "person.3",
+                                   description: Text("Groups you start or join appear here."))
+        } else if inbox.hasLoaded, entries.isEmpty, companyRooms.isEmpty, !(groups.enabled && !groups.invitations.isEmpty) {
             #if os(iOS)
             if !inbox.filter.isEmpty {
                 ContentUnavailableView.search(text: inbox.filter)
@@ -634,9 +670,18 @@ struct DesktopInboxView: View {
     /// shapes rather than `Button`s, for the reason the toolbar note gives.
     private var sideSwitch: some View {
         HStack(spacing: 6) {
-            sideChip("Inbox", symbol: "tray", on: !showingCalls, badge: 0, id: "sideInbox") { showingCalls = false }
-            sideChip("Calls", symbol: "phone", on: showingCalls, badge: callLog?.unseen ?? 0, id: "sideCalls") {
-                showingCalls = true
+            sideChip("Inbox", symbol: "tray", on: !showingCalls && !showingGroups, badge: 0, id: "sideInbox") {
+                showingCalls = false; showingGroups = false
+            }
+            if groups.enabled {
+                sideChip("Groups", symbol: "person.3", on: showingGroups && !showingCalls, badge: groups.unreadCount, id: "sideGroups") {
+                    showingCalls = false; showingGroups = true
+                }
+            }
+            if callLog != nil, account.features.callHistory {
+                sideChip("Calls", symbol: "phone", on: showingCalls, badge: callLog?.unseen ?? 0, id: "sideCalls") {
+                    showingCalls = true; showingGroups = false
+                }
             }
             Spacer(minLength: 0)
         }
@@ -663,7 +708,7 @@ struct DesktopInboxView: View {
         .onTapGesture(perform: action)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(on ? [.isButton, .isSelected] : .isButton)
-        .accessibilityLabel(badge > 0 ? "\(title), \(badge) missed" : title)
+        .accessibilityLabel(badge > 0 ? "\(title), \(badge) \(id == "sideCalls" ? "missed" : "unread")" : title)
         .accessibilityIdentifier(id)
     }
 
@@ -676,11 +721,23 @@ struct DesktopInboxView: View {
     private var mailboxBar: some View {
         HStack(spacing: 10) {
             Avatar(peer: account.me?.key, size: 30)
-            Text(account.me?.handle.map(PeerFace.displayName) ?? account.me?.label ?? "—")
-                .font(.geistMono(13, .medium))
-                .foregroundStyle(Theme.ink)
-                .lineLimit(1)
-                .truncationMode(.middle)
+                .orgBadge(actingOrg, size: 14)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(account.me?.handle.map(PeerFace.displayName) ?? account.me?.label ?? "—")
+                    .font(.geistMono(13, .medium))
+                    .foregroundStyle(Theme.ink)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                // SDS §5.4: a member mailbox says whose it is.
+                if let actingOrg {
+                    Text(actingOrg.profileLine)
+                        .font(.geist(11.5))
+                        .foregroundStyle(Theme.muted)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .accessibilityIdentifier("mailboxOrganization")
+                }
+            }
             Spacer(minLength: 0)
             if account.mailboxes.count > 1 {
                 Image(systemName: "chevron.down")
@@ -719,6 +776,7 @@ struct DesktopInboxView: View {
                     HStack(spacing: 4) {
                         HStack(spacing: 8) {
                             Avatar(peer: mailbox.handle ?? mailbox.address, size: 24)
+                                .orgBadge(account.organization(for: mailbox.address), size: 12)
                             Text(mailbox.handle.map(PeerFace.displayName) ?? mailbox.label ?? mailbox.address)
                                 .font(.geistMono(12.5))
                                 .foregroundStyle(Theme.ink)
@@ -748,6 +806,8 @@ struct DesktopInboxView: View {
         .frame(maxHeight: 260)
         .padding(.bottom, 10)
     }
+
+    private var actingOrg: OrganizationMembership? { account.organization(for: account.me?.address) }
 
     private func switchTo(_ mailbox: Mailbox) {
         switchingMailbox = false

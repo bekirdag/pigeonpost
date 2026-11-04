@@ -983,6 +983,23 @@ final class GroupStore {
         ]}
         """
         groups = (try? decoder.decode(GroupsResponse.self, from: Data(json.utf8)))?.groups ?? []
+        // SDS §5.4: an org room, which the inbox files under the Company heading.
+        #if DEBUG
+        if OrganizationSurfaceFixtures.enabled, account.features.orgs {
+            let room = """
+            {"groups":[{"id":"grp_room_fixturegeneral00000","name":"General","description":"Everyone at Example Co",
+              "org_id":"\(OrganizationSurfaceFixtures.organizationId)","join_policy":"public","post_policy":"everyone",
+              "visibility":"listed","revision":1,"epoch":1,"activation_state":"active","member_count":9,
+              "created_at":\(now - 50000),"last_at":\(now - 600),"last_seq":3,
+              "my":{"role":"member","state":"active","read_cursor":3,"unread":0,"notify":"all","revision":1}}]}
+            """
+            groups += (try? decoder.decode(GroupsResponse.self, from: Data(room.utf8)))?.groups ?? []
+            histories["grp_room_fixturegeneral00000"] = [
+                GroupItem(kind: .message, seq: 3, createdAt: now - 600, sender: "/k/fixtureada000000000000000", text: "Stand-up moves to 10:00 tomorrow."),
+            ]
+            inGroup.insert("grp_room_fixturegeneral00000")
+        }
+        #endif
         let garden = "grp_fixturegarden000000000000"
         let alp = "/k/aaaa1111bbbb2222cccc3333dd", ozgur = "/k/eeee5555ffff6666gggg7777hh"
         handles = [alp: "/alp/main", ozgur: "/ozgur/main", me: account.me?.handle ?? me]
@@ -1003,7 +1020,7 @@ final class GroupStore {
         histories["grp_fixtureannounce0000000000"] = [
             GroupItem(kind: .message, seq: 5, createdAt: now - 7200, sender: alp, text: "0.9.0 is out: groups and disappearing messages."),
         ]
-        inGroup = [garden, "grp_fixtureannounce0000000000"]
+        inGroup.formUnion([garden, "grp_fixtureannounce0000000000"])
         // Phase 6: an admin of Release notes is live there (a member watches; only admins may go
         // live in it), while the Garden club's owner has nobody live and may go live.
         if account.features.streaming, !CommandLine.arguments.contains("-no-live-fixture") {

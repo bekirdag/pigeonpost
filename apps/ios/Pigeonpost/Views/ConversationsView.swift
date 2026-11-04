@@ -359,6 +359,19 @@ struct ConversationsView: View {
                     .listRowBackground(Theme.sidebar)
                     .listRowSeparatorTint(Theme.rule)
             }
+            // SDS §5.4: the org's rooms under a Company heading, with the way to browse the rest.
+            if !companyOrgs.isEmpty {
+                Section {
+                    ForEach(companyRooms) { group in
+                        GroupRow(group: group, isSelected: group.id == selection)
+                            .tag(group.id)
+                            .listRowBackground(group.id == selection ? Theme.selected : Theme.sidebar)
+                            .listRowSeparatorTint(Theme.rule)
+                    }
+                } header: {
+                    CompanyHeader(orgs: companyOrgs) { sheet = .organizationRooms }
+                }
+            }
             ForEach(entries) { entry in
                 switch entry {
                 case let .group(group):
@@ -391,8 +404,22 @@ struct ConversationsView: View {
     }
 
     /// Conversations and groups together, unless the archive (which holds no groups) is open.
+    /// Org rooms are listed under Company instead, when there is a Company heading to hold them.
     private var entries: [InboxEntry] {
-        InboxEntry.merge(inbox.visible, groups.enabled && !inbox.viewingArchive ? groups.listed(filter: inbox.filter) : [])
+        let listed = groups.enabled && !inbox.viewingArchive ? groups.listed(filter: inbox.filter) : []
+        let orgs = companyOrgs
+        return InboxEntry.merge(inbox.visible, listed.filter { !OrganizationSurface.isCompanyRoom(orgId: $0.orgId, orgs: orgs) })
+    }
+
+    /// The person's orgs, when org rooms can be shown at all (both `orgs` and `groups` on).
+    private var companyOrgs: [OrganizationMembership] {
+        account.features.orgs && groups.enabled && !inbox.viewingArchive ? account.organizations : []
+    }
+
+    private var companyRooms: [GroupSummary] {
+        let orgs = companyOrgs
+        guard !orgs.isEmpty else { return [] }
+        return groups.listed(filter: inbox.filter).filter { OrganizationSurface.isCompanyRoom(orgId: $0.orgId, orgs: orgs) }
     }
 
     private func pruneDirectMessages() async {
@@ -427,7 +454,7 @@ struct ConversationsView: View {
 
     @ViewBuilder
     private var emptyState: some View {
-        if inbox.visible.isEmpty, inbox.hasLoaded, entries.isEmpty, groups.invitations.isEmpty || !groups.enabled {
+        if inbox.visible.isEmpty, inbox.hasLoaded, entries.isEmpty, companyRooms.isEmpty, groups.invitations.isEmpty || !groups.enabled {
             if !inbox.filter.isEmpty {
                 ContentUnavailableView.search(text: inbox.filter)
             } else if inbox.viewingArchive {
@@ -448,6 +475,7 @@ struct ConversationsView: View {
             Button { sheet = .identities } label: {
                 HStack(spacing: 7) {
                     Avatar(peer: account.me?.key, size: 28)
+                        .orgBadge(account.organization(for: account.me?.address), size: 13)
                     Text(actingName)
                         .font(.geistMono(14.5, .semibold))
                         .foregroundStyle(Theme.ink)
@@ -461,7 +489,7 @@ struct ConversationsView: View {
                         .foregroundStyle(Theme.secondary)
                 }
             }
-            .accessibilityLabel("Acting as \(actingName). Change mailbox")
+            .accessibilityLabel(actingLabel)
         }
         // Two trailing items, never three.
         //
@@ -514,6 +542,13 @@ struct ConversationsView: View {
             Button { sheet = .settings } label: { Image(systemName: "gearshape").foregroundStyle(Theme.secondary) }
                 .accessibilityLabel("Settings")
         }
+    }
+
+    private var actingLabel: String {
+        if let org = account.organization(for: account.me?.address) {
+            return "Acting as \(actingName), \(org.profileLine). Change mailbox"
+        }
+        return "Acting as \(actingName). Change mailbox"
     }
 
     private var actingName: String {
