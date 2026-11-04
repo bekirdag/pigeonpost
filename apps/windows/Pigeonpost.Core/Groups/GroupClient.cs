@@ -315,13 +315,19 @@ public sealed class GroupClient : IDisposable
                 Sha = i < m.Attachments.Length ? Convert.ToBase64String(m.Attachments[i].SealedSha256) : null,
                 Len = i < m.Attachments.Length ? m.Attachments[i].PlaintextLen : 0,
             }).ToList();
+            // References count only when the signed, encrypted body and the postbox's envelope name
+            // the same messages (docs/message-actions.md §5); otherwise the line stands alone.
+            var verified = SameReference(doc.ReplyTo, item.ReplyTo) && SameReference(doc.EditOf, item.EditOf);
             Remember(gid, new GroupLine
             {
                 Kind = "message", Seq = item.Seq, Sender = item.Sender, SenderDevice = item.SenderDevice, Cmid = item.ClientMessageId,
-                Text = doc.Text, Files = files, ReplyTo = doc.ReplyTo, EditOf = doc.EditOf ?? item.EditOf?.ToString(),
-                CreatedAt = created, ExpiresAt = item.ExpiresAt,
+                Text = doc.Text, Files = files, ReplyTo = verified ? doc.ReplyTo : null, EditOf = verified ? doc.EditOf : null,
+                ActionsVerified = verified, CreatedAt = created, ExpiresAt = item.ExpiresAt,
             });
-            if (item.EditOf is { } edited && History(gid).FirstOrDefault(x => x.Kind == "message" && x.Seq == edited) is { } target)
+            // An edit replaces an earlier version only when it is the same sender's readable message.
+            if (verified && GroupActions.Sequence(doc.EditOf) is { } edited && edited < item.Seq
+                && History(gid).FirstOrDefault(x => x.Kind == "message" && x.Seq == edited) is { } target
+                && target.Sender == item.Sender && !target.Deleted && !target.Undecryptable)
                 target.ReplacedBy = item.Seq;
             return Outcome.Message;
         }
@@ -505,11 +511,21 @@ public sealed class GroupClient : IDisposable
 
     public sealed record OutgoingFile(string Name, string Mime, byte[] Bytes);
 
-    public async Task<PostAccepted> SendAsync(string gid, string text, IReadOnlyList<OutgoingFile> files, CancellationToken ct, long? replyTo = null, long? editOf = null)
+    // `keep` re-references files the edited version already carries: the postbox moves them to the
+    // new version without another upload, and the sealed keys travel inside the new ciphertext.
+    public async Task<PostAccepted> SendAsync(string gid, string text, IReadOnlyList<OutgoingFile> files, CancellationToken ct, long? replyTo = null, long? editOf = null,
+        IReadOnlyList<LocalFile>? keep = null)
     {
+        if (keep is { Count: > 0 } && editOf is null) throw new ArgumentException("Only an edit keeps files.", nameof(keep));
         var cmid = "cm_" + GroupApi.RandomId(24);
         var uploaded = new List<GroupBody.File>();
         var refs = new List<AttachmentRef>();
+        foreach (var f in keep ?? [])
+        {
+            if (string.IsNullOrEmpty(f.Id) || f.Key is null || f.Sha is null) throw new PostboxException(409, "bad_attachment");
+            uploaded.Add(new GroupBody.File(f.Id, f.Name, f.Mime, f.Size));
+            refs.Add(new AttachmentRef(Convert.FromBase64String(f.Key), Convert.FromBase64String(f.Sha), f.Len));
+        }
         foreach (var f in files)
         {
             var sealedFile = Local(() => Pigeonpost.GroupCrypto.GroupCrypto.SealAttachment(f.Bytes));
@@ -528,7 +544,7 @@ public sealed class GroupClient : IDisposable
             var local = new GroupLine
             {
                 Kind = "message", Pending = true, Sender = Mailbox, SenderDevice = CurrentDeviceId, Cmid = cmid, Text = text, Files = localFiles,
-                ReplyTo = replyTo?.ToString(), EditOf = editOf?.ToString(), CreatedAt = now(), Mine = true,
+                ReplyTo = replyTo?.ToString(), EditOf = editOf?.ToString(), ActionsVerified = true, CreatedAt = now(), Mine = true,
             };
             for (var attempt = 0; attempt < MaxRetries; attempt++)
             {
@@ -564,6 +580,9 @@ public sealed class GroupClient : IDisposable
             throw new PostboxException(409, "epoch_conflict");
         }).ConfigureAwait(false);
     }
+
+    private static bool SameReference(string? body, long? envelope) =>
+        body is null ? envelope is null : envelope is { } seq && GroupActions.Sequence(body) == seq;
 
     private Task<CommitAccepted?> CommitPendingRemovalsLockedAsync(string gid, CancellationToken ct) => CommitLockedAsync(gid, async () =>
     {

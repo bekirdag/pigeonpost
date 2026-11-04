@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Pigeonpost.Core;
 using Pigeonpost.Core.Preview;
 
@@ -56,6 +57,17 @@ internal static class PrivacyTests
             catch (PostboxException ex) { Equal(ex.Code, "invalid_policy"); }
             Equal(PrivacySettings.All.Count, 6);
             Require(PrivacySettings.All.All(s => s.Options.Count >= 2), "Every setting offers choices.");
+        });
+        yield return ("Calls from unknown people show the postbox's own value, e.g. Silence for an agent mailbox, never an assumed Ring", () =>
+        {
+            // SDS §13.1: agent mailboxes default to Silence. The app has no default of its own:
+            // it selects exactly what the postbox reports and nothing when the field is missing.
+            var agent = JsonSerializer.Deserialize<InboxPolicy>("{\"unknown_calls\":\"silence\",\"unnamed_calls\":\"silence\"}", PostboxJson.Options)!;
+            Equal(agent.Value("unknown_calls"), "silence");
+            Equal(JsonSerializer.Deserialize<InboxPolicy>("{}", PostboxJson.Options)!.Value("unknown_calls"), null);
+            var row = PrivacySettings.All.Single(s => s.Field == "unknown_calls");
+            Equal(string.Join(",", row.Options.Select(o => o.Value)), "ring,silence,block");
+            return Task.CompletedTask;
         });
 
         yield return ("Block rules: confirmation wording, wildcards only for owned namespaces, blocked list and unblock", async () =>

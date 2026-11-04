@@ -36,6 +36,22 @@ internal static class CallRingTests
             Require(CallBridge.Parse("{\"type\":\"call\",\"state\":\"ended\",\"room\":\"<x>\"}")!.Room is null, "A malformed call room was kept.");
             return Task.CompletedTask;
         });
+        yield return ("Call page notices reach the app whole: removed from a group, notes not in the plan", () =>
+        {
+            // site-inbox/calls.js endedMessage("removed") and calls-summary.js notIncluded(): the page
+            // hands both to the host as a toast once its call UI has closed; the app shows the text.
+            foreach (var text in new[]
+            {
+                "You were removed from this group, so you left its call.",
+                "AI meeting notes aren't included in your plan. They come with Pigeonpost for business plans of 20 seats or more.",
+            })
+            {
+                var message = CallBridge.Parse(JsonSerializer.Serialize(new { type = "toast", text }))!;
+                Equal(message.Type, "toast"); Equal(message.Text, text);
+            }
+            Require(CallBridge.Parse("{\"type\":\"toast\",\"text\":\"  \"}") is null, "A blank toast is ignored.");
+            return Task.CompletedTask;
+        });
         yield return ("Caller text loses control, bidi and zero-width characters and is cut to length", () =>
         {
             Equal(CallRing.Clean("A‮lp​\n\u0007", 60), "Alp");

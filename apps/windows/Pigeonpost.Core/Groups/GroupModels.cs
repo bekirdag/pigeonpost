@@ -128,6 +128,9 @@ public sealed record InviteResult(string Address, string Status);
 public sealed record CreatedGroup(GroupInfo Group, IReadOnlyList<InviteResult>? Invitations);
 public sealed record GroupLink(string? LinkToken, string? Url);
 public sealed record GroupCallStatus(bool Active, string? Room = null, string? Kind = null, int? Participants = null, bool? Full = null);
+// GET /v1/groups/{id}/receipts (feature "receipts"): the other active members' cursors.
+public sealed record GroupReceiptMember(string Address, string? Handle, long? DeliveredSeq, long? SeenSeq);
+public sealed record GroupReceipts(IReadOnlyList<GroupReceiptMember>? Members, bool? ReadReceipts);
 
 // ---- local, decrypted history (only ever on this device, encrypted at rest) ------------------
 
@@ -165,6 +168,9 @@ public sealed class GroupLine
     public bool Undecryptable { get; set; }
     public string? Code { get; set; }
     public bool Pending { get; set; }
+    // The reply/edit references were read from the encrypted body and match the postbox's
+    // envelope (or this device wrote them). Only verified edits fold into earlier versions.
+    public bool ActionsVerified { get; set; }
     public bool Mine { get; set; }
     public string? Notice { get; set; }
     public string? Actor { get; set; }

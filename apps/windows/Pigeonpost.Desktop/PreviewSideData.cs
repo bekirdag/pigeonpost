@@ -53,6 +53,50 @@ internal static class PreviewLiveNotes
     }
 }
 
+// §14C group actions (test-message-modes.ps1): /preview/reader accepts an invitation to a group named
+// "Receipts check", joins with a real MLS device and asks one question, so the person has a received
+// line to reply to. Once that group holds the question and three of the person's messages, the
+// reader's cursors read as seen, delivered and not yet delivered for those three.
+internal static class PreviewGroupActions
+{
+    public const string GroupName = "Receipts check";
+    private sealed class Tokens : IAccessTokenProvider
+    {
+        public Task<string> GetTokenAsync(CancellationToken token) => Task.FromResult("preview-reader");
+        public Task<string> RefreshTokenAsync(CancellationToken token) => Task.FromResult("preview-reader");
+    }
+    public static void Seed(PreviewPostbox server, CancellationToken stop)
+    {
+        var reader = server.AddMailbox(PreviewPostbox.Seed(0xD7), "/preview/reader");
+        server.ReceiptsFixture = (name, seqs) => name == GroupName && seqs.Count == 4 ? [(reader, seqs[^2], seqs[^3])] : null;
+        _ = Task.Run(() => RunReaderAsync(server, reader, stop));
+    }
+    private static async Task RunReaderAsync(PreviewPostbox server, string reader, CancellationToken stop)
+    {
+        try
+        {
+            using var client = new PostboxClient(new HttpClient(server, disposeHandler: false), new Tokens(), new Uri("http://127.0.0.1:9"));
+            using var device = new Pigeonpost.Core.Groups.GroupClient(new Pigeonpost.Core.Groups.GroupApi(client, reader), new Pigeonpost.Core.Groups.MemoryGroupStateStore());
+            await device.InitAsync(stop);
+            await device.TopUpKeyPackagesAsync(stop);
+            var asked = false;
+            while (!stop.IsCancellationRequested)
+            {
+                foreach (var g in await device.Api.ListAsync(stop))
+                    if (g.IsInvited && g.Name == GroupName) await device.Api.AnswerInvitationAsync(g.Id, true, stop);
+                await device.ProcessWelcomesAsync(stop);
+                if (!asked)
+                    foreach (var g in await device.Api.ListAsync(stop))
+                        if (g.IsActive && g.Name == GroupName && device.InGroup(g.Id))
+                        { await device.SendAsync(g.Id, "Question from the reader", [], stop); asked = true; }
+                await Task.Delay(700, stop);
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) { DesktopLog.Error("Preview group reader stopped", ex); }
+    }
+}
+
 internal static class PreviewRooms
 {
     public const string OrganizationId = "org_preview";

@@ -302,9 +302,13 @@
                     <Border Width="30" Height="30" CornerRadius="15" VerticalAlignment="Top" Background="{ThemeResource AvatarSurfaceBrush}" Tag="{x:Bind SenderKey}" Loaded="Avatar_Loaded" Unloaded="Avatar_Unloaded">
                         <TextBlock Text="{x:Bind Initials}" FontSize="11" FontWeight="Bold" Foreground="{ThemeResource AvatarTextBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False" />
                     </Border>
-                    <Border Grid.Column="1" CornerRadius="14" Padding="14,9,14,10" Background="{ThemeResource IncomingMessageBrush}" BorderBrush="{ThemeResource IncomingBorderBrush}" BorderThickness="1">
+                    <Border Grid.Column="1" CornerRadius="14" Padding="14,9,14,10" Tag="{x:Bind}" Background="{ThemeResource IncomingMessageBrush}" BorderBrush="{ThemeResource IncomingBorderBrush}" BorderThickness="1">
                         <StackPanel Spacing="4">
                             <TextBlock Text="{x:Bind Sender}" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource AccentBrush}" />
+                            <Button Tag="{x:Bind}" Visibility="{x:Bind HasReply}" Click="GroupQuote_Click" AutomationProperties.Name="{x:Bind ReplyAccessibility}" AutomationProperties.AutomationId="{x:Bind Key}"
+                                    ToolTipService.ToolTip="Open quoted message" Style="{StaticResource AttachmentButton}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Padding="10,8" Margin="0,2,0,4" MinWidth="0">
+                                <TextBlock Text="{x:Bind ReplyQuote}" TextWrapping="Wrap" MaxLines="2" TextTrimming="CharacterEllipsis" FontSize="12.5" Foreground="{ThemeResource AccentBrush}" />
+                            </Button>
                             <TextBlock Text="{x:Bind Text}" TextWrapping="Wrap" IsTextSelectionEnabled="True" FontSize="14.5" LineHeight="21" Foreground="{ThemeResource IncomingTextBrush}" />
                             <ItemsControl ItemsSource="{x:Bind Files}">
                                 <ItemsControl.ItemTemplate>
@@ -316,17 +320,26 @@
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
-                            <StackPanel Orientation="Horizontal" Spacing="6">
+                            <!-- §14C.6: time and "Edited" at the bubble's bottom right. -->
+                            <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Right">
+                                <TextBlock Text="{x:Bind EditedLabel}" Visibility="{x:Bind Edited}" FontSize="11.5" Foreground="{ThemeResource IncomingFooterTextBrush}" />
                                 <TextBlock Text="{x:Bind TimeLabel}" FontSize="11.5" Foreground="{ThemeResource IncomingFooterTextBrush}" />
                                 <FontIcon Glyph="&#xE916;" FontSize="11" Visibility="{x:Bind Disappears}" Foreground="{ThemeResource IncomingFooterTextBrush}" AutomationProperties.Name="Disappearing message" />
                             </StackPanel>
                         </StackPanel>
+                        <Border.ContextFlyout>
+                            <MenuFlyout Opening="GroupMessageMenu_Opening"><MenuFlyoutItem Text="Copy message" Tag="{x:Bind Text}" Click="CopyOriginal_Click" /></MenuFlyout>
+                        </Border.ContextFlyout>
                     </Border>
-                    <!-- §14C.7: copy sits under the bubble, outside it. -->
-                    <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Left" Margin="4,0,0,0" Opacity="0.7">
+                    <!-- §14C.7: copy then reply sit under the bubble, outside it. -->
+                    <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Left" Spacing="2" Margin="4,0,0,0" Opacity="0.7">
                         <Button Tag="{x:Bind Text}" Click="CopyMessage_Click" Style="{StaticResource MessageRowButton}"
                                 AutomationProperties.Name="Copy message" AutomationProperties.AutomationId="{x:Bind Key}" ToolTipService.ToolTip="Copy message">
                             <FontIcon Glyph="&#xE8C8;" FontSize="16" />
+                        </Button>
+                        <Button Tag="{x:Bind}" Visibility="{x:Bind CanReply}" Click="GroupReply_Click" Style="{StaticResource MessageRowButton}"
+                                AutomationProperties.Name="Reply" AutomationProperties.AutomationId="{x:Bind Key}" ToolTipService.ToolTip="Reply">
+                            <FontIcon Glyph="&#xE97A;" FontSize="16" />
                         </Button>
                     </StackPanel>
                 </Grid>
@@ -334,8 +347,12 @@
             <DataTemplate x:Key="GroupOutgoingLine" x:DataType="groups:GroupLineRow">
                 <StackPanel HorizontalAlignment="Right" Margin="64,5,24,5" MaxWidth="620" Spacing="2" Background="Transparent"
                             PointerEntered="MessageStack_PointerEntered" PointerExited="MessageStack_PointerExited" GotFocus="MessageStack_FocusChanged" LostFocus="MessageStack_FocusChanged">
-                <Border HorizontalAlignment="Right" CornerRadius="14" Padding="14,9,14,10" Background="{ThemeResource OutgoingMessageBrush}" BorderBrush="{ThemeResource OutgoingBorderBrush}" BorderThickness="1">
+                <Border HorizontalAlignment="Right" CornerRadius="14" Padding="14,9,14,10" Tag="{x:Bind}" Background="{ThemeResource OutgoingMessageBrush}" BorderBrush="{ThemeResource OutgoingBorderBrush}" BorderThickness="1">
                     <StackPanel Spacing="4">
+                        <Button Tag="{x:Bind}" Visibility="{x:Bind HasReply}" Click="GroupQuote_Click" AutomationProperties.Name="{x:Bind ReplyAccessibility}" AutomationProperties.AutomationId="{x:Bind Key}"
+                                ToolTipService.ToolTip="Open quoted message" Style="{StaticResource AttachmentButton}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Padding="10,8" Margin="0,0,0,4" MinWidth="0">
+                            <TextBlock Text="{x:Bind ReplyQuote}" TextWrapping="Wrap" MaxLines="2" TextTrimming="CharacterEllipsis" FontSize="12.5" Foreground="{ThemeResource AccentBrush}" />
+                        </Button>
                         <TextBlock Text="{x:Bind Text}" TextWrapping="Wrap" IsTextSelectionEnabled="True" FontSize="14.5" LineHeight="21" Foreground="{ThemeResource OutgoingTextBrush}" />
                         <ItemsControl ItemsSource="{x:Bind Files}">
                             <ItemsControl.ItemTemplate>
@@ -347,13 +364,33 @@
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
-                        <StackPanel Orientation="Horizontal" Spacing="6">
-                            <TextBlock Text="{x:Bind TimeLabel}" FontSize="11.5" Foreground="{ThemeResource OutgoingFooterTextBrush}" />
+                        <!-- §14C.6: "Edited", time, then the receipt marks, at the bubble's bottom right. -->
+                        <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Right">
+                            <TextBlock Text="{x:Bind EditedLabel}" Visibility="{x:Bind Edited}" FontSize="11.5" VerticalAlignment="Center" Foreground="{ThemeResource OutgoingFooterTextBrush}" />
+                            <TextBlock Text="{x:Bind TimeLabel}" FontSize="11.5" VerticalAlignment="Center" Foreground="{ThemeResource OutgoingFooterTextBrush}" />
                             <FontIcon Glyph="&#xE916;" FontSize="11" Visibility="{x:Bind Disappears}" Foreground="{ThemeResource OutgoingFooterTextBrush}" AutomationProperties.Name="Disappearing message" />
+                            <Button Tag="{x:Bind}" Visibility="{x:Bind HasReceipt}" Click="GroupReceipt_Click" Style="{StaticResource ReceiptMarkButton}"
+                                    AutomationProperties.Name="{x:Bind ReceiptLabel}" AutomationProperties.AutomationId="{x:Bind Key}"
+                                    AutomationProperties.HelpText="Show message info" ToolTipService.ToolTip="{x:Bind ReceiptLabel}">
+                                <StackPanel Orientation="Horizontal" Spacing="4">
+                                    <FontIcon Glyph="&#xE823;" FontSize="11" Visibility="{x:Bind ShowsSending}" Foreground="{ThemeResource OutgoingFooterTextBrush}" AutomationProperties.AccessibilityView="Raw" />
+                                    <TextBlock Text="✓" Visibility="{x:Bind ShowsSentTick}" FontFamily="Segoe UI Symbol" FontSize="12" Foreground="{ThemeResource OutgoingFooterTextBrush}" AutomationProperties.AccessibilityView="Raw" />
+                                    <TextBlock Text="✓✓" Visibility="{x:Bind ShowsDeliveredTicks}" FontFamily="Segoe UI Symbol" FontSize="12" Foreground="{ThemeResource OutgoingFooterTextBrush}" AutomationProperties.AccessibilityView="Raw" />
+                                    <TextBlock Text="✓✓" Visibility="{x:Bind ShowsSeenTicks}" FontFamily="Segoe UI Symbol" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource TickSeenBrush}" AutomationProperties.AccessibilityView="Raw" />
+                                </StackPanel>
+                            </Button>
                         </StackPanel>
                     </StackPanel>
+                    <Border.ContextFlyout>
+                        <MenuFlyout Opening="GroupMessageMenu_Opening"><MenuFlyoutItem Text="Copy message" Tag="{x:Bind Text}" Click="CopyOriginal_Click" /></MenuFlyout>
+                    </Border.ContextFlyout>
                 </Border>
-                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,4,0" Opacity="0.7">
+                <!-- §14C.7: edit (while editable) then copy, under the bubble and outside it. -->
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="2" Margin="0,0,4,0" Opacity="0.7">
+                    <Button Tag="{x:Bind}" Visibility="{x:Bind CanEdit}" Click="GroupEdit_Click" Style="{StaticResource MessageRowButton}"
+                            AutomationProperties.Name="Edit message" AutomationProperties.AutomationId="{x:Bind Key}" ToolTipService.ToolTip="Edit message">
+                        <FontIcon Glyph="&#xE70F;" FontSize="16" />
+                    </Button>
                     <Button Tag="{x:Bind Text}" Click="CopyMessage_Click" Style="{StaticResource MessageRowButton}"
                             AutomationProperties.Name="Copy message" AutomationProperties.AutomationId="{x:Bind Key}" ToolTipService.ToolTip="Copy message">
                         <FontIcon Glyph="&#xE8C8;" FontSize="16" />

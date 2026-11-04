@@ -90,6 +90,16 @@ public sealed class GroupApi(PostboxClient transport, string mailbox)
 
     public Task MarkReadAsync(string id, long seq, CancellationToken ct) => postbox.SendAsync(HttpMethod.Post, G(id) + "/read", new { seq }, mailbox, ct);
 
+    // Feature "receipts": the other active members' delivered and seen cursors, for ticks. Rows that
+    // are not about a mailbox, or carry negative cursors, are dropped rather than trusted.
+    public async Task<GroupReceipts> ReceiptsAsync(string id, CancellationToken ct)
+    {
+        var body = await postbox.GetJsonAsync<GroupReceipts>(G(id) + "/receipts", mailbox, ct);
+        var members = (body.Members ?? []).Where(m => !string.IsNullOrEmpty(m.Address) && m.Address != mailbox
+            && m.DeliveredSeq is null or >= 0 && m.SeenSeq is null or >= 0).ToArray();
+        return new GroupReceipts(members, body.ReadReceipts == true);
+    }
+
     // ---- messages and handshakes -----------------------------------------------------------
 
     public Task<GroupMessagesPage> MessagesAsync(string id, string device, long afterSeq, CancellationToken ct) =>

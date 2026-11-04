@@ -30,7 +30,38 @@ public sealed record GroupLineRow(string Key, string Kind, string Text, string? 
     public string TimeLabel => At is > 0 and <= 253402300799 ? DateTimeOffset.FromUnixTimeSeconds(At).ToLocalTime().ToString("g") : "";
     public string Initials => ConversationPresentation.Initials(Sender ?? "");
     public bool HasFiles => Files.Count > 0;
+
+    // §14C: what this row offers, decided when the line was rendered and checked again on use.
+    public bool Edited { get; init; }
+    public string EditedLabel => Edited ? "Edited" : "";
+    public bool CanReply { get; init; }
+    public bool CanEdit { get; init; }
+    // The quoted message: its seq, and the text shown in the bubble.
+    public long? ReplySeq { get; init; }
+    public string ReplyQuote { get; init; } = "";
+    public bool HasReply => ReplySeq is not null;
+    public string ReplyAccessibility => HasReply ? "Replying to: " + ReplyQuote + ". Open the quoted message." : "";
+    // "" when ticks are off for this line; else sending | sent | delivered | seen.
+    public string Receipt { get; init; } = "";
+    public bool HasReceipt => Receipt.Length > 0;
+    public bool ShowsSending => Receipt == "sending";
+    public bool ShowsSentTick => Receipt == "sent";
+    public bool ShowsDeliveredTicks => Receipt == "delivered";
+    public bool ShowsSeenTicks => Receipt == "seen";
+    public string ReceiptLabel => HasReceipt ? GroupActions.ReceiptLabel(Receipt) : "";
 }
+
+// The composer is replying to, or editing, one line of one group, under the exact client, login
+// and selection that offered it. Any change of those cancels it.
+public sealed record GroupComposerMode(GroupComposerKind Kind, string GroupId, long Seq, string? Sender, string Text, IReadOnlyList<LocalFile> Files,
+    string PreviousDraft, GroupClient.OutgoingFile[] PreviousFiles, GroupClient Client, int Generation, int Selection);
+
+// Message info for one group line: the versions this device decrypted and, for one's own message,
+// each member's state.
+public sealed record GroupMessageVersion(string Label, long At, string? Text);
+public sealed record GroupMemberReceipt(string Name, string State);
+public sealed record GroupMessageInfo(string Sender, long At, IReadOnlyList<GroupMessageVersion> Versions, bool MissingEarlier,
+    bool ShowsDelivery, bool DeliveryKnown, IReadOnlyList<GroupMemberReceipt> Members);
 
 public sealed record GroupMemberRow(string Address, string Name, string Role, string State, IReadOnlyList<DeviceSummary> Devices, bool IsMe, long Revision)
 {
@@ -66,6 +97,12 @@ public sealed class GroupsModel(PostboxClient postbox, Func<string, IGroupStateS
     private bool streaming;
     private GroupStream? live;
     private string? liveFor;
+    // §14C: the account's message-action features, the selected group's receipts, the composer's action.
+    private ServerFeatures features = ServerFeatures.None;
+    private GroupReceipts? receipts;
+    private string? receiptsFor;
+    private GroupComposerMode? composerMode;
+    public Func<long> Clock { get; set; } = () => DateTimeOffset.UtcNow.ToUnixTimeSeconds();
     private GroupClient? ActiveClient => client is { IsActive: true } c ? c : null;
     private bool IsCurrent(GroupClient c, int version) => !disposed && version == generation && ReferenceEquals(client, c) && c.IsActive;
     private bool IsSelectionCurrent(GroupClient c, int version, int intent, string gid) =>
@@ -105,7 +142,20 @@ public sealed class GroupsModel(PostboxClient postbox, Func<string, IGroupStateS
     public bool ShowsAnnouncementBar => Info is { IsActive: true } && !Info.CanPost;
     public string AnnouncementText => Info?.Role == "restricted" ? "An admin stopped you from posting in this group." : "Only admins can send messages";
     public bool ShowsKeying => Info is { IsKeying: true } || Info is { IsActive: true } info && !CurrentValue(c => c.InGroup(info.Id), false);
-    public bool CanSend => !IsSending && Info is { CanPost: true } info && CurrentValue(c => c.InGroup(info.Id), false) && (Draft.Trim().Length > 0 || DraftFiles.Count > 0);
+    public bool CanSend => !IsSending && Info is { CanPost: true } info && CurrentValue(c => c.InGroup(info.Id), false)
+        && (Draft.Trim().Length > 0 || DraftFiles.Count > 0 || ComposerMode is { Kind: GroupComposerKind.Edit, Files.Count: > 0 });
+    // ---- §14C message actions ----------------------------------------------------------------
+    public bool RepliesEnabled => features.Has(ServerFeatures.MessageReply);
+    public bool EditsEnabled => features.Has(ServerFeatures.MessageEdit);
+    public bool ReceiptsEnabled => features.Has(ServerFeatures.Receipts);
+    public GroupComposerMode? ComposerMode => composerMode is { } m && ModeCurrent(m) ? m : null;
+    public bool HasComposerMode => ComposerMode is not null;
+    public bool IsEditing => ComposerMode?.Kind == GroupComposerKind.Edit;
+    public string ComposerModeTitle => ComposerMode is not { } m ? "" : m.Kind == GroupComposerKind.Edit ? "Editing message" : "Replying to " + NameOf(m.Sender);
+    public string ComposerModeExcerpt => ComposerMode is { } m ? Excerpt(m.Text, m.Files) : "";
+    public string SendLabel => IsEditing ? "Save edit" : "Send";
+    public string ComposerPlaceholder => IsEditing ? "Edit this message…" : "Write to the group…";
+    public bool CanAttach => !IsEditing;
     public bool CanCall => Info is { IsActive: true };
     public string TimerBanner => Timers.Banner(Info?.EphemeralSecs);
 
@@ -147,8 +197,23 @@ public sealed class GroupsModel(PostboxClient postbox, Func<string, IGroupStateS
         if (wasStreaming != streaming) NotifyAll();
         var enabled = acting is not null && features.Has(ServerFeatures.Groups) && LibraryAvailable;
         var accepted = postbox.AcceptedAuthorization;
+        var actionsChanged = this.features.Has(ServerFeatures.MessageEdit) != features.Has(ServerFeatures.MessageEdit)
+            || this.features.Has(ServerFeatures.MessageReply) != features.Has(ServerFeatures.MessageReply)
+            || this.features.Has(ServerFeatures.Receipts) != features.Has(ServerFeatures.Receipts);
+        this.features = features;
         if (enabled == Enabled && acting?.Address == mailbox?.Address && ReferenceEquals(accepted, authorization)
-            && (!enabled || ActiveClient is not null)) return;
+            && (!enabled || ActiveClient is not null))
+        {
+            if (actionsChanged)
+            {
+                // An action whose feature was switched off is dropped; its draft comes back.
+                if (composerMode is { } m && !(m.Kind == GroupComposerKind.Edit ? EditsEnabled : RepliesEnabled)) CancelComposerMode();
+                if (!ReceiptsEnabled) { receipts = null; receiptsFor = null; }
+                RebuildLines();
+                NotifyAll();
+            }
+            return;
+        }
         generation++;
         selectionGeneration++;
         var prior = client;
@@ -164,6 +229,8 @@ public sealed class GroupsModel(PostboxClient postbox, Func<string, IGroupStateS
         Enabled = enabled;
         selected = null;
         live = null; liveFor = null;
+        composerMode = null;
+        receipts = null; receiptsFor = null;
         Draft = "";
         DraftFiles.Clear();
         IsSending = false;
@@ -204,8 +271,9 @@ public sealed class GroupsModel(PostboxClient postbox, Func<string, IGroupStateS
     public bool CarryUnsentWork(AuthorizationLease prior)
     {
         if (disposed || !ReferenceEquals(authorization, prior)) return false;
-        carriedDraft = mailbox is { } box && selected is { } row && (Draft.Length > 0 || DraftFiles.Count > 0)
-            ? new(box.Address, row.Id, Draft, DraftFiles.ToArray(), prior) : null;
+        var (text, files) = composerMode is { Kind: GroupComposerKind.Edit } edit ? (edit.PreviousDraft, edit.PreviousFiles) : (Draft, DraftFiles.ToArray());
+        carriedDraft = mailbox is { } box && selected is { } row && (text.Length > 0 || files.Length > 0)
+            ? new(box.Address, row.Id, text, files, prior) : null;
         return true;
     }
     public void DropCarriedWork() => carriedDraft = null;
@@ -273,6 +341,7 @@ public sealed class GroupsModel(PostboxClient postbox, Func<string, IGroupStateS
             if (!IsCurrent(c, version)) return;
             RebuildRows(list.Where(g => !refused.Contains(g.Id)).ToArray());
             Error = null;
+            await RefreshReceiptsAsync();
         }
         catch (OperationCanceledException) { }
         catch (PostboxException ex) when (ex.Code is "unknown_device" or "device_revoked")
@@ -314,6 +383,8 @@ public sealed class GroupsModel(PostboxClient postbox, Func<string, IGroupStateS
         var token = scope.Token;
         selected = null;
         live = null; liveFor = null;
+        composerMode = null;
+        receipts = null; receiptsFor = null;
         Draft = "";
         DraftFiles.Clear();
         Error = null;
@@ -338,6 +409,7 @@ public sealed class GroupsModel(PostboxClient postbox, Func<string, IGroupStateS
             RebuildLines();
             NotifyAll();
             await MarkReadAsync();
+            await RefreshReceiptsAsync();
         }
         catch (OperationCanceledException) { }
         catch (PostboxException ex) when (ex.StatusCode is 401 or 403 or 404 or 410)
@@ -386,12 +458,15 @@ public sealed class GroupsModel(PostboxClient postbox, Func<string, IGroupStateS
             LinesChanged?.Invoke(this, EventArgs.Empty);
             return;
         }
-        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var now = Clock();
         var rows = new List<GroupLineRow>();
-        foreach (var line in c.HistoryOf(row.Id))
+        var history = c.HistoryOf(row.Id);
+        var canPost = row.Info.CanPost;
+        foreach (var line in history)
         {
             if (line.ExpiresAt is { } at && at <= now) continue;
-            if (Render(line) is { } r) rows.Add(r);
+            if (line.Kind == "message" && GroupActions.Deadline(line, history) is { } deadline && deadline <= now) continue;
+            if (Render(line, history, now, canPost) is { } r) rows.Add(r);
         }
         StableList.Reconcile(Lines, rows, r => r.Key, (a, b) => a == b && a.Files.SequenceEqual(b.Files));
         LinesChanged?.Invoke(this, EventArgs.Empty);
@@ -417,7 +492,7 @@ public sealed class GroupsModel(PostboxClient postbox, Func<string, IGroupStateS
     private bool IsBlocked(string? address) => address is not null && address != mailbox?.Address
         && (BlockRules.IsBlocked(address, contacts) || BlockRules.IsBlocked(KeyOf(address), contacts));
 
-    private GroupLineRow? Render(GroupLine l)
+    private GroupLineRow? Render(GroupLine l, IReadOnlyList<GroupLine> history, long now, bool canPost)
     {
         string Who(string? a) => NameOf(a);
         var key = $"{l.Kind}:{l.Seq}:{l.Order}:{l.Cmid}";
@@ -426,12 +501,32 @@ public sealed class GroupsModel(PostboxClient postbox, Func<string, IGroupStateS
             case "message":
                 if (l.ReplacedBy is not null) return null; // an edit replaced it
                 var blocked = IsBlocked(l.Sender);
+                var readable = !l.Deleted && !l.Undecryptable && !blocked;
                 var text = l.Deleted ? "Message deleted"
                     : l.Undecryptable ? "This message could not be decrypted on this device."
                     : blocked ? "Hidden: you blocked this sender."
-                    : (l.EditOf is not null ? "(edited) " : "") + (l.Text ?? "");
-                return new GroupLineRow(key, "message", text, l.Mine ? "You" : Who(l.Sender), l.Sender is null ? null : KeyOf(l.Sender), l.Mine || l.Sender == mailbox?.Address,
-                    l.CreatedAt, l.Deleted || blocked || l.Undecryptable ? [] : l.Files ?? [], l.ExpiresAt is not null, l.Deleted || l.Undecryptable || blocked, false, l.Seq);
+                    : l.Text ?? "";
+                var mine = l.Mine || l.Sender == mailbox?.Address;
+                long? replySeq = readable ? GroupActions.Sequence(l.ReplyTo) : null;
+                var quote = "";
+                if (replySeq is not null)
+                {
+                    var parent = GroupActions.ReplyParent(l, history, now);
+                    quote = parent is null ? "Original message unavailable"
+                        : IsBlocked(parent.Sender) ? "Hidden: you blocked this sender."
+                        : $"{(parent.Sender == mailbox?.Address ? "You" : Who(parent.Sender))}: {Excerpt(parent.Text, parent.Files)}";
+                }
+                return new GroupLineRow(key, "message", text, l.Mine ? "You" : Who(l.Sender), l.Sender is null ? null : KeyOf(l.Sender), mine,
+                    l.CreatedAt, readable ? l.Files ?? [] : [], l.ExpiresAt is not null || GroupActions.Deadline(l, history) is not null, !readable, false, l.Seq)
+                {
+                    Edited = readable && l.EditOf is not null,
+                    CanReply = readable && canPost && RepliesEnabled && !l.Pending && l.Seq > 0,
+                    CanEdit = readable && canPost && EditsEnabled && mailbox is { } box && GroupActions.Editable(l, history, box.Address, now),
+                    ReplySeq = replySeq,
+                    ReplyQuote = quote,
+                    // The sending clock always shows; the ticks only with the receipts feature.
+                    Receipt = !mine || !readable ? "" : l.Pending ? "sending" : ReceiptsEnabled ? GroupActions.Receipt(l, receiptsFor == selected?.Id ? receipts : null) : "",
+                };
             case "notice":
                 return NoticeText(l) is { } notice ? new GroupLineRow(key, "notice", notice, null, null, false, l.CreatedAt, [], l.ExpiresAt is not null, true, false, l.Seq) : null;
             case "commit":
@@ -503,22 +598,160 @@ public sealed class GroupsModel(PostboxClient postbox, Func<string, IGroupStateS
         var token = scope.Token;
         var text = Draft.Trim();
         var files = DraftFiles.ToArray();
+        var mode = composerMode;
+        if (mode is not null)
+        {
+            if (ModeProblem(mode, c, row) is { } problem) { Error = problem; return false; }
+            if (mode.Kind == GroupComposerKind.Edit && files.Length > 0) { Error = "Files can't be added to an edit. Send them as a new message."; return false; }
+            if (mode.Kind == GroupComposerKind.Edit && text == mode.Text.Trim()) { Error = "Change the text before saving the edit."; return false; }
+        }
         IsSending = true;
         Error = null;
         try
         {
-            await c.SendAsync(row.Id, text, files, token);
+            await c.SendAsync(row.Id, text, files, token,
+                replyTo: mode?.Kind == GroupComposerKind.Reply ? mode.Seq : null,
+                editOf: mode?.Kind == GroupComposerKind.Edit ? mode.Seq : null,
+                keep: mode?.Kind == GroupComposerKind.Edit ? mode.Files : null);
             if (!IsCurrent(c, version)) return false;
-            if (IsSelectionCurrent(c, version, intent, row.Id)) { Draft = ""; DraftFiles.Clear(); RebuildLines(); }
+            if (IsSelectionCurrent(c, version, intent, row.Id))
+            {
+                // A saved edit gives the box back the draft it borrowed.
+                composerMode = null;
+                Draft = mode?.Kind == GroupComposerKind.Edit ? mode.PreviousDraft : "";
+                DraftFiles.Clear();
+                if (mode?.Kind == GroupComposerKind.Edit) foreach (var f in mode.PreviousFiles) DraftFiles.Add(f);
+                RebuildLines();
+                NotifyAll();
+                await RefreshReceiptsAsync();
+            }
             return true;
         }
         catch (OperationCanceledException) { return false; }
-        catch (Exception ex) { if (IsCurrent(c, version)) Error = Describe(ex); return false; }
+        catch (Exception ex) { if (IsCurrent(c, version)) Error = ex is PostboxException p ? GroupActions.RefusalText(p, mode?.Kind) : Describe(ex); return false; }
         finally { if (IsCurrent(c, version)) IsSending = false; }
+    }
+
+    // ---- §14C reply and edit ----------------------------------------------------------------
+
+    private bool ModeCurrent(GroupComposerMode m) =>
+        ActiveClient is { } c && ReferenceEquals(m.Client, c) && m.Generation == generation && m.Selection == selectionGeneration && selected?.Id == m.GroupId;
+
+    // Why the action can't be sent as it stands, or null. Checked again right before posting.
+    private string? ModeProblem(GroupComposerMode m, GroupClient c, GroupRow row)
+    {
+        if (!ReferenceEquals(m.Client, c) || m.Generation != generation || m.Selection != selectionGeneration || row.Id != m.GroupId)
+            return "Select the original message again before sending this action.";
+        var history = c.HistoryOf(row.Id);
+        var line = history.FirstOrDefault(l => l.Kind == "message" && l.Seq == m.Seq);
+        var now = Clock();
+        if (line is null || line.Deleted || line.Undecryptable || GroupActions.Deadline(line, history) is { } at && at <= now)
+            return "The original message is no longer available.";
+        if (m.Kind == GroupComposerKind.Edit)
+        {
+            if (!EditsEnabled) return GroupActions.RefusalText(new PostboxException(403, "feature_disabled"), GroupComposerKind.Edit);
+            if (mailbox is not { } box || !GroupActions.Editable(line, history, box.Address, now))
+                return GroupActions.RefusalText(new PostboxException(403, "not_editable"), GroupComposerKind.Edit);
+            if (line.Text != m.Text) return "The original message changed. Review its latest version before editing.";
+        }
+        else if (!RepliesEnabled) return GroupActions.RefusalText(new PostboxException(403, "feature_disabled"), GroupComposerKind.Reply);
+        return null;
+    }
+
+    public bool BeginReply(GroupLineRow row) => BeginComposerMode(row, GroupComposerKind.Reply);
+    public bool BeginEdit(GroupLineRow row) => BeginComposerMode(row, GroupComposerKind.Edit);
+
+    private bool BeginComposerMode(GroupLineRow row, GroupComposerKind kind)
+    {
+        if (disposed || IsSending || ActiveClient is not { } c || selected is not { Info.CanPost: true } group) return false;
+        // Only a row this page is showing now, rendered for this client and selection, may start an action.
+        if (!Lines.Contains(row) || !(kind == GroupComposerKind.Edit ? row.CanEdit : row.CanReply)) return false;
+        var history = c.HistoryOf(group.Id);
+        var line = history.FirstOrDefault(l => l.Kind == "message" && l.Seq == row.Seq && l.Seq > 0);
+        if (line is null || line.Text is null || line.Deleted || line.Undecryptable) return false;
+        if (kind == GroupComposerKind.Edit && (!EditsEnabled || mailbox is not { } box || !GroupActions.Editable(line, history, box.Address, Clock()))) return false;
+        if (kind == GroupComposerKind.Reply && !RepliesEnabled) return false;
+        if (composerMode is not null) CancelComposerMode();
+        var mode = new GroupComposerMode(kind, group.Id, line.Seq, line.Sender, line.Text, kind == GroupComposerKind.Edit ? (line.Files ?? []).ToArray() : [],
+            Draft, DraftFiles.ToArray(), c, generation, selectionGeneration);
+        composerMode = mode;
+        if (kind == GroupComposerKind.Edit) { Draft = line.Text; DraftFiles.Clear(); }
+        Error = null;
+        NotifyAll();
+        return true;
+    }
+
+    public bool CancelComposerMode()
+    {
+        if (composerMode is not { } m || IsSending) return false;
+        composerMode = null;
+        if (m.Kind == GroupComposerKind.Edit && ModeCurrent(m))
+        {
+            Draft = m.PreviousDraft;
+            DraftFiles.Clear();
+            foreach (var f in m.PreviousFiles) DraftFiles.Add(f);
+        }
+        NotifyAll();
+        return true;
+    }
+
+    // The selected group's members' cursors, for ticks. Answers for another group, inbox or login are dropped.
+    public async Task RefreshReceiptsAsync()
+    {
+        if (!ReceiptsEnabled || ActiveClient is not { } c || selected is not { Info.IsActive: true } row) return;
+        var version = generation; var intent = selectionGeneration; var token = scope.Token;
+        GroupReceipts? found;
+        try { found = await c.Api.ReceiptsAsync(row.Id, token); }
+        catch (OperationCanceledException) { return; }
+        catch (Exception) { found = null; }
+        if (!IsSelectionCurrent(c, version, intent, row.Id) || !ReceiptsEnabled) return;
+        if (found is null && receiptsFor == row.Id) return; // keep the last good answer through a blip
+        var same = receiptsFor == row.Id && receipts is { } old && found is not null && old.ReadReceipts == found.ReadReceipts
+            && (old.Members ?? []).SequenceEqual(found.Members ?? []);
+        receipts = found; receiptsFor = row.Id;
+        if (!same) RebuildLines();
+    }
+
+    // Seq of the line the quote refers to, as shown: the latest version of its chain.
+    public GroupLineRow? ReplyParentRow(GroupLineRow row)
+    {
+        if (row.ReplySeq is not { } seq || ActiveClient is not { } c || selected is not { } group || !Lines.Contains(row)) return null;
+        var history = c.HistoryOf(group.Id);
+        var target = history.FirstOrDefault(l => l.Kind == "message" && l.Seq == seq);
+        for (var hops = 0; target?.ReplacedBy is { } next && hops < 64; hops++)
+            target = history.FirstOrDefault(l => l.Kind == "message" && l.Seq == next) ?? target;
+        return target is null ? null : Lines.FirstOrDefault(l => l.IsMessage && l.Seq == target.Seq);
+    }
+
+    public GroupMessageInfo? MessageInfoFor(GroupLineRow row)
+    {
+        if (ActiveClient is not { } c || selected is not { } group || !Lines.Contains(row) || !row.IsMessage) return null;
+        var history = c.HistoryOf(group.Id);
+        var line = row.Seq > 0 ? history.FirstOrDefault(l => l.Kind == "message" && l.Seq == row.Seq) : null;
+        if (line is null) return null;
+        var versions = GroupActions.Versions(line, history);
+        var list = versions.Select((v, i) => new GroupMessageVersion(i == 0 && v.EditOf is null ? "Original" : $"Edit {i}", v.CreatedAt,
+            v.Deleted || v.Undecryptable || IsBlocked(v.Sender) ? null : v.Text)).ToArray();
+        var mine = line.Sender == mailbox?.Address;
+        var known = receiptsFor == group.Id ? receipts : null;
+        var members = mine && ReceiptsEnabled && known is not null
+            ? (known.Members ?? []).Select(m => new GroupMemberReceipt(NameOf(m.Address),
+                (m.DeliveredSeq ?? 0) < line.Seq ? "Sent" : known.ReadReceipts == true && (m.SeenSeq ?? 0) >= line.Seq ? "Seen" : "Delivered")).ToArray()
+            : [];
+        return new GroupMessageInfo(mine ? "You" : NameOf(line.Sender), line.CreatedAt, list, versions[0].EditOf is not null,
+            mine && ReceiptsEnabled, known is not null, members);
+    }
+
+    private static string Excerpt(string? text, IReadOnlyList<LocalFile>? files)
+    {
+        var t = (text ?? "").ReplaceLineEndings(" ").Trim();
+        if (t.Length == 0 && files is { Count: > 0 }) t = files[0].Name;
+        return t.Length > 120 ? t[..120] + "…" : t;
     }
 
     public void AddFile(GroupClient.OutgoingFile file)
     {
+        if (IsEditing) { Error = "Files can't be added to an edit. Send them as a new message."; return; }
         if (file.Bytes.Length is 0 or > PostboxClient.MaxAttachmentBytes) { Error = "Choose a file between 1 byte and 25 MB."; return; }
         DraftFiles.Add(file);
         Changed(nameof(CanSend));
@@ -707,7 +940,9 @@ public sealed class GroupsModel(PostboxClient postbox, Func<string, IGroupStateS
         foreach (var name in new[] { nameof(Selected), nameof(Info), nameof(Title), nameof(Subtitle), nameof(HasSelection), nameof(ShowsInvitation),
             nameof(ShowsComposer), nameof(ShowsAnnouncementBar), nameof(AnnouncementText), nameof(ShowsKeying), nameof(CanSend), nameof(CanCall), nameof(TimerBanner),
             nameof(Streaming), nameof(LiveStream), nameof(ShowsLiveBanner), nameof(LiveIsMine), nameof(LiveBannerText), nameof(ShowsGoLive), nameof(CanChooseWhoGoesLive), nameof(StageInviteText),
-            nameof(Invitations), nameof(UnreadTotal), nameof(EmptyText), nameof(Enabled), nameof(DeviceFingerprint), nameof(Persistent) })
+            nameof(Invitations), nameof(UnreadTotal), nameof(EmptyText), nameof(Enabled), nameof(DeviceFingerprint), nameof(Persistent),
+            nameof(ComposerMode), nameof(HasComposerMode), nameof(IsEditing), nameof(ComposerModeTitle), nameof(ComposerModeExcerpt), nameof(SendLabel),
+            nameof(ComposerPlaceholder), nameof(CanAttach), nameof(RepliesEnabled), nameof(EditsEnabled), nameof(ReceiptsEnabled) })
             Changed(name);
     }
 
@@ -732,6 +967,8 @@ public sealed class GroupsModel(PostboxClient postbox, Func<string, IGroupStateS
         scope.Dispose();
         selected = null;
         live = null; liveFor = null;
+        composerMode = null;
+        receipts = null; receiptsFor = null;
         DraftFiles.Clear();
         Draft = "";
         handles.Clear();
