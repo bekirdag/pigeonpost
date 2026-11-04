@@ -20,16 +20,16 @@ internal static class CalendarWindowsGapTests
         yield return ("The week grid starts on the chosen weekday and the day view shows only the selected day", () =>
         {
             var wednesday = CalendarDay.Parse("2026-11-04");
-            var monday = CalendarTimeGrid.Days(CalendarView.Week, wednesday, 1);
+            var monday = CalendarTimeGrid.Days(CalendarViewMode.Week, wednesday, 1);
             Require(monday.Count == 7 && monday[0].Text == "2026-11-02" && monday[6].Text == "2026-11-08", "Monday week");
-            Require(CalendarTimeGrid.Days(CalendarView.Week, wednesday, 0)[0].Text == "2026-11-01", "Sunday week");
-            Require(CalendarTimeGrid.Days(CalendarView.Week, CalendarDay.Parse("2026-11-01"), 1)[0].Text == "2026-10-26", "a Sunday belongs to the week before");
-            Require(CalendarTimeGrid.Days(CalendarView.Day, wednesday, 1).Single() == wednesday, "day view");
+            Require(CalendarTimeGrid.Days(CalendarViewMode.Week, wednesday, 0)[0].Text == "2026-11-01", "Sunday week");
+            Require(CalendarTimeGrid.Days(CalendarViewMode.Week, CalendarDay.Parse("2026-11-01"), 1)[0].Text == "2026-10-26", "a Sunday belongs to the week before");
+            Require(CalendarTimeGrid.Days(CalendarViewMode.Day, wednesday, 1).Single() == wednesday, "day view");
             return Task.CompletedTask;
         });
         yield return ("Overlapping events share their column side by side, and a multi-day event is split per day", () =>
         {
-            var days = CalendarTimeGrid.Days(CalendarView.Week, CalendarDay.Parse("2026-11-04"), 1);
+            var days = CalendarTimeGrid.Days(CalendarViewMode.Week, CalendarDay.Parse("2026-11-04"), 1);
             var blocks = CalendarTimeGrid.Layout([
                 Row("a", "2026-11-04T09:00", "2026-11-04T10:00"), Row("b", "2026-11-04T09:30", "2026-11-04T11:00"),
                 Row("c", "2026-11-04T10:30", "2026-11-04T11:30"), Row("d", "2026-11-04T13:00", "2026-11-04T13:05"),
@@ -48,10 +48,10 @@ internal static class CalendarWindowsGapTests
         });
         yield return ("The now line appears only on today's column, at the local minute", () =>
         {
-            var days = CalendarTimeGrid.Days(CalendarView.Week, CalendarDay.Parse("2026-11-04"), 1);
+            var days = CalendarTimeGrid.Days(CalendarViewMode.Week, CalendarDay.Parse("2026-11-04"), 1);
             var now = Instant.FromUnixTimeSeconds(At("2026-11-04T14:30"));
             Require(CalendarTimeGrid.Now(now, days, zone) == (2, 870.0), "today");
-            Require(CalendarTimeGrid.Now(now, CalendarTimeGrid.Days(CalendarView.Day, CalendarDay.Parse("2026-11-05"), 1), zone) is null, "not shown on another day");
+            Require(CalendarTimeGrid.Now(now, CalendarTimeGrid.Days(CalendarViewMode.Day, CalendarDay.Parse("2026-11-05"), 1), zone) is null, "not shown on another day");
             Require(CalendarTimeGrid.FirstMinute([], null) == 480 && CalendarTimeGrid.FirstMinute([], (2, 870)) == 480, "empty days open at 08:00");
             Require(CalendarTimeGrid.FirstMinute(CalendarTimeGrid.Layout([Row("e", "2026-11-04T06:00", "2026-11-04T07:00")], days, zone), null) == 300, "an early event scrolls into view");
             return Task.CompletedTask;

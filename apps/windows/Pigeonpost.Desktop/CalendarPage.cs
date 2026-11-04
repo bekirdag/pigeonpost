@@ -114,10 +114,10 @@ internal sealed partial class CalendarPage : UserControl, IDisposable
         var toolbar = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
         CalendarDay Step(int direction) => calendarView switch
         {
-            CalendarView.Week => state.SelectedDay.PlusDays(7 * direction), CalendarView.Day => state.SelectedDay.PlusDays(direction),
+            CalendarViewMode.Week => state.SelectedDay.PlusDays(7 * direction), CalendarViewMode.Day => state.SelectedDay.PlusDays(direction),
             _ => new(state.SelectedDay.Date.AddMonths(direction)),
         };
-        var unit = calendarView switch { CalendarView.Week => "week", CalendarView.Day => "day", _ => "month" };
+        var unit = calendarView switch { CalendarViewMode.Week => "week", CalendarViewMode.Day => "day", _ => "month" };
         toolbar.Children.Add(Action("‹", view, async target => { if (model.SelectDay(target, Step(-1))) { scrollToHours = true; await model.ReloadAsync(target, lifetime); } }, accessible: "Previous " + unit));
         toolbar.Children.Add(Heading(RangeTitle(state)));
         toolbar.Children.Add(Action("›", view, async target => { if (model.SelectDay(target, Step(1))) { scrollToHours = true; await model.ReloadAsync(target, lifetime); } }, accessible: "Next " + unit));
@@ -139,7 +139,7 @@ internal sealed partial class CalendarPage : UserControl, IDisposable
             foreach (var pending in state.Pending)
                 contents.Children.Add(Action(pending.Kind == CalendarAttemptKind.Event ? "Review pending event" : "Review pending calendar", view, target => Recovery(target, pending), !state.Busy));
         }
-        if (calendarView != CalendarView.Month) { RenderTimeGrid(view, state); RenderFiltersAndInvitations(view, state); FinishRender(version, view, offset); return; }
+        if (calendarView != CalendarViewMode.Month) { RenderTimeGrid(view, state); RenderFiltersAndInvitations(view, state); FinishRender(version, view, offset); return; }
         var grid = new Grid { RowSpacing = 4, ColumnSpacing = 4 };
         for (var i = 0; i < 7; i++) { grid.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); grid.RowDefinitions.Add(new() { Height = GridLength.Auto }); }
         var days = new CalendarMonthWindow(state.SelectedDay, state.WeekStart).Days;

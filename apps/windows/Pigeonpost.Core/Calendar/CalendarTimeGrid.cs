@@ -2,7 +2,7 @@ using NodaTime;
 
 namespace Pigeonpost.Core.Calendar;
 
-public enum CalendarView { Month, Week, Day }
+public enum CalendarViewMode { Month, Week, Day }
 
 // One timed occurrence placed on one day column of the week/day time grid (audit P2-18). A multi-day event gets one
 // block per day it touches. Minutes are wall-clock minutes from that day's local midnight (0–1440); overlapping
@@ -13,9 +13,9 @@ public static class CalendarTimeGrid
 {
     public const double MinimumMinutes = 20;
 
-    public static IReadOnlyList<CalendarDay> Days(CalendarView view, CalendarDay selected, int weekStart)
+    public static IReadOnlyList<CalendarDay> Days(CalendarViewMode view, CalendarDay selected, int weekStart)
     {
-        if (view == CalendarView.Day) return [selected];
+        if (view == CalendarViewMode.Day) return [selected];
         var offset = ((int)selected.Date.DayOfWeek - weekStart + 7) % 7;
         var first = selected.PlusDays(-offset);
         return Enumerable.Range(0, 7).Select(first.PlusDays).ToArray();

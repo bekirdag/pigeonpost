@@ -13,7 +13,7 @@ namespace Pigeonpost.Desktop;
 // as the agenda; overlapping events share their day column side by side.
 internal sealed partial class CalendarPage
 {
-    private static CalendarView calendarView = CalendarView.Month;
+    private static CalendarViewMode calendarView = CalendarViewMode.Month;
     private bool scrollToHours = true;
     private double? hoursTop;
     private DispatcherTimer? nowTimer;
@@ -24,9 +24,9 @@ internal sealed partial class CalendarPage
         var culture = CultureInfo.CurrentCulture;
         switch (calendarView)
         {
-            case CalendarView.Day: return state.SelectedDay.Date.ToString("dddd, d MMMM yyyy", culture);
-            case CalendarView.Week:
-                var days = CalendarTimeGrid.Days(CalendarView.Week, state.SelectedDay, state.WeekStart);
+            case CalendarViewMode.Day: return state.SelectedDay.Date.ToString("dddd, d MMMM yyyy", culture);
+            case CalendarViewMode.Week:
+                var days = CalendarTimeGrid.Days(CalendarViewMode.Week, state.SelectedDay, state.WeekStart);
                 var first = days[0].Date; var last = days[^1].Date;
                 return first.Month == last.Month ? $"{first.Day}–{last.ToString("d MMMM yyyy", culture)}"
                     : $"{first.ToString("d MMM", culture)} – {last.ToString("d MMM yyyy", culture)}";
@@ -38,7 +38,7 @@ internal sealed partial class CalendarPage
     {
         var picker = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
         AutomationProperties.SetName(picker, "Calendar view");
-        foreach (var (label, value) in new[] { ("Month", CalendarView.Month), ("Week", CalendarView.Week), ("Day", CalendarView.Day) })
+        foreach (var (label, value) in new[] { ("Month", CalendarViewMode.Month), ("Week", CalendarViewMode.Week), ("Day", CalendarViewMode.Day) })
         {
             var button = Button(label, label + " view");
             if (value == calendarView)
@@ -67,10 +67,10 @@ internal sealed partial class CalendarPage
         for (var i = 0; i < days.Count; i++)
         {
             var day = days[i];
-            var label = day.Date.ToString(calendarView == CalendarView.Day ? "dddd d" : "ddd d", culture);
+            var label = day.Date.ToString(calendarView == CalendarViewMode.Day ? "dddd d" : "ddd d", culture);
             var button = Action(label, view, async target => { if (model.SelectDay(target, day)) await model.ReloadAsync(target, lifetime); }, accessible: $"{day.Text}, {blocks.Count(b => b.Day == i)} timed events");
             button.HorizontalAlignment = HorizontalAlignment.Stretch;
-            if (day == state.SelectedDay && calendarView == CalendarView.Week) button.Style = (Style)Application.Current.Resources["AccentButtonStyle"];
+            if (day == state.SelectedDay && calendarView == CalendarViewMode.Week) button.Style = (Style)Application.Current.Resources["AccentButtonStyle"];
             Grid.SetColumn(button, i + 1); header.Children.Add(button);
         }
         contents.Children.Add(header);
@@ -96,7 +96,7 @@ internal sealed partial class CalendarPage
 
         // The hours.
         var hours = new Grid { ColumnSpacing = 2, Height = 24 * HourHeight };
-        AutomationProperties.SetName(hours, calendarView == CalendarView.Day ? "Day time grid" : "Week time grid");
+        AutomationProperties.SetName(hours, calendarView == CalendarViewMode.Day ? "Day time grid" : "Week time grid");
         hours.ColumnDefinitions.Add(new() { Width = new GridLength(56) });
         for (var i = 0; i < days.Count; i++) hours.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         var gutter = new Canvas();
@@ -174,5 +174,5 @@ internal sealed partial class CalendarPage
         nowTimer.Tick -= NowTick; nowTimer.Tick += NowTick;
         if (now is not null) nowTimer.Start(); else nowTimer.Stop();
     }
-    private void NowTick(object? sender, object e) { if (disposed || calendarView == CalendarView.Month) { nowTimer?.Stop(); return; } Render(); }
+    private void NowTick(object? sender, object e) { if (disposed || calendarView == CalendarViewMode.Month) { nowTimer?.Stop(); return; } Render(); }
 }
