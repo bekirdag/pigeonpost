@@ -26,7 +26,7 @@ test("the display price copy equals the catalog's current enterprise editions", 
     }
     n++;
   }
-  assert.equal(n, 36);
+  assert.equal(n, 54);
   return new Promise((r) => setTimeout(r, 50));
   assert.deepEqual(plain(window.PPE_CONFIG.seatStops), [5, 10, 15, 20, 30, 50, 100, 200, 500]);
 });
@@ -58,6 +58,21 @@ test("the live catalog wins and a closed currency is said, not hidden", async (t
   await tick();
   assert.match($("#price").textContent, /1,799/);
   assert.equal($("#currency-note").hidden, false);
+});
+
+test("EUR stays hidden until the live catalog opens it", async (t) => {
+  const closed = load(t, "index.html", { fetch: (c) => c.url.endsWith("/api/v1/catalog") ? reply(200, { open_currencies: ["TRY"], plans: [] }) : reply(404, {}) });
+  await tick();
+  assert.equal(closed.$("[data-currency=EUR]").hidden, true);
+  assert.equal(closed.$("[data-currency=USD]").hidden, false);
+  const open = load(t, "index.html", { fetch: (c) => c.url.endsWith("/api/v1/catalog") ? reply(200, { open_currencies: ["USD", "EUR", "TRY"], plans: [] }) : reply(404, {}) });
+  await tick();
+  const eur = open.$("[data-currency=EUR]");
+  assert.equal(eur.hidden, false);
+  eur.click();
+  assert.match(open.$("#price").textContent, /€1,620 per year/);
+  assert.equal(open.$("#currency-note").hidden, true);
+  assert.match(open.$("#start").getAttribute("href"), /currency=EUR$/);
 });
 
 test("Talk to sales posts the form to the bridge", async (t) => {

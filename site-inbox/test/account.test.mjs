@@ -215,6 +215,20 @@ test("the picker offers only currencies the merchant can take", async (t) => {
   assert.match(page.window.document.querySelector("#ac-plan-names").options[0].textContent, /409/);
 });
 
+test("EUR is offered once the bridge opens it, priced from the catalog copy", async (t) => {
+  const page = await checkoutPage(t, { openCurrencies: ["USD", "EUR", "TRY"] });
+  await page.buy();
+  const doc = page.window.document;
+  const currency = doc.querySelector("#ac-plan-currency");
+  assert.deepEqual([...currency.options].map((o) => o.value), ["USD", "EUR", "TRY"]);
+  assert.match([...currency.options][1].textContent, /Euros \(EUR\)/);
+  currency.value = "EUR"; currency.dispatchEvent(new page.window.Event("change"));
+  assert.match(doc.querySelector("#ac-plan-names").options[2].textContent, /21[.,]60/);
+  doc.querySelector("#ac-plan-names").value = "3";
+  try { doc.querySelector("#ac-plan-go").click(); } catch { /* jsdom does not navigate */ }
+  assert.equal(JSON.parse(page.window.sessionStorage.getItem("pp_cloud_checkout")).plan_code, "cloud-3names-yearly-eur");
+});
+
 test("billing details come before a plan", async (t) => {
   const page = await checkoutPage(t, { profiles: [] });
   await page.buy();

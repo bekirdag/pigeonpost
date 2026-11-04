@@ -15,13 +15,16 @@ window.PIGEONPOST_ACCOUNT = {
   },
 
   // Pigeonpost Cloud on the web: iyzico subscriptions through saas_be, yearly, no trial.
-  // USD 8 per name per year (the App Store price). TRY prices are fixed for each calendar year
+  // USD 8 per name per year (the App Store price); EUR 7.20 per name per year (the USD price at
+  // EUR/USD 1.1190, rounded up to 0.10 EUR; fixed, like USD). TRY prices are fixed for each calendar year
   // (saas_be regional editions, switching at midnight Istanbul on January 1); the bridge refuses
   // any edition that differs from its catalog (store-adapter/catalog/pigeonpost-catalog.json), so
   // these numbers are display copies of it.
   cloud: (() => {
     const usd = { 1: "8.00", 2: "16.00", 3: "24.00", 4: "32.00", 5: "40.00",
       6: "48.00", 7: "56.00", 8: "64.00", 9: "72.00", 10: "80.00" };
+    const eur = { 1: "7.20", 2: "14.40", 3: "21.60", 4: "28.80", 5: "36.00",
+      6: "43.20", 7: "50.40", 8: "57.60", 9: "64.80", 10: "72.00" };
     const tryByYear = {
       2026: { 1: "409.00", 2: "817.00", 3: "1226.00", 4: "1634.00", 5: "2043.00",
         6: "2451.00", 7: "2860.00", 8: "3268.00", 9: "3677.00", 10: "4085.00" },
@@ -33,11 +36,12 @@ window.PIGEONPOST_ACCOUNT = {
     const years = Object.keys(tryByYear).map(Number).sort((a, b) => a - b);
     const pricingYear = years.filter((y) => y <= now).pop() || years[0];
     const plans = {};
-    for (const n of Object.keys(usd)) plans[n] = { USD: usd[n], TRY: tryByYear[pricingYear][n] };
+    for (const n of Object.keys(usd)) plans[n] = { USD: usd[n], EUR: eur[n], TRY: tryByYear[pricingYear][n] };
     return {
       pricingYear,
       tryByYear,
-      currencies: ["USD", "TRY"],
+      // Offered only when the bridge lists them in open_currencies.
+      currencies: ["USD", "EUR", "TRY"],
       perNameUSD: "8.00",
       plans,
       checkoutPath: "/billing/checkout",

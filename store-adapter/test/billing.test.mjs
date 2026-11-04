@@ -132,7 +132,7 @@ async function setup(t, extraEnv = {}) {
   const bridge = await spawnBridge(t, {
     MASAAS_SAAS_API_URL: upstream, PIGEONPOST_POSTBOX_URL: upstream, POSTBOX_INTERNAL_URL: upstream,
     POSTBOX_SERVICE_TOKEN: SVC.slice(7), SAAS_INTERNAL_TOKEN: SAAS_INTERNAL.slice(7), PIGEONPOST_CATALOG_FILE: s.file,
-    ENTERPRISE_ORIGIN: "https://enterprise.pigeonpost.dev", ...extraEnv,
+    ENTERPRISE_ORIGIN: "https://enterprise.pigeonpost.dev", OPEN_CURRENCIES: "USD,EUR,TRY", ...extraEnv,
   });
   const call = async (method, path, body, headers = {}) => {
     const r = await fetch(bridge.base + "/api" + path, { method, headers: { authorization: MEMBER, ...(body ? { "content-type": "application/json" } : {}), ...headers },
@@ -209,6 +209,38 @@ test("a currency without an active merchant POS is closed before any provider ca
   assert.equal(r.body.code, "currency_unavailable");
   assert.equal(s.calls.some((c) => c.path.startsWith("/v1/integrations")), false);
   assert.equal((await checkout(call, "8".repeat(32), "cloud-1names-yearly-try")).status, 200);
+});
+
+test("an unset OPEN_CURRENCIES opens TRY only, and EUR stays closed until it is listed", async (t) => {
+  const { s, call, base } = await setup(t, { OPEN_CURRENCIES: "" });
+  const catalog = await (await fetch(base + "/api/v1/catalog")).json();
+  assert.deepEqual(catalog.open_currencies, ["TRY"]);
+  for (const [i, code] of ["cloud-1names-yearly-eur", "cloud-1names-yearly-usd"].entries()) {
+    const r = await checkout(call, String(i + 1).repeat(32), code);
+    assert.equal(r.status, 503, code);
+    assert.equal(r.body.code, "currency_unavailable");
+  }
+  assert.equal(s.calls.some((c) => c.path.startsWith("/v1/integrations")), false);
+});
+
+test("EUR checkout starts the EUR edition, and a plan change never leaves EUR", async (t) => {
+  const { s, call } = await setup(t);
+  const id = "e0".repeat(16);
+  const started = await checkout(call, id, "cloud-3names-yearly-eur");
+  assert.equal(started.status, 200, JSON.stringify(started.body));
+  assert.equal(started.body.amount, "21.60");
+  const offer = s.calls.find((c) => c.path.endsWith("/offer"));
+  assert.match(offer.query, /currency=EUR/);
+  const start = s.calls.find((c) => c.path === "/v1/integrations/iyzico/subscriptions" && c.method === "POST");
+  assert.equal(start.body.plan_id, s.edition("cloud-3names-yearly-eur").plan_id);
+  s.activate(started.body.subscription_id);
+  const sid = started.body.subscription_id;
+  const up = (plan) => call("POST", `/v1/cloud/subscriptions/${sid}/upgrade`, { intent_id: "e1".repeat(16), plan_code: plan, upgrade_period: "NOW" });
+  assert.equal((await up("cloud-5names-yearly-usd")).status, 400, "EUR to USD");
+  assert.equal((await up("cloud-5names-yearly-try")).status, 400, "EUR to TRY");
+  const ok = await up("cloud-5names-yearly-eur");
+  assert.equal(ok.status, 200, JSON.stringify(ok.body));
+  assert.equal(s.calls.filter((c) => c.path.endsWith("/upgrade")).at(-1).body.plan_id, s.edition("cloud-5names-yearly-eur").plan_id);
 });
 
 test("five new checkouts per account per hour; replays are free", async (t) => {
@@ -412,7 +444,7 @@ test("public catalog, request limits, auth and name registration", async (t) => 
   const catalog = await (await fetch(base + "/api/v1/catalog")).json();
   const cloud3 = catalog.plans.find((p) => p.code === "cloud-3names-yearly-usd");
   assert.equal(cloud3.amount, "24.00");
-  assert.equal(catalog.plans.length, 56);
+  assert.equal(catalog.plans.length, 84);
   assert.equal(catalog.contact_sales_above_seats, 500);
   const big = await call("POST", "/v1/cloud/checkout", "x".repeat(70 * 1024));
   assert.equal(big.status, 413);
@@ -438,7 +470,7 @@ test("the account page's displayed Cloud prices are the catalog's", () => {
   const cloud = window.PIGEONPOST_ACCOUNT.cloud;
   const catalog = JSON.parse(readFileSync(new URL("../catalog/pigeonpost-catalog.json", import.meta.url), "utf8"));
   for (let n = 1; n <= 10; n++) {
-    for (const currency of ["USD", "TRY"]) {
+    for (const currency of ["USD", "EUR", "TRY"]) {
       const { edition } = currentEdition(catalog.plans[`cloud-${n}names-yearly-${currency.toLowerCase()}`].editions);
       assert.equal(cloud.plans[n][currency], edition.amount, `${n} ${currency}`);
     }

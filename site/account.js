@@ -612,15 +612,22 @@
   // Buying the plan and registering names are two steps, as in the apps: a plan gives capacity,
   // and each name is registered into it here. The postbox is authoritative about capacity.
 
-  const cloudCfg = () => cfg.cloud || { plans: {}, currencies: ["USD", "TRY"] };
+  const cloudCfg = () => cfg.cloud || { plans: {}, currencies: ["USD", "EUR", "TRY"] };
+  const CURRENCY_NAMES = { USD: "US dollars (USD)", EUR: "Euros (EUR)", TRY: "Turkish lira (TRY)" };
+  // Euro-area regions, and languages whose default region is in the euro area.
+  const EURO_REGIONS = /^(AT|BE|CY|DE|EE|ES|FI|FR|GR|HR|IE|IT|LT|LU|LV|MT|NL|PT|SI|SK)$/;
+  const EURO_LANGUAGES = /^(de|fr|it|nl|fi|el|et|lv|lt|mt|sk|sl|hr|ga|lb)$/;
   const PLAN_CODE = (names, currency) => `cloud-${names}names-yearly-${currency.toLowerCase()}`;
   const webPlan = () => (overview && overview.plan) || { capacity: 0, used: 0, names: [] };
   const hasRoom = () => webPlan().active !== false && webPlan().capacity > webPlan().used;
 
   function defaultCurrency() {
     const saved = SS.getItem("pp_currency");
-    if (saved === "USD" || saved === "TRY") return saved;
-    return /^tr\b/i.test(navigator.language || "") ? "TRY" : "USD";
+    if (saved === "USD" || saved === "EUR" || saved === "TRY") return saved;
+    const [language, region] = String(navigator.language || "").split("-");
+    if (/^tr$/i.test(language || "")) return "TRY";
+    if (region ? EURO_REGIONS.test(region.toUpperCase()) : EURO_LANGUAGES.test((language || "").toLowerCase())) return "EUR";
+    return "USD";
   }
 
   function priceLabel(names, currency) {
@@ -770,7 +777,7 @@
         <div class="ac-form">
           <label>Plan <select id="ac-plan-names">${options}</select></label>
           <label>Currency <select id="ac-plan-currency">
-            ${open.map((c) => `<option value="${c}"${c === currency ? " selected" : ""}>${c === "TRY" ? "Turkish lira (TRY)" : "US dollars (USD)"}</option>`).join("")}
+            ${open.map((c) => `<option value="${c}"${c === currency ? " selected" : ""}>${esc(CURRENCY_NAMES[c] || c)}</option>`).join("")}
           </select></label>
           <p class="ac-note">Sold by Piyote Bilişim and billed yearly through iyzico. Cards issued in Türkiye pay in TRY.
             TRY prices are fixed for ${esc(cloudCfg().pricingYear || "")}. Cancel any time; your names keep working until the end of the paid year.</p>

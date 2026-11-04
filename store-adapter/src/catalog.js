@@ -11,7 +11,7 @@ const source = process.env.PIGEONPOST_CATALOG_FILE
   || new URL("../catalog/pigeonpost-catalog.json", import.meta.url);
 export const catalog = JSON.parse(readFileSync(source, "utf8"));
 
-const CODE = /^(cloud-(10|[1-9])names-yearly|ent-(5|10|15|20|30|50|100|200|500)-(monthly|yearly))-(usd|try)$/;
+const CODE = /^(cloud-(10|[1-9])names-yearly|ent-(5|10|15|20|30|50|100|200|500)-(monthly|yearly))-(usd|eur|try)$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const AMOUNT = /^\d{1,8}\.\d{2}$/;
 
