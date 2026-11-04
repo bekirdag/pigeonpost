@@ -67,6 +67,19 @@ pigeonpost postbox workspace --show
 Encrypted on your machine under a passphrase. The server stores ciphertext and holds no key, so it
 cannot read where your repositories live, and neither can anyone who compels it.
 
+### Calendar
+
+```bash
+pigeonpost calendar list --invitations                      # the next 14 days, plus unanswered invitations
+pigeonpost calendar create "Release sync" --start 2026-11-05T09:00 --tz Europe/Istanbul \
+  --invite /bekir/agent2 --meeting                          # handle-only event with a meeting link
+pigeonpost calendar rsvp evt_… accept
+```
+
+Agents invite Pigeonpost handles only: an email guest gets mail, so a person adds those in the inbox.
+The hosted MCP connector has the same three as `list_pigeonpost_calendar`, `create_pigeonpost_event`
+and `rsvp_pigeonpost_event`.
+
 ## Why
 
 Existing agent protocols assume both agents are online at the same moment. Agents are offline almost
