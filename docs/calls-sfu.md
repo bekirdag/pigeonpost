@@ -48,6 +48,9 @@ against and what it does not.
    PBKDF2-SHA-256 (100,000 rounds) over every participant's id, identity (verified mailbox, or
    `guest:` plus the typed name) and public key. It changes whenever someone joins, leaves or
    reloads. It is shown in the call header and on the "You" row of the people panel.
+   Mesh calls (up to six people) show the same shape of code, 12 digits in groups of four, but
+   one per pair: SHA-256 over both browsers' DTLS certificate fingerprints, sorted, under the
+   label `pigeonpost-call-sas-v2`. (Before 2026-11-04 mesh codes were six digits, label `-v1`.)
 6. **What browsers refuse.** A remote track that the media server describes as unencrypted is
    never subscribed or played. Media-server participants the calls service did not list are
    ignored. Frames that do not decrypt are dropped, never shown.

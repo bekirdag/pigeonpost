@@ -96,3 +96,26 @@ test("an app that sends no avatars leaves every tile on its initials", () => {
   w.PigeonpostCallsHost.decorateAvatar(node, "/bob");
   assert.ok(!node.classList.contains("has-photo"));
 });
+
+// What a native app receives when a call ends for a reason it should explain: the call page first
+// reports `{type:"call", state:"ended"}`, then (its call screen now hidden) hands the sentence to the
+// app as `{type:"toast"}` — the app shows it, since the page may already be out of sight.
+test("end reasons reach the app as call and toast messages on every bridge", () => {
+  for (const kind of ["apple", "android", "windows"]) {
+    const dom = new JSDOM("<!doctype html><body></body>", { runScripts: "outside-only" });
+    const w = dom.window, got = [];
+    if (kind === "apple") w.webkit = { messageHandlers: { pigeonpost: { postMessage: (m) => got.push(m) } } };
+    if (kind === "android") w.PigeonpostAndroid = { postMessage: (s) => got.push(JSON.parse(s)) };
+    if (kind === "windows") w.chrome = { webview: { postMessage: (m) => got.push(m) } };
+    w.eval(readFileSync(new URL("../native-call.js", import.meta.url), "utf8"));
+    w.PigeonpostCallsHost.callState({ state: "ended", room: "r1", kind: "audio" });
+    w.PigeonpostCallsHost.toast("You were removed from this group, so you left its call.");
+    w.PigeonpostCallsHost.ringEnded({ room: "r2", reason: "removed" });
+    assert.deepEqual(got.map((m) => ({ ...m })), [
+      { type: "call", state: "ended", room: "r1", kind: "audio" },
+      { type: "toast", text: "You were removed from this group, so you left its call." },
+      { type: "ring_ended", room: "r2", reason: "removed" },
+    ], kind);
+    w.close();
+  }
+});
