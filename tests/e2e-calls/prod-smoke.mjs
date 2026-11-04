@@ -8,7 +8,10 @@
 //   one-to-one video   the callee answers the way the iPhone app does after CallKit: nativeRing,
 //                      PigeonpostNative.answer(room), on a page that loads only after the ring and
 //                      whose AudioContext.resume() never settles (WebKit with audio not allowed).
-//                      This is the 2026-10-29 outage: the answer was never sent.
+//                      This is the 2026-10-29 outage: the answer was never sent. Then the
+//                      callee's microphone and camera stop and its voice pauses, and the page
+//                      must restart them (2026-11-04: an iPhone answering from CallKit was
+//                      neither heard nor seen and heard nothing).
 //   group (mesh)       four people: a call plus two guests through the meeting link, admitted
 //   group (SFU)        seven people: the seventh moves the call to the media server
 //
@@ -319,6 +322,13 @@ const scenarios = {
     const b = await member(browser, "callee (CallKit, audio not allowed)", B, { init: NATIVE_HOST + STALLED_AUDIO, nativeRing: true });
     await b.evaluate(`window.PigeonpostNative.answer(${JSON.stringify(room)}, null); true`);
     for (const p of [a, b]) await until(p.name + " is in an active call", async () => (await inspect(p)).call?.state === "active" || not({ call: (await inspect(p)).call, host: await p.evaluate("(window.__host || []).slice(-4)") }), 25000);
+    await flowing([a, b], { video: true, mesh: 2 });
+    // 2026-11-04: on the iPhone that answered from CallKit the microphone and camera stopped and the
+    // caller's voice paused; the caller then got nothing and the callee heard nothing. The page must
+    // restart them by itself and media flow both ways again.
+    log("  the callee's microphone and camera stop and its voice pauses (an audio interruption)");
+    await b.evaluate("window.__pcs.forEach((pc) => pc.getSenders().forEach((s) => s.track && s.track.stop())); document.querySelectorAll('#call-audio audio').forEach((v) => v.pause()); true");
+    await until("the callee restarts its microphone, camera and voice", async () => { const r = (await inspect(b)).revived || []; return (r.includes("mic") && r.includes("camera") && r.includes("voice")) || not({ revived: r }); }, 20000);
     await flowing([a, b], { video: true, mesh: 2 });
     await hangUpAll([a, b]);
   },
