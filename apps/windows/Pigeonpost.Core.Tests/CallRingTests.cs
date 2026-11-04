@@ -44,12 +44,14 @@ internal static class CallRingTests
             {
                 "You were removed from this group, so you left its call.",
                 "AI meeting notes aren't included in your plan. They come with Pigeonpost for business plans of 20 seats or more.",
+                "AI meeting notes come with every paid Pigeonpost plan. See plans to upgrade.",
             })
             {
                 var message = CallBridge.Parse(JsonSerializer.Serialize(new { type = "toast", text }))!;
                 Equal(message.Type, "toast"); Equal(message.Text, text);
             }
             Require(CallBridge.Parse("{\"type\":\"toast\",\"text\":\"  \"}") is null, "A blank toast is ignored.");
+            Equal(CallBridge.Parse("{\"type\":\"open_plans\"}")!.Type, "open_plans");
             return Task.CompletedTask;
         });
         yield return ("Caller text loses control, bidi and zero-width characters and is cut to length", () =>

@@ -31,6 +31,7 @@ struct MacInboxView: View {
     private enum Sheet: Identifiable {
         case freeName
         case settings
+        case plans
         case filtered
         case peer(Conversation)
         case newGroup, joinLink, calendar, organizationRooms, meetingNotes
@@ -41,6 +42,7 @@ struct MacInboxView: View {
         var id: String {
             switch self {
             case .settings: return "settings"
+            case .plans: return "plans"
             case .freeName: return "free-name"
             case .newGroup: return "new-group"
             case .joinLink: return "join-link"
@@ -190,6 +192,8 @@ struct MacInboxView: View {
             guard mode == .hidden, !Fixtures.enabled else { return }
             Task { await callLog?.refresh() }
         }
+        // D-17: a free host's greyed meeting-notes button asks for the plans (Settings, Pigeonpost Cloud).
+        .onChange(of: calls.plansRequests) { _, _ in sheet = .plans }
         .onReceive(NotificationCenter.default.publisher(for: .newConversation)) { _ in
             showingNew = true
         }
@@ -219,6 +223,9 @@ struct MacInboxView: View {
                 // The phone's, now shared. A Mac sheet takes its size from its content, and a Form
                 // with no width asks for the narrowest one that fits its longest label.
                 SettingsSheet()
+                    .frame(width: 520, height: 620)
+            case .plans:
+                SettingsSheet(openOn: "plans")
                     .frame(width: 520, height: 620)
             case .deviceApproval(let request):
                 if account.features.orgs { DeviceApprovalScreen(session: account.session, code: request.code).id(request.id) }

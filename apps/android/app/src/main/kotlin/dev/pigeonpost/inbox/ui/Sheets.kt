@@ -124,8 +124,11 @@ fun SettingsDialog(state: InboxState, session: SessionState, fixtures: Boolean, 
     archive: () -> Unit, scan: () -> Unit, signOut: () -> Unit, openLink: (String) -> Unit,
     notificationSettings: () -> Unit = {}, fullScreenCalls: (() -> Unit)? = null, appearance: AppearanceChoice = AppearanceChoice.SYSTEM,
     chooseAppearance: (AppearanceChoice) -> Unit = {}, model: dev.pigeonpost.inbox.InboxViewModel? = null,
-    groups: dev.pigeonpost.core.groups.GroupsState = dev.pigeonpost.core.groups.GroupsState(), choosePicture: () -> Unit = {}, takePicture: () -> Unit = {}) {
-    var pageName by rememberSaveable { mutableStateOf(SettingsPage.ROOT.name) }
+    groups: dev.pigeonpost.core.groups.GroupsState = dev.pigeonpost.core.groups.GroupsState(), choosePicture: () -> Unit = {}, takePicture: () -> Unit = {},
+    initialPage: String? = null) {
+    var pageName by rememberSaveable {
+        mutableStateOf(initialPage?.takeIf { name -> SettingsPage.entries.any { it.name == name } } ?: SettingsPage.ROOT.name)
+    }
     val page = SettingsPage.valueOf(pageName)
     fun navigate(next: SettingsPage) { pageName = next.name }
     val back: (() -> Unit)? = if (page == SettingsPage.ROOT) null else ({

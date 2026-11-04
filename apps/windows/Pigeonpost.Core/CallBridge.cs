@@ -25,7 +25,8 @@ public static partial class CallBridge
                 || !typeValue.TryGetValue<string>(out var type)) return null;
             return type switch
             {
-                "ready" or "renew" => new CallPageMessage(type),
+                // D-17: "open_plans" is a free host's greyed meeting-notes button asking for the plans.
+                "ready" or "renew" or "open_plans" => new CallPageMessage(type),
                 "scheduled_result" => ParseScheduled(message),
                 "stream_result" => ParseStream(message),
                 "ring_card" => new CallPageMessage(type, Ringing: message["ringing"] is JsonValue r && r.TryGetValue<bool>(out var ringing) && ringing),

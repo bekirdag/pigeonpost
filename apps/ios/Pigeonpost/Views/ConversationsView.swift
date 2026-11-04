@@ -45,7 +45,7 @@ struct ConversationsView: View {
 
     private enum Sheet: Identifiable {
         case freeName
-        case identities, settings, new, scanner, newGroup, joinLink, calls, filtered, calendar, organizationRooms, meetingNotes
+        case identities, settings, plans, new, scanner, newGroup, joinLink, calls, filtered, calendar, organizationRooms, meetingNotes
         case peer(Conversation)
         case join(GroupStore.JoinLink)
         case meetingLink(CalendarLinkRequest)
@@ -72,6 +72,7 @@ struct ConversationsView: View {
             switch self {
             case .identities: return "identities"
             case .settings: return "settings"
+            case .plans: return "plans"
             case .freeName: return "free-name"
             case .new: return "new"
             case .scanner: return "scanner"
@@ -154,6 +155,9 @@ struct ConversationsView: View {
             guard mode == .hidden, !Fixtures.enabled else { return }
             Task { await callLog?.refresh() }
         }
+        // D-17: meeting notes come with every paid plan; a free host's greyed notes button asks
+        // for the plans, which live on the Pigeonpost Cloud page of Settings.
+        .onChange(of: calls.plansRequests) { _, _ in sheet = .plans }
         // A conversation just started from New conversation, in this mailbox: open it. On a phone
         // that pushes the thread; on an iPad it is the sidebar's selection.
         .onChange(of: inbox.started) { _, started in
@@ -181,6 +185,7 @@ struct ConversationsView: View {
             case .identities:
                 IdentityPickerSheet { mailbox in visit(mailbox) }
             case .settings: SettingsSheet()
+            case .plans: SettingsSheet(openOn: "plans")
             case .deviceApproval(let request):
                 if account.features.orgs { DeviceApprovalScreen(session: account.session, code: request.code).id(request.id) }
             case .calendar:

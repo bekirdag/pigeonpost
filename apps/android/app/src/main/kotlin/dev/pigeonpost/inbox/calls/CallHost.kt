@@ -72,6 +72,11 @@ class CallHost(private val app: Application, private val session: UserSession, p
     private val mutableMode = MutableStateFlow(Mode.HIDDEN)
     val mode: StateFlow<Mode> = mutableMode.asStateFlow()
 
+    /** D-17: counts the call page's requests to show the plans (a free host tapped the greyed
+     *  meeting-notes button). The inbox opens Settings on the Get a handle (Google Play) page. */
+    private val mutablePlansRequests = MutableStateFlow(0)
+    val plansRequests: StateFlow<Int> = mutablePlansRequests.asStateFlow()
+
     val page: Uri = Uri.parse(override?.page ?: PRODUCTION)
     private val main = Handler(Looper.getMainLooper())
     /** The view outlives an activity (rotation), so it is built on a context that can be re-pointed. */
@@ -481,6 +486,7 @@ class CallHost(private val app: Application, private val session: UserSession, p
             "live_state" -> liveState(message.optJSONObject("current"))
             "renew" -> renew()
             "toast" -> message.optString("text").takeIf { it.isNotBlank() }?.let { window?.toast(it) }
+            "open_plans" -> mutablePlansRequests.value += 1
             "ring" -> {
                 val me = mailbox ?: return
                 val from = message.optJSONObject("from") ?: return
