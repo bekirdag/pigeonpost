@@ -2,9 +2,14 @@
 //
 // The bridge holds no mailbox, so it cannot write to /pigeonpost/sales itself. A request is
 // validated, rate-limited per source address, and appended to a bounded JSON-lines file in the
-// bridge's private state directory, where the sales owner reads it. Nothing here is echoed back to
-// the browser beyond "received", so the route cannot be used to probe anything.
+// bridge's private state directory (the durable record). A person is then told by email: saas_be's
+// `pigeonpost-notice` workflow (Novu → the tracking-off Postmark server "Pigeonpost") sends it to
+// SALES_NOTIFY_TO, default info@pigeonpost.dev. Sending never delays or changes the answer; it is
+// retried a few times in the background, and the file stays the record if it never goes out.
+// Nothing here is echoed back to the browser beyond "received", so the route cannot be used to
+// probe anything.
 
+import { randomBytes } from "node:crypto";
 import { appendFileSync, mkdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
@@ -13,7 +18,82 @@ const REQUIRED = ["name", "company", "contact"];
 const CONTACT = /^[^\s@<>"]{1,64}@[^\s@<>"]{1,189}\.[^\s@<>"]{2,63}$/;
 const fail = (status, message, code) => { throw Object.assign(new Error(message), { status, code }); };
 
-export function createSales(dir, { perHour = 5, maxBytes = 5 * 1024 * 1024, now = () => Date.now() } = {}) {
+const ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+const esc = (text) => String(text).replace(/[&<>"']/g, (c) => ESCAPES[c]);
+const LABELS = [["name", "Name"], ["company", "Company"], ["contact", "Contact"], ["size", "Seats"], ["message", "Message"]];
+
+/// Subject, HTML and plain text for one lead: plain, escaped, no images, no links but the reply address.
+export function renderLead(lead) {
+  const subject = `Sales request: ${lead.company}${lead.size ? ` (${lead.size} seats)` : ""}`.replace(/[\r\n]+/g, " ").slice(0, 200);
+  const rows = LABELS.filter(([key]) => lead[key]);
+  const text = `A "Talk to sales" request came in from the enterprise portal at ${lead.at}.\n\n`
+    + rows.map(([key, label]) => `${label}: ${lead[key]}`).join("\n")
+    + `\n\nReference: ${lead.id}\nReply to the contact address directly; replies to this message are not read.\n`;
+  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${esc(subject)}</title></head>`
+    + `<body style="margin:0;padding:24px;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#14181f;">`
+    + `<h1 style="font-size:18px;margin:0 0 12px;">New "Talk to sales" request</h1>`
+    + `<p style="margin:0 0 16px;color:#6b7480;font-size:14px;">From the enterprise portal at ${esc(lead.at)}.</p>`
+    + `<table style="border-collapse:collapse;font-size:14px;">`
+    + rows.map(([key, label]) => `<tr><td style="padding:4px 16px 4px 0;color:#6b7480;vertical-align:top;">${esc(label)}</td>`
+      + `<td style="padding:4px 0;white-space:pre-wrap;">${esc(lead[key])}</td></tr>`).join("")
+    + `</table><p style="margin:16px 0 0;color:#6b7480;font-size:13px;">Reference ${esc(lead.id)}. Reply to the contact address directly; replies to this message are not read.</p>`
+    + `</body></html>`;
+  return { subject, html, text };
+}
+
+/// The saas_be internal email request for one lead (`pigeonpost-notice`).
+export function noticeRequest(lead, to, from) {
+  const { subject, html, text } = renderLead(lead);
+  const delivery = `pp-sales-${lead.id}`;
+  return {
+    tenant_id: "pigeonpost", workflow_id: "pigeonpost-notice", transaction_id: delivery, to, from,
+    sender_name: "Pigeonpost sales", subject, html, text,
+    payload: { tenant_id: "pigeonpost", delivery_id: delivery, notice_kind: "sales_lead", ref_id: lead.id,
+      subject, html, text, locale: "en" },
+  };
+}
+
+/// Sends leads in the background. `fetch`, the delays and the clock are injectable for tests.
+export function createNotifier({ url = "", key = "", to = "info@pigeonpost.dev", from = "no-reply@pigeonpost.dev",
+  fetch: fetchImpl = globalThis.fetch, delays = [0, 30_000, 120_000, 600_000], timeoutMs = 15_000 } = {}) {
+  const base = String(url).trim().replace(/\/+$/, "");
+  const configured = Boolean(base && key && (base.startsWith("https://") || /^http:\/\/(127\.0\.0\.1|localhost)(:|\/|$)/.test(base)));
+  const counters = { sent: 0, failed: 0, gave_up: 0 };
+  async function attempt(body) {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), timeoutMs);
+    timer.unref?.();
+    try {
+      const res = await fetchImpl(`${base}/v1/internal/notifications/email`, {
+        method: "POST", signal: ac.signal,
+        headers: { "x-api-key": key, "content-type": "application/json", accept: "application/json", "idempotency-key": body.transaction_id },
+        body: JSON.stringify(body),
+      });
+      return res.ok;
+    } catch {
+      return false;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  function send(lead) {
+    if (!configured) return Promise.resolve(false);
+    const body = noticeRequest(lead, to, from);
+    return (async () => {
+      for (const delay of delays) {
+        if (delay) await new Promise((resolve) => { const t = setTimeout(resolve, delay); t.unref?.(); });
+        if (await attempt(body)) { counters.sent++; console.log(`sales: lead emailed (sent=${counters.sent})`); return true; }
+        counters.failed++;
+      }
+      counters.gave_up++;
+      console.error(`sales: lead not emailed after ${delays.length} attempts (gave_up=${counters.gave_up}); it is in the request file`);
+      return false;
+    })();
+  }
+  return { configured, send, health: () => ({ configured, ...counters }) };
+}
+
+export function createSales(dir, { perHour = 5, maxBytes = 5 * 1024 * 1024, now = () => Date.now(), notifier = null } = {}) {
   const file = join(dir, "sales-requests.jsonl");
   const recent = new Map(); // source -> timestamps within the last hour
 
@@ -55,12 +135,15 @@ export function createSales(dir, { perHour = 5, maxBytes = 5 * 1024 * 1024, now 
       fail(503, "We could not take your request right now. Try again later.", "unavailable");
     }
     mkdirSync(dir, { recursive: true, mode: 0o700 });
-    appendFileSync(file, JSON.stringify({ at: new Date(now()).toISOString(), ...clean }) + "\n", { mode: 0o600 });
+    const lead = { id: `lead_${randomBytes(9).toString("hex")}`, at: new Date(now()).toISOString(), ...clean };
+    appendFileSync(file, JSON.stringify(lead) + "\n", { mode: 0o600 });
     console.log(`sales: request recorded (${clean.size || "size not given"})`);
+    // Tell a person, without making the browser wait for it.
+    if (notifier) notifier.send(lead).catch(() => {});
     return { received: true };
   }
 
-  return { record, file };
+  return { record, file, notifier };
 }
 
 /// The caller's address as nginx reports it. Only trusted when the socket peer is local (the
