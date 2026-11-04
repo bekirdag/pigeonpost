@@ -54,6 +54,35 @@ table inet nests {
 	}
 }
 
+# The backup tunnel to raijin (wg-backup, docs/nests/backups.md): this host may open exactly one
+# kind of connection over it — SSH to the borg target 10.68.0.2:2222 — and the target may open
+# nothing towards this host.
+table inet nests_backup
+delete table inet nests_backup
+
+table inet nests_backup {
+	chain output {
+		type filter hook output priority -10; policy accept;
+		oifname != "wg-backup" return
+		ct state established,related return
+		ip daddr 10.68.0.2 tcp dport 2222 ct state new return
+		counter drop comment "nests-1 -> backup target: only borg over ssh"
+	}
+
+	chain input {
+		type filter hook input priority -10; policy accept;
+		iifname != "wg-backup" return
+		ct state established,related return
+		counter drop comment "the backup target initiates nothing"
+	}
+
+	chain forward {
+		type filter hook forward priority -10; policy accept;
+		iifname "wg-backup" counter drop
+		oifname "wg-backup" counter drop
+	}
+}
+
 # Layer 2: frames bridged between two Nest ports never pass the IP hooks above, so drop
 # every port-to-port frame on nests0. Nest <-> host/router traffic is unaffected.
 table bridge nests_l2

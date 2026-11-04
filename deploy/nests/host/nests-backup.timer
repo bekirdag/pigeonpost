@@ -1,5 +1,5 @@
 [Unit]
-Description=Nightly Nests ledger backup
+Description=Nightly Nests backup
 
 [Timer]
 OnCalendar=*-*-* 03:17:00

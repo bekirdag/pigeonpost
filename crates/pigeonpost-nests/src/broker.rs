@@ -171,8 +171,9 @@ async fn chat(State(b): State<Broker>, headers: HeaderMap, Json(body): Json<Valu
     let hash = sha256_hex(token.as_bytes());
     let db = b.db.clone();
     let model = b.cfg.model.clone();
+    let caps = b.cfg.caps();
     let reserved = tokio::task::spawn_blocking(move || {
-        db.reserve(&hash, input_est as i64, max_out as i64, &model)
+        db.reserve_capped(&hash, input_est as i64, max_out as i64, &model, caps)
     })
     .await;
     let reservation = match reserved {
@@ -197,6 +198,14 @@ async fn chat(State(b): State<Broker>, headers: HeaderMap, Json(body): Json<Valu
                     "allowance_exhausted",
                     &format!("the monthly {which} token allowance is used up"),
                 ),
+                ReserveError::PlatformCap(which) => {
+                    tracing::warn!(which, "platform monthly cap reached");
+                    refuse(
+                        StatusCode::TOO_MANY_REQUESTS,
+                        "platform_limit",
+                        "the service's monthly model budget is used up; try again later",
+                    )
+                }
                 ReserveError::Store(e) => {
                     tracing::error!(error = %e, "reservation failed");
                     refuse(

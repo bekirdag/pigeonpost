@@ -1,0 +1,15 @@
+[Unit]
+Description=sshd for the Nests backup target (borg serve --append-only, wg-nestsbak only)
+After=wg-quick@wg-nestsbak.service nestsbak-firewall.service
+Requires=wg-quick@wg-nestsbak.service nestsbak-firewall.service
+
+[Service]
+ExecStartPre=/usr/bin/install -d -m 0755 /run/sshd
+ExecStartPre=/usr/sbin/sshd -t -f /etc/ssh/sshd_nestsbak_config
+ExecStart=/usr/sbin/sshd -D -e -f /etc/ssh/sshd_nestsbak_config
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

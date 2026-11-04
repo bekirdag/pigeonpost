@@ -1,0 +1,13 @@
+# /etc/wireguard/wg-backup.conf on nests-1 — the backup tunnel to raijin (10.68.0.1 <-> 10.68.0.2).
+# raijin sits behind NAT, so it dials in (Endpoint + PersistentKeepalive on its side); this end
+# only listens. ufw admits UDP 51821 from raijin's egress address only, and the wg_backup chains
+# in nests.nft allow nests-1 -> 10.68.0.2:2222 and nothing else over the tunnel.
+[Interface]
+Address = 10.68.0.1/30
+ListenPort = 51821
+PostUp = wg set %i private-key /etc/wireguard/backup.key
+
+[Peer]
+# raijin (backup target)
+PublicKey = <raijin wg-nestsbak public key>
+AllowedIPs = 10.68.0.2/32

@@ -1,0 +1,32 @@
+# /etc/ssh/sshd_nestsbak_config on raijin — a second sshd that exists only for the Nests backup.
+# Listens on the wg-nestsbak tunnel address alone; the main sshd is untouched. One user, one key,
+# one command: borg serve, append-only, restricted to the one repository, with a storage quota.
+Port 2222
+ListenAddress 10.68.0.2
+HostKey /etc/ssh/nestsbak_host_ed25519_key
+PidFile /run/sshd-nestsbak.pid
+
+AllowUsers nestsbak
+PermitRootLogin no
+PubkeyAuthentication yes
+AuthenticationMethods publickey
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+UsePAM no
+AuthorizedKeysFile /etc/ssh/nestsbak_authorized_keys
+StrictModes yes
+
+ForceCommand /usr/bin/borg serve --append-only --restrict-to-repository /mnt/backups/nests/repo --storage-quota 2T
+DisableForwarding yes
+PermitTTY no
+PermitTunnel no
+PermitUserRC no
+PermitUserEnvironment no
+X11Forwarding no
+Subsystem sftp /bin/false
+
+MaxAuthTries 2
+MaxSessions 2
+MaxStartups 4:50:10
+LoginGraceTime 20
+LogLevel VERBOSE
