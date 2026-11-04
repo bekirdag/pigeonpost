@@ -92,6 +92,8 @@ class FakeCalendarAPI:
             return {"event": copy.deepcopy(self.event), "occurrence": occ}
         if path == "/v1/calendar/events" and method == "POST":
             return {"event": {"id": EVT}, "delivery_status": "queued"}
+        if path.endswith("/link") and method == "POST":
+            return {"url": "https://inbox.pigeonpost.dev/m/ABCDEFGHJK#t=guest-token", "expires_at": 4_000_000_000}
         if path.endswith("/rsvp"):
             return {"rsvp": json.loads(raw)["status"], "revision": 11}
         if path.startswith("/v1/calendar/import/preview"):
@@ -289,6 +291,54 @@ class CalendarPageTests(unittest.TestCase):
         window.calendar_tick()
         self.assertEqual(len(sent), 1, "one notification per reminder")
         del window.get_application
+
+    def test_organizer_copies_an_email_guests_link_and_the_editor_says_so(self):
+        window = self.window
+        att = "att_" + "e" * 26
+        self.api.event["my"] = {"role": "organizer", "attendee_id": None, "rsvp": None}
+        self.api.event["attendees"] = [{"attendee_id": att, "kind": "external", "name": "Dana Guest", "rsvp": "needs_action"},
+                                       {"attendee_id": "att_" + "f" * 26, "kind": "handle", "handle": "/alex/main", "rsvp": "accepted"}]
+        detail = window.cal_client().event(EVT, OCC)
+        dialog = window.cal_detail_dialog(detail)
+        buttons, labels, stack = [], [], [dialog]
+        while stack:
+            widget = stack.pop()
+            if isinstance(widget, Gtk.Button) and widget.get_tooltip_text() == "Copy invitation link":
+                buttons.append(widget)
+            if isinstance(widget, Gtk.Label):
+                labels.append(widget.get_text())
+            child = widget.get_first_child()
+            while child:
+                stack.append(child)
+                child = child.get_next_sibling()
+        self.assertEqual(len(buttons), 1, "only the email guest has a personal link")
+        self.assertTrue(any("Copy each guest’s invitation link" in t for t in labels))
+        buttons[0].emit("clicked")
+        pump(lambda: any(c[1].endswith(f"/attendees/{att}/link") for c in self.api.calls), timeout=3)
+        row = buttons[0].get_parent()
+        pump(lambda: any(getattr(c, "guest_url", False) for c in self.children(row)), timeout=3)
+        field = next(c for c in self.children(row) if getattr(c, "guest_url", False))
+        self.assertEqual(field.get_text(), "https://inbox.pigeonpost.dev/m/ABCDEFGHJK#t=guest-token")
+        dialog.close()
+        editor = window.cal_editor()
+        entries, stack = [], [editor]
+        while stack:
+            widget = stack.pop()
+            if isinstance(widget, Gtk.Entry):
+                entries.append(widget.get_placeholder_text())
+            child = widget.get_first_child()
+            while child:
+                stack.append(child)
+                child = child.get_next_sibling()
+        self.assertIn("Add guests: /handle, /k/address, or name@example.org", entries)
+        editor.close()
+
+    @staticmethod
+    def children(widget):
+        child = widget.get_first_child()
+        while child:
+            yield child
+            child = child.get_next_sibling()
 
     def test_import_preview_and_replay_safe_confirmation(self):
         window = self.window
