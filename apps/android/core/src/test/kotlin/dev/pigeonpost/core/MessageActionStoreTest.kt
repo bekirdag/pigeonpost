@@ -114,6 +114,24 @@ class MessageActionStoreTest {
         store.reset(); assertFalse(file.exists())
     }
 
+    @Test fun aRefusedEditIsWordedAsTheRefusalNotAsAMissingFeature() = runTest {
+        for ((refusal, expected) in listOf(
+            ApiException(403, "edit_window_closed") to "This message can no longer be edited.",
+            ApiException(403, "feature_disabled") to "Editing messages is not turned on for this account.",
+        )) {
+            val api = object : ActionPostbox() {
+                override suspend fun sendWithActions(identity: String, to: String, body: String, threadId: String?, action: MessageSendAction, attachments: List<String>): SendResponse = throw refusal
+            }.also { it.rows = listOf(actionMessage()) }
+            val store = InboxStore(api, this, clock = { ACTION_NOW })
+            store.loadAccount("/a"); advanceUntilIdle(); store.selectPeer("/peer")
+            store.beginEdit("root"); store.draft("Changed"); store.send(); advanceUntilIdle()
+            val error = store.state.value.error
+            assertTrue("$refusal -> $error", error != null && error.startsWith(expected))
+            assertFalse(store.state.value.offline)
+            store.reset()
+        }
+    }
+
     @Test fun anEditPreservesTheRequestVerbAndArgumentsAndFoldsIntoItsRoot() = runTest {
         val original = """{"v":1,"verb":"ask","args":{"question":"Original","budget":5},"note":"Keep this context"}"""
         val api = object : ActionPostbox() {

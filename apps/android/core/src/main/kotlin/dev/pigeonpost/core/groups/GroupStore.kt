@@ -1,6 +1,8 @@
 package dev.pigeonpost.core.groups
 
 import dev.pigeonpost.core.ApiException
+import dev.pigeonpost.core.MessageActionKind
+import dev.pigeonpost.core.explainMessageActionRefusal
 import dev.pigeonpost.core.AuthorizationLease
 import dev.pigeonpost.core.AuthorizationContext
 import dev.pigeonpost.core.AuthorizationRetired
@@ -71,7 +73,15 @@ data class GroupsState(
 }
 
 /** How a person sees an error code from the group routes (as the web inbox words them). */
-fun explainGroupError(failure: Throwable): String = when ((failure as? ApiException)?.code) {
+fun explainGroupError(failure: Throwable, action: GroupComposerKind? = null): String {
+    val kind = when (action) { GroupComposerKind.EDIT -> MessageActionKind.EDIT; GroupComposerKind.REPLY -> MessageActionKind.REPLY; else -> MessageActionKind.SEND }
+    explainMessageActionRefusal(failure, kind)?.let { return it }
+    val api = failure as? ApiException
+    if (api?.status == 429 && api.code != "rate_limited") return "Too many requests. Wait a moment and try again."
+    return explainGroupCode(failure, api)
+}
+
+private fun explainGroupCode(failure: Throwable, api: ApiException?): String = when (api?.code) {
     "not_admin" -> "Only admins can do that."
     "owner_only" -> "Only the owner can do that."
     "human_required" -> "This needs you to be signed in yourself, not an agent key."
@@ -86,7 +96,11 @@ fun explainGroupError(failure: Throwable): String = when ((failure as? ApiExcept
     "not_member" -> "You are not a member of this group."
     "rate_limited" -> "Too many requests. Wait a moment and try again."
     "quota_exceeded" -> "This group is out of storage."
-    "feature_disabled" -> "Groups are not enabled for this account."
+    // 404: the groups feature itself is off. A 403 means a part of it (an edit, a reply) is off.
+    "feature_disabled" -> if (api.status == 404) "Groups are not enabled for this account." else "That is not turned on for this account."
+    "org_read_only" -> "This organization is read-only until its payment is settled."
+    "unknown_device", "device_revoked" -> "This device is no longer in the group. Open the group again to rejoin it on this device."
+    "not_org_member" -> "Act as your organization mailbox to do that."
     "not_found" -> "Not found."
     "not_editable", "edit_window_closed" -> "This message can no longer be edited."
     "unconfirmed_send" -> "Resolve the earlier send before writing another message."
@@ -95,6 +109,16 @@ fun explainGroupError(failure: Throwable): String = when ((failure as? ApiExcept
     "outbox_full" -> "Resolve your unconfirmed messages before sending more."
     else -> (failure as? GroupCryptoError)?.let { "This device could not decrypt that (${it.code})." }
         ?: failure.message?.takeIf { failure !is ApiException } ?: "Something went wrong."
+}
+
+/**
+ * A refused send (a 4xx answer) is definite and is worded as the refusal; anything else may have
+ * reached the group, so it is reported as unconfirmed.
+ */
+fun explainGroupSendFailure(failure: Throwable, action: GroupComposerKind? = null): String {
+    val api = failure as? ApiException
+    return if (api != null && api.status in 400..499) explainGroupError(failure, action)
+        else "Could not confirm the send: " + explainGroupError(failure, action)
 }
 
 /**
@@ -495,7 +519,7 @@ class GroupStore(
             }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (expired: SessionExpired) { if (run == generation) onSessionExpired(); false }
-            catch (failure: Exception) { if (run == generation) note("Could not confirm the send: " + explainGroupError(failure)); false }
+            catch (failure: Exception) { if (run == generation) note(explainGroupSendFailure(failure, action?.kind)); false }
             finally { if (run == generation) { mutable.update { it.copy(sending = false) }; snapshot() } }
             if (run == generation) done(ok)
         }
@@ -512,7 +536,7 @@ class GroupStore(
             val ok = try { c.retry(gid, cmid); if (run == generation) finishComposer(gid, action); true }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (expired: SessionExpired) { if (run == generation) onSessionExpired(); false }
-            catch (failure: Exception) { if (run == generation) note(explainGroupError(failure)); false }
+            catch (failure: Exception) { if (run == generation) note(explainGroupSendFailure(failure, action?.kind)); false }
             finally { if (run == generation) { mutable.update { it.copy(sending = false) }; snapshot() } }
             if (run == generation) done(ok)
         }
