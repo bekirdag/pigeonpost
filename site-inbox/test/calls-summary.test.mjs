@@ -283,6 +283,23 @@ test("calls.js hands summary events to the notes module and stops it when the ca
   assert.doesNotMatch(read("calls-summary.js"), /new Worker|blob:|eval\(/);
 });
 
+test("under the paid policy a free host is told notes come with paid plans and is shown the plans (D-17)", async (t) => {
+  const p = page(t);
+  const opened = [];
+  p.w.PigeonpostCallsHost = { openPlans: () => opened.push(true) };
+  p.w.PigeonpostCallsSummary.onEvent({ room: p.room.id, state: "off",
+    you: { participant: p.room.you, consent: null, can_control: true, can_request: false, unavailable: "not_included", policy: "paid" } });
+  await until(() => p.$("call-notes-btn") && !p.$("call-notes-btn").hidden, "notes button");
+  assert.equal(p.$("call-notes-btn").getAttribute("aria-disabled"), "true");
+  assert.match(p.$("call-notes-btn").title, /every paid Pigeonpost plan/);
+  assert.doesNotMatch(p.$("call-notes-btn").title, /seats/);
+  p.$("call-notes-btn").click();
+  assert.match(p.toasts.at(-1), /every paid Pigeonpost plan/);
+  assert.equal(opened.length, 1, "the plans screen opens");
+  assert.equal(p.$("call-notes-ask").hidden, true, "no request is offered");
+  assert.equal(p.posts.length, 0, "nothing is asked of the server");
+});
+
 test("where the engine cannot store a CryptoKey (WebKit app views), the notes key still works", async (t) => {
   const p = page(t, { refuseKeys: true });
   const k = await p.w.PigeonpostNotesKeys.get();

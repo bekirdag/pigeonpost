@@ -20,7 +20,7 @@ const INTEL_TOKEN = "intel-token-0123456789abcdef0123456789";
 const signing = loadSigningKey(generateSigningKeyPem());
 
 // The postbox's internal meeting routes, in memory: who may host, who answered what.
-function fakePostboxInternal({ allowed = new Set(["/k/alice1"]), notIncluded = new Set() } = {}) {
+function fakePostboxInternal({ allowed = new Set(["/k/alice1"]), notIncluded = new Set(), notIncludedPolicy = "enterprise" } = {}) {
   const meetings = new Map();
   const log = [];
   return {
@@ -30,7 +30,7 @@ function fakePostboxInternal({ allowed = new Set(["/k/alice1"]), notIncluded = n
       if (path === "/internal/v1/call-admission") return { decision: "ring", targets: [body.to] };
       if (path === "/internal/v1/call-events") return { accepted: true };
       if (path === "/internal/v1/meetings") {
-        if (notIncluded.has(body.host)) return { allowed: false, reason: "not_included", policy: "enterprise", min_seats: 20 };
+        if (notIncluded.has(body.host)) return notIncludedPolicy === "paid" ? { allowed: false, reason: "not_included", policy: "paid" } : { allowed: false, reason: "not_included", policy: "enterprise", min_seats: 20 };
         if (!allowed.has(body.host)) return { allowed: false, reason: "feature_disabled" };
         if (body.check_only) return { allowed: true, retention_days: 90 };
         const id = "mtg_" + crypto.randomBytes(13).toString("hex");
@@ -51,8 +51,8 @@ function fakePostboxInternal({ allowed = new Set(["/k/alice1"]), notIncluded = n
   };
 }
 
-async function start({ allowed, notIncluded, beforePostbox } = {}) {
-  const pb = fakePostboxInternal({ allowed, notIncluded });
+async function start({ allowed, notIncluded, notIncludedPolicy, beforePostbox } = {}) {
+  const pb = fakePostboxInternal({ allowed, notIncluded, notIncludedPolicy });
   const transcribed = [];
   const intel = createIntel({ sttName: "test-stt", llmName: "test-llm" }, {
     signing,
@@ -369,10 +369,25 @@ test("a host the summaries policy leaves out is told why, and a request is refus
     assert.equal(told.state, "off");
     assert.equal(told.you.can_request, false);
     assert.equal(told.you.min_seats, 20);
+    assert.equal(told.you.policy, "enterprise");
     const r = await t.req("tok-alice", "POST", `/calls/v1/rooms/${c.room}/summary`, { session: c.alice.id, enabled: true });
     assert.equal(r.status, 403);
     assert.equal(r.body.error, "notes_not_included");
     assert.equal(t.pb.meetings.size, 0);
+  } finally { await t.stop(); }
+});
+
+test("under the paid policy a free host is told notes come with paid plans (D-17, 2026-11-04)", async () => {
+  const t = await start({ allowed: new Set(), notIncluded: new Set(["/k/alice1"]), notIncludedPolicy: "paid" });
+  try {
+    const c = await call(t);
+    const told = await c.alice.summary((d) => d.you.unavailable === "not_included");
+    assert.equal(told.you.can_request, false);
+    assert.equal(told.you.policy, "paid");
+    assert.equal(told.you.min_seats, undefined);
+    const r = await t.req("tok-alice", "POST", `/calls/v1/rooms/${c.room}/summary`, { session: c.alice.id, enabled: true });
+    assert.equal(r.status, 403);
+    assert.equal(r.body.error, "notes_not_included");
   } finally { await t.stop(); }
 });
 

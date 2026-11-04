@@ -10,18 +10,24 @@ global). Runbook: `deploy/meeting-intel/README.md`.
    of a scheduled meeting. Guests and other members cannot. The calls service asks the postbox whether
    the host's account has `meeting_summaries` **and** is eligible under the deployment's summaries
    policy (below); when it does, the host sees a Notes control. A host the policy leaves out sees the
-   control greyed, with "not included in your plan" (`you.unavailable = "not_included"`).
+   control greyed (`you.unavailable = "not_included"`, `you.policy`). Under `paid` it says "AI meeting
+   notes come with every paid Pigeonpost plan" and tapping it opens the existing plans screen: the
+   web inbox opens `pigeonpost.dev/account`; native call pages send `open_plans` over the bridge
+   (Apple: Settings → Pigeonpost Cloud; Android: Settings → Get a handle; Windows: the web account
+   page). There is no add-on and no purchase in the call screen.
 
-   **Eligibility (D-17).** `POSTBOX_MEETING_SUMMARIES_ELIGIBILITY`:
-   - unset, `enterprise` or anything unrecognised — the D-17 rule: the host's account owns, or is an
-     active member of, an `active`/`past_due` organization with at least
-     `POSTBOX_MEETING_SUMMARIES_MIN_SEATS` seats (default 20, tier T20). The add-on below T20 is not
-     built.
-   - `all` — every account the flag is on for, 1:1 calls included (production, pending the owner's
-     D-17 decision; set explicitly in `postbox.env`).
+   **Eligibility (D-17, decided 2026-11-04: included in every paid plan).**
+   `POSTBOX_MEETING_SUMMARIES_ELIGIBILITY`:
+   - unset, `paid` or anything unrecognised — the D-17 rule: the host's account is paid by the same
+     rule as the paid hosting tier (an active namespace, or any live account entitlement: App Store,
+     Google Play, web iyzico, grant), **or** owns or is an active member of an `active`/`past_due`
+     organization of any size. Free accounts are not eligible.
+   - `t20` or `enterprise` — the superseded proposal: organizations with at least
+     `POSTBOX_MEETING_SUMMARIES_MIN_SEATS` seats (default 20) only.
+   - `all` — every account the flag is on for, 1:1 calls included (production before D-17).
 
-   Refusals answer `{allowed:false, reason:"not_included", policy, min_seats}` on
-   `POST /internal/v1/meetings` (with or without `check_only`).
+   Refusals answer `{allowed:false, reason:"not_included", policy}` (plus `min_seats` under
+   `enterprise`) on `POST /internal/v1/meetings` (with or without `check_only`).
 2. **Disclosure and consent.** Every participant, guests included, gets the same disclosure: processor,
    what is captured, audio handling, audience, retention, acoustic limits and how to stop. Capture runs
    only while *every person currently in the call* has explicitly agreed to the current disclosure.

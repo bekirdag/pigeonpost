@@ -5,7 +5,9 @@
 // - only the host (the person who started an ad-hoc or 1:1 call, the scheduled meeting's host) may
 //   turn notes on or off, and only when the postbox says the host's account has the feature and
 //   is eligible under the deployment's summaries policy (D-17). A host the policy leaves out is
-//   told so (`you.unavailable = "not_included"`), and a request is refused as `notes_not_included`;
+//   told so (`you.unavailable = "not_included"`, plus `you.policy`: `paid` means notes come with
+//   any paid plan, so clients link to the plans screen), and a request is refused as
+//   `notes_not_included`;
 // - capture runs only while *every* person in the call has explicitly agreed to the current
 //   disclosure. A newcomer, a decline or a withdrawal pauses it for everyone until the people
 //   present have all agreed again. Declining never removes anyone from the call;
@@ -116,7 +118,8 @@ export function createSummaries(ctx) {
         // rather than the button silently missing.
         else if (r.status === 200 && r.body && r.body.reason === "not_included") {
           const minSeats = Number.isInteger(r.body.min_seats) ? r.body.min_seats : null;
-          entry = { allowed: false, retentionDays: 0, at: now(), unavailable: "not_included", minSeats };
+          const policy = ["paid", "enterprise"].includes(r.body.policy) ? r.body.policy : null;
+          entry = { allowed: false, retentionDays: 0, at: now(), unavailable: "not_included", minSeats, policy };
         }
       } catch (_) { /* unreachable postbox: not available */ }
     }
@@ -148,7 +151,11 @@ export function createSummaries(ctx) {
   function view(room, p) {
     const s = room.summary;
     const you = { participant: p.id, consent: null, can_control: isHost(room, p), can_request: Boolean(p && p.canRequest) };
-    if (p && p.notesUnavailable) { you.unavailable = p.notesUnavailable; if (p.notesMinSeats) you.min_seats = p.notesMinSeats; }
+    if (p && p.notesUnavailable) {
+      you.unavailable = p.notesUnavailable;
+      if (p.notesPolicy) you.policy = p.notesPolicy;
+      if (p.notesMinSeats) you.min_seats = p.notesMinSeats;
+    }
     if (!s) return { room: room.id, state: "off", you };
     you.consent = s.consents.get(p.id) || null;
     const out = {
@@ -182,6 +189,7 @@ export function createSummaries(ctx) {
         p.canRequest = e.allowed;
         p.notesUnavailable = e.unavailable || null;
         p.notesMinSeats = e.minSeats || null;
+        p.notesPolicy = e.policy || null;
         if ((e.allowed || e.unavailable) && room.participants.has(p.id) && room.state !== "ended") send(sessions.get(p.sessionId), "summary", view(room, p));
       }, () => {});
     }
