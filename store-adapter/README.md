@@ -111,7 +111,7 @@ marked expired once that passes. Nothing here ever extends a paid period.
 | `ENTERPRISE_ORIGIN` | Enterprise return origin, default `https://enterprise.pigeonpost.dev` |
 | `STORE_STATE_DIR` | Durable state, default `/var/lib/pigeonpost-store-adapter` (systemd `StateDirectory=`) |
 | `CHECKOUTS_PER_HOUR`, `RECONCILE_INTERVAL_MS` | 5 and 60000 |
-| `OPEN_CURRENCIES` | Currencies new checkouts may use, e.g. `TRY` or `USD,EUR,TRY`. **Unset means `TRY`.** Production is `TRY`: merchant 101064752 answers iyzico 5185 for USD and EUR until the owner buys iyzico's Multi Currency add-on. Opening them is the one-command runbook in saas_be `docs/ops/iyzico-subscriptions.md` ("Enable runbook"). The account page and the enterprise portal offer only listed currencies (the portal hides EUR entirely until it is listed). |
+| `OPEN_CURRENCIES` | Currencies new checkouts may use, e.g. `TRY` or `USD,EUR,TRY`. **Unset means `TRY`.** Production is `USD,EUR,TRY` since 2026-11-04 (iyzico Multi Currency add-on active; no-charge probe passed). To open or close a currency, back up `/etc/pigeonpost-store-adapter.env`, edit it and restart `pigeonpost-store-adapter`; the one-command runbook is in saas_be `docs/ops/iyzico-subscriptions.md` ("Enable runbook"). The account page and the enterprise portal offer only listed currencies (the portal hides EUR entirely until it is listed). |
 
 `/healthz` reports `configured:true` when these are present and well formed. It checks local
 configuration only, not whether the upstreams are reachable.
