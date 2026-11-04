@@ -31,6 +31,9 @@
   };
   P.reset = () => { live = null; openCurrencies = null; };
   P.isOpen = (currency) => !openCurrencies || openCurrencies.includes(currency);
+  /// Shown at all only once the live catalog says it is open (EUR, until the merchant takes it).
+  P.isListedOpen = (currency) => Array.isArray(openCurrencies) && openCurrencies.includes(currency);
+  P.HIDDEN_UNTIL_OPEN = ["EUR"];
 
   /// The amount for one plan, as a decimal string, or null when unknown.
   P.amount = function (seats, interval, currency) {

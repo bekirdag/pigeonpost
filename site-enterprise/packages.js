@@ -45,7 +45,11 @@
     start.textContent = `Start with ${seats} seats`;
     start.href = `/start?seats=${seats}&interval=${state.interval}&currency=${state.currency}`;
     for (const b of PPE.$$("[data-interval]")) b.setAttribute("aria-pressed", String(b.dataset.interval === state.interval));
-    for (const b of PPE.$$("[data-currency]")) b.setAttribute("aria-pressed", String(b.dataset.currency === state.currency));
+    for (const b of PPE.$$("[data-currency]")) {
+      b.setAttribute("aria-pressed", String(b.dataset.currency === state.currency));
+      b.hidden = P.HIDDEN_UNTIL_OPEN.includes(b.dataset.currency) && !P.isListedOpen(b.dataset.currency)
+        && b.dataset.currency !== state.currency;
+    }
   }
 
   function salesSheet() {
@@ -92,7 +96,7 @@
     const q = new URLSearchParams(window.location.search);
     if (q.get("seats")) state.index = P.indexOf(q.get("seats"));
     if (["monthly", "yearly"].includes(q.get("interval"))) state.interval = q.get("interval");
-    if (["USD", "TRY"].includes(q.get("currency"))) state.currency = q.get("currency");
+    if (["USD", "EUR", "TRY"].includes(q.get("currency"))) state.currency = q.get("currency");
     $("#seats").addEventListener("input", (e) => { state.index = Number(e.target.value); render(); });
     for (const b of PPE.$$("[data-interval]")) b.addEventListener("click", () => { state.interval = b.dataset.interval; render(); });
     for (const b of PPE.$$("[data-currency]")) b.addEventListener("click", () => { state.currency = b.dataset.currency; render(); });

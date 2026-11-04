@@ -14,7 +14,7 @@
     step: saved.step || 1,
     seats: P.stops().includes(Number(q.get("seats"))) ? Number(q.get("seats")) : saved.seats || 30,
     interval: ["monthly", "yearly"].includes(q.get("interval")) ? q.get("interval") : saved.interval || "yearly",
-    currency: ["USD", "TRY"].includes(q.get("currency")) ? q.get("currency") : saved.currency || "USD",
+    currency: ["USD", "EUR", "TRY"].includes(q.get("currency")) ? q.get("currency") : saved.currency || "USD",
     name: saved.name || "",
     namespace: saved.namespace || "",
     intent: /^[a-f0-9]{32}$/.test(saved.intent || "") ? saved.intent : null,

@@ -1,12 +1,13 @@
 {
  "tenant": "pigeonpost",
- "catalog_version": "2026-10-29",
+ "catalog_version": "2026-11-04",
  "trial_period_days": 0,
  "pricing": {
   "cloud": "USD 8 per name per year, 1-10 names (D-18, matches the App Store)",
   "ent": "USD 6 per seat per month; -10% from 50 seats, -20% from 100, -25% from 200; yearly = 10 x monthly; 500+ seats: contact sales (D-16)",
   "try": "Calendar-year fixed TRY editions. 2026: saas_be USD_ANNUAL_EQUIVALENT formula, opening USD/TRY 42.9229 (TCMB 2025-12-31 ForexSelling), inflation assumption 48.078% (mean December CPI 2021-2025); 2027 (from 2027-01-01 Istanbul): same formula, opening USD/TRY 51.5471 (CBRT Market Participants Survey Oct 2026, end-2026 expectation), projected 2027 depreciation 19.0% (survey 12-month-ahead 59.26), rounded up to clean price points (saas_be price_point CLEAN_9_V1)",
-  "storage": "Enterprise: 5 GB per seat, pooled; agent addresses: 10 x seats"
+  "storage": "Enterprise: 5 GB per seat, pooled; agent addresses: 10 x seats",
+  "eur": "Fixed EUR editions (2026-11-04, SDS 8.3): the USD unit price at EUR/USD 1.1190 (TCMB bulletin 03.11.2026), rounded up to 0.10 EUR per unit. Cloud EUR 7.20 per name per year; Enterprise EUR 5.40 / 4.90 / 4.30 / 4.10 per seat per month (base / 50+ / 100+ / 200+ seats), yearly = 10 x monthly"
  },
  "products": {
   "cloud": {
@@ -30,6 +31,20 @@
      "amount": "8.00",
      "plan_id": "5f547c3f-1d76-4b0e-a931-93aa6cb3d156",
      "provider_plan_reference": "a32b3642-8ca9-449a-ac0c-748b228d2649"
+    }
+   }
+  },
+  "cloud-1names-yearly-eur": {
+   "family": "cloud",
+   "names": 1,
+   "interval": "year",
+   "currency": "EUR",
+   "package_slug": "pp-cloud-1names",
+   "editions": {
+    "2026": {
+     "amount": "7.20",
+     "plan_id": "8d9ddf6b-f30d-46bd-8a73-0d6e0b4d5f52",
+     "provider_plan_reference": "eb248708-a8bd-4a42-9f85-0180f2819908"
     }
    }
   },
@@ -66,6 +81,20 @@
     }
    }
   },
+  "cloud-2names-yearly-eur": {
+   "family": "cloud",
+   "names": 2,
+   "interval": "year",
+   "currency": "EUR",
+   "package_slug": "pp-cloud-2names",
+   "editions": {
+    "2026": {
+     "amount": "14.40",
+     "plan_id": "dece6e3e-8f9c-40d7-a783-84065d15e311",
+     "provider_plan_reference": "1495f49c-6d93-4ce9-b10e-889f334aa1e8"
+    }
+   }
+  },
   "cloud-2names-yearly-try": {
    "family": "cloud",
    "names": 2,
@@ -96,6 +125,20 @@
      "amount": "24.00",
      "plan_id": "567ec6ff-c59b-4150-9c66-bea7afac8d79",
      "provider_plan_reference": "78842358-98a3-4afc-b5e7-8eb7edc34990"
+    }
+   }
+  },
+  "cloud-3names-yearly-eur": {
+   "family": "cloud",
+   "names": 3,
+   "interval": "year",
+   "currency": "EUR",
+   "package_slug": "pp-cloud-3names",
+   "editions": {
+    "2026": {
+     "amount": "21.60",
+     "plan_id": "390551e3-cb6b-4dfa-aa9d-fe8a7c502e5c",
+     "provider_plan_reference": "0be1ea18-14ee-46be-aab1-bb912a5dcc9b"
     }
    }
   },
@@ -132,6 +175,20 @@
     }
    }
   },
+  "cloud-4names-yearly-eur": {
+   "family": "cloud",
+   "names": 4,
+   "interval": "year",
+   "currency": "EUR",
+   "package_slug": "pp-cloud-4names",
+   "editions": {
+    "2026": {
+     "amount": "28.80",
+     "plan_id": "8c59ec9d-1165-4c4b-8c88-0fa34f1e933c",
+     "provider_plan_reference": "37a2dfcf-2e21-4042-b88b-78cfa76e2d28"
+    }
+   }
+  },
   "cloud-4names-yearly-try": {
    "family": "cloud",
    "names": 4,
@@ -162,6 +219,20 @@
      "amount": "40.00",
      "plan_id": "ccbb5acd-2ede-4e22-8864-fefeebfb5ef3",
      "provider_plan_reference": "efe66674-64aa-402d-be4a-2516ba633f1b"
+    }
+   }
+  },
+  "cloud-5names-yearly-eur": {
+   "family": "cloud",
+   "names": 5,
+   "interval": "year",
+   "currency": "EUR",
+   "package_slug": "pp-cloud-5names",
+   "editions": {
+    "2026": {
+     "amount": "36.00",
+     "plan_id": "49f57416-e5c1-4337-84e9-db5bc84c32ad",
+     "provider_plan_reference": "1719c2db-396d-4939-8310-a07151044de3"
     }
    }
   },
@@ -198,6 +269,20 @@
     }
    }
   },
+  "cloud-6names-yearly-eur": {
+   "family": "cloud",
+   "names": 6,
+   "interval": "year",
+   "currency": "EUR",
+   "package_slug": "pp-cloud-6names",
+   "editions": {
+    "2026": {
+     "amount": "43.20",
+     "plan_id": "b4a818fd-4bfa-46e3-94af-08b2dd7b1aff",
+     "provider_plan_reference": "792012e4-14e7-452a-bc0b-0cf0719656fd"
+    }
+   }
+  },
   "cloud-6names-yearly-try": {
    "family": "cloud",
    "names": 6,
@@ -228,6 +313,20 @@
      "amount": "56.00",
      "plan_id": "dda39956-a88a-406b-9321-4b2595e81e00",
      "provider_plan_reference": "9ab6ba4c-5d4f-48c7-a8b8-8dd05b3dc138"
+    }
+   }
+  },
+  "cloud-7names-yearly-eur": {
+   "family": "cloud",
+   "names": 7,
+   "interval": "year",
+   "currency": "EUR",
+   "package_slug": "pp-cloud-7names",
+   "editions": {
+    "2026": {
+     "amount": "50.40",
+     "plan_id": "85fd17a9-86d7-4f72-ad94-6025d9dda6d4",
+     "provider_plan_reference": "3e10e232-2fd5-4dcd-928c-37ae96a4da91"
     }
    }
   },
@@ -264,6 +363,20 @@
     }
    }
   },
+  "cloud-8names-yearly-eur": {
+   "family": "cloud",
+   "names": 8,
+   "interval": "year",
+   "currency": "EUR",
+   "package_slug": "pp-cloud-8names",
+   "editions": {
+    "2026": {
+     "amount": "57.60",
+     "plan_id": "e1d18974-9fcc-47cb-9465-15fcff146a04",
+     "provider_plan_reference": "9c6b45a9-7013-4fa7-93dc-693dae221d07"
+    }
+   }
+  },
   "cloud-8names-yearly-try": {
    "family": "cloud",
    "names": 8,
@@ -294,6 +407,20 @@
      "amount": "72.00",
      "plan_id": "b20ea1be-01a9-4e79-b872-6450c9f1afeb",
      "provider_plan_reference": "961423e7-577b-42f4-83f1-6c8efca767b5"
+    }
+   }
+  },
+  "cloud-9names-yearly-eur": {
+   "family": "cloud",
+   "names": 9,
+   "interval": "year",
+   "currency": "EUR",
+   "package_slug": "pp-cloud-9names",
+   "editions": {
+    "2026": {
+     "amount": "64.80",
+     "plan_id": "1abccc43-a435-47a0-9d45-070cfa96607f",
+     "provider_plan_reference": "47483cf2-a06f-47e4-84b3-cb1ecdb134a7"
     }
    }
   },
@@ -330,6 +457,20 @@
     }
    }
   },
+  "cloud-10names-yearly-eur": {
+   "family": "cloud",
+   "names": 10,
+   "interval": "year",
+   "currency": "EUR",
+   "package_slug": "pp-cloud-10names",
+   "editions": {
+    "2026": {
+     "amount": "72.00",
+     "plan_id": "7ed8c991-fba1-45ad-9338-60c06b7d272e",
+     "provider_plan_reference": "0fa265ee-ec30-4685-90b2-d8e00d411cf0"
+    }
+   }
+  },
   "cloud-10names-yearly-try": {
    "family": "cloud",
    "names": 10,
@@ -362,6 +503,22 @@
      "amount": "30.00",
      "plan_id": "2d635224-d3d3-4ede-9090-9075b38e3451",
      "provider_plan_reference": "6c0862e1-216b-4387-96f5-0fbd468aff56"
+    }
+   }
+  },
+  "ent-5-monthly-eur": {
+   "family": "ent",
+   "seats": 5,
+   "agent_limit": 50,
+   "storage_gb": 25,
+   "interval": "month",
+   "currency": "EUR",
+   "package_slug": "pp-ent-5-monthly",
+   "editions": {
+    "2026": {
+     "amount": "27.00",
+     "plan_id": "82aa5a0a-66ef-4874-a91a-8e960e3024e6",
+     "provider_plan_reference": "5b5b5a0e-e40e-4975-a356-450d9596b2ca"
     }
    }
   },
@@ -402,6 +559,22 @@
     }
    }
   },
+  "ent-5-yearly-eur": {
+   "family": "ent",
+   "seats": 5,
+   "agent_limit": 50,
+   "storage_gb": 25,
+   "interval": "year",
+   "currency": "EUR",
+   "package_slug": "pp-ent-5-yearly",
+   "editions": {
+    "2026": {
+     "amount": "270.00",
+     "plan_id": "e8180316-3668-4f6c-a221-0161515a4a3b",
+     "provider_plan_reference": "10e1540e-5212-4224-acca-c18fec3b83e5"
+    }
+   }
+  },
   "ent-5-yearly-try": {
    "family": "ent",
    "seats": 5,
@@ -436,6 +609,22 @@
      "amount": "60.00",
      "plan_id": "bfded62c-34d7-471a-a252-d5a416a54ceb",
      "provider_plan_reference": "cffe8efd-faae-457b-ad87-ff9d3a654522"
+    }
+   }
+  },
+  "ent-10-monthly-eur": {
+   "family": "ent",
+   "seats": 10,
+   "agent_limit": 100,
+   "storage_gb": 50,
+   "interval": "month",
+   "currency": "EUR",
+   "package_slug": "pp-ent-10-monthly",
+   "editions": {
+    "2026": {
+     "amount": "54.00",
+     "plan_id": "4f758923-0f20-4196-a657-c29246608308",
+     "provider_plan_reference": "87e6a0eb-dbb9-4373-8b74-5202004ff910"
     }
    }
   },
@@ -476,6 +665,22 @@
     }
    }
   },
+  "ent-10-yearly-eur": {
+   "family": "ent",
+   "seats": 10,
+   "agent_limit": 100,
+   "storage_gb": 50,
+   "interval": "year",
+   "currency": "EUR",
+   "package_slug": "pp-ent-10-yearly",
+   "editions": {
+    "2026": {
+     "amount": "540.00",
+     "plan_id": "497b2c24-6ee3-4e7e-b47c-19955c3722b6",
+     "provider_plan_reference": "f34f317d-e094-4eae-be3d-aa528c55f544"
+    }
+   }
+  },
   "ent-10-yearly-try": {
    "family": "ent",
    "seats": 10,
@@ -510,6 +715,22 @@
      "amount": "90.00",
      "plan_id": "f8b60e61-ef70-457e-8ba0-546f216a97ae",
      "provider_plan_reference": "605723e7-6ec8-4cd9-9bcf-fa4d26c03836"
+    }
+   }
+  },
+  "ent-15-monthly-eur": {
+   "family": "ent",
+   "seats": 15,
+   "agent_limit": 150,
+   "storage_gb": 75,
+   "interval": "month",
+   "currency": "EUR",
+   "package_slug": "pp-ent-15-monthly",
+   "editions": {
+    "2026": {
+     "amount": "81.00",
+     "plan_id": "44cdb557-9ee7-480a-a89f-a5db0b2fd3ba",
+     "provider_plan_reference": "f1117000-20ec-4cc9-baae-c0783221c893"
     }
    }
   },
@@ -550,6 +771,22 @@
     }
    }
   },
+  "ent-15-yearly-eur": {
+   "family": "ent",
+   "seats": 15,
+   "agent_limit": 150,
+   "storage_gb": 75,
+   "interval": "year",
+   "currency": "EUR",
+   "package_slug": "pp-ent-15-yearly",
+   "editions": {
+    "2026": {
+     "amount": "810.00",
+     "plan_id": "1a29304e-2736-4b5c-a851-faea2ee41329",
+     "provider_plan_reference": "2f9aa47e-adea-48c9-9d7a-97a307f6c5ad"
+    }
+   }
+  },
   "ent-15-yearly-try": {
    "family": "ent",
    "seats": 15,
@@ -584,6 +821,22 @@
      "amount": "120.00",
      "plan_id": "f693f3f5-12fb-4cde-a90c-f928910e44ff",
      "provider_plan_reference": "d657c5da-4283-466c-8e70-c7413354d712"
+    }
+   }
+  },
+  "ent-20-monthly-eur": {
+   "family": "ent",
+   "seats": 20,
+   "agent_limit": 200,
+   "storage_gb": 100,
+   "interval": "month",
+   "currency": "EUR",
+   "package_slug": "pp-ent-20-monthly",
+   "editions": {
+    "2026": {
+     "amount": "108.00",
+     "plan_id": "8a75f1cd-46aa-4b8c-b346-8683b8581c0b",
+     "provider_plan_reference": "7e3d34dd-16fe-4576-b37d-664ea8b73505"
     }
    }
   },
@@ -624,6 +877,22 @@
     }
    }
   },
+  "ent-20-yearly-eur": {
+   "family": "ent",
+   "seats": 20,
+   "agent_limit": 200,
+   "storage_gb": 100,
+   "interval": "year",
+   "currency": "EUR",
+   "package_slug": "pp-ent-20-yearly",
+   "editions": {
+    "2026": {
+     "amount": "1080.00",
+     "plan_id": "76310d61-7d40-475b-85c4-a12947250421",
+     "provider_plan_reference": "70ce1da7-3f21-40bb-ba67-c755f1842599"
+    }
+   }
+  },
   "ent-20-yearly-try": {
    "family": "ent",
    "seats": 20,
@@ -658,6 +927,22 @@
      "amount": "180.00",
      "plan_id": "727c1221-6f2b-48d7-bc9c-88ab06906780",
      "provider_plan_reference": "48a64b02-35c7-4af1-ab44-e4332a8db4cf"
+    }
+   }
+  },
+  "ent-30-monthly-eur": {
+   "family": "ent",
+   "seats": 30,
+   "agent_limit": 300,
+   "storage_gb": 150,
+   "interval": "month",
+   "currency": "EUR",
+   "package_slug": "pp-ent-30-monthly",
+   "editions": {
+    "2026": {
+     "amount": "162.00",
+     "plan_id": "539968f3-d544-40d7-a869-b6caf3eae61f",
+     "provider_plan_reference": "7454df23-0d1a-46e9-8c2d-45b2d34482b9"
     }
    }
   },
@@ -698,6 +983,22 @@
     }
    }
   },
+  "ent-30-yearly-eur": {
+   "family": "ent",
+   "seats": 30,
+   "agent_limit": 300,
+   "storage_gb": 150,
+   "interval": "year",
+   "currency": "EUR",
+   "package_slug": "pp-ent-30-yearly",
+   "editions": {
+    "2026": {
+     "amount": "1620.00",
+     "plan_id": "28b64c2e-90c7-4f4e-9e8b-ceca275316eb",
+     "provider_plan_reference": "16600600-acd0-432f-af82-f2a70e4426f8"
+    }
+   }
+  },
   "ent-30-yearly-try": {
    "family": "ent",
    "seats": 30,
@@ -732,6 +1033,22 @@
      "amount": "270.00",
      "plan_id": "156c1e69-d78d-4275-ac50-2db271520ccb",
      "provider_plan_reference": "87ab488f-92d2-4808-8db5-fbd7f827ac24"
+    }
+   }
+  },
+  "ent-50-monthly-eur": {
+   "family": "ent",
+   "seats": 50,
+   "agent_limit": 500,
+   "storage_gb": 250,
+   "interval": "month",
+   "currency": "EUR",
+   "package_slug": "pp-ent-50-monthly",
+   "editions": {
+    "2026": {
+     "amount": "245.00",
+     "plan_id": "ec54ad98-f6fe-4425-9634-15d79514a2fb",
+     "provider_plan_reference": "e89bf330-9842-4a9e-a6e1-c964334f3d5b"
     }
    }
   },
@@ -772,6 +1089,22 @@
     }
    }
   },
+  "ent-50-yearly-eur": {
+   "family": "ent",
+   "seats": 50,
+   "agent_limit": 500,
+   "storage_gb": 250,
+   "interval": "year",
+   "currency": "EUR",
+   "package_slug": "pp-ent-50-yearly",
+   "editions": {
+    "2026": {
+     "amount": "2450.00",
+     "plan_id": "e2f5cc8b-41ea-4461-bd49-8af32b51306a",
+     "provider_plan_reference": "f55b387b-7a5a-47e8-8320-24e93d5d5c4c"
+    }
+   }
+  },
   "ent-50-yearly-try": {
    "family": "ent",
    "seats": 50,
@@ -806,6 +1139,22 @@
      "amount": "480.00",
      "plan_id": "301c1d8c-c419-4585-be2f-3dc00f538720",
      "provider_plan_reference": "cc8a301a-c712-419e-a036-a97fddbb0847"
+    }
+   }
+  },
+  "ent-100-monthly-eur": {
+   "family": "ent",
+   "seats": 100,
+   "agent_limit": 1000,
+   "storage_gb": 500,
+   "interval": "month",
+   "currency": "EUR",
+   "package_slug": "pp-ent-100-monthly",
+   "editions": {
+    "2026": {
+     "amount": "430.00",
+     "plan_id": "841a0e84-b247-40b2-acb3-79438d8bdbe1",
+     "provider_plan_reference": "b49d22f0-809c-47ff-9d44-25b90cb15de0"
     }
    }
   },
@@ -846,6 +1195,22 @@
     }
    }
   },
+  "ent-100-yearly-eur": {
+   "family": "ent",
+   "seats": 100,
+   "agent_limit": 1000,
+   "storage_gb": 500,
+   "interval": "year",
+   "currency": "EUR",
+   "package_slug": "pp-ent-100-yearly",
+   "editions": {
+    "2026": {
+     "amount": "4300.00",
+     "plan_id": "160f4e44-1510-4254-a9f1-898a3016eb3c",
+     "provider_plan_reference": "87e48de9-e0b7-4385-b817-3e1950a5913d"
+    }
+   }
+  },
   "ent-100-yearly-try": {
    "family": "ent",
    "seats": 100,
@@ -880,6 +1245,22 @@
      "amount": "900.00",
      "plan_id": "1e261fb1-e410-49c8-9f4f-a6fca29b6bf8",
      "provider_plan_reference": "b2cdea53-d6ba-4188-a972-d72cfbc7ae6c"
+    }
+   }
+  },
+  "ent-200-monthly-eur": {
+   "family": "ent",
+   "seats": 200,
+   "agent_limit": 2000,
+   "storage_gb": 1000,
+   "interval": "month",
+   "currency": "EUR",
+   "package_slug": "pp-ent-200-monthly",
+   "editions": {
+    "2026": {
+     "amount": "820.00",
+     "plan_id": "9153655d-a29f-4e1d-8544-3578f3a8167f",
+     "provider_plan_reference": "22bb5a6e-1469-467a-b8da-a56b5adbfd66"
     }
    }
   },
@@ -920,6 +1301,22 @@
     }
    }
   },
+  "ent-200-yearly-eur": {
+   "family": "ent",
+   "seats": 200,
+   "agent_limit": 2000,
+   "storage_gb": 1000,
+   "interval": "year",
+   "currency": "EUR",
+   "package_slug": "pp-ent-200-yearly",
+   "editions": {
+    "2026": {
+     "amount": "8200.00",
+     "plan_id": "8aaee6b4-8c19-4926-aedc-f3fa43dc8262",
+     "provider_plan_reference": "567f66ce-f49b-479f-98a6-870e7d9519bf"
+    }
+   }
+  },
   "ent-200-yearly-try": {
    "family": "ent",
    "seats": 200,
@@ -957,6 +1354,22 @@
     }
    }
   },
+  "ent-500-monthly-eur": {
+   "family": "ent",
+   "seats": 500,
+   "agent_limit": 5000,
+   "storage_gb": 2500,
+   "interval": "month",
+   "currency": "EUR",
+   "package_slug": "pp-ent-500-monthly",
+   "editions": {
+    "2026": {
+     "amount": "2050.00",
+     "plan_id": "fa45e119-4393-41d5-b0b3-db56355855f5",
+     "provider_plan_reference": "48759a58-2535-45cc-acda-41a8e56ca239"
+    }
+   }
+  },
   "ent-500-monthly-try": {
    "family": "ent",
    "seats": 500,
@@ -991,6 +1404,22 @@
      "amount": "22500.00",
      "plan_id": "e4749565-d8e7-4b99-b227-804858d4a018",
      "provider_plan_reference": "788f989c-bfce-43b0-9b5c-ed9f5aacef9a"
+    }
+   }
+  },
+  "ent-500-yearly-eur": {
+   "family": "ent",
+   "seats": 500,
+   "agent_limit": 5000,
+   "storage_gb": 2500,
+   "interval": "year",
+   "currency": "EUR",
+   "package_slug": "pp-ent-500-yearly",
+   "editions": {
+    "2026": {
+     "amount": "20500.00",
+     "plan_id": "3cbe7546-0df7-401b-bce9-b76ac313696e",
+     "provider_plan_reference": "1d3d93a9-c962-4ba3-9ad9-11dbf42b6aa1"
     }
    }
   },

@@ -16,8 +16,10 @@ against local fixtures for saas_be and the postbox; nothing calls a real provide
 
 `catalog/pigeonpost-catalog.json` is the approved price list. It holds:
 
-- 56 plan codes: `cloud-<n>names-yearly-<usd|try>` (n = 1–10) and
-  `ent-<seats>-<monthly|yearly>-<usd|try>` (5, 10, 15, 20, 30, 50, 100, 200, 500 seats);
+- 84 plan codes: `cloud-<n>names-yearly-<usd|eur|try>` (n = 1–10) and
+  `ent-<seats>-<monthly|yearly>-<usd|eur|try>` (5, 10, 15, 20, 30, 50, 100, 200, 500 seats);
+  USD and EUR are fixed prices with one edition (2026) that stays on sale every year; TRY has one
+  edition per calendar year;
 - for each code, the editions provisioned in saas_be: pricing year, amount, local plan id and iyzico
   pricing-plan reference.
 
@@ -109,6 +111,7 @@ marked expired once that passes. Nothing here ever extends a paid period.
 | `ENTERPRISE_ORIGIN` | Enterprise return origin, default `https://enterprise.pigeonpost.dev` |
 | `STORE_STATE_DIR` | Durable state, default `/var/lib/pigeonpost-store-adapter` (systemd `StateDirectory=`) |
 | `CHECKOUTS_PER_HOUR`, `RECONCILE_INTERVAL_MS` | 5 and 60000 |
+| `OPEN_CURRENCIES` | Currencies new checkouts may use, e.g. `TRY` or `USD,EUR,TRY`. **Unset means `TRY`.** Production is `TRY`: merchant 101064752 answers iyzico 5185 for USD and EUR until the owner buys iyzico's Multi Currency add-on. Opening them is the one-command runbook in saas_be `docs/ops/iyzico-subscriptions.md` ("Enable runbook"). The account page and the enterprise portal offer only listed currencies (the portal hides EUR entirely until it is listed). |
 
 `/healthz` reports `configured:true` when these are present and well formed. It checks local
 configuration only, not whether the upstreams are reachable.
