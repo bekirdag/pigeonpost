@@ -479,6 +479,11 @@ class InboxStore(
                 if (uncertain && epoch == sessionVersion && request.mode?.editing != true && key.subject == null) request.action?.msgRef?.let { follows[request.id] = Follow(epoch, key.mailbox, key.peer, null, it) }
                 if (uncertain && failure !is SessionExpired && failure !is CancellationException)
                     throw IOException(if (request.action == null) "Delivery could not be confirmed. Check the conversation before sending again." else "Delivery could not be confirmed. Retry the original message safely.", failure)
+                // A refused edit or reply is worded for what was tried (§14C), not as the raw code.
+                if (failure is ApiException && request.action != null) {
+                    val kind = when { request.action.editOf != null -> MessageActionKind.EDIT; request.action.replyTo != null -> MessageActionKind.REPLY; else -> MessageActionKind.SEND }
+                    explainMessageActionRefusal(failure, kind)?.let { throw ApiException(failure.status, failure.code, it, failure.problem, retryAfter = failure.retryAfter) }
+                }
                 throw failure
             } finally { if (epoch == sessionVersion) mutable.update { it.copy(sending = it.sending - key) } }
         }

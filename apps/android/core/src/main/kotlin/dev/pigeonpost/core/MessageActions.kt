@@ -82,3 +82,29 @@ fun newMessageReference(): String {
         if (bits > 0) append(alphabet[(buffer shl (5 - bits)) and 31])
     }
 }
+
+/** Which §14C action a refused request carried, so a refusal can be worded for what was tried. */
+enum class MessageActionKind { SEND, EDIT, REPLY }
+
+/**
+ * How a person sees a postbox refusal of an edit or a reply, in a 1:1 thread or a group (§14C).
+ * The postbox answers `feature_disabled` both when a whole feature is off (404) and when only
+ * editing or replying is off (403), so the request kind decides the wording. Returns null for
+ * anything that is not specific to the action; callers then fall back to their general wording.
+ */
+fun explainMessageActionRefusal(failure: Throwable, kind: MessageActionKind): String? {
+    val api = failure as? ApiException ?: return null
+    return when (api.code) {
+        "feature_disabled" -> when {
+            api.status != 403 -> null
+            kind == MessageActionKind.EDIT -> "Editing messages is not turned on for this account."
+            kind == MessageActionKind.REPLY -> "Replying to a message is not turned on for this account."
+            else -> null
+        }
+        "not_editable", "edit_window_closed" -> "This message can no longer be edited. Messages can be edited for 24 hours after they are sent, while they have not expired."
+        "edit_has_attachments" -> "An edit changes the text only. Send files in a new message."
+        "reference_not_found", "invalid_msg_ref" -> if (kind == MessageActionKind.REPLY) "The message you are replying to is no longer available." else if (kind == MessageActionKind.EDIT) "The message you are editing is no longer available." else null
+        "msg_ref_in_use" -> "That message was already sent. Check the conversation before sending again."
+        else -> null
+    }
+}
