@@ -45,6 +45,12 @@ struct APIError: LocalizedError, Equatable {
         case "recipient_unresolved": return "No mailbox at that address."
         case "recipient_inbox_full": return "Their inbox is full."
         case "unauthorized": return "Your session expired. Sign in again."
+        // Edits and replies (SDS §14C): the postbox's `detail` is lower-case server prose.
+        case "feature_disabled":
+            return detail.map { $0.prefix(1).uppercased() + $0.dropFirst() + "." } ?? "This is not turned on for this account."
+        case "edit_window_closed": return "That message is no longer editable."
+        case "edit_has_attachments": return "An edit can change only the text, not the files."
+        case "reference_not_found": return "That message is no longer in this conversation."
         default: return errorDescription ?? "Could not send."
         }
     }

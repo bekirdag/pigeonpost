@@ -141,6 +141,7 @@ extension Notification.Name {
             await startedConversationIsSelected(window: window, host: host, account: account, inbox: inbox)
             await clipboardMessages(window: window, account: account, inbox: inbox)
             await composerSizing(window: window, account: account, inbox: inbox)
+            await windowToast(window: window, host: host, inbox: inbox)
             await idleCallOverlay(window: window)
             print("Mac inbox integration: \(InboxLoadingTests.checks) checks, \(InboxLoadingTests.failures) failures")
             watchdog.cancel()
@@ -148,6 +149,42 @@ extension Notification.Name {
             exit(InboxLoadingTests.failures == 0 ? 0 : 1)
         }
         app.run()
+    }
+
+    /// `inbox.toast` is how failed actions and the call page's closing words ("You were removed
+    /// from this group…", handed over by `CallHost` once the call screen is gone) reach the window.
+    static func windowToast(window: NSWindow, host: NSView, inbox: Inbox) async {
+        // The steps before this one swap their own views into the window. A detached hosting view
+        // still draws into a snapshot but has no accessibility tree, so put the inbox back first.
+        window.contentView = host
+        await settle()
+        let words = "You were removed from this group, so you left its call."
+        inbox.toast = words
+        await settle()
+        // SwiftUI builds a window's accessibility tree only once an assistive client has asked the
+        // app for it; until then the hosting view reports no children at all. Ask the way such a
+        // client does (one attribute read on this process), then read the tree it now exposes.
+        var windows: CFTypeRef?
+        _ = AXUIElementCopyAttributeValue(AXUIElementCreateApplication(getpid()), kAXWindowsAttribute as CFString, &windows)
+        await settle()
+        // Breadth first, each element once. The mail lists' tables are not entered: the toast floats
+        // over them rather than inside them, and asking a SwiftUI list table for its accessibility
+        // contents from inside the app does not return, so a missing toast would hang the walk.
+        var queue: [Any] = [host]
+        var seen = Set<ObjectIdentifier>()
+        var found = false
+        while !queue.isEmpty, !found, seen.count < 20_000 {
+            guard let node = queue.removeFirst() as? NSObject, seen.insert(ObjectIdentifier(node)).inserted else { continue }
+            let role = node.value(forKey: "accessibilityRole") as? String
+            if role == NSAccessibility.Role.table.rawValue || role == NSAccessibility.Role.outline.rawValue { continue }
+            found = node.value(forKey: "accessibilityLabel") as? String == words
+                || node.value(forKey: "accessibilityValue") as? String == words
+            queue += (node.value(forKey: "accessibilityChildren") as? [Any]) ?? []
+        }
+        InboxLoadingTests.check(found, "the Mac window shows the inbox toast")
+        snapshot(host, name: "mac-inbox-toast")
+        inbox.toast = nil
+        await settle()
     }
 
     /// An idle call stays loaded over the window but must never take a click meant for the mail.

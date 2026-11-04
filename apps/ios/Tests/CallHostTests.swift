@@ -49,6 +49,7 @@ struct CallConversation { let peer: String; let name: String }
         await liveStreams()
         await notesKeys()
         await confirmPanel()
+        await pageWords()
         print("Call host: \(checks) checks, \(failures) failures")
         exit(failures == 0 ? 0 : 1)
     }
@@ -244,6 +245,28 @@ struct CallConversation { let peer: String; let name: String }
             check(error as? CallHost.BridgeError == .refused("no_key_for_device"), "a brief for other devices is refused with its code")
         }
         host.detach()
+    }
+    /// The page's own words for why a call ended or what notes can't do reach the app unchanged:
+    /// once the call screen is hidden the page hands its toast to the host (calls.js `toast`).
+    static func pageWords() async {
+        let host = CallHost(), session = Session(), account = Account(), inbox = Inbox()
+        account.me = a
+        host.attach(session: session, account: account, inbox: inbox)
+        await wait("token before toasts") { session.tokens.count == 1 }
+        session.tokens[0].resume(returning: "synthetic-a")
+        await wait("configured before toasts") { await records(host).contains { $0["kind"] as? String == "configure" } }
+        let removed = "You were removed from this group, so you left its call."
+        let plan = "AI meeting notes aren't included in your plan. They come with Pigeonpost for business plans of 20 seats or more."
+        for words in [removed, plan] {
+            inbox.toast = nil
+            _ = try? await host.webView.evaluateJavaScript("window.webkit.messageHandlers.pigeonpost.postMessage({type:'mode',mode:'hidden'});window.webkit.messageHandlers.pigeonpost.postMessage({type:'toast',text:\(Self.quoted(words))})")
+            await wait("page toast") { inbox.toast != nil }
+            check(inbox.toast == words, "the page's words reach the app unchanged: " + words.prefix(32))
+        }
+        host.detach()
+    }
+    static func quoted(_ s: String) -> String {
+        String(data: try! JSONSerialization.data(withJSONObject: [s]), encoding: .utf8)!.dropFirst().dropLast().description
     }
     static func confirmPanel() async {
         let (host, _, _) = await signedIn()

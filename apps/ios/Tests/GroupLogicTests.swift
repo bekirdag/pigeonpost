@@ -228,5 +228,19 @@ check(!FileManager.default.fileExists(atPath: dir.path), "retired save cannot re
 let missingMembership = try! JSONDecoder().decode(GroupSummary.self, from: Data(#"{"id":"grp_unknown","name":"Unknown"}"#.utf8))
 check(!missingMembership.isActive && !missingMembership.isKeying, "missing membership makes no joined claim")
 
+// ---- refusals of sends, edits and replies ----
+// The postbox answers feature_disabled for groups off (404) and for edits/replies off (403).
+check(GroupText.explainSend(APIError(status: 403, code: "feature_disabled", detail: nil), editing: true, replying: false).contains("Editing"), "a refused edit says editing is off")
+check(!GroupText.explainSend(APIError(status: 403, code: "feature_disabled", detail: nil), editing: true, replying: false).contains("Groups"), "a refused edit never claims groups are off")
+check(GroupText.explainSend(APIError(status: 403, code: "feature_disabled", detail: nil), editing: false, replying: true).contains("Replying"), "a refused reply says replies are off")
+check(GroupText.explainSend(APIError(status: 404, code: "feature_disabled", detail: nil), editing: true, replying: false) == "Groups are not enabled for this account.", "a 404 is groups off")
+check(GroupText.explainSend(APIError(status: 403, code: "not_editable", detail: nil), editing: true, replying: false).contains("24 hours"), "an expired edit window is explained")
+check(GroupText.explainSend(APIError(status: 403, code: "posting_restricted", detail: nil), editing: false, replying: false) == "Only admins can send messages here.", "admins-only posting is explained")
+check(GroupText.explainSend(APIError(status: 429, code: nil, detail: nil), editing: false, replying: false).contains("too fast"), "a rate limit is explained")
+check(GroupText.explain(APIError(status: 403, code: "feature_disabled", detail: "replying to a message is not enabled for this account")) == "Replying to a message is not enabled for this account.", "a 403 feature refusal uses the server's own words")
+check(GroupText.explain(APIError(status: 0, code: "feature_disabled", detail: nil)) == "Groups are not enabled for this account.", "no engine still reads as groups off")
+check(APIError(status: 403, code: "feature_disabled", detail: "editing messages is not enabled for this account").sendFailureMessage == "Editing messages is not enabled for this account.", "a refused 1:1 edit is explained")
+check(APIError(status: 404, code: "reference_not_found", detail: nil).sendFailureMessage.contains("no longer"), "a reply to a vanished message is explained")
+
 print("Groups logic: \(checks) checks, \(failures) failures")
 exit(failures == 0 ? 0 : 1)

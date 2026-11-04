@@ -544,7 +544,7 @@ final class GroupStore {
             guard current(visit) else { return false }
             await reloadHistory(group)
             guard current(visit) else { return false }
-            say("Not sent: " + GroupText.explain(error))
+            say((editOf != nil ? "Edit not saved: " : "Not sent: ") + GroupText.explainSend(error, editing: editOf != nil, replying: replyTo != nil))
             return false
         }
     }
