@@ -17,6 +17,9 @@ pub(super) const MIGRATIONS: &[&str] = &[
     "ALTER TABLE inbox_policy ADD COLUMN low_reputation TEXT NOT NULL DEFAULT 'filter'",
     "ALTER TABLE inbox_policy ADD COLUMN group_members_known INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE inbox_policy ADD COLUMN call_history_days INTEGER NOT NULL DEFAULT 180",
+    // 1 once the owner chose `unknown_calls`. Until then the column's 'ring' is only the column
+    // default, and the effective value is the mailbox kind's default (SDS §13.1: agents Silence).
+    "ALTER TABLE inbox_policy ADD COLUMN unknown_calls_set INTEGER NOT NULL DEFAULT 0",
     // Delivered but filed in the recipient's Filtered list.
     "ALTER TABLE messages ADD COLUMN filtered INTEGER NOT NULL DEFAULT 0",
     "CREATE INDEX IF NOT EXISTS messages_filtered ON messages(owner, sender) WHERE filtered = 1",
@@ -115,6 +118,26 @@ pub struct Filters {
     /// so clients can show it, and is consulted once they do.
     pub group_members_known: bool,
     pub call_history_days: u32,
+}
+
+impl Filters {
+    /// The defaults for an agent mailbox: as for a person, except that calls from people the
+    /// mailbox does not know are silenced (SDS §13.1). Nobody is at the other end to answer them.
+    pub fn agent_default() -> Self {
+        Filters {
+            unknown_calls: CallRule::Silence,
+            ..Filters::default()
+        }
+    }
+
+    /// The defaults for `address`, by mailbox kind.
+    fn default_for(agent: bool) -> Self {
+        if agent {
+            Filters::agent_default()
+        } else {
+            Filters::default()
+        }
+    }
 }
 
 impl Default for Filters {
@@ -220,11 +243,14 @@ impl Relationship {
     }
 }
 
-fn read_filters(row: &rusqlite::Row<'_>) -> rusqlite::Result<Filters> {
-    let d = Filters::default();
+fn read_filters(row: &rusqlite::Row<'_>, d: Filters) -> rusqlite::Result<Filters> {
     let text = |i: usize| -> rusqlite::Result<String> { row.get::<_, String>(i) };
     Ok(Filters {
-        unknown_calls: CallRule::parse(&text(0)?).unwrap_or(d.unknown_calls),
+        unknown_calls: if row.get::<_, i64>(7)? != 0 {
+            CallRule::parse(&text(0)?).unwrap_or(d.unknown_calls)
+        } else {
+            d.unknown_calls
+        },
         unnamed_calls: CallRule::parse(&text(1)?).unwrap_or(d.unnamed_calls),
         unnamed_messages: MessageRule::parse(&text(2)?).unwrap_or(d.unnamed_messages),
         unknown_messages: MessageRule::parse(&text(3)?).unwrap_or(d.unknown_messages),
@@ -243,15 +269,56 @@ fn read_filters(row: &rusqlite::Row<'_>) -> rusqlite::Result<Filters> {
 const FILTER_COLS: &str = "unknown_calls, unnamed_calls, unnamed_messages, unknown_messages, \
                            low_reputation, group_members_known, call_history_days";
 
-/// The settings, for callers already holding the lock.
+/// Whether `address` is an agent mailbox: an org agent (`org_agents`, any status but deleted), or a
+/// personal agent handle under a person's name (`/namespace/person/agent`, three or more segments,
+/// the shape `authorize_open_handle` treats as an agent).
+pub(crate) fn is_agent_mailbox_in(
+    c: &rusqlite::Connection,
+    address: &str,
+) -> Result<bool, StoreError> {
+    let org_agent = c
+        .query_row(
+            "SELECT 1 FROM org_agents WHERE identity = ?1 AND status != 'deleted'",
+            params![address],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some();
+    if org_agent {
+        return Ok(true);
+    }
+    let handle: Option<String> = c
+        .query_row(
+            "SELECT handle FROM identities WHERE address = ?1",
+            params![address],
+            |r| r.get(0),
+        )
+        .optional()?
+        .flatten();
+    Ok(handle.is_some_and(|h| agent_handle(&h)))
+}
+
+/// `/namespace/person/agent` (or deeper): the handle names an agent under a person.
+fn agent_handle(handle: &str) -> bool {
+    handle
+        .trim_start_matches('/')
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .count()
+        > 2
+}
+
+/// The settings, for callers already holding the lock. Fields the owner never chose take the
+/// default for the mailbox's kind.
 pub(super) fn filters_in(c: &rusqlite::Connection, address: &str) -> Result<Filters, StoreError> {
+    let d = Filters::default_for(is_agent_mailbox_in(c, address)?);
     Ok(c.query_row(
-        &format!("SELECT {FILTER_COLS} FROM inbox_policy WHERE address = ?1"),
+        &format!("SELECT {FILTER_COLS}, unknown_calls_set FROM inbox_policy WHERE address = ?1"),
         params![address],
-        read_filters,
+        |r| read_filters(r, d),
     )
     .optional()?
-    .unwrap_or_default())
+    .unwrap_or(d))
 }
 
 impl Store {
@@ -294,12 +361,13 @@ impl Store {
             // same values `InboxPolicy::default` reports.
             tx.execute(
                 &format!(
-                    "INSERT INTO inbox_policy (address, updated_at, {FILTER_COLS})
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                    "INSERT INTO inbox_policy (address, updated_at, {FILTER_COLS}, unknown_calls_set)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
                      ON CONFLICT(address) DO UPDATE SET
                         updated_at = ?2, unknown_calls = ?3, unnamed_calls = ?4,
                         unnamed_messages = ?5, unknown_messages = ?6, low_reputation = ?7,
-                        group_members_known = ?8, call_history_days = ?9"
+                        group_members_known = ?8, call_history_days = ?9,
+                        unknown_calls_set = MAX(unknown_calls_set, ?10)"
                 ),
                 params![
                     address,
@@ -311,6 +379,7 @@ impl Store {
                     next.low_reputation.as_str(),
                     next.group_members_known as i64,
                     next.call_history_days as i64,
+                    update.unknown_calls.is_some() as i64,
                 ],
             )?;
             tx.commit()?;
@@ -522,5 +591,119 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(r, Relationship::default());
+    }
+
+    /// Mailboxes inserted directly: (address, handle).
+    fn seed(store: &Store, rows: &[(&str, Option<&str>)]) {
+        let c = store.conn.lock().unwrap();
+        for (address, handle) in rows {
+            c.execute(
+                "INSERT INTO identities (address, ed25519_pub, x25519_pub, wrapped_nonce, wrapped_ct,
+                                         cap_hash, created_at, handle)
+                 VALUES (?1, x'00', x'00', x'00', x'00', x'00', 1, ?2)",
+                params![address, handle],
+            )
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn agent_handles_are_under_a_person() {
+        assert!(agent_handle("/ada/main/build"));
+        assert!(agent_handle("/ada/main/build/sub"));
+        assert!(!agent_handle("/ada/main"));
+        assert!(!agent_handle("/ada"));
+        assert!(!agent_handle("/k/abc"));
+    }
+
+    #[tokio::test]
+    async fn agent_mailboxes_silence_unknown_callers_until_their_owner_chooses() {
+        let store = Store::open(":memory:").unwrap();
+        seed(
+            &store,
+            &[
+                ("/k/agent", Some("/ada/main/build")),
+                ("/k/person", Some("/ada/main")),
+                ("/k/orgagent", Some("/acme/build")),
+                ("/k/plain", None),
+            ],
+        );
+        store
+            .conn
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO org_agents (org_id, identity, handle, created_at)
+                 VALUES ('org_1', '/k/orgagent', '/acme/build', 1)",
+                [],
+            )
+            .unwrap();
+        let calls = |a: &'static str| {
+            let store = &store;
+            async move { store.filters(a.into()).await.unwrap().unknown_calls }
+        };
+        assert_eq!(calls("/k/agent").await, CallRule::Silence);
+        assert_eq!(calls("/k/orgagent").await, CallRule::Silence);
+        assert_eq!(calls("/k/person").await, CallRule::Ring);
+        assert_eq!(calls("/k/plain").await, CallRule::Ring);
+        assert_eq!(
+            store.filters("/k/agent".into()).await.unwrap(),
+            Filters::agent_default()
+        );
+
+        // A row created by another setting (here the stranger-defaults writer, and a filters write
+        // of another field) does not turn the column default into a choice.
+        store
+            .set_inbox_policy("/k/agent".into(), Some(false), None, 2)
+            .await
+            .unwrap();
+        let other = store
+            .set_filters(
+                "/k/agent".into(),
+                FiltersUpdate {
+                    low_reputation: Some(ReputationRule::Allow),
+                    ..FiltersUpdate::default()
+                },
+                3,
+            )
+            .await
+            .unwrap();
+        assert_eq!(other.unknown_calls, CallRule::Silence);
+        assert_eq!(calls("/k/agent").await, CallRule::Silence);
+
+        // An explicit Ring is kept, also across later writes of other fields.
+        let set = store
+            .set_filters(
+                "/k/agent".into(),
+                FiltersUpdate {
+                    unknown_calls: Some(CallRule::Ring),
+                    ..FiltersUpdate::default()
+                },
+                4,
+            )
+            .await
+            .unwrap();
+        assert_eq!(set.unknown_calls, CallRule::Ring);
+        store
+            .set_filters(
+                "/k/agent".into(),
+                FiltersUpdate {
+                    call_history_days: Some(30),
+                    ..FiltersUpdate::default()
+                },
+                5,
+            )
+            .await
+            .unwrap();
+        assert_eq!(calls("/k/agent").await, CallRule::Ring);
+
+        // A deleted org agent is no longer an agent mailbox.
+        store
+            .conn
+            .lock()
+            .unwrap()
+            .execute("UPDATE org_agents SET status = 'deleted'", [])
+            .unwrap();
+        assert_eq!(calls("/k/orgagent").await, CallRule::Ring);
     }
 }
