@@ -460,6 +460,20 @@
     return h ? h.displayName(handle || address) : (handle || address);
   }
 
+  // SDS §15.2: a blocked sender's group content is hidden here, on this device only. Neither member
+  // leaves the group and nobody is told. A block covers the mailbox's address or its handle.
+  function blockedSender(address) {
+    const h = host();
+    if (!address || address === me() || !h || !h.blocked) return false;
+    return h.blocked([address, G.handles.get(address)].filter(Boolean));
+  }
+  function blockMember(address) {
+    const h = host();
+    if (!h || !h.askBlock || !address || address === me()) return;
+    hideSheet("group-info-sheet");
+    h.askBlock(G.handles.get(address) || address, nameOf(address));
+  }
+
   function previewOf(gid) {
     const c = client();
     if (!c) return "";
@@ -467,6 +481,7 @@
     for (let i = list.length - 1; i >= 0; i--) {
       const x = list[i];
       if (x.kind !== "message" || x.replaced_by) continue;
+      if (blockedSender(x.sender)) continue;
       if (x.deleted) return "Message deleted";
       if (x.undecryptable) return "Encrypted message";
       const who = x.sender === me() ? "You" : nameOf(x.sender).split(/[ /]/).filter(Boolean)[0] || "Someone";
@@ -945,6 +960,12 @@
       }
       if (x.kind !== "message" || x.replaced_by) continue;
       const mine = x.sender === me();
+      if (!mine && blockedSender(x.sender)) {
+        ol.append(el("li", { class: "blocked-msg", dataset: { seq: String(x.seq == null ? "" : x.seq) } },
+          el("div", { class: "msg-stack" }, el("div", { class: "bubble" }, el("div", { class: "text muted-text", text: "Hidden: you blocked this sender" })))));
+        lastSender = null;
+        continue;
+      }
       const li = el("li", { class: (mine ? "mine" : "") + (x.expires_at ? " ephemeral" : ""), dataset: { seq: String(x.seq == null ? "" : x.seq) } });
       const bubble = el("div", { class: "bubble" });
       if (!mine && x.sender !== lastSender) bubble.append(el("div", { class: "group-sender", text: nameOf(x.sender) }));
@@ -1023,9 +1044,10 @@
 
   function groupQuote(list, seq) {
     const parent = list.find((y) => y.kind === "message" && String(y.seq) === String(seq));
-    const who = parent ? (parent.sender === me() ? "You" : nameOf(parent.sender)) : "";
+    const who = parent ? (parent.sender === me() ? "You" : blockedSender(parent.sender) ? "" : nameOf(parent.sender)) : "";
     const UI = window.PigeonpostMessageActions;
-    const line = !parent || parent.deleted ? "Original message unavailable"
+    const hidden = parent && parent.sender !== me() && blockedSender(parent.sender);
+    const line = !parent || parent.deleted ? "Original message unavailable" : hidden ? "Hidden: you blocked this sender"
       : (UI ? UI.quoteExcerpt(parent.text || "", (parent.files || []).map((f) => ({ filename: f.name }))) : parent.text || "");
     return el("button", { type: "button", class: "reply-quote", "aria-label": `Replying to ${who || "a message"}: ${line}. Show the original.`,
       onclick: () => jumpToSeq(seq) },
@@ -1133,6 +1155,7 @@
       item("Copy", () => navigator.clipboard?.writeText(x.text || "").catch(() => {}));
       if (groupEditable(g, x)) item("Edit", () => startGroupCompose("edit", g.id, x));
       if (mine && x.seq != null) item("Info", () => groupMessageInfo(g, x));
+      if (!mine && x.sender && !blockedSender(x.sender)) item("Block sender", () => blockMember(x.sender));
     }
     if (canDelete(g, x, mine)) item("Delete", () => deleteMessage(g.id, x.seq));
     menu.hidden = false;
@@ -1527,6 +1550,20 @@
     }
     body.append(membersSection);
 
+    // Banned mailboxes (admins only; the postbox lists them to admins). Unbanning lets them be
+    // invited or join again; it does not add them back.
+    const banned = admin ? members.filter((m) => m.state === "banned") : [];
+    if (banned.length) {
+      const list = el("ul", { class: "gi-members", id: "gi-banned", role: "list" });
+      for (const m of banned) {
+        list.append(el("li", { class: "gi-member gi-banned" },
+          el("span", { class: "gi-member-name", text: nameOf(m.address) }),
+          el("span", { class: "pill", text: "Banned" }),
+          el("span", { class: "gi-member-actions" }, el("button", { type: "button", class: "linkish", text: "Unban", "aria-label": "Unban " + nameOf(m.address), onclick: () => unban(g, m) }))));
+      }
+      body.append(section(`Banned (${banned.length})`, list, el("p", { class: "note", text: "Unbanning lets them join again or be invited. It does not add them back." })));
+    }
+
     // Invite link
     if (admin && g.join_policy === "public") {
       const out = el("div", { class: "gi-link", id: "gi-link-out" });
@@ -1623,6 +1660,10 @@
       if (admin && (m.role !== "admin" || owner)) { act("Remove", { state: "removed" }); act("Ban", { state: "banned" }); }
     }
     if (self && m.role === "admin") act("Step down as admin", { role: "member" });
+    if (!self && (m.state === "active" || m.state === "keying")) {
+      if (blockedSender(m.address)) actions.append(el("span", { class: "pill pill-blocked", text: "Blocked" }));
+      else actions.append(el("button", { type: "button", class: "linkish", text: "Block", "aria-label": "Block " + nameOf(m.address), onclick: () => blockMember(m.address) }));
+    }
     li.append(actions);
     if (m.state === "active") {
       const devs = el("details", { class: "gi-devices" }, el("summary", { text: "Devices" }));
@@ -1671,6 +1712,16 @@
     await loadMembers(g.id);
     renderInfo();
     refresh();
+  }
+
+  async function unban(g, m) {
+    if (!(await confirmAction("Unban?", `${nameOf(m.address)} can join again or be invited.`, "Unban"))) return;
+    try {
+      await api(groupPath(g.id, "/bans/" + encodeURIComponent(m.address)), { method: "DELETE" });
+      host().toast("Unbanned.");
+    } catch (e) { host().toast(explain(e)); }
+    await loadMembers(g.id);
+    renderInfo();
   }
 
   async function invite(g, raw) {
