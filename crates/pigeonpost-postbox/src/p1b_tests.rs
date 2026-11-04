@@ -393,6 +393,64 @@ async fn agents_only_tighten_and_bad_policy_values_change_nothing() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
+#[tokio::test]
+async fn agent_mailboxes_silence_unknown_callers_by_default() {
+    let state = state();
+    let srv = serve(state.clone()).await;
+    let ada = person(&state, "acct_ada", Some("/ada/main")).await;
+    let build = person(&state, "acct_ada2", Some("/adb/main/build")).await;
+    let caller = person(&state, "acct_c", Some("/carl/main")).await;
+    srv.flag("call_admission", &ada.account).await;
+    srv.flag("call_admission", &build.account).await;
+
+    // The settings say so, so every client shows it without knowing about agents.
+    let (_, p) = srv.get("/v1/policy", Some(&build.token)).await;
+    assert_eq!(p["unknown_calls"], "silence");
+    let (_, p) = srv.get("/v1/policy", Some(&ada.token)).await;
+    assert_eq!(p["unknown_calls"], "ring");
+    // And the calls service decides by it: a named stranger rings a person, not an agent.
+    assert_eq!(
+        admit(&srv, &caller.me.address, &ada.me.address).await.1["decision"],
+        "ring"
+    );
+    assert_eq!(
+        admit(&srv, &caller.me.address, &build.me.address).await.1["decision"],
+        "silence"
+    );
+
+    // The agent itself may not loosen its own default.
+    let loosen = store::FiltersUpdate {
+        unknown_calls: Some(store::CallRule::Ring),
+        ..Default::default()
+    };
+    let err = filtering::do_set_filters(&state, &build.me, loosen, TrustActor::Agent)
+        .await
+        .unwrap_err();
+    assert_eq!(err.into_response().status(), StatusCode::FORBIDDEN);
+
+    // Its owner may, and the choice holds across later writes.
+    let (status, _) = srv
+        .put(
+            "/v1/policy",
+            Some(&build.token),
+            json!({ "unknown_calls": "ring" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    srv.put(
+        "/v1/policy",
+        Some(&build.token),
+        json!({ "call_history_days": 30 }),
+    )
+    .await;
+    let (_, p) = srv.get("/v1/policy", Some(&build.token)).await;
+    assert_eq!(p["unknown_calls"], "ring");
+    assert_eq!(
+        admit(&srv, &caller.me.address, &build.me.address).await.1["decision"],
+        "ring"
+    );
+}
+
 async fn admit(srv: &Server, from: &str, to: &str) -> (StatusCode, Value) {
     srv.post(
         "/internal/v1/call-admission",

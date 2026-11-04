@@ -20186,7 +20186,7 @@
               "silence",
               "block"
             ],
-            "description": "Calls from people you don't know. Default ring."
+            "description": "Calls from people you don't know. Default ring; silence for an agent mailbox (an org agent, or a handle under a person such as /name/person/agent) until its owner chooses."
           },
           "unnamed_calls": {
             "type": "string",
