@@ -68,6 +68,63 @@ Jobs that stay on GitHub-hosted runners even with the variable on:
 | `release.yml` → `container_candidate`, `container_verify` | `docker/setup-qemu-action` registers binfmt handlers in the shared host kernel. |
 | The rest of `release.yml` | Tag-only, never qualified on the worker. It follows its own variable, `PIGEONPOST_SELF_HOSTED_RELEASE` (unset = hosted); its `ci` call still follows `PIGEONPOST_SELF_HOSTED_CI`. |
 
+## Cassandra macOS runner (opt-in, 2026-11-04)
+
+macOS jobs that work with Xcode 16.2 on macOS 14 can run on Cassandra, Bekir's ARM64 Mac. It has
+64 GiB RAM and Xcode 16.2 with the iOS 18.3 simulator runtime. The runner is registered to this
+repository (not the `bekirdag/cassandra-ci` broker) with the labels `self-hosted`, `macOS`, `ARM64`,
+`cassandra-pigeonpost`. Routing follows its own variable:
+
+```yaml
+runs-on: ${{ vars.PIGEONPOST_MAC_SELF_HOSTED_CI == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","cassandra-pigeonpost"]') || 'macos-14' }}
+```
+
+Fork pull requests always keep the hosted label. Set the variable to anything else to send every
+job back to its hosted image at once.
+
+| Routed job | Hosted fallback |
+|---|---|
+| `ci.yml` → `test (macos-14)` | `macos-14` |
+| `mac-desktop-tests.yml` → `groups-e2e` | `macos-14` |
+| `group-crypto.yml` → macOS interop + XCFramework | `macos-15` |
+
+These macOS jobs stay hosted:
+- Anything that needs Xcode 26, the iOS/iPadOS 26 SDK or `macos-26`: the iOS UX shards, `native-ipad`, and mac-desktop's `macos-26` leg.
+- `mac-desktop-tests.yml` → `native (macos-14)`: `mac-inbox.sh` launches a test app with `open`. From the runner's LaunchDaemon (no GUI login session) that fails with `OSLaunchdErrorDomain Code=125`. Its model and call-host steps do pass there.
+- `ios-ux-tests.yml` → `native-storekit`: requires the iOS 18 simulator runtime; Cassandra lacks it after a
+  2026-11-04 disk cleanup. Routing resumes after installing the runtime via
+  `xcodebuild -downloadPlatform iOS` (~8 GB). Creating simulators works from the LaunchDaemon.
+- TestFlight, App Store, notarization and other signing jobs.
+- `release.yml`, including its macOS builds and the attestations.
+
+**Isolation.** Jobs run as `pigeonpost-ci`, a standard (non-admin, hidden) macOS user without sudo
+and without signing identities or credentials. The service is a LaunchDaemon with
+`UserName=pigeonpost-ci`, so no login is needed. An explicit ACL denies that user the owner's home
+directory.
+
+**Install.** `deploy/ci/cassandra-macos-runner.sh` (as root, with a fresh registration token in
+`REG_TOKEN`) creates the user, adds the home-directory deny ACE, configures the runner under
+`/Users/pigeonpost-ci/actions-runner/<name>`, copies `bin/runsvc.sh` beside it and loads the
+LaunchDaemon `dev.pigeonpost.ci-runner.<name>`. Logs: `~pigeonpost-ci/Library/Logs/`. Stop or start with
+`sudo launchctl bootout|bootstrap system /Library/LaunchDaemons/dev.pigeonpost.ci-runner.<name>.plist`.
+
+**Per-job preparation.** `.github/actions/self-hosted-prereqs` has a macOS branch that runs only on
+this runner. It:
+- fails early below 10 GiB free disk;
+- selects Xcode through `DEVELOPER_DIR`, because the user cannot `sudo xcode-select`. Hosted jobs
+  keep their `sudo xcode-select` step;
+- keeps rustup in `~/.cargo/bin` with a per-job `CARGO_HOME`, for the same rust-cache `cleanBin`
+  trap as on Linux;
+- points `DOTNET_INSTALL_DIR` at the tool cache;
+- removes simulators named `pp-ci-<runner>-*` left behind by earlier jobs.
+
+A job that needs a simulator should create its own, with a name starting with `$PP_CI_SIM_PREFIX`, and delete it afterwards. Keep DerivedData under `$RUNNER_TEMP`.
+
+**Owner notes.**
+- One runner serializes the routed jobs.
+- The laptop must be awake and online, with the lid open or on external power with a display.
+- The data volume is the binding constraint: jobs refuse to start below 10 GiB.
+
 ## Required exceptions
 
 | Job type | Runner | Reason |
@@ -76,7 +133,7 @@ Jobs that stay on GitHub-hosted runners even with the variable on:
 | `release.yml` build and preparation jobs | Hosted Ubuntu; `wodo-ci` pool only with `PIGEONPOST_SELF_HOSTED_RELEASE=true` | Tag-only; not yet qualified on the worker. |
 | Fork PR jobs | Original hosted Ubuntu label | Contributor code runs separately from persistent workers. |
 | Native Linux/X64 group-encryption library | `ubuntu-22.04`; `wodo-ci` pool when opted in | Keep the glibc 2.35 floor check; the initial self-hosted build passed it. `ubuntu-22.04` is the default and fork-PR label. |
-| Native Linux ARM64, Windows and macOS jobs | Existing OS/architecture label | No matching self-hosted worker is registered for this repository. |
+| Native Linux ARM64, Windows and the remaining macOS jobs | Existing OS/architecture label | No matching self-hosted worker; Cassandra covers only the Xcode 16.2 jobs listed above. |
 | `release.yml` → `container_attest`, `release_attest` | `ubuntu-24.04` | Downstream verification requires `--deny-self-hosted-runners`; the attestation producer must meet it. |
 | `release.yml` → `npm_publish` | `ubuntu-24.04` | The current npm trusted-publishing environment requires a supported hosted runner. |
 

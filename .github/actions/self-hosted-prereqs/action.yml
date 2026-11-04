@@ -1,18 +1,24 @@
 name: Self-hosted runner prerequisites
 description: >-
-  On the wodo-ci worker only: size build parallelism from the container's cgroup limits and install
-  the Ubuntu packages a job expects from GitHub's hosted image. On GitHub-hosted runners this action
-  does nothing, so hosted jobs keep their exact image. See docs/ci-runners.md.
+  On the wodo-ci worker: size build parallelism from the container's cgroup limits and install the
+  Ubuntu packages a job expects from GitHub's hosted image. On the Cassandra macOS runner: check free
+  disk, select Xcode through DEVELOPER_DIR (the CI user cannot sudo xcode-select), give the job a
+  throwaway CARGO_HOME and remove simulators an earlier job left behind. On GitHub-hosted runners
+  this action does nothing, so hosted jobs keep their exact image. See docs/ci-runners.md.
 inputs:
   apt-packages:
     description: Space-separated Ubuntu packages the job needs (preinstalled on the hosted image).
     required: false
     default: ""
+  xcode-version:
+    description: Xcode version to select on the self-hosted macOS runner.
+    required: false
+    default: "16.2"
 runs:
   using: composite
   steps:
     - name: Size parallelism and install missing packages
-      if: runner.environment == 'self-hosted'
+      if: runner.environment == 'self-hosted' && runner.os == 'Linux'
       shell: bash
       env:
         APT_PACKAGES: ${{ inputs.apt-packages }}
@@ -77,3 +83,63 @@ runs:
         export DEBIAN_FRONTEND=noninteractive
         sudo -E apt-get update -qq
         sudo -E apt-get install -y -qq --no-install-recommends --no-upgrade "${missing[@]}"
+
+    - name: Prepare the Cassandra macOS runner
+      if: runner.environment == 'self-hosted' && runner.os == 'macOS'
+      shell: bash
+      env:
+        XCODE_VERSION: ${{ inputs.xcode-version }}
+      run: |
+        set -euo pipefail
+        # Jobs run as the unprivileged pigeonpost-ci user on a shared laptop disk. Fail early with a
+        # clear message rather than half-way through a build.
+        free_gib=$(( $(df -k "$RUNNER_TEMP" | awk 'NR==2{print $4}') / 1048576 ))
+        echo "Free disk: ${free_gib} GiB"
+        if [ "$free_gib" -lt 10 ]; then
+          echo "::error::Only ${free_gib} GiB free on the Cassandra runner; macOS jobs need 10 GiB. Free disk on the host or turn PIGEONPOST_MAC_SELF_HOSTED_CI off."
+          exit 1
+        fi
+
+        # Hosted jobs run `sudo xcode-select`; the CI user has no sudo, so select through DEVELOPER_DIR.
+        developer=""
+        for app in /Applications/Xcode*.app; do
+          [ -d "$app/Contents/Developer" ] || continue
+          version=$(DEVELOPER_DIR="$app/Contents/Developer" xcodebuild -version 2>/dev/null | awk 'NR==1{print $2}')
+          if [ "$version" = "$XCODE_VERSION" ]; then developer="$app/Contents/Developer"; break; fi
+        done
+        [ -n "$developer" ] || { echo "::error::Xcode $XCODE_VERSION is not installed on this runner."; exit 1; }
+        export DEVELOPER_DIR="$developer"
+        echo "DEVELOPER_DIR=$developer" >> "$GITHUB_ENV"
+        xcodebuild -version
+
+        # Same rust-cache trap as on Linux: its post-job cleanup deletes files in $CARGO_HOME/bin that
+        # the job did not install, which would remove the persistent rustup. Keep rustup in
+        # ~/.cargo/bin (toolchains in ~/.rustup) and give each job its own CARGO_HOME.
+        if [ ! -x "$HOME/.cargo/bin/rustup" ]; then
+          echo "Installing rustup into $HOME/.cargo (first job, or removed by an earlier one)."
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | CARGO_HOME="$HOME/.cargo" sh -s -- -y --no-modify-path --default-toolchain none >/dev/null
+        fi
+        cargo_home="$RUNNER_TEMP/cargo-home"
+        mkdir -p "$cargo_home/bin"
+        {
+          echo "CARGO_HOME=$cargo_home"
+          # setup-dotnet would otherwise install into the persistent ~/.dotnet.
+          echo "DOTNET_INSTALL_DIR=$RUNNER_TOOL_CACHE/dotnet"
+          # Simulators a job creates carry this prefix; the next job on this runner removes leftovers.
+          echo "PP_CI_SIM_PREFIX=pp-ci-$RUNNER_NAME-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+        } >> "$GITHUB_ENV"
+        echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+        echo "$cargo_home/bin" >> "$GITHUB_PATH"
+
+        xcrun simctl list devices --json | python3 -c '
+        import json, os, subprocess, sys
+        prefix = "pp-ci-" + os.environ["RUNNER_NAME"] + "-"
+        for entries in json.load(sys.stdin)["devices"].values():
+            for d in entries:
+                if d["name"].startswith(prefix):
+                    print("Removing leftover simulator", d["name"])
+                    subprocess.run(["xcrun", "simctl", "shutdown", d["udid"]], capture_output=True)
+                    subprocess.run(["xcrun", "simctl", "delete", d["udid"]], check=False)
+        ' || true
+        xcrun simctl delete unavailable || true
