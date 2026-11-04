@@ -99,6 +99,12 @@ and without signing identities or credentials. The service is a LaunchDaemon wit
 `UserName=pigeonpost-ci`, so no login is needed. An explicit ACL denies that user the owner's home
 directory.
 
+**Install.** `deploy/ci/cassandra-macos-runner.sh` (as root, with a fresh registration token in
+`REG_TOKEN`) creates the user, adds the home-directory deny ACE, configures the runner under
+`/Users/pigeonpost-ci/actions-runner/<name>`, copies `bin/runsvc.sh` beside it and loads the
+LaunchDaemon `dev.pigeonpost.ci-runner.<name>`. Logs: `~pigeonpost-ci/Library/Logs/`. Stop or start with
+`sudo launchctl bootout|bootstrap system /Library/LaunchDaemons/dev.pigeonpost.ci-runner.<name>.plist`.
+
 **Per-job preparation.** `.github/actions/self-hosted-prereqs` has a macOS branch that runs only on
 this runner. It:
 - fails early below 10 GiB free disk;
