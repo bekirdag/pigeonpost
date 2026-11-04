@@ -39,6 +39,13 @@ function fixture() {
     if (p === "/v1/me/entitlements") return json(res, 200, { account: ACCOUNT, entitlements: [], web_plan: s.webPlan });
     if (p === "/v1/claims/plan") return json(res, 200, { namespace: `/${body.namespace}`, capacity: 3, used: 1 });
     if (p === "/v1/capabilities") return auth === MEMBER ? json(res, 200, { api_version: "1.2", features: s.features }) : json(res, 401, {});
+    if (p === "/v1/nest-purchases/intents" && req.method === "POST") {
+      if (auth !== MEMBER) return json(res, 401, {});
+      s.nestIntents = (s.nestIntents || []).concat([body]);
+      return s.nestRefusal ? json(res, s.nestRefusal.status, { error: s.nestRefusal.error, detail: "refused" })
+        : json(res, 200, { intent_id: "npi_fixture", package: body.package, rail: body.rail });
+    }
+    if (p === "/v1/nests" && req.method === "GET") return auth === MEMBER ? json(res, 200, { allowance: { slots: 1, used: 0 } }) : json(res, 401, {});
     if ((m = /^\/v1\/orgs\/([^/]+)\/billing$/.exec(p))) {
       if (auth !== MEMBER) return json(res, 401, {});
       if (!s.features.includes("orgs")) return json(res, 404, { error: "feature_disabled" });
@@ -612,4 +619,121 @@ test("enterprise cancel, card update and retry: managers only, buyer's token, ho
   assert.equal(last.paid_through, paidThrough, "cancellation keeps the paid period");
   assert.equal((await call("POST", `/ent/orgs/${org}/subscription/pause`, { intent_id: "e2".repeat(16) })).status, 404);
   assert.equal((await call("POST", `/ent/orgs/${org}/subscription/cancel`, { intent_id: "e3".repeat(16), extra: 1 })).status, 400);
+});
+
+// ---- Nest packages (Nests Phase B1) -------------------------------------------------------------
+
+const nestCheckout = (call, id, plan = "nest-ai-starter-monthly-usd", extra = {}) =>
+  call("POST", "/v1/nests/checkout", { intent_id: id, plan_code: plan, billing_profile_id: PROFILE, ...extra });
+
+test("nest checkout asks the postbox first, then starts one pp-nest hosted subscription", async (t) => {
+  const { s, call } = await setup(t);
+  const id = intent(901);
+  const r = await nestCheckout(call, id);
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.deepEqual(s.nestIntents, [{ package: "nest.ai.starter.monthly", rail: "web" }]);
+  const start = s.calls.find((c) => c.method === "POST" && c.path === "/v1/integrations/iyzico/subscriptions");
+  assert.equal(start.body.client_reference_id, `pp-nest:${ACCOUNT}:${id}`);
+  assert.equal(start.key, `pp-nest-${id}`);
+  assert.equal(start.body.plan_id, s.edition("nest-ai-starter-monthly-usd").plan_id);
+  assert.equal(start.body.return_url, `https://pigeonpost.dev/account?nest_checkout=${id}`);
+  assert.equal(r.body.amount, "10.00");
+  // A replay of the same intent does not ask again or start a second subscription.
+  const again = await nestCheckout(call, id);
+  assert.equal(again.status, 200);
+  assert.equal(s.nestIntents.length, 1);
+  assert.equal(s.calls.filter((c) => c.method === "POST" && c.path === "/v1/integrations/iyzico/subscriptions").length, 2,
+    "the replay reuses the idempotency key");
+  // Return polling activates from authoritative state, as a Nest entitlement (no names).
+  s.activate(r.body.subscription_id, { days: 30 });
+  const status = await call("GET", `/v1/nests/checkout/${id}`);
+  assert.equal(status.status, 200);
+  assert.equal(status.body.status, "active");
+  const put = s.puts.find((p) => p.reference === r.body.subscription_id);
+  assert.equal(put.body.plan_code, "nest-ai-starter-monthly-usd");
+  assert.equal(put.body.names, null);
+  assert.equal(put.body.seats, null);
+  assert.deepEqual(put.body.subject, { kind: "account", id: ACCOUNT });
+});
+
+test("nest checkout is refused when the postbox refuses: flag off, or funded elsewhere", async (t) => {
+  const { s, call } = await setup(t);
+  for (const [status, error] of [[403, "feature_disabled"], [409, "nest_package_active"], [409, "nest_package_owned"]]) {
+    s.nestRefusal = { status, error };
+    const r = await nestCheckout(call, intent(910 + status));
+    assert.equal(r.status, status);
+    assert.equal(r.body.code, error);
+  }
+  assert.ok(!s.calls.some((c) => c.method === "POST" && c.path === "/v1/integrations/iyzico/subscriptions"),
+    "no provider call after a refusal");
+  // Families never cross.
+  s.nestRefusal = null;
+  assert.equal((await nestCheckout(call, intent(920), "cloud-1names-yearly-usd")).status, 400);
+  assert.equal((await checkout(call, intent(921), "nest-ai-plus-monthly-usd")).status, 400);
+  assert.equal((await nestCheckout(call, intent(922), "nest-ai-pro-monthly-usd")).status, 400, "Pro is not in the catalog");
+});
+
+test("a nest package changes up now and down at renewal, within its currency", async (t) => {
+  const { s, call } = await setup(t);
+  const r = await nestCheckout(call, intent(930), "nest-ai-starter-monthly-eur");
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  s.activate(r.body.subscription_id, { days: 30 });
+  const sub = r.body.subscription_id;
+  const up = await call("POST", `/v1/nests/subscriptions/${sub}/upgrade`, { intent_id: intent(931), plan_code: "nest-ai-plus-monthly-eur" });
+  assert.equal(up.status, 200, JSON.stringify(up.body));
+  assert.equal(up.body.effective, "now");
+  const op = s.calls.filter((c) => c.path.endsWith("/upgrade")).pop();
+  assert.equal(op.body.upgradePeriod, "NOW");
+  assert.equal(op.key, `pp-nest-upgrade-${intent(931)}`);
+  const down = await call("POST", `/v1/nests/subscriptions/${sub}/upgrade`, { intent_id: intent(932), plan_code: "nest-host-starter-monthly-eur" });
+  assert.equal(down.status, 200, JSON.stringify(down.body));
+  assert.equal(down.body.effective, "next_period");
+  for (const plan of ["nest-ai-plus-monthly-usd", "cloud-1names-yearly-eur", "nest-ai-plus-monthly-eur"]) {
+    const bad = await call("POST", `/v1/nests/subscriptions/${sub}/upgrade`, { intent_id: intent(933), plan_code: plan });
+    assert.equal(bad.status, 400, plan);
+  }
+  // A Cloud subscription is not reachable through the Nest routes, nor the reverse.
+  const cloud = await checkout(call, intent(934));
+  assert.equal((await call("GET", `/v1/nests/subscriptions/${cloud.body.subscription_id}`)).status, 404);
+  assert.equal((await call("GET", `/v1/cloud/subscriptions/${sub}`)).status, 404);
+});
+
+test("the reconciler activates closed-tab Nest purchases from pp-nest references", async (t) => {
+  const { s } = await setup(t);
+  const plan = s.edition("nest-ai-plus-monthly-try");
+  const closedTab = uuid(940);
+  s.access = [{ subscription_id: closedTab, tenant_id: "pigeonpost", user_id: uuid(8), keycloak_id: OIDC_SUB, status: "active",
+    plan_id: plan.plan_id, package_slug: "pp-nest-ai-plus", product_slug: "pigeonpost",
+    external_reference: `pp-nest:${ACCOUNT}:${"7".repeat(32)}`, current_period_start: new Date().toISOString(), current_period_end: future(30) },
+  // A nest plan under a cloud reference is not trusted as either.
+  { subscription_id: uuid(941), tenant_id: "pigeonpost", status: "active", plan_id: plan.plan_id, package_slug: "pp-nest-ai-plus",
+    external_reference: `pp-cloud:${ACCOUNT}`, current_period_start: new Date().toISOString(), current_period_end: future(30) }];
+  const dir = mkdtempSync(join(tmpdir(), "pp-nest-rec-"));
+  await spawnBridge(t, {
+    STORE_STATE_DIR: dir,
+    MASAAS_SAAS_API_URL: `http://127.0.0.1:${s.server.address().port}`, PIGEONPOST_POSTBOX_URL: `http://127.0.0.1:${s.server.address().port}`,
+    POSTBOX_INTERNAL_URL: `http://127.0.0.1:${s.server.address().port}`, POSTBOX_SERVICE_TOKEN: SVC.slice(7),
+    SAAS_INTERNAL_TOKEN: SAAS_INTERNAL.slice(7), PIGEONPOST_CATALOG_FILE: s.file, RECONCILE_INTERVAL_MS: "150",
+  });
+  const deadline = Date.now() + 6000;
+  while (!s.puts.some((p) => p.reference === closedTab) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100));
+  const put = s.puts.find((p) => p.reference === closedTab);
+  assert.ok(put, "closed-tab Nest purchase activated");
+  assert.equal(put.body.plan_code, "nest-ai-plus-monthly-try");
+  assert.deepEqual(put.body.subject_check, { oidc_sub: OIDC_SUB });
+  assert.equal(put.body.names, null);
+  await new Promise((r) => setTimeout(r, 400));
+  assert.ok(!s.puts.some((p) => p.reference === uuid(941)), "family and reference must agree");
+});
+
+test("Nest prices are not public; a signed-in account with Nests sees them", async (t) => {
+  const { base, call } = await setup(t);
+  const pub = await fetch(`${base}/api/v1/catalog`).then((x) => x.json());
+  assert.ok(!pub.plans.some((p) => p.family === "nest"), "unapproved prices stay off the public list");
+  const r = await call("GET", "/v1/nests");
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const nests = r.body.prices.plans;
+  assert.equal(nests.length, 9);
+  assert.ok(nests.every((p) => p.slots >= 1 && p.package.startsWith("nest.")));
+  assert.ok(!nests.some((p) => p.code.includes("pro")));
 });

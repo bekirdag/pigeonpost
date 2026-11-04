@@ -1,13 +1,14 @@
 {
  "tenant": "pigeonpost",
- "catalog_version": "2026-11-04",
+ "catalog_version": "2026-11-05",
  "trial_period_days": 0,
  "pricing": {
   "cloud": "USD 8 per name per year, 1-10 names (D-18, matches the App Store)",
   "ent": "USD 6 per seat per month; -10% from 50 seats, -20% from 100, -25% from 200; yearly = 10 x monthly; 500+ seats: contact sales (D-16)",
   "try": "Calendar-year fixed TRY editions. 2026: saas_be USD_ANNUAL_EQUIVALENT formula, opening USD/TRY 42.9229 (TCMB 2025-12-31 ForexSelling), inflation assumption 48.078% (mean December CPI 2021-2025); 2027 (from 2027-01-01 Istanbul): same formula, opening USD/TRY 51.5471 (CBRT Market Participants Survey Oct 2026, end-2026 expectation), projected 2027 depreciation 19.0% (survey 12-month-ahead 59.26), rounded up to clean price points (saas_be price_point CLEAN_9_V1)",
   "storage": "Enterprise: 5 GB per seat, pooled; agent addresses: 10 x seats",
-  "eur": "Fixed EUR editions (2026-11-04, SDS 8.3): the USD unit price at EUR/USD 1.1190 (TCMB bulletin 03.11.2026), rounded up to 0.10 EUR per unit. Cloud EUR 7.20 per name per year; Enterprise EUR 5.40 / 4.90 / 4.30 / 4.10 per seat per month (base / 50+ / 100+ / 200+ seats), yearly = 10 x monthly"
+  "eur": "Fixed EUR editions (2026-11-04, SDS 8.3): the USD unit price at EUR/USD 1.1190 (TCMB bulletin 03.11.2026), rounded up to 0.10 EUR per unit. Cloud EUR 7.20 per name per year; Enterprise EUR 5.40 / 4.90 / 4.30 / 4.10 per seat per month (base / 50+ / 100+ / 200+ seats), yearly = 10 x monthly",
+  "nest": "Nest packages, monthly (Nests Phase B1, 2026-11-05). PROPOSAL pending owner approval: Pigeonpost AI USD 10 / EUR 9.00, Pigeonpost AI Plus USD 25 / EUR 22.40, Empty Nest USD 5 / EUR 4.50 (EUR = USD at 1.1190 rounded up to 0.10); TRY 2026 by the formula without a price point, 2027 with CLEAN_9_V1, like the existing editions"
  },
  "products": {
   "cloud": {
@@ -17,6 +18,10 @@
   "ent": {
    "name": "PP_ENT",
    "provider_product_reference": "132784df-6df6-4940-8195-137e2490ed87"
+  },
+  "nest": {
+   "name": "PP_NEST",
+   "provider_product_reference": null
   }
  },
  "plans": {
@@ -1441,6 +1446,174 @@
      "amount": "1259000.00",
      "plan_id": "f371afe7-d57c-4955-aca9-54ff02be47eb",
      "provider_plan_reference": "651a8288-6919-4987-8423-52991cd9aa76"
+    }
+   }
+  },
+  "nest-ai-starter-monthly-usd": {
+   "family": "nest",
+   "package": "nest.ai.starter.monthly",
+   "slots": 1,
+   "rank": 2,
+   "storage_gb": 5,
+   "interval": "month",
+   "currency": "USD",
+   "package_slug": "pp-nest-ai-starter",
+   "editions": {
+    "2026": {
+     "amount": "10.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "nest-ai-starter-monthly-eur": {
+   "family": "nest",
+   "package": "nest.ai.starter.monthly",
+   "slots": 1,
+   "rank": 2,
+   "storage_gb": 5,
+   "interval": "month",
+   "currency": "EUR",
+   "package_slug": "pp-nest-ai-starter",
+   "editions": {
+    "2026": {
+     "amount": "9.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "nest-ai-starter-monthly-try": {
+   "family": "nest",
+   "package": "nest.ai.starter.monthly",
+   "slots": 1,
+   "rank": 2,
+   "storage_gb": 5,
+   "interval": "month",
+   "currency": "TRY",
+   "package_slug": "pp-nest-ai-starter",
+   "editions": {
+    "2026": {
+     "amount": "511.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    },
+    "2027": {
+     "amount": "559.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "nest-ai-plus-monthly-usd": {
+   "family": "nest",
+   "package": "nest.ai.plus.monthly",
+   "slots": 3,
+   "rank": 3,
+   "storage_gb": 20,
+   "interval": "month",
+   "currency": "USD",
+   "package_slug": "pp-nest-ai-plus",
+   "editions": {
+    "2026": {
+     "amount": "25.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "nest-ai-plus-monthly-eur": {
+   "family": "nest",
+   "package": "nest.ai.plus.monthly",
+   "slots": 3,
+   "rank": 3,
+   "storage_gb": 20,
+   "interval": "month",
+   "currency": "EUR",
+   "package_slug": "pp-nest-ai-plus",
+   "editions": {
+    "2026": {
+     "amount": "22.40",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "nest-ai-plus-monthly-try": {
+   "family": "nest",
+   "package": "nest.ai.plus.monthly",
+   "slots": 3,
+   "rank": 3,
+   "storage_gb": 20,
+   "interval": "month",
+   "currency": "TRY",
+   "package_slug": "pp-nest-ai-plus",
+   "editions": {
+    "2026": {
+     "amount": "1277.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    },
+    "2027": {
+     "amount": "1399.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "nest-host-starter-monthly-usd": {
+   "family": "nest",
+   "package": "nest.host.starter.monthly",
+   "slots": 1,
+   "rank": 1,
+   "storage_gb": 5,
+   "interval": "month",
+   "currency": "USD",
+   "package_slug": "pp-nest-host-starter",
+   "editions": {
+    "2026": {
+     "amount": "5.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "nest-host-starter-monthly-eur": {
+   "family": "nest",
+   "package": "nest.host.starter.monthly",
+   "slots": 1,
+   "rank": 1,
+   "storage_gb": 5,
+   "interval": "month",
+   "currency": "EUR",
+   "package_slug": "pp-nest-host-starter",
+   "editions": {
+    "2026": {
+     "amount": "4.50",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "nest-host-starter-monthly-try": {
+   "family": "nest",
+   "package": "nest.host.starter.monthly",
+   "slots": 1,
+   "rank": 1,
+   "storage_gb": 5,
+   "interval": "month",
+   "currency": "TRY",
+   "package_slug": "pp-nest-host-starter",
+   "editions": {
+    "2026": {
+     "amount": "256.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    },
+    "2027": {
+     "amount": "279.00",
+     "plan_id": null,
+     "provider_plan_reference": null
     }
    }
   }

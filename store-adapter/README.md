@@ -16,8 +16,12 @@ against local fixtures for saas_be and the postbox; nothing calls a real provide
 
 `catalog/pigeonpost-catalog.json` is the approved price list. It holds:
 
-- 84 plan codes: `cloud-<n>names-yearly-<usd|eur|try>` (n = 1–10) and
-  `ent-<seats>-<monthly|yearly>-<usd|eur|try>` (5, 10, 15, 20, 30, 50, 100, 200, 500 seats);
+- 93 plan codes:
+  - `cloud-<n>names-yearly-<usd|eur|try>` (n = 1–10);
+  - `ent-<seats>-<monthly|yearly>-<usd|eur|try>` (5, 10, 15, 20, 30, 50, 100, 200, 500 seats);
+  - `nest-<ai-starter|ai-plus|host-starter>-monthly-<usd|eur|try>`. Their prices are proposals
+    pending owner approval, and their editions have no ids until saas_be provisions them, so they
+    fail closed;
   USD and EUR are fixed prices with one edition (2026) that stays on sale every year; TRY has one
   edition per calendar year;
 - for each code, the editions provisioned in saas_be: pricing year, amount, local plan id and iyzico
@@ -54,6 +58,33 @@ listed here (a new year, a changed price) **fails closed** until someone reviews
    - `card-update` — hosted form;
    - `upgrade` — same product, currency and interval. A plan below the names already registered is
      refused.
+
+**Nest packages** (Nests Phase B1; behind the postbox's `nests` flag)
+
+The same individual flow as Cloud, under `/v1/nests/…`:
+
+- `GET /v1/nests` — the member's Nest subscriptions, the postbox's Nest view, and the Nest prices.
+  `prices` is `null` unless the postbox shows Nests to this account. Nest prices are kept off the
+  public `/v1/catalog` while the owner has not approved them.
+- `POST /v1/nests/checkout {intent_id, plan_code, billing_profile_id, locale}` with a
+  `nest-<ai|host>-<tier>-monthly-<usd|eur|try>` plan. Before any provider call it posts
+  `POST /v1/nest-purchases/intents {package, rail:"web"}` to the postbox with the member's own
+  token. The postbox refuses when:
+  - the flag is off;
+  - a package bought in the App Store or Google Play already funds the account;
+  - the account already holds that package.
+
+  The checkout then runs with `client_reference_id: pp-nest:<account>:<intent>` and returns to
+  `/account?nest_checkout=<intent>`.
+- `GET /v1/nests/checkout/<intent>` reads saas_be's authoritative state and activates the account.
+- `/v1/nests/subscriptions/<id>/{cancel|retry|card-update|upgrade}` manage the subscription:
+  - a larger package applies `NOW`;
+  - a smaller one applies `NEXT_PERIOD`. The postbox pauses Nests above a smaller package; it never
+    deletes them.
+
+The pushed entitlement has the web plan code and no names. The postbox maps it to the package's
+slots, storage and model allowance. The reconciler activates `pp-nest:` references from the access
+list, as it does for Cloud.
 
 **Enterprise** (the Phase 4 portal calls these; exercised by tests now)
 
