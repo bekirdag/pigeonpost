@@ -8,7 +8,8 @@
 // Walks: packages → start wizard (sign-in, organization, billing, summary) → the isolated checkout
 // page (its nonce-only CSP must run the provider's inline script) → checkout return polling → admin
 // People (choose the owner's address, invite someone, copy the shown-once link) → the invitation as
-// the wrong account (masked mismatch) and as the right one (welcome) → Rules (template + test).
+// the wrong account (masked mismatch) and as the right one (welcome) → Rules (template + test) →
+// the same pages in Turkish (D-05) and the switch back to English.
 //
 // Against a real postbox the purchase is skipped: the organization must already be active and
 // ORG_ID owned by TOKEN_OWNER (activate it through the internal entitlement API first). The
@@ -223,7 +224,7 @@ log("portal at", ORIGIN, REAL ? `against postbox ${REAL}` : "with mock postbox")
 
 async function browser(label) {
   const dir = path.join(work, "chrome-" + label);
-  const proc = spawn(CHROME, ["--headless=new", "--remote-debugging-port=0", `--user-data-dir=${dir}`, "--no-first-run", "--no-default-browser-check", "--disable-gpu", ...(process.platform === "linux" ? ["--no-sandbox"] : []), "--window-size=1280,900", "about:blank"], { stdio: "ignore" });
+  const proc = spawn(CHROME, ["--headless=new", "--remote-debugging-port=0", `--user-data-dir=${dir}`, "--no-first-run", "--no-default-browser-check", "--disable-gpu", "--lang=en-US", "--accept-lang=en-US", ...(process.platform === "linux" ? ["--no-sandbox"] : []), "--window-size=1280,900", "about:blank"], { stdio: "ignore" });
   children.push(proc);
   const port = await until(() => { const f = path.join(dir, "DevToolsActivePort"); return existsSync(f) && readFileSync(f, "utf8").split("\n")[0]; }, "chrome start " + label, 20000);
   const target = await until(async () => (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find((t) => t.type === "page"), "page target");
@@ -351,6 +352,17 @@ try {
   await A.click(".sheet button", "Test");
   await until(() => A.text(".sheet").then((t) => t.includes("Delivered")), "rule test result");
   check((await A.text(".sheet")).includes("Known contact"), "test explains the outcome");
+
+  // 8. Turkish (D-05) under the production CSP: the packages page and the rules page.
+  await A.go(`${ORIGIN}/?lang=tr`);
+  await until(() => A.text("h1").then((t) => t === "Ekipler için Pigeonpost"), "packages page in Turkish");
+  await until(() => A.text("#summary").then((t) => t.includes("30 kişi · en fazla 300 ajan adresi")), "Turkish summary");
+  check((await A.where()) === "/", "?lang= removed from the address bar");
+  await A.go(`${ORIGIN}/app/rules`);
+  await until(() => A.text("#content").then((t) => t.includes("Kurallar") && t.includes("Kural ekle")), "rules page in Turkish (remembered)", 15000);
+  check((await A.evaluate("document.documentElement.lang")) === "tr", "html lang is tr");
+  await A.click("#ppe-lang");
+  await until(() => A.text("#content").then((t) => t.includes("Add rule")), "switched back to English", 15000);
 
   for (const b of [A, B]) {
     const bad = b.problems.filter((p) => !/favicon|ERR_NAME_NOT_RESOLVED|inbox-stub|evil\.test|status of 40[13] /.test(p));
