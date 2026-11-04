@@ -1377,7 +1377,7 @@ class Window(MessagesMixin, NotesMixin, PairingMixin, OrgsMixin, CalendarMixin, 
         dialog.connect("response", lambda _, response: action() if response == "confirm" and generation == self.generation else None)
         dialog.present()
 
-    def form_dialog(self, title, placeholder, submitted, initial="", address=False):
+    def form_dialog(self, title, placeholder, submitted, initial="", address=False, suggest=None):
         window, content = self.dialog(title)
         entry = Gtk.Entry(placeholder_text=placeholder, text=initial)
         if address:
@@ -1400,6 +1400,8 @@ class Window(MessagesMixin, NotesMixin, PairingMixin, OrgsMixin, CalendarMixin, 
                     GLib.idle_add(prefix_address, widget)
             entry.connect("changed", schedule_prefix)
         content.append(entry)
+        if suggest:
+            self.attach_suggestions(window, content, entry, suggest)
         error_label = label("", "error", wrap=True)
         content.append(error_label)
         def submit():
@@ -1416,6 +1418,53 @@ class Window(MessagesMixin, NotesMixin, PairingMixin, OrgsMixin, CalendarMixin, 
         entry.connect("activate", lambda _: submit())
         window.present()
         entry.grab_focus()
+        return window
+
+    def attach_suggestions(self, window, content, entry, suggest):
+        """Addresses from the organization directory under the entry (SDS §5.4). Choosing one fills the
+        entry with the handle; nothing is sent until Continue."""
+        holder = box(4)
+        content.append(holder)
+        state = {"timer": None, "picked": None}
+        window.suggestions = holder
+
+        def show(entries, asked=None):
+            if asked is not None and asked != entry.get_text():
+                return
+            clear(holder)
+            for item in entries:
+                shown = item["name"] or display_name(item["handle"])
+                pick = Gtk.Button()
+                pick.add_css_class("flat")
+                inner = box(2)
+                inner.append(label(shown, "pp-peer"))
+                inner.append(label(f"{item['handle']} · {item['org_name']}" + (" · agent" if item["kind"] == "agent" else ""), "dim-label"))
+                pick.set_child(inner)
+                pick.set_tooltip_text("Write to " + item["handle"])
+                pick.update_property([Gtk.AccessibleProperty.LABEL], [f"{shown}, {item['handle']}, {item['org_name']}"])
+                pick.connect("clicked", lambda _, h=item["handle"]: chosen(h))
+                holder.append(pick)
+
+        def chosen(handle):
+            state["picked"] = handle
+            entry.set_text(handle)
+            entry.set_position(-1)
+            clear(holder)
+
+        def ask():
+            state["timer"] = None
+            text = entry.get_text()
+            if text == state["picked"]:
+                return False
+            suggest(text, lambda found, asked=text: show(found, asked))
+            return False
+
+        def changed(_):
+            if state["timer"]:
+                GLib.source_remove(state["timer"])
+            state["timer"] = GLib.timeout_add(250, ask)
+        entry.connect("changed", changed)
+        window.connect("close-request", lambda _: (GLib.source_remove(state["timer"]) if state["timer"] else None, False)[1])
 
     def new_conversation(self):
         if not self.identity:
@@ -1439,7 +1488,8 @@ class Window(MessagesMixin, NotesMixin, PairingMixin, OrgsMixin, CalendarMixin, 
             self.render_all()
             self.restore_draft()
             self.composer.grab_focus()
-        self.form_dialog("New conversation", "/bekir", start, initial="/", address=True)
+        return self.form_dialog("New conversation", "/bekir", start, initial="/", address=True,
+                                suggest=self.org_directory_suggest if self.org_catalog() else None)
 
     def new_subject(self):
         if not self.peer:
@@ -1569,6 +1619,9 @@ class Window(MessagesMixin, NotesMixin, PairingMixin, OrgsMixin, CalendarMixin, 
         current = next((row for row in self.mailboxes if row["address"] == self.identity), None)
         if current:
             content.append(address_row(current.get("handle") or current["address"]))
+            membership = self.org_membership_line(current["address"])
+            if membership:
+                content.append(label(membership, "dim-label"))
         settings_group(content, settings_row("Manage account", "Profile and account details", "avatar-default-symbolic",
                        lambda: self.open_url("https://pigeonpost.dev/account")))
         content.append(button("Sign out", self.sign_out))
