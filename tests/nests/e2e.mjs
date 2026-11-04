@@ -71,7 +71,9 @@ async function replyFrom(e, after, needle) {
   await pb(POSTBOX, "POST", "/v1/ack", e.inbox_token, { message_id: m.message_id }).catch(() => {});
   // A run that failed still replies (saying so): that is a failed test, not an answer.
   if (String(m.body).includes("outcome=failed")) throw new Error(`the Nest reported a failed run: ${String(m.body).slice(-200)}`);
-  if (!String(m.body).includes("model broker")) throw new Error("the reply did not come through the model broker");
+  // The mock upstream's answer names the broker; a real model's does not (set NESTS_E2E_REAL_MODEL=1
+  // and check the broker's settled reservation on the Nests host instead).
+  if (!process.env.NESTS_E2E_REAL_MODEL && !String(m.body).includes("model broker")) throw new Error("the reply did not come through the model broker");
   return m;
 }
 

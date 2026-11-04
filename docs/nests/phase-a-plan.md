@@ -38,7 +38,7 @@ ingestion, tools, or the real mswarm tenant (§7).
                │                                 model broker 10.67.255.1:8788 (user nest-broker)
                │                                              │ reserve → call → settle (SQLite ledger)
                │                                              ▼
-               └──────────────────────────────── mswarm PP tenant → OpenRouter → DeepSeek
+               └──────────────────────────────── mswarm → self-hosted load balancer → qwen-latest-flash-next
                                                  (Phase A: loopback mock until the tenant exists)
 ```
 
@@ -248,6 +248,10 @@ Escape attempts from inside a Nest (uid 10001, no capabilities), all refused:
    `mswarm`, not a dedicated Pigeonpost tenant) as an interim; a dedicated PP tenant key with
    `ip_allowlist: ["193.164.5.238"]` is still the target. The broker enforces operator caps itself
    (`[broker]` `nest_monthly_*_cap`, `global_monthly_*_cap`).
+   **Model (owner decision 2026-11-04):** mswarm's self-hosted load balancer,
+   `/v1/swarm/self-hosted/openai/load-balanced/chat/completions` with the load-balanced alias
+   `mswarm-lb-mcoda-qwen-latest-flash-next-9dcea7b3d996` (cost 0; the pool has one node today).
+   DeepSeek through OpenRouter stays possible by changing `upstream_url` and `model`.
 2. **mswarm gaps to know about:** no per-key model allowlist and no spend ceiling (MASAAS guardrails
    are request counts); responses carry token counts (and `usage.cost_cents`). The broker therefore
    enforces the model, the per-Nest budget and a host-wide monthly token cap itself; a tenant-wide
@@ -261,7 +265,7 @@ Purchase flows (StoreKit, Play, iyzico web) and entitlement from paid packages i
 the Products page with Buy an Inbox / Buy Nests / Services on web, desktop and mobile; native and web
 Nest management (status header, files, usage); plain conversation (today a Nest answers
 `answer_question` request envelopes from the owner's own mailboxes, not free-form chat); file and
-archive ingestion; typed tools and approvals; real mswarm tenant and DeepSeek route promotion;
+archive ingestion; typed tools and approvals; dedicated mswarm tenant and model route review;
 off-host volume backups and restore rehearsal; off-host LUKS unlock; Prometheus metrics; the
 Firecracker/KVM worker and PostgreSQL ledger.
 
