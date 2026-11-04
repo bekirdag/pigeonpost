@@ -55,21 +55,27 @@ fn retention_secs() -> u64 {
 
 /// Who may request AI meeting notes.
 ///
-/// D-17 says summaries are included for enterprise organizations from tier T20 up (an add-on below
-/// that is not built). Production ran with every account eligible before this policy existed, so
-/// the deployment chooses explicitly: `POSTBOX_MEETING_SUMMARIES_ELIGIBILITY=all` keeps that
-/// behaviour; unset, `enterprise`, or anything unrecognised means the D-17 rule. The
-/// `meeting_summaries` feature flag still gates both.
+/// D-17 (owner decision, 2026-11-04): summaries are included in every paid plan and free accounts
+/// are not eligible; there is no add-on. "Paid" is the same rule that gives an account the paid
+/// hosting tier (`Store::tier_of`: an active namespace or any live account entitlement from the
+/// App Store, Google Play, Pigeonpost Cloud on the web, or a grant), plus membership of an active
+/// organization of any size. Production ran with every account eligible before this policy
+/// existed, so the deployment chooses explicitly: `POSTBOX_MEETING_SUMMARIES_ELIGIBILITY=all` keeps
+/// that behaviour, `t20`/`enterprise` keeps the earlier T20 proposal, and unset, `paid`, or anything
+/// unrecognised means the D-17 rule. The `meeting_summaries` feature flag still gates all of them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SummariesPolicy {
     /// Every account the feature flag is on for, 1:1 calls included.
     All,
+    /// D-17: any paid individual plan, or ownership/active membership of an active (or past-due)
+    /// organization.
+    Paid,
     /// Hosts who own or are an active member of an active (or past-due) organization with at least
     /// `min_seats` seats (`POSTBOX_MEETING_SUMMARIES_MIN_SEATS`, default 20 = T20).
     Enterprise { min_seats: i64 },
 }
 
-/// D-17's threshold: tier T20.
+/// The earlier T20 proposal's threshold, still the default for `enterprise`.
 pub(crate) const D17_MIN_SEATS: i64 = 20;
 
 impl SummariesPolicy {
@@ -80,13 +86,14 @@ impl SummariesPolicy {
             .clamp(1, 100_000);
         match policy.map(|v| v.trim().to_ascii_lowercase()).as_deref() {
             Some("all") => Self::All,
-            None | Some("") | Some("enterprise") => Self::Enterprise { min_seats },
+            Some("enterprise") | Some("t20") => Self::Enterprise { min_seats },
+            None | Some("") | Some("paid") => Self::Paid,
             Some(other) => {
                 tracing::warn!(
                     value = other,
-                    "POSTBOX_MEETING_SUMMARIES_ELIGIBILITY not recognised; using the enterprise rule"
+                    "POSTBOX_MEETING_SUMMARIES_ELIGIBILITY not recognised; using the paid rule"
                 );
-                Self::Enterprise { min_seats }
+                Self::Paid
             }
         }
     }
@@ -107,6 +114,7 @@ impl SummariesPolicy {
     fn name(self) -> &'static str {
         match self {
             Self::All => "all",
+            Self::Paid => "paid",
             Self::Enterprise { .. } => "enterprise",
         }
     }
@@ -118,8 +126,15 @@ pub(crate) fn host_eligible(
     policy: SummariesPolicy,
     account: &str,
 ) -> rusqlite::Result<bool> {
-    let SummariesPolicy::Enterprise { min_seats } = policy else {
-        return Ok(true);
+    let min_seats = match policy {
+        SummariesPolicy::All => return Ok(true),
+        SummariesPolicy::Paid => {
+            if crate::store::account_paid_at(c, account, now_unix())? {
+                return Ok(true);
+            }
+            1
+        }
+        SummariesPolicy::Enterprise { min_seats } => min_seats,
     };
     let found: Option<i64> = c
         .query_row(
@@ -136,7 +151,8 @@ pub(crate) fn host_eligible(
     Ok(found.is_some())
 }
 
-/// The refusal a host gets when the policy leaves them out: clients show it as "not included".
+/// The refusal a host gets when the policy leaves them out. Clients show it as "included with
+/// paid plans" (policy `paid`) or "not included in your plan", with a link to the plans screen.
 fn not_included(policy: SummariesPolicy) -> Value {
     let mut v = json!({ "allowed": false, "reason": "not_included", "policy": policy.name() });
     if let SummariesPolicy::Enterprise { min_seats } = policy {

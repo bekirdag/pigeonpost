@@ -1,20 +1,69 @@
-#!/bin/sh
-# /usr/local/sbin/nests-backup — nightly consistent copy of the Nests ledger, kept 14 days.
+#!/bin/bash
+# /usr/local/sbin/nests-backup — nightly Nests backup (nests-1). Design: docs/nests/backups.md.
 #
-# Nest *volumes* are not copied off-host in Phase A: no independent backup storage is defined for
-# Nests yet (docs/nests/phase-a-plan.md §8). When one is, point restic at it with
-# RESTIC_REPOSITORY/RESTIC_PASSWORD_FILE in /etc/nests/backup.env and this script also runs
-# `restic backup` of the ledger copy and each open Nest volume (snapshots are encrypted by restic).
-set -eu
+# 1. A consistent copy of the ledger (sqlite .backup), kept locally for 14 days.
+# 2. When /etc/nests/backup.env exists: one borg archive on the backup target (raijin's HDD, over
+#    the wg-backup tunnel) holding the ledger copy, the per-Nest LUKS key files, the host's Nests
+#    config (never upstream.key) and a raw image of every Nest volume taken from a thin LVM
+#    snapshot. The volume images are the LUKS2 ciphertext, and the whole archive is encrypted again
+#    by borg with a key that exists only on this host and on the owner's Mac.
+# 3. borg prune (14 daily, 8 weekly, 6 monthly). The target serves this host append-only, so a
+#    prune here only marks archives deleted; space comes back when the operator compacts on the
+#    target. A compromised nests-1 therefore cannot destroy history.
+set -euo pipefail
+umask 077
+
 DIR=/var/backups/nests
+STAGE=$DIR/stage
+VG=nests
+MNT=/var/lib/nests/mnt
+KEYS=/var/lib/nests/keys
+
 mkdir -p "$DIR"; chmod 700 "$DIR"
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)
 sqlite3 /var/lib/nests/ledger/nestd.db ".backup '$DIR/nestd-$STAMP.db'"
 chmod 600 "$DIR/nestd-$STAMP.db"
-find "$DIR" -name 'nestd-*.db' -mtime +14 -delete
-if [ -f /etc/nests/backup.env ]; then
-  . /etc/nests/backup.env
-  export RESTIC_REPOSITORY RESTIC_PASSWORD_FILE
-  restic backup --quiet --tag nests "$DIR/nestd-$STAMP.db" /var/lib/nests/mnt
-  restic forget --quiet --tag nests --keep-daily 14 --keep-weekly 8 --prune
-fi
+find "$DIR" -maxdepth 1 -name 'nestd-*.db' -mtime +14 -delete
+
+[ -f /etc/nests/backup.env ] || exit 0
+# BORG_REPO, BORG_RSH, BORG_KEYS_DIR, BORG_PASSCOMMAND, BORG_BASE_DIR (no secrets in the file).
+set -a; . /etc/nests/backup.env; set +a
+
+SNAPS=()
+FROZEN=""
+cleanup() {
+  if [ -n "$FROZEN" ]; then fsfreeze -u "$FROZEN" 2>/dev/null || true; fi
+  for s in "${SNAPS[@]}"; do lvremove -qq -y "$VG/$s" >/dev/null 2>&1 || true; done
+  rm -rf "$STAGE"
+}
+trap cleanup EXIT
+
+# Leftovers from an interrupted run.
+for s in $(lvs --noheadings -o lv_name -S 'lv_name=~^bak-nst_' "$VG" 2>/dev/null); do
+  lvremove -qq -y "$VG/$s" >/dev/null 2>&1 || true
+done
+
+rm -rf "$STAGE"; mkdir -p "$STAGE/keys" "$STAGE/etc"
+cp -a "$DIR/nestd-$STAMP.db" "$STAGE/nestd.db"
+for f in nestd.toml nests.nft control-token.sha256; do
+  [ -f "/etc/nests/$f" ] && cp -a "/etc/nests/$f" "$STAGE/etc/"
+done
+
+PATHS=("$STAGE")
+for lv in $(lvs --noheadings -o lv_name -S 'lv_name=~^nest-nst_' "$VG"); do
+  id=${lv#nest-}
+  [ -f "$KEYS/$id.key" ] || { echo "skip $id: no key" >&2; continue; }
+  cp -a "$KEYS/$id.key" "$STAGE/keys/"
+  # Freeze a mounted (running or open) volume for the instant of the snapshot, so the image is
+  # filesystem-consistent rather than crash-consistent.
+  if mountpoint -q "$MNT/$id"; then FROZEN="$MNT/$id"; fsfreeze -f "$FROZEN"; fi
+  lvcreate -qq -s -kn -ay -n "bak-$id" "$VG/$lv" >/dev/null
+  if [ -n "$FROZEN" ]; then fsfreeze -u "$FROZEN"; FROZEN=""; fi
+  SNAPS+=("bak-$id")
+  PATHS+=("/dev/$VG/bak-$id")
+done
+
+borg create --read-special --compression zstd,3 --stats \
+  "::nests-$STAMP" "${PATHS[@]}"
+borg prune --glob-archives 'nests-*' --keep-daily 14 --keep-weekly 8 --keep-monthly 6
+echo "nests-backup: archive nests-$STAMP, ${#SNAPS[@]} volume(s)"

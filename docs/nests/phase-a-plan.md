@@ -14,8 +14,9 @@ adapts it to the only Nests host that exists, and records what was measured ther
   trait (`crates/pigeonpost-nests/src/sandbox.rs`), so a Firecracker/KVM worker replaces it without
   touching the control plane, the ledger or the postbox contract.
 - Free/open-source only: podman, crun, netavark (Apache-2.0), gVisor (Apache-2.0), LVM2/cryptsetup
-  (GPL-2.0), nftables (GPL-2.0), WireGuard (GPL-2.0), SQLite (public domain), restic (BSD-2).
-- Never on raijin or the postbox host. The postbox host only gained a WireGuard peer.
+  (GPL-2.0), nftables (GPL-2.0), WireGuard (GPL-2.0), SQLite (public domain), BorgBackup (BSD-3).
+- Never on raijin or the postbox host. The postbox host only gained a WireGuard peer; raijin only
+  holds the append-only backup endpoint ([backups.md](backups.md)).
 
 Phase A delivers: lifecycle (create, provision, start, pause, resume, stop, wake, delete), a durable
 run/lease/usage ledger, idle stop, reconcile after reboot, the runner image, the model broker with
@@ -37,7 +38,7 @@ ingestion, tools, or the real mswarm tenant (§7).
                │                                 model broker 10.67.255.1:8788 (user nest-broker)
                │                                              │ reserve → call → settle (SQLite ledger)
                │                                              ▼
-               └──────────────────────────────── mswarm PP tenant → OpenRouter → DeepSeek
+               └──────────────────────────────── mswarm → self-hosted load balancer → qwen-latest-flash-next
                                                  (Phase A: loopback mock until the tenant exists)
 ```
 
@@ -226,9 +227,10 @@ Escape attempts from inside a Nest (uid 10001, no capabilities), all refused:
   Mail to an idle-stopped Nest wakes it (postbox → `POST /v1/nests/{id}/wake`, debounced 10 s).
 - Logs: journald capped at 1 GiB/30 days; container logs 1 MB each; no prompt or answer text is
   logged by the broker, the mock or nestd.
-- Backups: nightly ledger copy kept 14 days in `/var/backups/nests`. **No independent backup storage
-  is defined for Nest volumes yet**; `nests-backup` runs restic (encrypted) when
-  `/etc/nests/backup.env` names a repository. Until then a Nest's files exist only on nests-1.
+- Backups (since 2026-11-04): nightly borg archive of the ledger, the LUKS keys and every Nest
+  volume's ciphertext image to raijin's HDD over a dedicated WireGuard tunnel, append-only on the
+  target, key held on nests-1 and the owner's Mac only; restore rehearsed. Design and procedures:
+  [backups.md](backups.md). The local 14-day ledger copy in `/var/backups/nests` remains.
 - Hardening kept: key-only SSH, ufw deny-in (+ the three Nest flows), fail2ban, unattended upgrades.
   `runsc` is held at `release-20261102.0` from gVisor's signed repository (key `6F1D F85E 3A71 C249
   18E7 27D5 6FC6 D554 E32B D943`); base images are pinned by digest in the Containerfile.
@@ -242,11 +244,19 @@ Escape attempts from inside a Nest (uid 10001, no capabilities), all refused:
    on so it is durable. Put the returned key in `/etc/nests/upstream.key`, set `upstream_url =
    "https://api.mswarm.org/v1/chat/completions"`, stop the mock. Do not use a trusted
    `MSWARM_API_KEYS` entry: those can act for other tenants.
+   **2026-11-04:** the broker now runs against real mswarm with the owner's own mswarm key (tenant
+   `mswarm`, not a dedicated Pigeonpost tenant) as an interim; a dedicated PP tenant key with
+   `ip_allowlist: ["193.164.5.238"]` is still the target. The broker enforces operator caps itself
+   (`[broker]` `nest_monthly_*_cap`, `global_monthly_*_cap`).
+   **Model (owner decision 2026-11-04):** mswarm's self-hosted load balancer,
+   `/v1/swarm/self-hosted/openai/load-balanced/chat/completions` with the load-balanced alias
+   `mswarm-lb-mcoda-qwen-latest-flash-next-9dcea7b3d996` (cost 0; the pool has one node today).
+   DeepSeek through OpenRouter stays possible by changing `upstream_url` and `model`.
 2. **mswarm gaps to know about:** no per-key model allowlist and no spend ceiling (MASAAS guardrails
-   are request counts); callers get token counts but no cost. The broker therefore enforces the model
-   and the token budget itself; a tenant-wide monetary cap must be set on the OpenRouter/MASAAS side.
-3. **Backup target** for Nest volumes (any Wodo-controlled storage reachable from nests-1), so
-   restic can run.
+   are request counts); responses carry token counts (and `usage.cost_cents`). The broker therefore
+   enforces the model, the per-Nest budget and a host-wide monthly token cap itself; a tenant-wide
+   monetary cap must still be set on the OpenRouter/MASAAS side.
+3. ~~Backup target~~ — done 2026-11-04: raijin's HDD ([backups.md](backups.md)).
 4. **The real RAM reservation** of the VM from the provider (ballooning, §5).
 
 ## 8. Phase B (not in Phase A)
@@ -255,7 +265,7 @@ Purchase flows (StoreKit, Play, iyzico web) and entitlement from paid packages i
 the Products page with Buy an Inbox / Buy Nests / Services on web, desktop and mobile; native and web
 Nest management (status header, files, usage); plain conversation (today a Nest answers
 `answer_question` request envelopes from the owner's own mailboxes, not free-form chat); file and
-archive ingestion; typed tools and approvals; real mswarm tenant and DeepSeek route promotion;
+archive ingestion; typed tools and approvals; dedicated mswarm tenant and model route review;
 off-host volume backups and restore rehearsal; off-host LUKS unlock; Prometheus metrics; the
 Firecracker/KVM worker and PostgreSQL ledger.
 

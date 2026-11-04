@@ -1,0 +1,12 @@
+# /etc/wireguard/wg-nestsbak.conf on raijin. raijin is behind NAT, so it dials nests-1 and keeps
+# the tunnel open; nests-1 never needs a route into raijin's LAN. AllowedIPs is the one /32.
+[Interface]
+Address = 10.68.0.2/30
+PostUp = wg set %i private-key /etc/wireguard/nestsbak.key
+
+[Peer]
+# nests-1
+PublicKey = <nests-1 wg-backup public key>
+Endpoint = 193.164.5.238:51821
+AllowedIPs = 10.68.0.1/32
+PersistentKeepalive = 25

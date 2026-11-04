@@ -107,6 +107,29 @@ pub struct BrokerConfig {
     /// Upstream timeout. A timeout after the request was sent is "outcome unknown", not zero cost.
     #[serde(default = "default_upstream_timeout")]
     pub upstream_timeout_secs: u64,
+    /// Operator spend caps (monthly tokens). A Nest's allowance is the lower of what the postbox
+    /// granted and `nest_monthly_*_cap`; all Nests together may not exceed `global_monthly_*_cap`
+    /// (counting reservations in flight and unknown-outcome requests). Unset means no cap.
+    #[serde(default)]
+    pub nest_monthly_input_cap: Option<u64>,
+    #[serde(default)]
+    pub nest_monthly_output_cap: Option<u64>,
+    #[serde(default)]
+    pub global_monthly_input_cap: Option<u64>,
+    #[serde(default)]
+    pub global_monthly_output_cap: Option<u64>,
+}
+
+impl BrokerConfig {
+    pub fn caps(&self) -> crate::db::Caps {
+        let c = |v: Option<u64>| v.map(|n| i64::try_from(n).unwrap_or(i64::MAX));
+        crate::db::Caps {
+            nest_input: c(self.nest_monthly_input_cap),
+            nest_output: c(self.nest_monthly_output_cap),
+            global_input: c(self.global_monthly_input_cap),
+            global_output: c(self.global_monthly_output_cap),
+        }
+    }
 }
 
 fn default_idle() -> u64 {
@@ -172,6 +195,19 @@ impl Config {
         }
         if self.broker.max_output_tokens == 0 || self.broker.max_input_tokens == 0 {
             return Err("broker token caps must be positive".into());
+        }
+        for cap in [
+            self.broker.nest_monthly_input_cap,
+            self.broker.nest_monthly_output_cap,
+            self.broker.global_monthly_input_cap,
+            self.broker.global_monthly_output_cap,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if cap == 0 {
+                return Err("broker monthly caps must be positive (omit one for no cap)".into());
+            }
         }
         // The control API must never listen on every interface.
         for bind in [&self.control.bind, &self.broker.bind] {
@@ -255,6 +291,10 @@ pub(crate) fn test_config(dir: &std::path::Path) -> Config {
             max_input_tokens: 4000,
             max_output_tokens: 500,
             upstream_timeout_secs: 5,
+            nest_monthly_input_cap: None,
+            nest_monthly_output_cap: None,
+            global_monthly_input_cap: None,
+            global_monthly_output_cap: None,
         },
     }
 }

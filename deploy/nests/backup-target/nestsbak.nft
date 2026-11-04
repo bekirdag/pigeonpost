@@ -1,0 +1,32 @@
+#!/usr/sbin/nft -f
+# /etc/nestsbak/nestsbak.nft on raijin — confines the Nests backup tunnel (wg-nestsbak).
+# Over the tunnel nests-1 may reach exactly 10.68.0.2:2222 (the dedicated borg sshd). Nothing else
+# on raijin — the main sshd, Docker-published ports, any 0.0.0.0 listener — and nothing routed
+# through raijin. raijin opens nothing towards nests-1. Drops in a base chain are final, so
+# Docker's own rules cannot widen this. Only the wg-nestsbak interface is affected.
+table inet nestsbak
+delete table inet nestsbak
+
+table inet nestsbak {
+	chain input {
+		type filter hook input priority -10; policy accept;
+		ip daddr 10.68.0.0/30 iifname != { "wg-nestsbak", "lo" } counter drop comment "tunnel addresses only via the tunnel"
+		iifname != "wg-nestsbak" return
+		ct state established,related return
+		ip saddr 10.68.0.1 ip daddr 10.68.0.2 tcp dport 2222 ct state new return
+		counter drop comment "wg-nestsbak: only borg ssh from nests-1"
+	}
+
+	chain forward {
+		type filter hook forward priority -10; policy accept;
+		iifname "wg-nestsbak" counter drop
+		oifname "wg-nestsbak" counter drop
+	}
+
+	chain output {
+		type filter hook output priority -10; policy accept;
+		oifname != "wg-nestsbak" return
+		ct state established,related return
+		counter drop comment "raijin initiates nothing over the tunnel"
+	}
+}

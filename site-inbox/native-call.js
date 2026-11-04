@@ -49,6 +49,8 @@
       return renewing;
     },
     mailbox: () => me,
+    // D-17: the app opens its own plans screen (App Store, Play, or the web account page).
+    openPlans: () => tell({ type: "open_plans" }),
     peer: () => peer,
     knownPeer: (key) => Boolean(key && Object.prototype.hasOwnProperty.call(names, key)),
     // The app's name for a peer (a contact alias or its own derived name), else the shared rule.

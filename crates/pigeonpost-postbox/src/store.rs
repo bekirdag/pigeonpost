@@ -52,6 +52,15 @@ pub use filtering::{
 };
 pub use googleplay::GoogleBinding;
 pub(crate) use groups::append_event;
+
+/// Whether `account` is on a paid individual plan at `now`: the same rule as the paid hosting tier
+/// (`Store::tier_of`). Org seats are not included; callers that count them check `orgs` too.
+pub(crate) fn account_paid_at(c: &Connection, account: &str, now: u64) -> rusqlite::Result<bool> {
+    entitlements::paid(c, account, now).map_err(|e| match e {
+        StoreError::Sqlite(e) => e,
+        other => rusqlite::Error::ToSqlConversionFailure(Box::new(other)),
+    })
+}
 #[cfg(test)]
 use lifecycle::AppleRefresh;
 pub use msgactions::{DeliveryWrite, MessageMeta, ReceiptKind, RefRow};
