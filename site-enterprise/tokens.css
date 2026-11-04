@@ -36,7 +36,7 @@
      blue, which is what the mockup's Send button does. */
   --on-accent: #ffffff;
   --green: #22c55e;
-  --tick-seen: #15a34a;
+  --tick-seen: #1E8A50;
   --amber: #8a5208;
   --ink: #12161c;
   --body: #343c47;
@@ -195,7 +195,7 @@
     --accent-fill-hover: #a5c5ff;
     --on-accent: #0d0f12;
     --green: #7dd3a0;
-    --tick-seen: #4ade80;
+    --tick-seen: #7DD3A0;
     --amber: #f0b860;
     --ink: #e8eaed;
     --body: #d7dce3;
@@ -329,7 +329,7 @@
   --accent-fill-hover: #a5c5ff;
   --on-accent: #0d0f12;
   --green: #7dd3a0;
-  --tick-seen: #4ade80;
+  --tick-seen: #7DD3A0;
   --amber: #f0b860;
   --ink: #e8eaed;
   --body: #d7dce3;

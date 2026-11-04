@@ -116,7 +116,7 @@ try {
   check("The browser receives the app's audio", audioIn(b)?.bps > 0 || audioIn(b)?.received > 0, audioIn(b));
   check("The app receives the browser's video", videoIn(a)?.decoded > 0, videoIn(a));
   check("The browser receives the app's camera", videoIn(b)?.decoded > 0, videoIn(b));
-  check("Both ends show the same security code", a.peers[0]?.security?.code && a.peers[0].security.code === b.peers[0]?.security?.code, a.peers[0]?.security?.code);
+  check("Both ends show the same security code", a.peers[0]?.security?.code && /^\d{4} \d{4} \d{4}$/.test(a.peers[0].security.code) && a.peers[0].security.code === b.peers[0]?.security?.code, a.peers[0]?.security?.code);
   if (!simulate) {
     check("The microphone and camera were granted by the app's permission handler", logged("Call permission Microphone: allowed") > 0 && logged("Call permission Camera: allowed") > 0);
     check("Call buttons are disabled while a call is showing", buttonEnabled("Video call") === false && buttonEnabled("Voice call") === false);
@@ -219,7 +219,7 @@ try {
   result.scheduled = { app: a.peers.map(p => ({ connected: p.connected, receiving: p.stats?.receiving, sas: p.security?.code })), browser: b.peers.map(p => ({ connected: p.connected, receiving: p.stats?.receiving, sas: p.security?.code })) };
   check("Scheduled native and browser participants receive audio both ways", (audioIn(a)?.bps > 0 || audioIn(a)?.received > 0) && (audioIn(b)?.bps > 0 || audioIn(b)?.received > 0));
   check("Scheduled native and browser participants receive video both ways", videoIn(a)?.decoded > 0 && videoIn(b)?.decoded > 0);
-  check("Scheduled participants show the same security code", a.peers[0]?.security?.code && a.peers[0].security.code === b.peers[0]?.security?.code);
+  check("Scheduled participants show the same security code", a.peers[0]?.security?.code && /^\d{4} \d{4} \d{4}$/.test(a.peers[0].security.code) && a.peers[0].security.code === b.peers[0]?.security?.code);
   capture("scheduled-call-connected.png");
   await A.evaluate("document.getElementById('call-end-all').click()");
   await until(async () => mode() === "hidden" && !(await inspect(B)).room, 15000, 200, "the host to end the scheduled meeting");

@@ -1231,6 +1231,7 @@
         t.messages.push({
           kind: "out",
           id: m.message_id,
+          stored: true, // the postbox holds this copy, so it can be deleted (not a pending send)
           at: m.sent_at || m.received_at,
           body: m.body,
           status: "sent",
@@ -1245,6 +1246,7 @@
         kind: "in",
         thread_id: m.thread_id,
         id: m.message_id,
+        stored: true,
         at: m.received_at,
         body: m.body,
         read: m.read,
@@ -1968,6 +1970,42 @@
     $("compose").dispatchEvent(new Event("input"));
   }
 
+  // Delete one message (SDS §14C.7): `POST /v1/messages/delete` removes this mailbox's copy, and
+  // every edited version of it, for good. The other side keeps theirs and is not told.
+  let deletingMessage = null;
+  function askDeleteMessage(m) {
+    if (!m?.stored || !m.id) return;
+    deletingMessage = { context: mailboxContext(), id: m.id };
+    $("delete-message-detail").textContent = (m.edit_count ? "This message and its earlier versions are" : "This message is")
+      + " removed from this mailbox. The other person keeps their copy.";
+    $("delete-message-error").hidden = true;
+    $("delete-message-confirm").disabled = false;
+    openSheet("delete-message-sheet");
+    $("delete-message-cancel").focus();
+  }
+  async function deleteOneMessage() {
+    const target = deletingMessage, button = $("delete-message-confirm");
+    if (!target?.context.current() || button.disabled) return;
+    button.disabled = true;
+    try {
+      await api("/v1/messages/delete", { method: "POST", body: { message_id: target.id, identity: target.context.address }, signal: target.context.signal });
+      if (!target.context.current()) return;
+      state.inbound = state.inbound.filter(m => m.message_id !== target.id);
+      state.filtered = state.filtered.filter(m => m.message_id !== target.id);
+      state.acceptedInboxRequest = ++state.inboxRequest;
+      if (deletingMessage === target) { deletingMessage = null; closeSheet("delete-message-sheet"); }
+      render();
+      toast("Message deleted.");
+      await loadAll();
+    } catch (e) {
+      if (!target.context.current() || deletingMessage !== target) return;
+      $("delete-message-error").textContent = "Could not delete this message. " + (e?.message || "Please try again.");
+      $("delete-message-error").hidden = false;
+    } finally {
+      if (target.context.current() && deletingMessage === target) button.disabled = false;
+    }
+  }
+
   let deletingThread = null;
   function askDeleteThread() {
     const thread = currentSubthread(state.openPeer);
@@ -2414,6 +2452,7 @@
     item("Copy", () => navigator.clipboard?.writeText(copyTextOf(m)).catch(() => {}));
     if (editable(m, Date.now() / 1000, flags)) item("Edit", () => startEdit(m));
     if (live && actionsOn()) item("Info", () => openMessageInfo(m));
+    if (m.stored && m.id) item("Delete", () => askDeleteMessage(m));
     if (m.kind === "in" && m.id) item("Report", () => reportMessage(m));
     if (m.kind === "in" && state.openPeer) item("Block sender", () => askBlock({ peer: state.openPeer, name: $("peer-name").textContent, origin: "message", messageId: m.id }));
     menu.hidden = false;
@@ -4259,6 +4298,9 @@
     $("delete-thread-confirm").onclick = deleteThread;
     $("delete-thread-cancel").onclick = () => closeSheet("delete-thread-sheet");
     wireSheet("delete-thread-sheet");
+    $("delete-message-confirm").onclick = deleteOneMessage;
+    $("delete-message-cancel").onclick = () => closeSheet("delete-message-sheet");
+    wireSheet("delete-message-sheet");
     wireColumns();
 
     for (const input of document.querySelectorAll('#theme-choice input[name="theme"]')) {

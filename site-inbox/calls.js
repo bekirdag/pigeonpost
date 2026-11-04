@@ -1419,9 +1419,11 @@
       return;
     }
     const [a, b] = [mine, theirs].sort();
-    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode("pigeonpost-call-sas-v1\n" + a + "\n" + b));
-    const code = String(new DataView(digest).getUint32(0) % 1_000_000).padStart(6, "0");
-    p.security = { code: code.slice(0, 3) + " " + code.slice(3), checked: presented ? true : null };
+    // Twelve digits in groups of four, the same length and shape as the large-call (media server)
+    // code, so a person reads one kind of code whichever way the call is carried.
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode("pigeonpost-call-sas-v2\n" + a + "\n" + b));
+    const code = String(new DataView(digest).getBigUint64(0) % 1_000_000_000_000n).padStart(12, "0");
+    p.security = { code: code.slice(0, 4) + " " + code.slice(4, 8) + " " + code.slice(8), checked: presented ? true : null };
     renderStage();
     renderPeople();
   }

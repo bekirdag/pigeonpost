@@ -278,7 +278,8 @@ const DETAILS = `(async () => {
   if (d.left < -0.5 || d.top < -0.5 || d.right > innerWidth + 0.5 || d.bottom > innerHeight + 0.5) problems.push("details cut off by the window");
   for (const other of ui.querySelectorAll(".call-top-right button, .call-back")) if (other.offsetWidth && hit(d, rect(other))) problems.push("details cover " + (other.getAttribute("aria-label") || other.id));
   const code = document.getElementById("call-sas");
-  const shown = { code: Boolean(code && !code.hidden && code.offsetHeight), handle: document.getElementById("call-handle").textContent, quality: document.getElementById("call-quality").textContent };
+  const codes = [document.getElementById("call-sas-code"), ...(code ? code.querySelectorAll("li strong") : [])].map((e) => (e && e.textContent || "").trim()).filter(Boolean);
+  const shown = { code: Boolean(code && !code.hidden && code.offsetHeight), codes, handle: document.getElementById("call-handle").textContent, quality: document.getElementById("call-quality").textContent };
   return { problems, shown };
 })()`;
 const CLOSE_DETAILS = `(async () => {
@@ -375,6 +376,8 @@ try {
         await p.shot(path.join(OUT, name + "-details.png"));
         const closed = await p.evaluate(CLOSE_DETAILS);
         if (!details.shown?.code) details.problems.push("no security code in the details");
+        else if (!details.shown.codes?.length) details.problems.push("the security code is empty");
+        for (const shown of details.shown?.codes || []) if (!/^\d{4} \d{4} \d{4}$/.test(shown)) details.problems.push(`the security code is not 12 digits in groups of four: ${shown}`);
         for (const problem of [...details.problems, ...closed]) { failures.push(`${name}: ${problem}`); m.problems.push(problem); }
       }
     }

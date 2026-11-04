@@ -285,12 +285,12 @@ test("right-click opens the full list", async t => {
   await a.open();
   a.row("in-1").querySelector(".bubble").dispatchEvent(new a.w.MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }));
   assert.equal(a.$("msg-menu").hidden, false);
-  assert.deepEqual([...a.$("msg-menu").querySelectorAll("button")].map(b => b.textContent), ["Reply", "Copy", "Info", "Report", "Block sender"]);
+  assert.deepEqual([...a.$("msg-menu").querySelectorAll("button")].map(b => b.textContent), ["Reply", "Copy", "Info", "Delete", "Report", "Block sender"]);
   [...a.$("msg-menu").querySelectorAll("button")][0].click();
   assert.equal(a.$("msg-menu").hidden, true);
   assert.equal(a.$("compose-context").hidden, false);
   a.row("out-1").querySelector(".bubble").dispatchEvent(new a.w.MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
-  assert.deepEqual([...a.$("msg-menu").querySelectorAll("button")].map(b => b.textContent), ["Reply", "Copy", "Edit", "Info"]);
+  assert.deepEqual([...a.$("msg-menu").querySelectorAll("button")].map(b => b.textContent), ["Reply", "Copy", "Edit", "Info", "Delete"]);
 });
 
 test("acks carry with_edits; the read-receipts setting saves", async t => {
@@ -317,4 +317,52 @@ test("the stylesheet keeps the gear still under reduced motion and shows the row
   assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{\s*\.ticks-working svg \{ animation: none; \}\s*\.ticks-word \{ display: inline; \}/);
   assert.match(css, /@media \(hover: none\) \{\s*\.msg-actions \{ opacity: 1;/);
   assert.match(css, /\.messages > li:hover \.msg-actions,\s*\.messages > li:focus-within \.msg-actions \{ opacity: 1; \}/);
+});
+
+test("Delete removes one message after confirming, and shows errors", async t => {
+  const a = await app(t);
+  const prev = a.w.fetch;
+  let n = 0;
+  a.w.fetch = async (url, opts = {}) => {
+    const parsed = new URL(url, "https://postbox.pigeonpost.dev");
+    const path = parsed.pathname, method = opts.method || "GET";
+    const body = typeof opts.body === "string" ? JSON.parse(opts.body) : null;
+    if (path === "/v1/messages/delete" && method === "POST") {
+      a.server.calls.push({ path, method, body });
+      n++;
+      if (n === 1) return response({ error: { code: "store_error", message: "Try later" } }, 500);
+      const messages = a.server.mailboxes[OWNER].messages;
+      const idx = messages.findIndex(m => m.message_id === "out-2");
+      if (idx !== -1) messages.splice(idx, 1);
+      return response({ deleted: true });
+    }
+    return prev(url, opts);
+  };
+  await a.open();
+  a.row("out-2").querySelector(".bubble").dispatchEvent(new a.w.MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+  const del = [...a.$("msg-menu").querySelectorAll("button")].find(b => b.textContent === "Delete");
+  assert.ok(del, "the menu offers Delete");
+  del.click();
+  assert.equal(a.$("delete-message-sheet").hidden, false);
+  assert.match(a.$("delete-message-detail").textContent, /earlier versions/);
+  assert.match(a.$("delete-message-detail").textContent, /other person keeps their copy/);
+
+  a.$("delete-message-confirm").click();
+  await until(() => !a.$("delete-message-error").hidden, "the failure is shown");
+  assert.ok(a.row("out-2"), "a failed delete keeps the message");
+
+  a.$("delete-message-confirm").click();
+  await until(() => !a.row("out-2"), "the message is removed");
+  assert.equal(a.$("delete-message-sheet").hidden, true);
+  assert.ok(a.row("out-1"), "only that message goes");
+  const calls = a.called("/v1/messages/delete", "POST");
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[1].body, { message_id: "out-2", identity: OWNER });
+});
+
+test("received mail can be deleted from this mailbox too", async t => {
+  const a = await app(t);
+  await a.open();
+  a.row("in-1").querySelector(".bubble").dispatchEvent(new a.w.MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+  assert.ok([...a.$("msg-menu").querySelectorAll("button")].some(b => b.textContent === "Delete"), "received mail can be deleted from this mailbox");
 });
