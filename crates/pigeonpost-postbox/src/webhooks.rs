@@ -686,10 +686,15 @@ pub(crate) fn create_in(
         )
     })?;
     let id = org::new_id("wh");
+    // `created_at` is read from SQLite's clock, not `now`. Fan-out sends an event only to webhooks
+    // created no later than it, and the event triggers stamp events with SQLite's clock. On Windows
+    // that clock is the coarse system time (about 16 ms steps) while `now_unix` is the precise one,
+    // so near a second boundary a `now` stamp can be a second ahead of an event recorded right
+    // after it, and that event was silently never delivered. One clock keeps the order.
     tx.execute(
         "INSERT INTO webhooks (id, org_id, url, events, description, secret_sealed, created_by, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-        params![id, org_id, h.url, json!(h.events).to_string(), h.description, sealed, by.label, now as i64],
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, CAST(strftime('%s','now') AS INTEGER))",
+        params![id, org_id, h.url, json!(h.events).to_string(), h.description, sealed, by.label],
     )?;
     org::audit_in(
         tx,

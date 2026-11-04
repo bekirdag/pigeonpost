@@ -506,6 +506,49 @@ async fn dns_rebinding_after_registration_is_blocked_at_delivery() {
 }
 
 #[tokio::test]
+async fn an_event_right_after_registration_reaches_the_webhook_whatever_the_app_clock_says() {
+    // The event triggers stamp events with SQLite's clock. Register the webhook with the app's
+    // clock a few seconds ahead of it (as a precise clock is, just past a second boundary, of a
+    // coarse one), and the member invited right afterwards must still be delivered.
+    let dns = Dns::default();
+    dns.set("hooks.test.example", &["127.0.0.1"]);
+    let rx = Receiver::start(&[]).await;
+    let (srv, owner, org) = setup_with(&dns, true, None).await;
+    let url = rx.url("hooks.test.example");
+    let (vault, auditor, org_id) = (
+        srv.state.vault.clone(),
+        srv.state.auditor.clone(),
+        org.clone(),
+    );
+    let hook = sql(&srv, move |tx| {
+        let by = webhooks::By {
+            kind: crate::audit::ActorKind::ApiKey,
+            actor: "key_clock",
+            label: "key_clock",
+            ip: None,
+        };
+        let new = webhooks::NewHook {
+            url,
+            events: vec!["member.invited".into()],
+            description: None,
+        };
+        Ok(
+            webhooks::create_in(tx, &vault, &auditor, &org_id, &new, &by, now_unix() + 5)
+                .map(|(id, _)| id)
+                .ok(),
+        )
+    })
+    .await
+    .expect("the webhook is created");
+    invite(&srv, &org, &owner, "clock").await;
+    assert_eq!(webhooks::tick(&srv.state, now_unix()).await.unwrap(), 1);
+    let log = deliveries(&srv, &org, &owner, &hook).await;
+    assert_eq!(log.len(), 1);
+    assert_eq!(log[0]["status"], "delivered", "{}", log[0]);
+    assert_eq!(rx.hits().len(), 1);
+}
+
+#[tokio::test]
 async fn redirects_are_never_followed() {
     let dns = Dns::default();
     dns.set("hooks.test.example", &["127.0.0.1"]);
