@@ -105,6 +105,38 @@ final class ComposerTests: XCTestCase {
         XCTAssertTrue(app.buttons["Copy message"].firstMatch.exists)
     }
 
+    /// docs/message-actions.md §6: the row below the bubble is icon-only — received → copy,
+    /// reply; sent → edit (while editable), copy — and Info is not in it.
+    func testActionRowOrderAndContents() {
+        let app = actionApp()
+        let reply = revealAction("message-reply:m_reply", in: app)
+        let receivedCopy = app.buttons["message-copy:m_reply"]
+        XCTAssertTrue(receivedCopy.exists)
+        XCTAssertEqual(receivedCopy.label, "Copy message")
+        XCTAssertEqual(reply.label, "Reply")
+        XCTAssertLessThan(receivedCopy.frame.minX, reply.frame.minX, "received: copy, then reply")
+        XCTAssertEqual(receivedCopy.frame.midY, reply.frame.midY, accuracy: 2, "one row")
+        XCTAssertFalse(app.buttons["message-edit:m_reply"].exists, "a received message cannot be edited")
+        XCTAssertLessThan(reply.frame.height, 45, "compact on touch")
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "native-action-row-received"
+        shot.lifetime = .keepAlways
+        add(shot)
+
+        let edit = revealAction("message-edit:m_out2", in: app)
+        let sentCopy = app.buttons["message-copy:m_out2"]
+        XCTAssertTrue(sentCopy.exists)
+        XCTAssertEqual(edit.label, "Edit message")
+        XCTAssertLessThan(edit.frame.minX, sentCopy.frame.minX, "sent: edit, then copy")
+        XCTAssertFalse(app.buttons["message-reply:m_out2"].exists, "a sent message's row has no reply")
+        XCTAssertTrue(app.buttons["message-info:m_out2"].exists, "info is behind the time, not in the row")
+        XCTAssertFalse(app.buttons.matching(NSPredicate(format: "label == %@", "Info")).firstMatch.exists)
+        let sent = XCTAttachment(screenshot: app.screenshot())
+        sent.name = "native-action-row-sent"
+        sent.lifetime = .keepAlways
+        add(sent)
+    }
+
     func testReceiptAndAgentStatusesAreAccessible() {
         let app = actionApp(features: "receipts,agent_status", statusFixtures: true)
         let seen = app.descendants(matching: .any)["message-receipt:action-seen"]
@@ -117,6 +149,8 @@ final class ComposerTests: XCTestCase {
         XCTAssertTrue(failed.exists)
         XCTAssertEqual(failed.label, "Agent run failed")
         XCTAssertFalse(app.descendants(matching: .any)["message-receipt:action-working"].exists)
+        // The tick and gear marks open message info, as the time does; the row carries no Info.
+        XCTAssertFalse(app.buttons.matching(NSPredicate(format: "label == %@", "Info")).firstMatch.exists)
         let shot = XCTAttachment(screenshot: app.screenshot())
         shot.name = "native-receipt-and-agent-status"
         shot.lifetime = .keepAlways
@@ -319,6 +353,9 @@ private func focusComposer(_ app: XCUIApplication, _ field: XCUIElement, file: S
         if app.keyboards.firstMatch.waitForExistence(timeout: 2) { break }
     }
     XCTAssertTrue(app.keyboards.firstMatch.exists, "composer never accepted keyboard focus", file: file, line: line)
+    // The keyboard can be up a moment before the field owns it; keys sent then are lost.
+    let focused = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hasKeyboardFocus == true"), object: field)
+    XCTAssertEqual(XCTWaiter.wait(for: [focused], timeout: 3), .completed, "the composer owns the keyboard", file: file, line: line)
 }
 
 /// A form field in a sheet can miss the first tap while the sheet is still settling.

@@ -14,6 +14,48 @@ struct MessageActionButtonStyle: ButtonStyle {
     }
 }
 
+/// Which button in a message's action row has keyboard focus, if any.
+enum MessageActionFocus: Hashable { case edit, copy, reply }
+
+/// An 18 pt line icon for the action row below a message (docs/message-actions.md §6).
+struct MessageActionIcon: View {
+    let systemImage: String
+
+    var body: some View {
+        Image(systemName: systemImage)
+            .font(.system(size: 15, weight: .regular))
+            .frame(width: 18, height: 18)
+    }
+}
+
+/// Icon-only button for the action row: 30 pt square on the Mac. On touch the 18 pt icon sits in
+/// a full 44 pt target laid out side by side, so neighbouring targets never overlap.
+struct MessageIconButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            #if os(iOS)
+            .frame(width: 44, height: 44)
+            .contentShape(Rectangle())
+            #else
+            .frame(width: 30, height: 30)
+            .contentShape(Rectangle())
+            #endif
+            .opacity(configuration.isPressed ? 0.6 : 1)
+    }
+}
+
+extension View {
+    /// The action row is always there. On the Mac it sits at 70% until the message is hovered or
+    /// one of its buttons is focused; touch screens have no hover, so it stays at full strength.
+    func messageActionsQuiet(engaged: Bool) -> some View {
+        #if os(macOS)
+        return opacity(engaged ? 1 : 0.7)
+        #else
+        return self
+        #endif
+    }
+}
+
 struct MessageAgentMark: View {
     let state: String
     @Environment(\.accessibilityReduceMotion) private var reducedMotion
@@ -35,6 +77,7 @@ struct MessageAgentMark: View {
         .foregroundStyle(state == "working" ? Theme.green : Theme.Pill.blockedText)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(state == "working" ? "Agent working on this" : "Agent run failed")
+        .help(state == "working" ? "Agent working on this" : "Agent run failed")
     }
 }
 
@@ -51,8 +94,13 @@ struct MessageReceiptMark: View {
             .font(.geist(11, .semibold))
             .foregroundStyle(state == "seen" ? Theme.green : Theme.secondary)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(state == "seen" ? receipt.seenAt.map { "Seen " + Time.clockTime($0) } ?? "Seen" : state.capitalized)
+            .accessibilityLabel(label(state))
+            .help(label(state))
         }
+    }
+
+    private func label(_ state: String) -> String {
+        state == "seen" ? receipt.seenAt.map { "Seen " + Time.clockTime($0) } ?? "Seen" : state.capitalized
     }
 }
 
