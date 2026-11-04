@@ -58,6 +58,11 @@ struct MacInboxView: View {
         }
     }
 
+    /// D-17: Settings opened on the Pigeonpost Cloud page, sized like the Settings sheet.
+    private var plansSheet: some View {
+        SettingsSheet(openOn: "plans").frame(width: 520, height: 620)
+    }
+
     var body: some View {
         @Bindable var inbox = inbox
 
@@ -193,7 +198,7 @@ struct MacInboxView: View {
             Task { await callLog?.refresh() }
         }
         // D-17: a free host's greyed meeting-notes button asks for the plans (Settings, Pigeonpost Cloud).
-        .onChange(of: calls.plansRequests) { _, _ in sheet = .plans }
+        .onPlansRequest(calls) { sheet = .plans }
         .onReceive(NotificationCenter.default.publisher(for: .newConversation)) { _ in
             showingNew = true
         }
@@ -224,9 +229,7 @@ struct MacInboxView: View {
                 // with no width asks for the narrowest one that fits its longest label.
                 SettingsSheet()
                     .frame(width: 520, height: 620)
-            case .plans:
-                SettingsSheet(openOn: "plans")
-                    .frame(width: 520, height: 620)
+            case .plans: plansSheet
             case .deviceApproval(let request):
                 if account.features.orgs { DeviceApprovalScreen(session: account.session, code: request.code).id(request.id) }
             case .calendar:

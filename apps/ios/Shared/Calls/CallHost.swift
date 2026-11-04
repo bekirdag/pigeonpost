@@ -878,3 +878,21 @@ struct CallButtons: View {
     }
     #endif
 }
+
+extension View {
+    /// D-17: runs `open` each time the call page asks for the plans (`open_plans`: a free host tapped
+    /// the greyed meeting-notes button). A modifier of its own keeps the inbox views' long modifier
+    /// chains cheap for the type checker.
+    func onPlansRequest(_ calls: CallHost, perform open: @escaping () -> Void) -> some View {
+        modifier(PlansRequestWatcher(calls: calls, open: open))
+    }
+}
+
+private struct PlansRequestWatcher: ViewModifier {
+    let calls: CallHost
+    let open: () -> Void
+
+    func body(content: Content) -> some View {
+        content.onChange(of: calls.plansRequests) { _, _ in open() }
+    }
+}

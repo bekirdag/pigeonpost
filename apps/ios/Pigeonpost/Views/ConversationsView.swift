@@ -157,7 +157,7 @@ struct ConversationsView: View {
         }
         // D-17: meeting notes come with every paid plan; a free host's greyed notes button asks
         // for the plans, which live on the Pigeonpost Cloud page of Settings.
-        .onChange(of: calls.plansRequests) { _, _ in sheet = .plans }
+        .onPlansRequest(calls) { sheet = .plans }
         // A conversation just started from New conversation, in this mailbox: open it. On a phone
         // that pushes the thread; on an iPad it is the sidebar's selection.
         .onChange(of: inbox.started) { _, started in
