@@ -21,6 +21,10 @@
       "description": "Health, onboarding and discovery."
     },
     {
+      "name": "nests",
+      "description": "Nests (hosted agents) — packages, purchases, slots and paid setups (feature `nests`, docs/nests/)."
+    },
+    {
       "name": "meetings",
       "description": "Consented meeting notes, delivered as ciphertext to attending devices (Phase 7, docs/meeting-summaries.md)."
     },
@@ -7483,6 +7487,701 @@
           },
           "404": {
             "description": "`not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/nest-packages": {
+      "get": {
+        "tags": [
+          "nests"
+        ],
+        "operationId": "listNestPackages",
+        "summary": "The Nest package catalog and this account's store binding tokens (feature `nests`)",
+        "description": "Packages, which purchase rails this server accepts, and the opaque values a native purchase must carry: StoreKit `appAccountToken` and Google Play `obfuscatedAccountId`. Prices come from the store (native) or the billing bridge (web), never from here. See docs/nests/phase-b.md.",
+        "security": [
+          {
+            "apiKey": []
+          },
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The catalog.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "catalog_version": {
+                      "type": "string"
+                    },
+                    "packages": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/NestPackage"
+                      }
+                    },
+                    "rails": {
+                      "type": "object",
+                      "properties": {
+                        "apple": {
+                          "type": "boolean"
+                        },
+                        "google": {
+                          "type": "boolean"
+                        },
+                        "web": {
+                          "type": "boolean"
+                        }
+                      }
+                    },
+                    "app_account_token": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "google_account_id": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "description": "`feature_disabled` or `credential_not_accepted` (a mailbox token or connector)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/nests": {
+      "get": {
+        "tags": [
+          "nests"
+        ],
+        "operationId": "listNests",
+        "summary": "This account's Nest allowance, Nests and paid setups (feature `nests`)",
+        "description": "The allowance comes only from verified purchases (App Store, Google Play, web) or grants: one funding package per account; any other live package is listed under `duplicates` and never adds slots. `setups` are paid purchases whose Nest is not provisioned yet.",
+        "security": [
+          {
+            "apiKey": []
+          },
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The account's Nests.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NestSnapshot"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "description": "`feature_disabled` or `credential_not_accepted`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "nests"
+        ],
+        "operationId": "createNest",
+        "summary": "Create a Nest in a free slot of the account's package (a person only)",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "label"
+                ],
+                "properties": {
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created; the sandbox enrolls within seconds.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "nest_id": {
+                      "type": "string"
+                    },
+                    "address": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`bad_label`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "description": "`no_nest_package`: buy a Nest package first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`feature_disabled` or `human_required`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`nest_slots_full`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "`nestd_failed`: the worker host did not provision; nothing is charged again and the slot is released",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/nests/enroll": {
+      "post": {
+        "tags": [
+          "nests"
+        ],
+        "operationId": "enrollNest",
+        "summary": "A Nest sandbox redeems its one-time enrollment code (no credential)",
+        "description": "The sandbox signs `pigeonpost-nest-enroll-v1\\0` + code with a fresh Ed25519 device key. Redemption rotates the Nest mailbox's capability token and returns it to the sandbox alone. Every refusal is the same `enrollment_invalid`.",
+        "security": [
+          {}
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "code",
+                  "device_public_key",
+                  "signature"
+                ],
+                "properties": {
+                  "code": {
+                    "type": "string"
+                  },
+                  "device_public_key": {
+                    "type": "string",
+                    "description": "Base64 Ed25519 public key."
+                  },
+                  "signature": {
+                    "type": "string",
+                    "description": "Base64 Ed25519 signature."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Enrolled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "nest_id": {
+                      "type": "string"
+                    },
+                    "address": {
+                      "type": "string"
+                    },
+                    "capability_token": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`enrollment_invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`enrollment_rate_limited`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/nest-purchases/intents": {
+      "post": {
+        "tags": [
+          "nests"
+        ],
+        "operationId": "createNestPurchaseIntent",
+        "summary": "Record a purchase intent before a store sheet or web checkout (a person only)",
+        "description": "Refuses a purchase that would fund the account twice: a live package on another rail (`nest_package_active`) or the same package on this rail (`nest_package_owned`). Upgrades on the funding rail are allowed. The intent grants nothing; only the verified purchase does.",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "package",
+                  "rail"
+                ],
+                "properties": {
+                  "package": {
+                    "type": "string",
+                    "example": "nest.ai.starter.monthly"
+                  },
+                  "rail": {
+                    "type": "string",
+                    "enum": [
+                      "apple",
+                      "google",
+                      "web"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The intent and the product to buy.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "intent_id": {
+                      "type": "string"
+                    },
+                    "expires_at": {
+                      "type": "integer"
+                    },
+                    "package": {
+                      "type": "string"
+                    },
+                    "rail": {
+                      "type": "string"
+                    },
+                    "catalog_version": {
+                      "type": "string"
+                    },
+                    "apple_product_id": {
+                      "type": "string"
+                    },
+                    "google_product_id": {
+                      "type": "string"
+                    },
+                    "google_base_plan_id": {
+                      "type": "string"
+                    },
+                    "web_plan": {
+                      "type": "string"
+                    },
+                    "app_account_token": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "google_account_id": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`unknown_package` or `unknown_rail`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "description": "`feature_disabled` or `human_required`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`nest_package_active` or `nest_package_owned`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`billing_unavailable`: that store is not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/nest-purchases/apple": {
+      "post": {
+        "tags": [
+          "nests"
+        ],
+        "operationId": "claimNestPurchaseApple",
+        "summary": "Claim or restore an App Store Nest subscription (a person only)",
+        "description": "Verified with the App Store Server API. The transaction must carry this account's `appAccountToken`; a subscription is bound to the first account that claims it. The first Nest is set up right away, or kept as a paid setup and retried.",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "transaction_id"
+                ],
+                "properties": {
+                  "transaction_id": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Recorded; the account's Nests, with `claimed`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NestSnapshot"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`purchase_not_found` or `invalid_purchase`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "description": "`purchase_account_mismatch`, `feature_disabled` or `human_required`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`purchase_already_used` or `purchase_inactive`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`billing_unavailable`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/nest-purchases/google": {
+      "post": {
+        "tags": [
+          "nests"
+        ],
+        "operationId": "claimNestPurchaseGoogle",
+        "summary": "Claim or restore a Google Play Nest subscription (a person only)",
+        "description": "Verified with the Play Developer API (subscriptionsv2) against this account's obfuscated account id and the `monthly` base plan. Acknowledged only after it is recorded, and never when it duplicates a live package (Google then refunds it).",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "purchase_token"
+                ],
+                "properties": {
+                  "purchase_token": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Recorded; the account's Nests, with `claimed`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NestSnapshot"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`purchase_not_found` or `invalid_purchase`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "description": "`purchase_account_mismatch`, `feature_disabled` or `human_required`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`purchase_already_used` or `purchase_inactive`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`billing_unavailable`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/nest-setups/{id}/retry": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^nsu_[0-9a-f]{24}$"
+          }
+        }
+      ],
+      "post": {
+        "tags": [
+          "nests"
+        ],
+        "operationId": "retryNestSetup",
+        "summary": "Retry a paid-but-unprovisioned Nest setup now (a person only)",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Attempted; the account's Nests.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NestSnapshot"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "description": "`feature_disabled` or `human_required`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`no_setup`",
             "content": {
               "application/json": {
                 "schema": {
@@ -20028,6 +20727,248 @@
           },
           "at": {
             "type": "integer"
+          }
+        }
+      },
+      "NestPackage": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "rank": {
+            "type": "integer"
+          },
+          "slots": {
+            "type": "integer"
+          },
+          "storage_bytes": {
+            "type": "integer"
+          },
+          "active_hours": {
+            "type": "integer"
+          },
+          "input_tokens": {
+            "type": "integer"
+          },
+          "output_tokens": {
+            "type": "integer"
+          },
+          "model": {
+            "type": "string",
+            "enum": [
+              "managed",
+              "none"
+            ]
+          },
+          "sellable": {
+            "type": "boolean"
+          },
+          "apple_product_id": {
+            "type": "string"
+          },
+          "google_product_id": {
+            "type": "string"
+          },
+          "google_base_plan_id": {
+            "type": "string"
+          },
+          "web_plan": {
+            "type": "string"
+          }
+        }
+      },
+      "NestFunding": {
+        "type": "object",
+        "properties": {
+          "entitlement_id": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "apple",
+              "google",
+              "iyzico",
+              "grant",
+              "test"
+            ]
+          },
+          "package": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "paid_through": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "cancel_requested_at": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "pending_plan_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "NestSnapshot": {
+        "type": "object",
+        "properties": {
+          "allowance": {
+            "type": "object",
+            "properties": {
+              "funding": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/NestFunding"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "slots": {
+                "type": "integer"
+              },
+              "used": {
+                "type": "integer"
+              },
+              "duplicates": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/NestFunding"
+                }
+              }
+            }
+          },
+          "package": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NestPackage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "nests": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "nest_id": {
+                  "type": "string"
+                },
+                "address": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "label": {
+                  "type": "string"
+                },
+                "state": {
+                  "type": "string"
+                },
+                "funding": {
+                  "type": "string",
+                  "enum": [
+                    "ops",
+                    "package"
+                  ]
+                },
+                "paused_reason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "`unfunded`, `over_capacity` or null"
+                },
+                "delete_after": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "description": "Unfunded Nests are deleted after this (end of the 30-day export window)."
+                },
+                "created_at": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "setups": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "setup_id": {
+                  "type": "string"
+                },
+                "entitlement_id": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "pending",
+                    "failed"
+                  ]
+                },
+                "attempts": {
+                  "type": "integer"
+                },
+                "next_attempt_at": {
+                  "type": "integer"
+                },
+                "last_error": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "nest_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            }
+          },
+          "claimed": {
+            "type": "object",
+            "description": "Only on purchase claims.",
+            "properties": {
+              "entitlement_id": {
+                "type": "string"
+              },
+              "package": {
+                "type": "string"
+              },
+              "active": {
+                "type": "boolean"
+              },
+              "duplicate": {
+                "type": "boolean"
+              }
+            }
           }
         }
       },
