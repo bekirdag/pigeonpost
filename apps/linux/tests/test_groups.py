@@ -494,6 +494,12 @@ class GroupTests(unittest.TestCase):
             self.assertEqual(len([i for i in self.fake.groups[gid]["items"] if i.get("sender") == D and i["type"] == "application"]), 1)
             stored = next(f for f in Path(folder).rglob("store-*.bin"))
             self.assertNotIn(b"did it land?", stored.read_bytes())
+            # The window reads what kind of send it was (plain, reply or edit) to word a refusal.
+            doc = again.outbox_doc(entry["cmid"])
+            self.assertEqual(doc.get("text"), "did it land?")
+            self.assertIsNone(doc.get("reply_to"))
+            self.assertIsNone(doc.get("edit_of"))
+            self.assertEqual(again.outbox_doc("nope"), {})
             result = again.retry_outbox(entry["cmid"])
             self.assertEqual(result["seq"], posted[0]["seq"], "the postbox answered the duplicate with the original")
             self.assertEqual(again.outbox(gid), [])

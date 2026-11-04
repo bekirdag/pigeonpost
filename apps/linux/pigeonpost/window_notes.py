@@ -134,9 +134,9 @@ class NotesMixin:
                 listing.append(self.notes_row(row))
             content.append(listing)
 
-        def failed(_error):
+        def failed(error):
             if self.notes_current(view, state):
-                status.set_text("Couldn’t load your meeting notes.")
+                status.set_text(mn.load_error(error))
         self.bound_work(lease, lambda: api.call("GET", "/v1/meetings"), done, failed)
 
     @staticmethod
@@ -194,9 +194,9 @@ class NotesMixin:
             self.notes_render(content, brief)
             content.append(self.notes_actions(mid, brief))
 
-        def failed(_error):
+        def failed(error):
             if self.notes_current(view, state):
-                status.set_text("These notes are no longer available.")
+                status.set_text(mn.load_error(error, opening=True))
         self.bound_work(lease, run, done, failed)
 
     def notes_render(self, content, b):

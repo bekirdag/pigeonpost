@@ -16,6 +16,7 @@ from .actions import (AGENT_STATUS, MESSAGE_EDIT, MESSAGE_REPLY, RECEIPTS, can_r
                       seconds, tick_state)
 from .api import APIError
 from .binding import Retired
+from .features import refusal
 from .delivery import Coordinator, DeliveryConflict, DeliveryLimit, load_drafts, save_draft, uncertain
 from .message_ui import action_row, attach_menu, footer, highlight, mode_bar, quote_block, tick_widget
 from .model import contact_for, display_name, message_text, subjects, target_thread
@@ -394,7 +395,9 @@ class MessagesMixin:
             elif isinstance(error, ValueError):
                 self.notice("Message not sent", str(error))
             else:
-                self.notice("Message not sent", self.error_text(error) + " Your draft is still here.")
+                action = "edit" if options.get("edit_of") else "reply" if options.get("reply_to") else None
+                text = (refusal(error, action) if isinstance(error, APIError) else None) or self.error_text(error)
+                self.notice("Edit not saved" if action == "edit" else "Message not sent", text + " Your draft is still here.")
         self.bound_work(lease, run, done, failed)
 
     # ---- unconfirmed deliveries ----------------------------------------------------------------

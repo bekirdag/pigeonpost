@@ -45,6 +45,20 @@ FOOTER = ("Transcribed and summarized automatically on Pigeonpost’s server{by}
           "microphone; a microphone can pick up other voices.")
 
 
+
+def load_error(error, opening=False):
+    """What to say when listing (or, with `opening`, reading) notes was refused or failed."""
+    status, code = getattr(error, "status", None), getattr(error, "code", None)
+    if code == "feature_disabled":
+        return "Meeting notes aren’t available for this account."
+    if status == 429 or code == "rate_limited":
+        return "Too many requests. Wait a moment and try again."
+    if opening and (status in (403, 404) or code in ("not_found", "forbidden")):
+        return "These notes are no longer available. They may have been deleted or passed their retention date."
+    if code == "network_error" or status == 0:
+        return "Could not reach Pigeonpost. Check your connection and try again."
+    return "Couldn’t open these notes. Try again." if opening else "Couldn’t load your meeting notes. Try again."
+
 class NotesError(Exception):
     def __init__(self, code, text="This computer couldn’t open these notes."):
         super().__init__(text)
