@@ -252,7 +252,7 @@
     $("call-notes-btn").setAttribute("aria-pressed", String(Boolean(on)));
     $("call-notes-btn").classList.toggle("call-notes-unavailable", excluded && !on);
     $("call-notes-btn").setAttribute("aria-disabled", String(excluded && !on));
-    $("call-notes-btn").title = excluded && !on ? notIncluded(you.min_seats) : "Meeting notes";
+    $("call-notes-btn").title = excluded && !on ? notIncluded(you) : "Meeting notes";
     const banner = $("call-notes-banner");
     banner.hidden = !on;
     banner.dataset.state = on ? v.state : "off";
@@ -295,15 +295,27 @@
     if ($("call-notes-ask")) $("call-notes-ask").hidden = true;
   }
 
-  function notIncluded(minSeats) {
-    const seats = Number.isInteger(minSeats) && minSeats > 0 ? minSeats : 20;
+  // D-17 (owner, 2026-11-04): notes come with every paid plan; free accounts are not eligible and
+  // there is no add-on. Under the older `enterprise` policy the threshold is a seat count.
+  function notIncluded(you) {
+    you = you || {};
+    if (you.policy === "paid") return "AI meeting notes come with every paid Pigeonpost plan. See plans to upgrade.";
+    const seats = Number.isInteger(you.min_seats) && you.min_seats > 0 ? you.min_seats : 20;
     return `AI meeting notes aren't included in your plan. They come with Pigeonpost for business plans of ${seats} seats or more.`;
+  }
+
+  // The existing plans screen: the inbox opens the account page, a native app its own plans sheet
+  // (`open_plans` over the bridge). No purchase happens here.
+  function openPlans(you) {
+    if (!you || you.policy !== "paid") return;
+    const h = window.PigeonpostCallsHost;
+    try { if (h && typeof h.openPlans === "function") h.openPlans(); } catch (_) { /* host gone */ }
   }
 
   function notesButton() {
     const on = view && (view.state === "waiting" || view.state === "active");
     const you = (view && view.you) || {};
-    if (!on && !you.can_request && you.unavailable === "not_included") { api.toast(notIncluded(you.min_seats)); return; }
+    if (!on && !you.can_request && you.unavailable === "not_included") { api.toast(notIncluded(you)); openPlans(you); return; }
     if (on) setNotes(false);
     else { ensureUi(); $("call-notes-ask").hidden = false; }
   }
@@ -315,7 +327,7 @@
       const v = await api.post(`/rooms/${r.id}/summary`, { session: api.session(), enabled });
       if (v && v.room) onEvent(v);
     } catch (e) {
-      const why = { notes_not_included: notIncluded(view && view.you && view.you.min_seats), notes_disabled: "Meeting notes aren't available for this account.", summary_busy: "The notes service is busy. Try again in a few minutes.", summary_unavailable: "The notes service isn't reachable right now.", host_only: "Only the host can turn notes on or off." }[e.code];
+      const why = { notes_not_included: notIncluded(view && view.you), notes_disabled: "Meeting notes aren't available for this account.", summary_busy: "The notes service is busy. Try again in a few minutes.", summary_unavailable: "The notes service isn't reachable right now.", host_only: "Only the host can turn notes on or off." }[e.code];
       api.toast(why || "Couldn't change meeting notes.");
     }
   }

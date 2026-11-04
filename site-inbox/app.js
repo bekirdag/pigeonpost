@@ -6846,6 +6846,8 @@
     // Phase 1b: lets call tiles show a profile picture over their initials.
     decorateAvatar: (el, key) => Avatars.decorate(el, key),
     toast,
+    // D-17: a free host's greyed notes button leads to the plans on the account page.
+    openPlans: () => { try { window.open("https://pigeonpost.dev/account", "_blank", "noopener"); } catch (_) { /* blocked */ } },
   };
 
   // Phase 3a: what groups.js may ask of the inbox. Group content never passes through here; it is

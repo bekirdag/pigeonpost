@@ -827,25 +827,126 @@ async fn retention_purges_expired_meetings_and_closes_stale_ones() {
 }
 
 #[test]
-fn the_summaries_policy_defaults_to_d17_and_all_must_be_explicit() {
+fn the_summaries_policy_defaults_to_d17_paid_and_all_must_be_explicit() {
     use crate::meetings::{SummariesPolicy as P, D17_MIN_SEATS};
-    let d17 = P::Enterprise {
+    let t20 = P::Enterprise {
         min_seats: D17_MIN_SEATS,
     };
-    assert_eq!(P::parse(None, None), d17);
-    assert_eq!(P::parse(Some(""), None), d17);
-    assert_eq!(P::parse(Some("enterprise"), None), d17);
+    assert_eq!(P::parse(None, None), P::Paid);
+    assert_eq!(P::parse(Some(""), None), P::Paid);
+    assert_eq!(P::parse(Some(" Paid "), None), P::Paid);
     assert_eq!(
         P::parse(Some("everyone?"), None),
-        d17,
-        "unrecognised fails restrictive"
+        P::Paid,
+        "unrecognised fails to the D-17 rule, never to all"
     );
     assert_eq!(P::parse(Some(" ALL "), None), P::All);
+    assert_eq!(P::parse(Some("enterprise"), None), t20);
+    assert_eq!(P::parse(Some("t20"), None), t20);
     assert_eq!(
         P::parse(Some("enterprise"), Some("50")),
         P::Enterprise { min_seats: 50 }
     );
-    assert_eq!(P::parse(None, Some("zero")), d17);
+    assert_eq!(P::parse(Some("t20"), Some("zero")), t20);
+}
+
+#[tokio::test]
+async fn under_the_paid_policy_any_paid_plan_or_org_seat_may_request_notes() {
+    let mut state = state();
+    state.summaries_policy = crate::meetings::SummariesPolicy::Paid;
+    let s = serve(state.clone()).await;
+    let free = person(&state, "acct_paid_free").await;
+    let lapsed = person(&state, "acct_paid_lapsed").await;
+    let cloud = person(&state, "acct_paid_cloud").await;
+    let named = person(&state, "acct_paid_named").await;
+    let owner = person(&state, "acct_paid_owner").await;
+    let member = person(&state, "acct_paid_member").await;
+    let left = person(&state, "acct_paid_left").await;
+    let gone = person(&state, "acct_paid_gone").await;
+    for p in [
+        &free, &lapsed, &cloud, &named, &owner, &member, &left, &gone,
+    ] {
+        s.flag(&p.account, true).await;
+    }
+    let now = crate::now_unix() as i64;
+    state
+        .store
+        .group_tx(move |tx| -> Result<(), crate::groups::GErr> {
+            // A live Pigeonpost Cloud (web) plan and an expired one.
+            for (id, account, paid_through) in [
+                ("ent_paid_cloud", "acct_paid_cloud", now + 86_400),
+                ("ent_paid_lapsed", "acct_paid_lapsed", now - 86_400),
+            ] {
+                tx.execute(
+                    "INSERT INTO entitlements (id, subject_kind, subject_id, source, plan_code,
+                        plan_version, names, status, period_end, paid_through, provider_ref,
+                        provider_environment, updated_at, reconciliation_version)
+                     VALUES (?1, 'account', ?2, 'iyzico', 'cloud-1names-yearly-try', '2026', 1,
+                        'active', ?3, ?3, ?1, 'live', 0, 1)",
+                    rusqlite::params![id, account, paid_through],
+                )?;
+            }
+            // A held name (App Store, Play or web) counts as paid, as it does for hosting.
+            tx.execute(
+                "INSERT INTO namespaces (namespace, account_id, source, verified_at, expires_at)
+                 VALUES ('paidnamed', 'acct_paid_named', 'apple', 0, ?1)",
+                rusqlite::params![now + 86_400],
+            )?;
+            // Org seats of any size count while the org is live; a suspended one does not.
+            for (id, owner, status) in [
+                ("org_paid_small", "acct_paid_owner", "active"),
+                ("org_paid_dead", "acct_paid_gone", "suspended"),
+            ] {
+                tx.execute(
+                    "INSERT INTO orgs (id, namespace, name, owner_account, status, seats, agent_limit,
+                        storage_bytes, created_at, create_operation_id, create_hash)
+                     VALUES (?1, ?1, 'Synthetic Co', ?2, ?3, 5, 50, 0, 0, ?1, 'h')",
+                    rusqlite::params![id, owner, status],
+                )?;
+            }
+            for (id, account, status) in [
+                ("om_paid_1", "acct_paid_member", "active"),
+                ("om_paid_2", "acct_paid_left", "removed"),
+            ] {
+                tx.execute(
+                    "INSERT INTO org_members (id, org_id, account_id, first_name, last_name, status)
+                     VALUES (?1, 'org_paid_small', ?2, 'Syn', 'Thetic', ?3)",
+                    rusqlite::params![id, account, status],
+                )?;
+            }
+            Ok(())
+        })
+        .await
+        .unwrap();
+    for (p, allowed) in [
+        (&free, false),
+        (&lapsed, false),
+        (&cloud, true),
+        (&named, true),
+        (&owner, true),
+        (&member, true),
+        (&left, false),
+        (&gone, false),
+    ] {
+        let (st, v) = s
+            .post(
+                "/internal/v1/meetings",
+                Some(CALLS),
+                json!({ "host": p.address, "check_only": true }),
+            )
+            .await;
+        assert_eq!(st, StatusCode::OK, "{v}");
+        assert_eq!(v["allowed"], allowed, "{}: {v}", p.account);
+        if !allowed {
+            assert_eq!(v["reason"], "not_included");
+            assert_eq!(v["policy"], "paid");
+            assert!(v.get("min_seats").is_none(), "{v}");
+        }
+    }
+    let (_, v) = open(&s, &free.address).await;
+    assert_eq!(v["allowed"], false, "{v}");
+    let (_, v) = open(&s, &cloud.address).await;
+    assert_eq!(v["allowed"], true, "{v}");
 }
 
 #[tokio::test]
