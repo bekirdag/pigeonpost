@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import http from "node:http";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -22,6 +22,12 @@ function fixture() {
     catalog, calls: [], puts: [], orgCalls: [], operations: new Map(), subs: new Map(), list: [], access: [],
     offerOverride: {}, webPlan: { capacity: 0, used: 0, names: [] }, nextSub: 1,
     features: ["orgs", "enterprise_portal"],
+    // saas_be billing profiles (GET returns them decrypted); the default buyer is outside the EU/UK.
+    profiles: [{ id: uuid(42), account_type: "individual", legal_name: "Ada Buyer", tax_id: null,
+      address: { line1: "1 Main St", city: "Austin", postal_code: "73301", country: "United States" } }],
+    // VIES and HMRC stand-ins: valid VAT numbers by id, and whether the services answer.
+    vat: { valid: { DE123456789: "BEISPIEL GMBH", FR12345678901: "EXEMPLE SAS", "GB123456789": "EXAMPLE LTD" }, viesDown: false },
+    vatCalls: [],
     orgBilling: { plan_code: "ent-30-yearly-usd", seats: 30, seats_used: 4, agent_limit: 300, agents_used: 2, status: "active", can_manage: true },
   };
   const edition = (code) => catalog.plans[code].editions["2026"];
@@ -34,6 +40,25 @@ function fixture() {
       slug: req.headers["x-product-slug"] });
     const p = url.pathname;
     let m;
+    // ---- VIES and HMRC (no member token)
+    if (p === "/vies") {
+      s.vatCalls.push({ source: "vies", body });
+      if (s.vat.viesDown) return json(res, 200, { actionSucceed: false, errorWrappers: [{ error: "MS_UNAVAILABLE" }] });
+      const name = s.vat.valid[`${body.countryCode}${body.vatNumber}`];
+      return json(res, 200, { countryCode: body.countryCode, vatNumber: body.vatNumber, requestDate: "2026-11-04T10:00:00.000Z",
+        valid: Boolean(name), name: name || "---", address: name ? "1 RUE X" : "---" });
+    }
+    if (p === "/hmrc/oauth/token") {
+      s.vatCalls.push({ source: "hmrc-token", body });
+      return json(res, 200, { access_token: "hmrc-fixture-token", token_type: "bearer", expires_in: 14400 });
+    }
+    if ((m = /^\/hmrc\/organisations\/vat\/check-vat-number\/lookup\/(\d+)$/.exec(p))) {
+      s.vatCalls.push({ source: "hmrc", vrn: m[1], auth });
+      if (auth !== "Bearer hmrc-fixture-token") return json(res, 401, { code: "MISSING_CREDENTIALS" });
+      const name = s.vat.valid[`GB${m[1]}`];
+      return name ? json(res, 200, { target: { name, vatNumber: m[1], address: { line1: "1 High St", postcode: "SW1A 1AA", countryCode: "GB" } },
+        processingDate: "2026-11-04T10:00:00+00:00" }) : json(res, 404, { code: "NOT_FOUND" });
+    }
     // ---- postbox public
     if (p === "/v1/me/handles") return auth === MEMBER ? json(res, 200, { account: ACCOUNT, handles: [] }) : json(res, 401, {});
     if (p === "/v1/me/entitlements") return json(res, 200, { account: ACCOUNT, entitlements: [], web_plan: s.webPlan });
@@ -105,7 +130,7 @@ function fixture() {
       return json(res, 201, { subscription_id: m[1], status: sub.status });
     }
     if (p === "/v1/billing/profiles" && req.method === "POST") return json(res, 201, { id: uuid(77), ...body });
-    if (p === "/v1/billing/profiles") return json(res, 200, { data: [] });
+    if (p === "/v1/billing/profiles") return json(res, 200, { data: s.profiles });
     if (p === "/v1/billing/invoices") return json(res, 200, { data: [{ id: "inv", status: "paid" }] });
     if (p === `/v1/billing/invoices/${uuid(61)}/download`) return json(res, 200, { url: "https://files.example.test/invoice.pdf" });
     if (p === `/v1/billing/invoices/${uuid(62)}/download`) return json(res, 200, { url: "javascript:alert(1)" });
@@ -132,7 +157,8 @@ async function setup(t, extraEnv = {}) {
   const bridge = await spawnBridge(t, {
     MASAAS_SAAS_API_URL: upstream, PIGEONPOST_POSTBOX_URL: upstream, POSTBOX_INTERNAL_URL: upstream,
     POSTBOX_SERVICE_TOKEN: SVC.slice(7), SAAS_INTERNAL_TOKEN: SAAS_INTERNAL.slice(7), PIGEONPOST_CATALOG_FILE: s.file,
-    ENTERPRISE_ORIGIN: "https://enterprise.pigeonpost.dev", OPEN_CURRENCIES: "USD,EUR,TRY", ...extraEnv,
+    ENTERPRISE_ORIGIN: "https://enterprise.pigeonpost.dev", OPEN_CURRENCIES: "USD,EUR,TRY",
+    VIES_CHECK_URL: `${upstream}/vies`, HMRC_API_BASE: `${upstream}/hmrc`, ...extraEnv,
   });
   const call = async (method, path, body, headers = {}) => {
     const r = await fetch(bridge.base + "/api" + path, { method, headers: { authorization: MEMBER, ...(body ? { "content-type": "application/json" } : {}), ...headers },
@@ -612,4 +638,142 @@ test("enterprise cancel, card update and retry: managers only, buyer's token, ho
   assert.equal(last.paid_through, paidThrough, "cancellation keeps the paid period");
   assert.equal((await call("POST", `/ent/orgs/${org}/subscription/pause`, { intent_id: "e2".repeat(16) })).status, 404);
   assert.equal((await call("POST", `/ent/orgs/${org}/subscription/cancel`, { intent_id: "e3".repeat(16), extra: 1 })).status, 400);
+});
+
+// ---- EU/UK VAT on web sales (docs/billing-tax.md) -----------------------------------------------
+
+const starts = (s) => s.calls.filter((c) => c.path === "/v1/integrations/iyzico/subscriptions" && c.method === "POST").length;
+const profile = (country, extra = {}) => ({ id: PROFILE, account_type: "individual", legal_name: "Ada Buyer", tax_id: null,
+  address: { line1: "1 Street", city: "City", postal_code: "1000", country }, ...extra });
+const company = (country, vat, extra = {}) => profile(country, { account_type: "entity", entity_name: "Example Co", tax_id: vat, ...extra });
+
+test("EU and UK consumers are not sold to on the web; nothing is reserved or started", async (t) => {
+  const { s, call, bridge } = await setup(t);
+  for (const [i, country, header] of [[1, "Germany", {}], [2, "DE", {}], [3, "United Kingdom", {}], [4, "Fransa", {}],
+    [5, "United States", { "cf-ipcountry": "FR" }], [6, "United States", { "cf-ipcountry": "GB" }]]) {
+    s.profiles = [profile(country)];
+    const r = await call("POST", "/v1/cloud/checkout", { intent_id: intent(700 + i), plan_code: "cloud-1names-yearly-eur", billing_profile_id: PROFILE }, header);
+    assert.equal(r.status, 403, `${country} ${JSON.stringify(header)}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.code, "eu_uk_consumer_web_unavailable");
+    assert.match(r.body.error, /iOS or Android app/);
+  }
+  assert.equal(starts(s), 0, "no provider call");
+  assert.equal(s.calls.filter((c) => c.path.endsWith("/offer")).length, 0);
+  const file = join(bridge.stateDir, "billing-state.json");
+  const saved = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {};
+  assert.equal(Object.keys(saved.intents || {}).length, 0, "a refusal reserves nothing");
+});
+
+test("everyone else is unchanged; a Turkish profile with a TCKN stays Turkish on an EU network", async (t) => {
+  const { s, call } = await setup(t);
+  s.profiles = [profile("United States")];
+  let r = await checkout(call, intent(720), "cloud-1names-yearly-usd");
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  s.activate(r.body.subscription_id);
+  let st = await call("GET", `/v1/cloud/checkout/${intent(720)}`);
+  assert.equal(st.body.receipt.treatment, "standard");
+  assert.deepEqual(st.body.receipt.customer, { name: "Ada Buyer", country: "US", vat_id: null });
+  assert.ok(st.body.receipt.lines.some((l) => l.includes("11/1-a")), "service export line for a foreign buyer");
+
+  s.list = [];
+  s.profiles = [profile("Türkiye", { identity_number: "10000000146" })];
+  r = await call("POST", "/v1/cloud/checkout", { intent_id: intent(721), plan_code: "cloud-1names-yearly-try", billing_profile_id: PROFILE },
+    { "cf-ipcountry": "DE" });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  s.activate(r.body.subscription_id);
+  st = await call("GET", `/v1/cloud/checkout/${intent(721)}`);
+  assert.equal(st.body.receipt.treatment, "standard");
+  assert.deepEqual(st.body.receipt.lines, [], "a domestic sale carries no export or reverse-charge line");
+
+  s.profiles = [profile("Atlantis")];
+  r = await checkout(call, intent(722), "cloud-1names-yearly-usd");
+  assert.deepEqual([r.status, r.body.code], [400, "billing_country_unknown"]);
+});
+
+test("EU businesses buy with a VIES-valid VAT number under reverse charge", async (t) => {
+  const { s, call, bridge } = await setup(t);
+  s.profiles = [company("Germany", "DE 123 456 789")];
+  const r = await checkout(call, intent(730), "cloud-2names-yearly-eur");
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.deepEqual(s.vatCalls.at(-1), { source: "vies", body: { countryCode: "DE", vatNumber: "123456789" } });
+  const saved = JSON.parse(readFileSync(join(bridge.stateDir, "billing-state.json"), "utf8"));
+  assert.equal(saved.intents[intent(730)].tax.treatment, "reverse_charge");
+  assert.equal(saved.intents[intent(730)].tax.vat_id, "DE123456789");
+  s.activate(r.body.subscription_id);
+  const st = await call("GET", `/v1/cloud/checkout/${intent(730)}`);
+  assert.deepEqual(st.body.receipt.customer, { name: "Example Co", country: "DE", vat_id: "DE123456789" });
+  assert.ok(st.body.receipt.lines.includes("Reverse charge – VAT to be accounted for by the recipient, Art. 196 Council Directive 2006/112/EC."));
+  const detail = await call("GET", `/v1/cloud/subscriptions/${r.body.subscription_id}`);
+  assert.equal(detail.body.receipt.treatment, "reverse_charge");
+
+  // Invalid, foreign-country and unverifiable numbers are refused before anything starts.
+  const before = starts(s);
+  s.list = [];
+  for (const [i, p, code, status] of [
+    [1, company("Germany", "DE999999999"), "vat_id_invalid", 400],
+    [2, company("France", "DE123456789"), "vat_id_invalid", 400],
+    [3, company("Germany", "12"), "vat_id_invalid", 400],
+  ]) {
+    s.profiles = [p];
+    const x = await checkout(call, intent(740 + i), "cloud-1names-yearly-eur");
+    assert.deepEqual([x.status, x.body.code], [status, code], JSON.stringify(x.body));
+  }
+  s.vat.viesDown = true;
+  s.profiles = [company("France", "FR12345678901")];
+  const down = await checkout(call, intent(745), "cloud-1names-yearly-eur");
+  assert.deepEqual([down.status, down.body.code], [503, "vat_check_unavailable"]);
+  assert.equal(starts(s), before, "no refused business reached the provider");
+});
+
+test("UK businesses need an HMRC check; without HMRC credentials they are refused", async (t) => {
+  const { s, call } = await setup(t);
+  s.profiles = [company("United Kingdom", "GB123456789")];
+  const r = await checkout(call, intent(750), "cloud-1names-yearly-usd");
+  assert.deepEqual([r.status, r.body.code], [403, "uk_vat_check_unavailable"]);
+  assert.equal(starts(s), 0);
+});
+
+test("UK businesses with an HMRC-valid VAT number buy under reverse charge", async (t) => {
+  const { s, call } = await setup(t, { HMRC_CLIENT_ID: "fixture-id", HMRC_CLIENT_SECRET: "fixture-secret" });
+  s.profiles = [company("UK", "123456789")];
+  const r = await checkout(call, intent(751), "cloud-1names-yearly-usd");
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(s.vatCalls.find((c) => c.source === "hmrc").auth, "Bearer hmrc-fixture-token");
+  s.activate(r.body.subscription_id);
+  const st = await call("GET", `/v1/cloud/checkout/${intent(751)}`);
+  assert.ok(st.body.receipt.lines.some((l) => l.startsWith("Reverse charge – the customer accounts for UK VAT")));
+  s.list = [];
+  s.profiles = [company("UK", "GB000000000")];
+  const bad = await checkout(call, intent(752), "cloud-1names-yearly-usd");
+  assert.deepEqual([bad.status, bad.body.code], [400, "vat_id_invalid"]);
+});
+
+test("opening EU consumer sales (after OSS registration) sells VAT-inclusive at the country's rate", async (t) => {
+  const { s, call } = await setup(t, { TAX_B2C_OPEN_REGIONS: "EU" });
+  s.profiles = [profile("Germany")];
+  const r = await checkout(call, intent(760), "cloud-1names-yearly-eur");
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  s.activate(r.body.subscription_id);
+  const st = await call("GET", `/v1/cloud/checkout/${intent(760)}`);
+  assert.equal(st.body.receipt.treatment, "b2c_vat");
+  assert.deepEqual(st.body.receipt.lines, ["Price includes 19% VAT (DE)."]);
+  // The UK stays closed until it is listed too.
+  s.list = [];
+  s.profiles = [profile("United Kingdom")];
+  const uk = await checkout(call, intent(761), "cloud-1names-yearly-usd");
+  assert.deepEqual([uk.status, uk.body.code], [403, "eu_uk_consumer_web_unavailable"]);
+});
+
+test("enterprise checkout applies the same rule before drafting an org", async (t) => {
+  const { s, call } = await setup(t);
+  s.profiles = [profile("Netherlands")];
+  const r = await call("POST", "/ent/checkout", { intent_id: intent(770), plan_code: "ent-5-yearly-usd", billing_profile_id: PROFILE,
+    org: { name: "Acme", namespace: "acme" } });
+  assert.deepEqual([r.status, r.body.code], [403, "eu_uk_consumer_web_unavailable"]);
+  assert.equal(s.orgCalls.length, 0, "no org draft");
+  s.profiles = [company("Netherlands", "NL123456789B01")];
+  s.vat.valid.NL123456789B01 = "ACME BV";
+  const ok = await call("POST", "/ent/checkout", { intent_id: intent(771), plan_code: "ent-5-yearly-usd", billing_profile_id: PROFILE,
+    org: { name: "Acme", namespace: "acme" } });
+  assert.equal(ok.status, 200, JSON.stringify(ok.body));
 });
