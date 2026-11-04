@@ -113,9 +113,12 @@ Binary values are standard base64; P-256 public keys are 65-byte uncompressed po
   key of every consenting attendee: a fresh ECDH key, `HKDF(ECDH, salt = meeting, info =
   "pigeonpost meeting notes v1|" + key_id)`, AES-GCM wrap of the content key with AAD `meeting|key_id`.
 - **Notes keys.** Each browser or native call host keeps one non-extractable P-256 private key in
-  IndexedDB. Its public half goes with a member's Agree (registered for the account through the calls
-  service) and is registered by the inbox while the feature is on. At most 10 per account; the oldest is
-  dropped. A key id is never rebound to a different key. WebKit in app web views (WKWebView) cannot
+  IndexedDB. Its public half is registered by the inbox and the native apps while the feature is on,
+  with `PUT /v1/meetings/keys/{key_id}` from a person's interactive sign-in (the account API key is
+  refused `human_required`). The key id sent with a member's Agree only *points at* a key the member
+  registered: the calls service cannot add a key, and an unknown or changed key is ignored
+  (`notes_key: "unregistered"`), so it gets no wrap (audit 2026-11-03 P2-2). At most 10 per account;
+  the oldest is dropped. A key id is never rebound to a different key. WebKit in app web views (WKWebView) cannot
   store a `CryptoKey` in IndexedDB (`DataCloneError`); there the private key is kept as PKCS#8 bytes in
   that origin's storage on the device and re-imported as non-extractable when used. That is weaker at
   rest than a non-extractable key (anyone who can read the app's web storage on the device can read it).
@@ -133,7 +136,7 @@ existing SSH tunnel).
 | Calls service reading audio | Chunks are encrypted to meeting-intel's per-meeting key, signed by a key pinned in the client; the calls service never holds a private key | A compromised raijin host (root) can read meeting-intel's memory; meeting-intel is a consented processor by design (SDS §3.6) |
 | Calls service substituting the service key | Signature check against the pinned key | Whoever controls the static site could ship a different pinned key; same trust as the call page itself |
 | Forged or replayed uploads | Capture token (HMAC, per process) + participant-bound AAD + per-participant monotonic `seq`; uploads refused unless the meeting is active and the participant's current answer is yes | Tokens are invalidated by any version change, so in-flight chunks after a pause are dropped by design |
-| Results reaching the wrong people | Postbox records consent from the calls service; meeting-intel can wrap only for consenting attendees' registered keys (`not_a_recipient`); reads require consented, unremoved attendance and an unexpired meeting, and look the same as "not found" otherwise | The postbox lists notes keys and could in principle add one (the same custodial-attestation limit as other device keys, §3.6); listed under `GET /v1/meetings/keys` |
+| Results reaching the wrong people | Postbox records consent from the calls service, which can name only keys members registered themselves; meeting-intel can wrap only for consenting attendees' registered keys (`not_a_recipient`); reads require consented, unremoved attendance, current active membership of the group for a group call, and an unexpired meeting — the brief expires at the earliest of the retention and the group's disappearing-message timer from when it was ready — and look the same as "not found" otherwise | The postbox lists notes keys and could in principle add one (the same custodial-attestation limit as other device keys, §3.6); listed under `GET /v1/meetings/keys` |
 | Server-side plaintext | Audio held in memory only, zeroed after decode and transcription; transcript and keys dropped with the session; postbox stores ciphertext only; logs carry ids and counts | JavaScript strings cannot be zeroed; they are released with the session. A crash loses the meeting (attendees see `timed_out` after 26 h) |
 | Prompt injection via speech | Transcript passed as delimited data, model told to ignore instructions in it; output validated field by field (owners must be speaker labels, timestamps must exist, lengths bounded) | A speaker can still say misleading things; the notes say they are automatic |
 | Cloud leakage | Local whisper.cpp and the local model only; no fallback route. LLM failure gives a marked draft (transcript only) | — |

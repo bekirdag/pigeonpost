@@ -681,10 +681,10 @@ async fn keys_never_exceed_their_creators_live_authority() {
     )
     .await;
     assert_eq!(get(&srv, "/agents", &key).await.status, 200);
-    // Suspended creator: refused.
+    // Suspended creator: refused. (Suspending a full admin needs step-up, audit P2-15.)
     srv.patch(
         &format!("/v1/orgs/{org}/members/{adm_id}"),
-        &owner.token,
+        &owner.strong,
         json!({ "status": "suspended" }),
     )
     .await;

@@ -1369,3 +1369,82 @@ async fn agent_limit_and_org_rooms() {
         "{v}"
     );
 }
+
+/// §3.4, audit 2026-11-03 P2-15: suspending or removing a full admin needs a strong, recent sign-in,
+/// like taking the role away; the same actions on a plain member do not.
+#[tokio::test]
+async fn suspending_or_removing_a_full_admin_needs_step_up() {
+    let srv = serve().await;
+    srv.global_flag("orgs").await;
+    srv.global_flag("groups").await;
+    let owner = srv.person("p215owner").await;
+    let org = srv.org(&owner, "stepco", 10).await;
+    let admin = srv.person("p215admin").await;
+    let member = srv.person("p215member").await;
+    let (admin_id, _) = srv.join(&org, &owner, &admin, "adm", &["admin"]).await;
+    let (member_id, _) = srv.join(&org, &owner, &member, "mem", &[]).await;
+    let o = |p: &str| format!("/v1/orgs/{org}{p}");
+
+    // A plain member: no step-up.
+    let (s, v) = srv
+        .patch(
+            &o(&format!("/members/{member_id}")),
+            &owner.token,
+            json!({ "status": "suspended" }),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+
+    // A full admin: step-up for suspend...
+    let (s, v) = srv
+        .patch(
+            &o(&format!("/members/{admin_id}")),
+            &owner.token,
+            json!({ "status": "suspended" }),
+        )
+        .await;
+    assert_eq!(s, 401, "{v}");
+    assert_eq!(v["error"], "step_up_required");
+    let (s, v) = srv
+        .patch(
+            &o(&format!("/members/{admin_id}")),
+            &owner.strong,
+            json!({ "status": "suspended" }),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    // ...for reinstating...
+    let (s, _) = srv
+        .patch(
+            &o(&format!("/members/{admin_id}")),
+            &owner.token,
+            json!({ "status": "active" }),
+        )
+        .await;
+    assert_eq!(s, 401);
+    // ...and for removal.
+    let (s, v) = srv
+        .post(
+            &o(&format!("/members/{admin_id}/remove")),
+            &owner.token,
+            json!({}),
+        )
+        .await;
+    assert_eq!(s, 401, "{v}");
+    let (s, v) = srv
+        .post(
+            &o(&format!("/members/{admin_id}/remove")),
+            &owner.strong,
+            json!({}),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (s, _) = srv
+        .post(
+            &o(&format!("/members/{member_id}/remove")),
+            &owner.token,
+            json!({}),
+        )
+        .await;
+    assert_eq!(s, 200);
+}
