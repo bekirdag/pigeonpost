@@ -58,6 +58,9 @@ final class CallHost: NSObject {
 
     private(set) var mode: Mode = .hidden
     private(set) var preparingScheduled = false
+    /// D-17: counts the call page's requests to show the plans (a free host tapped the greyed
+    /// meeting-notes button). The inbox opens Settings on the Pigeonpost Cloud page each time.
+    private(set) var plansRequests = 0
 
     /// Phase 6: the live stream this device is in, as the page reports it (`PigeonpostLive.current()`).
     struct LiveState: Equatable {
@@ -623,6 +626,8 @@ final class CallHost: NSObject {
             Task { await renew() }
         case "toast":
             if let text = message["text"] as? String, !text.isEmpty { inbox?.toast = text }
+        case "open_plans":
+            plansRequests += 1
         case "ring", "ring_ended", "call", "muted":
             events?.callPage(type, message)
         default:
@@ -872,4 +877,22 @@ struct CallButtons: View {
             .accessibilityAddTraits(.isButton)
     }
     #endif
+}
+
+extension View {
+    /// D-17: runs `open` each time the call page asks for the plans (`open_plans`: a free host tapped
+    /// the greyed meeting-notes button). A modifier of its own keeps the inbox views' long modifier
+    /// chains cheap for the type checker.
+    func onPlansRequest(_ calls: CallHost, perform open: @escaping () -> Void) -> some View {
+        modifier(PlansRequestWatcher(calls: calls, open: open))
+    }
+}
+
+private struct PlansRequestWatcher: ViewModifier {
+    let calls: CallHost
+    let open: () -> Void
+
+    func body(content: Content) -> some View {
+        content.onChange(of: calls.plansRequests) { _, _ in open() }
+    }
 }

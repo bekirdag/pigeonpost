@@ -23,7 +23,7 @@ enum DockBadge { static func show(_ count: Int) {} }
     static let shared = MenuBarItem()
     func show(unread: Int) {}
 }
-struct SettingsSheet: View { var body: some View { Text("Settings") } }
+struct SettingsSheet: View { var openOn: String? = nil; var body: some View { Text("Settings") } }
 struct OrganizationRoomsScreen: View {
     let account: Account
     let visit: (Mailbox) -> Void

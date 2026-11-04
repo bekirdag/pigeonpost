@@ -61,12 +61,20 @@ struct SettingsSheet: View {
             case "find-people": self = .findPeople
             case "privacy": self = .privacy
             case "blocked": self = .blocked
+            case "plans": self = .purchases
             default: return nil
             }
         }
     }
     @State private var confirmSignOut = false
     @State private var path: [Page] = []
+    /// A page to open on, as `-sheet=` names it (`plans` for the Pigeonpost Cloud page).
+    private let openOn: String?
+
+    /// Explicit, because the `@State private` properties make the memberwise initializer private.
+    init(openOn: String? = nil) {
+        self.openOn = openOn
+    }
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -127,7 +135,7 @@ struct SettingsSheet: View {
             }
         }
         .onChange(of: people?.state.conversationRequest) { _, peer in if peer != nil { dismiss() } }
-        .onAppear { if path.isEmpty, let staged = Page(staged: Fixtures.sheet) { path = [staged] } }
+        .onAppear { if path.isEmpty, let staged = Page(staged: openOn ?? Fixtures.sheet) { path = [staged] } }
         // Keep one store alive while moving between pages, including an unfinished purchase.
         .task {
             #if DEBUG

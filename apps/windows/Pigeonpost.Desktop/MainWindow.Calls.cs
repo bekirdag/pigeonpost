@@ -336,6 +336,10 @@ public sealed partial class MainWindow
             case { Type: "toast", Text: { } text }:
                 AccountStatus.Text = text;
                 break;
+            case { Type: "open_plans" }:
+                // D-17: meeting notes come with every paid plan. Plans are sold on the web account page.
+                await OpenLinkAsync(new Uri("https://pigeonpost.dev/account"));
+                break;
         }
     }
 

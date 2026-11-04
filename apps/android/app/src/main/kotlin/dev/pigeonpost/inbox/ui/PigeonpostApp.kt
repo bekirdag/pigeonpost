@@ -65,6 +65,8 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
     var blockTarget by remember { mutableStateOf<BlockTarget?>(null) }
     var filteredOpen by remember { mutableStateOf<String?>(null) }
     val handleState by model.handles.state.collectAsStateWithLifecycle()
+    // D-17: meeting notes come with every paid plan; a free host's greyed notes button asks for the plans.
+    val plansRequests by (model.calls?.plansRequests ?: remember { kotlinx.coroutines.flow.MutableStateFlow(0) }).collectAsStateWithLifecycle()
     val appearance by model.appearance.collectAsStateWithLifecycle()
     val callMode = model.calls?.mode?.collectAsStateWithLifecycle()?.value ?: CallHost.Mode.HIDDEN
     val joiningMeeting = model.calls?.preparingScheduled?.collectAsStateWithLifecycle()?.value ?: false
@@ -80,6 +82,8 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
     val deviceApproval by (model.deviceApproval?.state ?: remember { kotlinx.coroutines.flow.MutableStateFlow(dev.pigeonpost.core.enterprise.DeviceApprovalState()) }).collectAsStateWithLifecycle()
     val meetingLookup by (model.meetingLookup?.state ?: remember { kotlinx.coroutines.flow.MutableStateFlow(dev.pigeonpost.core.calendar.CalendarMeetingLookupState()) }).collectAsStateWithLifecycle()
     var sheet by rememberSaveable { mutableStateOf<String?>(null) }
+    var plansSeen by rememberSaveable { mutableStateOf(0) }
+    LaunchedEffect(plansRequests) { if (plansRequests > plansSeen) { plansSeen = plansRequests; sheet = "plans" } }
     var editContact by remember { mutableStateOf<Contact?>(null) }
     var viewing by remember { mutableStateOf<Attachment?>(null) }
     val snackbar = remember { SnackbarHostState() }
@@ -193,14 +197,15 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
             "mailbox" -> MailboxDialog(state, { store.switchMailbox(it); sheet = null }, { sheet = null }, session.username)
             "new" -> NewConversationDialog(state, { model.startConversation(it); sheet = null }, { sheet = null })
             "subject" -> SubjectDialog(state.actionBusy, { store.openThread(it) { sheet = null } }, { sheet = null })
-            "settings" -> SettingsDialog(state, session, model.graph.fixtures, handleState, model.handles,
+            "settings", "plans" -> SettingsDialog(state, session, model.graph.fixtures, handleState, model.handles,
                 paidHandles = model.paidHandles,
                 accountHandles = model.accountHandles, refreshMailboxes = { store.loadAccount() },
                 openInbox = { store.switchMailbox(it); sheet = null }, dismiss = { sheet = null },
                 contacts = { sheet = "contacts" }, archive = { store.showArchive(true); sheet = null }, scan = scan,
                 signOut = { sheet = "signout" }, openLink = openLink, notificationSettings = notificationSettings, model = model, groups = groups, choosePicture = choosePicture, takePicture = takePicture,
                 fullScreenCalls = fullScreenCalls(),
-                appearance = appearance, chooseAppearance = model::chooseAppearance)
+                appearance = appearance, chooseAppearance = model::chooseAppearance,
+                initialPage = if (sheet == "plans" && model.paidHandles != null) "PURCHASES" else null)
             "contacts" -> ContactsDialog(state, { editContact = it; sheet = "contact" }, { sheet = null }, back = { sheet = "settings" })
             "contact" -> ContactDialog(state, editContact, { store.saveContact(it) { sheet = "contacts" } },
                 { peer -> store.removeContact(peer) { sheet = "contacts" } }, { sheet = "contacts" })
