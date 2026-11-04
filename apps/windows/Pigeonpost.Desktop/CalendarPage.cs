@@ -48,7 +48,7 @@ internal sealed partial class CalendarPage : UserControl, IDisposable
     public void Dispose()
     {
         if (disposed) return; disposed = true; model.PropertyChanged -= StateChanged;
-        rendered?.Retire(); rendered = null; dialog?.Hide(); contents.Children.Clear();
+        rendered?.Retire(); rendered = null; dialog?.Hide(); contents.Children.Clear(); nowTimer?.Stop();
     }
     private static TextBlock Text(string text, double size = 13) => new() { Text = text, FontSize = size, TextWrapping = TextWrapping.Wrap };
     private static TextBlock Heading(string text, int level = 2)
@@ -112,16 +112,25 @@ internal sealed partial class CalendarPage : UserControl, IDisposable
         if (!state.Enabled || next is null) { contents.Children.Add(Text(state.Error ?? "The calendar is unavailable for this inbox.")); return; }
         var view = next;
         var toolbar = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-        toolbar.Children.Add(Action("‹", view, async target => { if (model.SelectDay(target, new(state.SelectedDay.Date.AddMonths(-1)))) await model.ReloadAsync(target, lifetime); }, accessible: "Previous month"));
-        toolbar.Children.Add(Heading(state.SelectedDay.Date.ToString("MMMM yyyy", CultureInfo.CurrentCulture)));
-        toolbar.Children.Add(Action("›", view, async target => { if (model.SelectDay(target, new(state.SelectedDay.Date.AddMonths(1)))) await model.ReloadAsync(target, lifetime); }, accessible: "Next month"));
+        CalendarDay Step(int direction) => calendarView switch
+        {
+            CalendarView.Week => state.SelectedDay.PlusDays(7 * direction), CalendarView.Day => state.SelectedDay.PlusDays(direction),
+            _ => new(state.SelectedDay.Date.AddMonths(direction)),
+        };
+        var unit = calendarView switch { CalendarView.Week => "week", CalendarView.Day => "day", _ => "month" };
+        toolbar.Children.Add(Action("‹", view, async target => { if (model.SelectDay(target, Step(-1))) { scrollToHours = true; await model.ReloadAsync(target, lifetime); } }, accessible: "Previous " + unit));
+        toolbar.Children.Add(Heading(RangeTitle(state)));
+        toolbar.Children.Add(Action("›", view, async target => { if (model.SelectDay(target, Step(1))) { scrollToHours = true; await model.ReloadAsync(target, lifetime); } }, accessible: "Next " + unit));
         toolbar.Children.Add(Action("Today", view, async target => { if (model.Today(target)) await model.ReloadAsync(target, lifetime); }));
         toolbar.Children.Add(Action("Refresh", view, target => model.ReloadAsync(target, lifetime), !state.Loading));
         contents.Children.Add(toolbar);
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         actions.Children.Add(Action("New event", view, target => Edit(target), state.CanCreate && !state.Pending.Any(p => p.Kind == CalendarAttemptKind.Event)));
         actions.Children.Add(Action("New calendar", view, NewCalendar, state.CanCreate && !state.Pending.Any(p => p.Kind == CalendarAttemptKind.Calendar)));
-        actions.Children.Add(Action("Calendar settings", view, Settings, !state.Busy)); contents.Children.Add(actions);
+        actions.Children.Add(Action("Calendar settings", view, Settings, !state.Busy));
+        actions.Children.Add(Action("Subscription links", view, Feeds, !state.Busy && state.Folders.Count > 0));
+        actions.Children.Add(Action("Import .ics", view, Import, !state.Busy && state.CanCreate, accessible: "Import calendar file")); contents.Children.Add(actions);
+        contents.Children.Add(ViewPicker());
         if (state.Error is { Length: > 0 } error) contents.Children.Add(Text(error));
         if (state.Loading) contents.Children.Add(new ProgressBar { IsIndeterminate = true, Height = 3 });
         if (state.Pending.Count > 0)
@@ -130,6 +139,7 @@ internal sealed partial class CalendarPage : UserControl, IDisposable
             foreach (var pending in state.Pending)
                 contents.Children.Add(Action(pending.Kind == CalendarAttemptKind.Event ? "Review pending event" : "Review pending calendar", view, target => Recovery(target, pending), !state.Busy));
         }
+        if (calendarView != CalendarView.Month) { RenderTimeGrid(view, state); RenderFiltersAndInvitations(view, state); FinishRender(version, view, offset); return; }
         var grid = new Grid { RowSpacing = 4, ColumnSpacing = 4 };
         for (var i = 0; i < 7; i++) { grid.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); grid.RowDefinitions.Add(new() { Height = GridLength.Auto }); }
         var days = new CalendarMonthWindow(state.SelectedDay, state.WeekStart).Days;
@@ -150,6 +160,19 @@ internal sealed partial class CalendarPage : UserControl, IDisposable
         }
         contents.Children.Add(grid);
         contents.Children.Add(Text("Times shown in " + state.DisplayZone, 12));
+        contents.Children.Add(Heading(state.SelectedDay.Date.ToString("dddd, d MMMM", CultureInfo.CurrentCulture)));
+        if (state.Agenda.Count == 0) contents.Children.Add(Text(state.Folders.Count == 0 ? "Create an event or calendar to get started." : "No events on this day."));
+        foreach (var row in state.Agenda)
+        {
+            var button = Action(row.Title ?? "Untitled event", view, target => Detail(target, row.Key), accessible: $"Open event {row.Title}, {TimeLabel(row, state.DisplayZone)}");
+            button.Content = new StackPanel { Spacing = 4, Children = { Text(row.Title ?? "Untitled event", 15), Text(TimeLabel(row, state.DisplayZone) + (row.Meeting is { Enabled: true } or { Code.Length: > 0 } ? " · Pigeonpost meeting" : "") + (row.Status == "cancelled" ? " · Cancelled" : ""), 12) } };
+            button.HorizontalAlignment = HorizontalAlignment.Stretch; button.HorizontalContentAlignment = HorizontalAlignment.Left; contents.Children.Add(button);
+        }
+        RenderFiltersAndInvitations(view, state);
+        FinishRender(version, view, offset);
+    }
+    private void RenderFiltersAndInvitations(CalendarContextView view, CalendarState state)
+    {
         var filters = new StackPanel { Spacing = 7 };
         var filterActions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         filterActions.Children.Add(Action("All calendars", view, async target => { if (model.SelectCalendars(target, null)) await model.ReloadAsync(target, lifetime); }));
@@ -170,22 +193,20 @@ internal sealed partial class CalendarPage : UserControl, IDisposable
         var filterExpander = new Expander { Header = "Calendars", Content = filters, IsExpanded = filtersExpanded, HorizontalAlignment = HorizontalAlignment.Stretch };
         filterExpander.Expanding += (_, _) => filtersExpanded = true; filterExpander.Collapsed += (_, _) => filtersExpanded = false;
         contents.Children.Add(filterExpander);
-        contents.Children.Add(Heading(state.SelectedDay.Date.ToString("dddd, d MMMM", CultureInfo.CurrentCulture)));
-        if (state.Agenda.Count == 0) contents.Children.Add(Text(state.Folders.Count == 0 ? "Create an event or calendar to get started." : "No events on this day."));
-        foreach (var row in state.Agenda)
-        {
-            var button = Action(row.Title ?? "Untitled event", view, target => Detail(target, row.Key), accessible: $"Open event {row.Title}, {TimeLabel(row, state.DisplayZone)}");
-            button.Content = new StackPanel { Spacing = 4, Children = { Text(row.Title ?? "Untitled event", 15), Text(TimeLabel(row, state.DisplayZone) + (row.Meeting is { Enabled: true } or { Code.Length: > 0 } ? " · Pigeonpost meeting" : "") + (row.Status == "cancelled" ? " · Cancelled" : ""), 12) } };
-            button.HorizontalAlignment = HorizontalAlignment.Stretch; button.HorizontalContentAlignment = HorizontalAlignment.Left; contents.Children.Add(button);
-        }
         void Invitations(string title, IReadOnlyList<CalendarInvitation> invitations)
         {
             if (invitations.Count == 0) return; contents.Children.Add(Heading(title));
             foreach (var item in invitations) contents.Children.Add(Action(item.Title ?? "Untitled invitation", view, target => Detail(target, item.Key), accessible: "Open invitation " + item.Title));
         }
         Invitations("Invitations", state.Invitations); Invitations("Filtered invitations", state.FilteredInvitations);
-        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () => { if (!disposed && version == renderVersion && ReferenceEquals(rendered, view)) scroll.ChangeView(null, offset, null, true); });
     }
+    private void FinishRender(int version, CalendarContextView view, double offset) =>
+        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
+        {
+            if (disposed || version != renderVersion || !ReferenceEquals(rendered, view)) return;
+            if (scrollToHours && hoursTop is { } top) { scrollToHours = false; scroll.ChangeView(null, top, null, true); }
+            else scroll.ChangeView(null, offset, null, true);
+        });
     private async Task<ContentDialogResult> Show(CalendarActionTarget target, ContentDialog next)
     {
         if (disposed || !target.IsCurrent || XamlRoot is null || dialog is not null || dialogBusy()) return ContentDialogResult.None;

@@ -110,6 +110,24 @@ public sealed partial class MainWindow
             Check(RequestEnvelope.DisplayText(sent.Body) == "Replying from the toast" && sent.ThreadId == "design-release", "Inline reply is sent into the toast's subject");
             Check(!AppWindow.IsVisible, "Replying leaves the app in the tray");
 
+            // Audit P2-18: calendar invitation and reminder toasts carry their own actions and locators only.
+            var invite = new Pigeonpost.Core.Calendar.CalendarAlert(Pigeonpost.Core.Calendar.CalendarAlertKind.Invite, mailboxAddress, "evt_toast", null, false, null);
+            Check(DesktopNotifications.AnnounceCalendar(invite, "Invitation", "Design invited you: Launch review", answerable: true), "Windows accepts a calendar invitation toast");
+            var reminder = invite with { Kind = Pigeonpost.Core.Calendar.CalendarAlertKind.Reminder, OccurrenceId = "occ_toast" };
+            Check(DesktopNotifications.AnnounceCalendar(reminder, "Calendar", "Event: Starting in 10 minutes", answerable: false), "Windows accepts a calendar reminder toast");
+            var calendarToasts = (await AppNotificationManager.Default.GetAllAsync()).Where(a => a.Group == Pigeonpost.Core.Calendar.CalendarAlerts.Group(mailboxAddress, "evt_toast"))
+                .Select(a => a.Payload.Replace('\'', '"')).ToArray();
+            checks.AddRange(calendarToasts.Select(p => "Calendar toast payload: " + p));
+            Check(calendarToasts.Length == 2, "Both calendar toasts are filed under their event");
+            var invitePayload = calendarToasts.Single(p => p.Contains("Launch review", StringComparison.Ordinal));
+            Check(invitePayload.Contains("content=\"Accept\"", StringComparison.Ordinal) && invitePayload.Contains("content=\"Decline\"", StringComparison.Ordinal)
+                && invitePayload.Contains("calendar=accept", StringComparison.Ordinal) && invitePayload.Contains("calendar=decline", StringComparison.Ordinal), "The invitation toast offers Accept and Decline");
+            var reminderPayload = calendarToasts.Single(p => p.Contains("Starting in 10 minutes", StringComparison.Ordinal));
+            Check(reminderPayload.Contains("scenario=\"reminder\"", StringComparison.Ordinal) && !reminderPayload.Contains("Accept", StringComparison.Ordinal)
+                && reminderPayload.Contains("content=\"Open\"", StringComparison.Ordinal), "The reminder toast stays on screen and offers Open only");
+            await DesktopNotifications.RemoveCalendarAsync(mailboxAddress, "evt_toast");
+            Check((await AppNotificationManager.Default.GetAllAsync()).All(a => a.Group != Pigeonpost.Core.Calendar.CalendarAlerts.Group(mailboxAddress, "evt_toast")), "Answering removes the event's toasts");
+
             unreadState.Clear(); notifications!.Update(0);
             await DesktopNotifications.ClearAlertsAsync();
             Check(unreadState.Count == 0 && (await AppNotificationManager.Default.GetAllAsync()).Count == 0, "Sign-out cleanup clears the badge and native alerts");
