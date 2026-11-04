@@ -82,7 +82,7 @@ jobs:
 
   test:
     name: test (${{ matrix.os }})
-    runs-on: ${{ startsWith(matrix.os, 'ubuntu-') && !endsWith(matrix.os, '-arm') && vars.PIGEONPOST_SELF_HOSTED_CI == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || matrix.os }}
+    runs-on: ${{ startsWith(matrix.os, 'ubuntu-') && !endsWith(matrix.os, '-arm') && vars.PIGEONPOST_SELF_HOSTED_CI == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || matrix.os == 'macos-14' && vars.PIGEONPOST_MAC_SELF_HOSTED_CI == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","cassandra-pigeonpost"]') || matrix.os }}
     strategy:
       fail-fast: false
       matrix:
@@ -91,7 +91,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Prepare the self-hosted worker (no-op on GitHub-hosted runners)
         uses: ./.github/actions/self-hosted-prereqs
-        if: runner.os == 'Linux'
+        if: runner.os != 'Windows'
       - name: Parse the Windows release lifecycle harness
         if: runner.os == 'Windows'
         shell: pwsh

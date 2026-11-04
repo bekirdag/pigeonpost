@@ -144,9 +144,11 @@ jobs:
 
   macos:
     name: interop (macOS — adds Swift) + XCFramework + SwiftPM tests
-    runs-on: macos-15
+    runs-on: ${{ vars.PIGEONPOST_MAC_SELF_HOSTED_CI == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","cassandra-pigeonpost"]') || 'macos-15' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Prepare the self-hosted worker (no-op on GitHub-hosted runners)
+        uses: ./.github/actions/self-hosted-prereqs
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: crates/pigeonpost-groupcrypto

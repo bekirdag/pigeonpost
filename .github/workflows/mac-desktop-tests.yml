@@ -28,14 +28,16 @@ jobs:
       fail-fast: false
       matrix:
         os: [macos-14, macos-26]
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.os == 'macos-14' && vars.PIGEONPOST_MAC_SELF_HOSTED_CI == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","cassandra-pigeonpost"]') || matrix.os }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Prepare the self-hosted worker (no-op on GitHub-hosted runners)
+        uses: ./.github/actions/self-hosted-prereqs
       - name: Select Swift 6 on Sonoma
-        if: matrix.os == 'macos-14'
+        if: matrix.os == 'macos-14' && runner.environment == 'github-hosted'
         run: sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
       - name: Shared model regressions
         run: sh apps/ios/Tests/run.sh
@@ -59,7 +61,7 @@ jobs:
   groups-e2e:
     # Group E2EE through the Swift binding and the app's own GroupEngine, against a real postbox
     # built from this commit, beside the web inbox's own client for interop (apps/ios/Tests/groups-e2e.sh).
-    runs-on: macos-14
+    runs-on: ${{ vars.PIGEONPOST_MAC_SELF_HOSTED_CI == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","cassandra-pigeonpost"]') || 'macos-14' }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -68,7 +70,10 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "24.19.0"
+      - name: Prepare the self-hosted worker (no-op on GitHub-hosted runners)
+        uses: ./.github/actions/self-hosted-prereqs
       - name: Select Swift 6 on Sonoma
+        if: runner.environment == 'github-hosted'
         run: sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
       - name: Groups end to end
         run: sh apps/ios/Tests/groups-e2e.sh

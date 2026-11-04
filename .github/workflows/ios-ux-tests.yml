@@ -194,7 +194,7 @@ jobs:
     # Keep the current-runtime UI suite above, and verify real StoreKit transactions
     # on iOS 18 until the hosted image includes a fixed runtime.
     # https://developer.apple.com/forums/thread/826971
-    runs-on: macos-14
+    runs-on: ${{ vars.PIGEONPOST_MAC_SELF_HOSTED_CI == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","cassandra-pigeonpost"]') || 'macos-14' }}
     timeout-minutes: 15
     defaults:
       run:
@@ -202,15 +202,27 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@8632757d5a758c452f724e9d837848c694a7bb48 # 1.91.1
+      - name: Prepare the self-hosted worker (no-op on GitHub-hosted runners)
+        uses: ./.github/actions/self-hosted-prereqs
       - name: Select the StoreKit-compatible simulator
+        env:
+          SELF_HOSTED: ${{ runner.environment == 'self-hosted' }}
         run: |
-          sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
+          [ "$SELF_HOSTED" = true ] || sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
           python3 - <<'PY'
           import json, os, subprocess
+          if os.environ['SELF_HOSTED'] == 'true':
+              # The persistent runner gets a simulator of its own, removed after the job.
+              listing = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', '--json']))
+              runtime = max((r for r in listing['runtimes'] if r['isAvailable'] and r['identifier'].startswith('com.apple.CoreSimulator.SimRuntime.iOS-18-')),
+                            key=lambda r: [int(x) for x in r['version'].split('.')])
+              phone = [t for t in runtime['supportedDeviceTypes'] if t['productFamily'] == 'iPhone'][-1]
+              subprocess.check_call(['xcrun', 'simctl', 'create', os.environ['PP_CI_SIM_PREFIX'] + '-storekit', phone['identifier'], runtime['identifier']])
           devices = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'devices', 'available', '--json']))['devices']
           phones = [d for runtime, entries in devices.items()
                     if runtime.startswith('com.apple.CoreSimulator.SimRuntime.iOS-18-')
-                    for d in entries if 'iPhone' in d['name']]
+                    for d in entries if 'iPhone' in d['name']
+                    and (os.environ['SELF_HOSTED'] != 'true' or d['name'].startswith(os.environ['PP_CI_SIM_PREFIX']))]
           assert phones, 'No iOS 18 iPhone simulator available for StoreKit testing'
           device = phones[0]
           with open(os.environ['GITHUB_ENV'], 'a') as out:
@@ -232,3 +244,7 @@ jobs:
           name: ios-storekit-results
           path: ${{ runner.temp }}/storekit.xcresult
           retention-days: 14
+      - name: Remove this job's simulator
+        if: always() && runner.environment == 'self-hosted'
+        run: |
+          [ -z "${IOS_STOREKIT_SIM:-}" ] || { xcrun simctl shutdown "$IOS_STOREKIT_SIM" || true; xcrun simctl delete "$IOS_STOREKIT_SIM"; }
