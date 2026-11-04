@@ -1659,6 +1659,113 @@ async fn messages_go_only_from_the_keys_agent_to_this_orgs_mailboxes() {
     );
 }
 
+/// Decision P2-10 (2026-11-04): the server-custodial `POST /messages` sends only as one of the
+/// org's own agent/service mailboxes, and only to recipients inside the same org. It never sends as
+/// a person's identity and never reaches another organization.
+#[tokio::test]
+async fn org_messages_send_only_as_org_agents_and_only_inside_the_org() {
+    let (srv, owner, org) = api_setup().await;
+    make_agent(&srv, &org, &owner, "notifier").await;
+    let jane = srv.person("jane").await;
+    let (_, jane_mb) = srv.join(&org, &owner, &jane, "jane", &[]).await;
+    let (_, key) = make_key(
+        &srv,
+        &org,
+        &owner,
+        &["messages:send"],
+        json!({ "send_as": "/acme/notifier" }),
+    )
+    .await;
+
+    // Allowed: the org's own agent identity, to a member of the same org.
+    let r = post(
+        &srv,
+        "/messages",
+        &key,
+        json!({ "to": "/acme/jane", "body": "Deploy finished" }),
+    )
+    .await;
+    assert_eq!(r.status, 201, "{}", r.body);
+    assert_eq!(r.body["data"]["from"], "/acme/notifier");
+
+    // Cross-org: a member of another organization is refused.
+    let other = srv.person("other").await;
+    let beta = srv.org(&other, "beta", 5).await;
+    let (s, v) = srv
+        .post(
+            &format!("/v1/orgs/{beta}/me/mailbox"),
+            &other.token,
+            json!({ "handle": "chief" }),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    assert_eq!(
+        code(
+            &post(
+                &srv,
+                "/messages",
+                &key,
+                json!({ "to": "/beta/chief", "body": "hi" })
+            )
+            .await
+        ),
+        (403, "recipient_not_in_org")
+    );
+
+    // A human member's identity is never a key's sender, by handle or by address.
+    for send_as in [
+        json!("/acme/jane"),
+        json!(jane_mb.clone()),
+        json!("/acme/boss"),
+    ] {
+        let (s, v) = srv
+            .post(
+                &format!("/v1/orgs/{org}/api-keys"),
+                &owner.strong,
+                json!({ "name": "as a person", "scopes": ["messages:send"], "send_as": send_as }),
+            )
+            .await;
+        assert_eq!(
+            (s, v["error"].as_str()),
+            (400, Some("invalid_send_as")),
+            "{send_as} → {v}"
+        );
+    }
+
+    // Even a corrupted row listing a person's mailbox as an org agent does not open the custodial
+    // path: the sender must be minted under the org and must not be a member's identity.
+    let (o2, mb) = (org.clone(), jane_mb.clone());
+    srv.state
+        .store
+        .group_tx(
+            move |tx: &rusqlite::Transaction<'_>| -> crate::groups::GResult<()> {
+                tx.execute(
+                    "INSERT INTO org_agents (org_id, identity, handle, created_at) VALUES (?1, ?2, 'jane-bot', 1)",
+                    rusqlite::params![o2, mb],
+                )?;
+                tx.execute(
+                    "UPDATE org_api_keys SET send_as = ?2 WHERE org_id = ?1 AND send_as IS NOT NULL",
+                    rusqlite::params![o2, mb],
+                )?;
+                Ok(())
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        code(
+            &post(
+                &srv,
+                "/messages",
+                &key,
+                json!({ "to": "/acme/boss", "body": "pretending to be Jane" })
+            )
+            .await
+        ),
+        (409, "send_as_unavailable")
+    );
+}
+
 // ---- spec drift ----
 
 /// The spec's own examples obey its schemas, so the docs never show a shape the API does not send.
