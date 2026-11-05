@@ -268,7 +268,16 @@ pub(crate) struct Settings {
     /// room's own timer and this applies, and a room with its timer off is still bound by it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub room_max_ephemeral_secs: Option<i64>,
+    /// The language meeting briefs of this org's rooms are written in (SDS §14.5 "Brief
+    /// language"), one of [`BRIEF_LANGUAGES`]; `None` = the meeting's majority language.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub brief_language: Option<String>,
 }
+
+/// Languages a Brief can be requested in: the ones meeting-intel prompts its model in by name.
+/// Only `en` and `tr` are validated (docs/meeting-summaries.md, language matrix).
+pub(crate) const BRIEF_LANGUAGES: &[&str] =
+    &["en", "tr", "de", "fr", "es", "it", "nl", "pt", "ru", "ar"];
 
 fn everyone() -> String {
     "everyone".into()
@@ -285,6 +294,7 @@ impl Default for Settings {
             stream_max_viewers: None,
             room_default_ephemeral_secs: None,
             room_max_ephemeral_secs: None,
+            brief_language: None,
         }
     }
 }

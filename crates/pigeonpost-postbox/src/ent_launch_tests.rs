@@ -466,3 +466,104 @@ async fn emailed_invitations_do_not_show_the_link() {
     assert_eq!(v["results"][0]["delivery"], "queued", "{v}");
     assert!(v["results"][0]["link"].is_null(), "{v}");
 }
+
+/// P2-23: an org's Brief language reaches meeting-intel for calls in its rooms; a brief of an org
+/// room lives no longer than the org's maximum room retention (SDS §14.5, §14.6, §17.1).
+#[tokio::test]
+async fn org_brief_language_and_retention_reach_meeting_briefs() {
+    const CALLS: &str = "svc_calls_0123456789abcdef0123456789abcdef";
+    const INTEL: &str = "svc_intel_0123456789abcdef0123456789abcdef";
+    let srv = crate::org_tests::serve_with(|s| {
+        s.service_tokens = std::sync::Arc::new(crate::internal_api::tokens_for_test(&[
+            ("POSTBOX_SVC_TOKEN_OPS", OPS),
+            ("POSTBOX_SVC_TOKEN_BILLING", BILLING),
+            ("POSTBOX_SVC_TOKEN_CALLS", CALLS),
+            ("POSTBOX_SVC_TOKEN_MEETING_INTEL", INTEL),
+        ]));
+    })
+    .await;
+    srv.global_flag("orgs").await;
+    srv.global_flag("groups").await;
+    srv.global_flag("meeting_summaries").await;
+    let owner = srv.person("brieflang").await;
+    let org = srv.org(&owner, "briefco", 5).await;
+    let (_, mb) = srv
+        .post(
+            &format!("/v1/orgs/{org}/me/mailbox"),
+            &owner.token,
+            json!({ "handle": "boss" }),
+        )
+        .await;
+    let boss = mb["mailbox"]["address"].as_str().unwrap().to_string();
+    let general = mb["general_room"].as_str().unwrap().to_string();
+    let (s, _) = srv
+        .patch(
+            &format!("/v1/orgs/{org}"),
+            &owner.token,
+            json!({ "settings": { "brief_language": "xx" } }),
+        )
+        .await;
+    assert_eq!(s, 400);
+    let (s, v) = srv
+        .patch(
+            &format!("/v1/orgs/{org}"),
+            &owner.token,
+            json!({ "settings": { "brief_language": "TR", "room_max_ephemeral_secs": 3600 } }),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["org"]["settings"]["brief_language"], "tr");
+    let (s, v) = srv
+        .call(
+            Method::POST,
+            "/internal/v1/meetings",
+            Some(CALLS),
+            Some(json!({
+                "host": boss, "room_ref": "abcdef0123456789", "kind": "group", "group_id": general,
+            })),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let mid = v["meeting_id"].as_str().unwrap().to_string();
+    let (s, v) = srv
+        .call(
+            Method::GET,
+            &format!("/internal/v1/meetings/{mid}/recipients"),
+            Some(INTEL),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["brief_language"], "tr");
+    // The org maximum clamps the stored expiry when the brief is ready.
+    let (s, v) = srv
+        .call(
+            Method::POST,
+            &format!("/internal/v1/meetings/{mid}/brief"),
+            Some(INTEL),
+            Some(json!({ "status": "failed", "reason": "no_speech" })),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let id2 = mid.clone();
+    let expires: i64 = srv
+        .state
+        .store
+        .group_read(move |c| -> Result<i64, crate::groups::GErr> {
+            Ok(c.query_row(
+                &format!(
+                    "SELECT {} FROM meetings m {} WHERE m.id = ?1",
+                    crate::meetings::EFFECTIVE_EXPIRY_SQL,
+                    crate::meetings::GROUP_JOIN_SQL
+                ),
+                [&id2],
+                |r| r.get(0),
+            )?)
+        })
+        .await
+        .unwrap();
+    assert!(
+        expires <= now_unix() as i64 + 3600 + 5,
+        "org maximum applies: {expires}"
+    );
+}

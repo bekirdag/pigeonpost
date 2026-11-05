@@ -49,7 +49,7 @@ function rig(over = {}) {
     summarizer: over.summarizer || { summarize: async (lines, speakers) => ({ notes: { title: "Weekly", summary: "We met.", decisions: ["Ship"], action_items: [{ owner: [...speakers][0], task: "Write notes", due: null, quote_ts: null }], open_questions: [] }, draft: false }) },
     postbox: async (method, path, body) => {
       posted.push({ method, path, body });
-      if (path.endsWith("/recipients")) return over.recipientsStatus ? { status: over.recipientsStatus, body: null } : { status: 200, body: { recipients: rec } };
+      if (path.endsWith("/recipients")) return over.recipientsStatus ? { status: over.recipientsStatus, body: null } : { status: 200, body: { recipients: rec, brief_language: over.briefLanguage ?? null } };
       return { status: 200, body: { stored: true } };
     },
     log: () => {},
@@ -118,6 +118,22 @@ test("pipeline: two speakers, windows, brief encrypted to the recipients' keys, 
   assert.equal(r.intel._sessions.size, 0);
   assert.equal(r.intel._queue.length, 0);
   assert.throws(() => r.intel.sessionFor(o.session), /no_session/);
+});
+
+test("an org's Brief language overrides the spoken majority, and a malformed one is ignored", async () => {
+  for (const [requested, expected] of [["tr", "tr"], [null, "en"], ["english; drop", "en"]]) {
+    const asked = [];
+    const r = rig({ briefLanguage: requested, summarizer: { summarize: async (lines, speakers, language) => { asked.push(language); return { notes: { title: "T", summary: "S", decisions: [], action_items: [], open_questions: [] }, draft: false }; } } });
+    const o = r.intel.open({ meeting_id: MEETING });
+    const s = r.intel.sessionFor(o.session);
+    await send(r.intel, s, o, "pid_aaaaaaaaaaaa", 0, "loud:10:1", 1_000_000);
+    await r.intel.finish(s, "host_stopped");
+    assert.deepEqual(asked, [expected], String(requested));
+    const brief = r.posted.find((p) => p.path.endsWith("/brief"));
+    const plain = JSON.parse(openBrief(MEETING, brief.body, brief.body.wraps[0], r.recipientKeys.get("keyAAAAAAAA1")).toString());
+    assert.equal(plain.language, expected);
+    assert.equal(plain.spoken_language, "en");
+  }
 });
 
 test("queue limits refuse with busy, and a busy session does not starve another", async () => {

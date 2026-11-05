@@ -320,17 +320,21 @@ export function createIntel(cfg, deps) {
       const t0 = segments[0].t;
       const lines = transcriptLines(segments, t0);
       const speakers = new Set(segments.map((x) => x.speaker));
-      const language = majorityLanguage(segments);
-      const started = now();
-      const result = await summarizer.summarize(lines, speakers, language);
       const recipients = await postbox("GET", `/internal/v1/meetings/${s.meeting}/recipients`);
       if (recipients.status !== 200 || !recipients.body) return await failed(s, "postbox_unavailable");
       const audience = (recipients.body.recipients || []).filter((r) => Array.isArray(r.keys) && r.keys.length);
       if (!audience.length) return await failed(s, "no_recipients");
+      // The org's Brief language when it set one (SDS §14.5), else the meeting's majority language.
+      const spoken = majorityLanguage(segments);
+      const requested = typeof recipients.body.brief_language === "string" && /^[a-z]{2}$/.test(recipients.body.brief_language)
+        ? recipients.body.brief_language : null;
+      const language = requested || spoken;
+      const started = now();
+      const result = await summarizer.summarize(lines, speakers, language);
       const brief = {
         v: 1, meeting_id: s.meeting,
         title: result.notes?.title || null,
-        language, started_at: new Date(t0).toISOString(),
+        language, spoken_language: spoken, started_at: new Date(t0).toISOString(),
         duration_s: Math.round((segments[segments.length - 1].t - t0) / 1000),
         participants: [...speakers],
         summary: result.notes?.summary || null,

@@ -299,6 +299,9 @@ struct PatchSettings {
     /// The longest any room keeps a message, one of the §17.1 values; `0` = no maximum.
     #[serde(default)]
     room_max_ephemeral_secs: Option<i64>,
+    /// Meeting briefs' language (`en`, `tr`, …); `""` = the meeting's majority language.
+    #[serde(default)]
+    brief_language: Option<String>,
 }
 
 /// `PATCH /v1/orgs/{id}`
@@ -386,6 +389,17 @@ async fn patch_org(
             if let Some(v) = s.room_max_ephemeral_secs {
                 settings.room_max_ephemeral_secs = timer(v)?;
                 changed.push("room_max_ephemeral_secs");
+            }
+            if let Some(v) = &s.brief_language {
+                let v = v.trim().to_ascii_lowercase();
+                if !v.is_empty() && !org::BRIEF_LANGUAGES.contains(&v.as_str()) {
+                    return Err(GErr::bad(
+                        "bad_request",
+                        format!("brief_language is one of {}, or empty", org::BRIEF_LANGUAGES.join(", ")),
+                    ));
+                }
+                settings.brief_language = (!v.is_empty()).then_some(v);
+                changed.push("brief_language");
             }
             if let (Some(d), Some(m)) = (settings.room_default_ephemeral_secs, settings.room_max_ephemeral_secs) {
                 if d > m {

@@ -45,7 +45,10 @@ pub(crate) const MAX_ATTENDEES: usize = 40;
 // ---- the brief's audience and lifetime (SDS §14.6; audit 2026-11-03 P2-2) ------------------------
 
 /// Joined into every member read, aliased `g`: the meeting's group, when it was a group call.
-const GROUP_JOIN: &str = "LEFT JOIN groups g ON g.id = m.group_id";
+#[cfg(test)]
+pub(crate) const GROUP_JOIN_SQL: &str = GROUP_JOIN;
+const GROUP_JOIN: &str =
+    "LEFT JOIN groups g ON g.id = m.group_id LEFT JOIN orgs o ON o.id = g.org_id";
 
 /// A group meeting's brief is for attendees who are *still* active members of that group: a person
 /// removed, banned or gone since the call loses access, and a deleted group takes its briefs along.
@@ -56,11 +59,16 @@ const STILL_IN_GROUP: &str =
            AND gm.state IN ('active','keying'))))";
 
 /// The brief's effective expiry: the meeting's own retention, shortened by the group's
-/// disappearing-message timer counted from when the brief was ready (the earliest applicable
-/// expiry wins; changing the timer later applies to existing briefs too).
-const EFFECTIVE_EXPIRY: &str =
-    "MIN(m.expires_at, CASE WHEN g.ephemeral_secs IS NULL THEN m.expires_at
-        ELSE COALESCE(m.ready_at, m.created_at) + g.ephemeral_secs END)";
+/// disappearing-message timer and, for an org room, the org's maximum room retention, each counted
+/// from when the brief was ready (the earliest applicable expiry wins; changing a timer later
+/// applies to existing briefs too; SDS §14.6, §17.1).
+#[cfg(test)]
+pub(crate) const EFFECTIVE_EXPIRY_SQL: &str = EFFECTIVE_EXPIRY;
+const EFFECTIVE_EXPIRY: &str = "MIN(m.expires_at,
+        CASE WHEN g.ephemeral_secs IS NULL THEN m.expires_at
+             ELSE COALESCE(m.ready_at, m.created_at) + g.ephemeral_secs END,
+        CASE WHEN json_extract(o.settings, '$.room_max_ephemeral_secs') IS NULL THEN m.expires_at
+             ELSE COALESCE(m.ready_at, m.created_at) + json_extract(o.settings, '$.room_max_ephemeral_secs') END)";
 
 fn retention_secs() -> u64 {
     std::env::var("POSTBOX_MEETING_RETENTION_DAYS")
@@ -846,7 +854,18 @@ async fn recipients_inner(state: &AppState, headers: &HeaderMap, id: String) -> 
                         .push(json!({ "account_id": account, "address": address, "keys": [key] })),
                 }
             }
-            Ok(json!({ "meeting_id": id, "recipients": out }))
+            // The org's Brief language (SDS §14.5) for a call in one of its rooms; otherwise the
+            // processor writes the brief in the meeting's majority language.
+            let brief_language: Option<String> = c
+                .query_row(
+                    "SELECT json_extract(o.settings, '$.brief_language') FROM meetings m
+                       JOIN groups g ON g.id = m.group_id JOIN orgs o ON o.id = g.org_id WHERE m.id = ?1",
+                    params![id],
+                    |r| r.get(0),
+                )
+                .optional()?
+                .flatten();
+            Ok(json!({ "meeting_id": id, "recipients": out, "brief_language": brief_language }))
         })
         .await
 }

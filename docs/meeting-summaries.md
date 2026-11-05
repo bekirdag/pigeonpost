@@ -153,8 +153,31 @@ existing SSH tunnel).
   backlogs beyond the queue bound are refused, and meetings finish a little after they end.
 - Summary: `qwen-latest-flash-next` on the box's local OpenAI-compatible server; ~5 s for a short meeting.
   It is shared (one request at a time); retries with backoff, then a marked draft.
-- Languages: English and Turkish checked with synthetic voices; other languages are transcribed but not
-  validated. Speaker labels come from whose device captured the audio.
+- Speaker labels come from whose device captured the audio.
+
+### Language matrix (SDS §14.5)
+
+What is validated, and how. "Validated" means `tests/e2e-meeting-summaries/stt-check.mjs` passed on raijin
+with the synthetic fixture (every speaker's key phrases transcribed, the brief decrypts for each
+recipient, action-item owners are only people who took tasks). Nothing here is a claim of equal
+quality across languages.
+
+| Language | Transcription (whisper.cpp `small`) | Brief written in it (`qwen-latest-flash-next`) | Status |
+|---|---|---|---|
+| English | validated (synthetic voices) | validated | supported |
+| Turkish | validated (synthetic voices) | validated | supported |
+| Mixed EN/TR in one meeting | validated (the fixture is bilingual) | majority language, or the org's Brief language | supported |
+
+An org can fix the Brief language for calls in its rooms (`settings.brief_language`, `docs/orgs.md`); the
+postbox returns it with the recipients and meeting-intel writes the brief in it, keeping the spoken majority
+as `spoken_language`. Briefs of org-room calls also expire no later than the org's maximum room retention.
+| German, French, Spanish, Italian, Dutch, Portuguese, Russian, Arabic | transcribed, not validated | the model is prompted by name, not validated | unvalidated: works, no quality claim |
+| Other Whisper languages | transcribed, not validated | the summary falls back to "the language most of the meeting was held in" | unvalidated |
+
+Before a language moves to "supported", record a fixture in it (`make-fixture.sh` with that language's
+voices) and run `stt-check.mjs` on raijin. Real voices, accents and crosstalk are not covered by any row;
+they are the limit stated to members. Brief headings are rendered by the reader's app from the brief's
+structured fields, in the app's UI language (today English in the web inbox).
 
 ## 6. Clients
 

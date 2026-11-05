@@ -87,7 +87,10 @@ actions: they are human-only (`403 human_required`).
 `Org`: `{id, name, namespace (bare, e.g. `acme`), status, seats, seats_used, agent_limit, agents_used, plan_code,
 storage_bytes, deletion_at, logo, period_end, settings:{require_mfa, invite_domains_only, rooms_creation,
 ssh_allowed, ssh_requires_approval, stream_max_viewers?, room_default_ephemeral_secs?,
-room_max_ephemeral_secs?}, created_at, revision}`. `logo` is `null` or `{id, version, hash, urls}`.
+room_max_ephemeral_secs?, brief_language?}, created_at, revision}`. `brief_language` (`en`, `tr`, `de`,
+`fr`, `es`, `it`, `nl`, `pt`, `ru`, `ar`; `""` clears) is the language meeting briefs of calls in
+the org's rooms are written in (SDS §14.5); without it a brief follows the meeting's majority
+language. Only `en` and `tr` are validated (`docs/meeting-summaries.md`, language matrix). `logo` is `null` or `{id, version, hash, urls}`.
 
 **Org logo** (SDS §16.1): `PUT /v1/orgs/{id}/logo` with the raw image (as `PUT /v1/profile/avatar`,
 `?crop=x,y,w,h`; JPEG, PNG or WebP up to 10 MB, re-encoded, metadata stripped; 5 changes a day),

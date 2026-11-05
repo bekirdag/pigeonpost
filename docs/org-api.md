@@ -72,7 +72,7 @@ actor on its own record.
 
 ## 2. Conventions (`/org/v1`)
 
-- Base URL `https://postbox.pigeonpost.dev/org/v1` (D-26 alias `api.pigeonpost.dev` once DNS exists).
+- Base URL `https://postbox.pigeonpost.dev/org/v1`, also served as `https://api.pigeonpost.dev/org/v1` (D-26).
   `Authorization: Bearer pk_org_…`.
 - JSON, `application/json; charset=utf-8`, snake_case. Timestamps are ISO 8601 UTC
   (`2026-10-27T10:15:00Z`).
