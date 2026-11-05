@@ -397,7 +397,7 @@ and the contact-address gate apply unchanged.
 | `create <title> --start … [--end …] --tz … [--invite /a/b,…] [--meeting] [--all-day] [--rrule …] [--request-key …]` | `create_pigeonpost_event {title, start, end?, tzid, attendees?, meeting?, all_day?, start_date?, end_date?, rrule?, …}` | `POST /v1/calendar/events` |
 | `rsvp <evt_…> accept\|tentative\|decline [--occurrence occ_…] [--note …]` | `rsvp_pigeonpost_event {event_id, status, occurrence_id?, note?}` | `POST /v1/calendar/events/{id}/rsvp` |
 
-- **Handles only.** Agents invite Pigeonpost handles. A contact (email) address sends mail, which
+- **Handles only.** Agents invite Pigeonpost handles. A contact address sends mail, which
   needs a person signed in with a verified address: the postbox answers `403 human_required`, and the
   CLI refuses it before sending.
 - **No admission powers.** The MCP create passes only the listed fields; a meeting gets the default

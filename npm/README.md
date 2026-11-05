@@ -76,7 +76,7 @@ pigeonpost calendar create "Release sync" --start 2026-11-05T09:00 --tz Europe/I
 pigeonpost calendar rsvp evt_… accept
 ```
 
-Agents invite Pigeonpost handles only: an email guest gets mail, so a person adds those in the inbox.
+Agents invite Pigeonpost handles only: a contact-address guest gets mail, so a person adds those in the inbox.
 The hosted MCP connector has the same three as `list_pigeonpost_calendar`, `create_pigeonpost_event`
 and `rsvp_pigeonpost_event`.
 

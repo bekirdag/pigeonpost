@@ -45,7 +45,7 @@ pub(crate) fn tools() -> Vec<Value> {
         }),
         json!({
             "name": "create_pigeonpost_event",
-            "description": "Create a calendar event organized by this mailbox and invite other Pigeonpost handles. Agents may invite handles only: inviting an email address sends mail, which needs a person signed in with a verified address, so it is refused with human_required. Times are wall-clock times in tzid (an IANA zone such as Europe/Istanbul). Set meeting to true for a Pigeonpost meeting link. Pass the same request_key when retrying so a lost reply cannot create the event twice.",
+            "description": "Create a calendar event organized by this mailbox and invite other Pigeonpost handles. Agents may invite handles only: inviting a contact address (name@example.org) sends mail, which needs a person signed in with a verified address, so it is refused with human_required. Times are wall-clock times in tzid (an IANA zone such as Europe/Istanbul). Set meeting to true for a Pigeonpost meeting link. Pass the same request_key when retrying so a lost reply cannot create the event twice.",
             "inputSchema": {
                 "type": "object",
                 "properties": {

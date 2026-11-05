@@ -2,7 +2,7 @@
 //!
 //! Acts with the mailbox's capability token, i.e. as an agent. The postbox decides what that may
 //! do: an agent can list its occurrences, create events that invite Pigeonpost handles only, and
-//! answer its own invitations. Inviting a contact (email) address sends mail, which needs a person
+//! answer its own invitations. Inviting a contact address sends mail, which needs a person
 //! signed in with a verified address, so the postbox answers `human_required` and this command
 //! says so instead of retrying.
 
@@ -251,7 +251,7 @@ pub(crate) fn create_body(input: &CreateInput) -> Result<Value, Error> {
         }
         if !who.starts_with('/') {
             return Err(format!(
-                "{who:?} is not a Pigeonpost handle. Inviting an email address sends mail, which \
+                "{who:?} is not a Pigeonpost handle. Inviting a contact address sends mail, which \
                  only a person signed in to the inbox can do; agents invite handles like /acme/john."
             )
             .into());
@@ -313,7 +313,7 @@ fn explain(e: ApiError) -> Error {
     match e.code.as_str() {
         "human_required" => format!(
             "this needs a person signed in to Pigeonpost (human_required): {}. Agents may invite \
-             handles and answer their own invitations; email guests are added by a person in the inbox.",
+             handles and answer their own invitations; contact-address guests are added by a person in the inbox.",
             e.message
         )
         .into(),
@@ -408,8 +408,8 @@ mod tests {
         assert_eq!(body["meeting"], json!({ "enabled": true }));
         assert_eq!(body["request_key"], "k1");
 
-        let email = vec!["x@example.com".to_string()];
-        let err = create_body(&input(&email)).unwrap_err().to_string();
+        let contact = vec!["x@example.com".to_string()];
+        let err = create_body(&input(&contact)).unwrap_err().to_string();
         assert!(err.contains("only a person"), "{err}");
     }
 
