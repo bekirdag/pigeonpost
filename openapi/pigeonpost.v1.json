@@ -13761,6 +13761,278 @@
         }
       }
     },
+    "/v1/groups/{id}/picture": {
+      "put": {
+        "tags": [
+          "groups"
+        ],
+        "operationId": "groupPicturePut",
+        "summary": "Set the group's picture (raw image)",
+        "description": "See docs/groups.md. Group owner or admin, a person (not an agent or key). Same processing as `PUT /v1/profile/avatar`; members get `group.settings` with `changed: [picture]`.",
+        "security": [
+          {
+            "memberToken": []
+          },
+          {
+            "capToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Identity"
+          },
+          {
+            "name": "crop",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "`x,y,w,h` in pixels of the uploaded image."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "image/jpeg": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "image/png": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "image/webp": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The stored picture: `{avatar: {id, version, hash, urls}}`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/GroupError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/GroupError"
+          },
+          "404": {
+            "$ref": "#/components/responses/GroupError"
+          },
+          "413": {
+            "description": "Larger than 10 MB."
+          },
+          "429": {
+            "description": "`avatar_rate_limited`: five changes a day."
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "groups"
+        ],
+        "operationId": "groupPictureDelete",
+        "summary": "Remove it",
+        "security": [
+          {
+            "memberToken": []
+          },
+          {
+            "capToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Identity"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`{removed: true}`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/GroupError"
+          },
+          "404": {
+            "$ref": "#/components/responses/GroupError"
+          }
+        }
+      }
+    },
+    "/v1/orgs/{id}/logo": {
+      "put": {
+        "tags": [
+          "organizations"
+        ],
+        "operationId": "orgLogoPut",
+        "summary": "Set the organization's logo (raw image)",
+        "description": "See docs/orgs.md. Requires the `orgs` feature flag. Owner or admin. Same processing as `PUT /v1/profile/avatar`; logos are public.",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "crop",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "`x,y,w,h` in pixels of the uploaded image."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "image/jpeg": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "image/png": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "image/webp": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The stored picture: `{avatar: {id, version, hash, urls}}`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/GroupError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/GroupError"
+          },
+          "404": {
+            "$ref": "#/components/responses/GroupError"
+          },
+          "413": {
+            "description": "Larger than 10 MB."
+          },
+          "429": {
+            "description": "`avatar_rate_limited`: five changes a day."
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "organizations"
+        ],
+        "operationId": "orgLogoDelete",
+        "summary": "Remove it",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`{removed: true}`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/GroupError"
+          },
+          "404": {
+            "$ref": "#/components/responses/GroupError"
+          }
+        }
+      }
+    },
     "/v1/orgs/{id}/transfer": {
       "post": {
         "tags": [

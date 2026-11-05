@@ -573,11 +573,17 @@ pub(crate) struct DraftBody {
     seats: i64,
 }
 
-/// `ent-<seats>-<monthly|yearly>-<usd|try|eur>`, with the seat count matching `seats`.
+/// The seat tiers sold self-serve (SDS §8.3, `store-adapter` catalog). Larger organizations go
+/// through sales and are provisioned by grant, not by a plan code.
+const SEAT_TIERS: [i64; 9] = [5, 10, 15, 20, 30, 50, 100, 200, 500];
+
+/// `ent-<seats>-<monthly|yearly>-<usd|try|eur>`, with the seat count one of [`SEAT_TIERS`] and
+/// matching `seats` (audit 2026-11-03 P3-2).
 fn valid_ent_plan(code: &str, seats: i64) -> bool {
     let parts: Vec<&str> = code.split('-').collect();
     parts.len() == 4
         && parts[0] == "ent"
+        && SEAT_TIERS.contains(&seats)
         && parts[1].parse::<i64>().ok() == Some(seats)
         && !parts[1].starts_with('0')
         && ["monthly", "yearly"].contains(&parts[2])
@@ -638,7 +644,7 @@ pub(crate) async fn create_org_draft(
     if !(1..=MAX_SEATS).contains(&b.seats) || !valid_ent_plan(&b.plan_code, b.seats) {
         return bad(
             "invalid_plan_code",
-            "plan_code must be ent-<seats>-<monthly|yearly>-<usd|try|eur> matching seats",
+            "plan_code must be ent-<seats>-<monthly|yearly>-<usd|try|eur>, seats one of 5, 10, 15, 20, 30, 50, 100, 200, 500",
         );
     }
     let namespace = match crate::web_plan::canonical_namespace(&state, &b.namespace) {

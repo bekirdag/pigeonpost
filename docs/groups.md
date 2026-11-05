@@ -68,6 +68,7 @@ history, keys or calls. `unread` counts application messages after `read_cursor`
 | GET | `/v1/groups` | `?state=active,invited,keying` (default all three) | `{groups:[group]}` for the acting mailbox, most recent first; deleted groups the mailbox was in appear once with `deleted_at`. |
 | GET | `/v1/groups/{id}` | | `group`. `404 not_found` when the mailbox has no relationship to it (a known id grants nothing). |
 | PATCH | `/v1/groups/{id}` | `{expected_revision, name?, description?, join_policy?, post_policy?, visibility?, members_can_invite?, members_can_change_timer?, ephemeral_secs?}` | Owner/admin; `ephemeral_secs` also by members when `members_can_change_timer`. Human only. `{group}`; notice + `group.settings`. |
+| PUT / DELETE | `/v1/groups/{id}/picture` | raw image (`?identity=&crop=x,y,w,h`; as `PUT /v1/profile/avatar`) | Owner/admins, human only. `{avatar}`; `group.settings` `{changed:["picture"]}`. The group view carries `picture` (`null` or `{id, version, hash, urls}`). Visible to members (and invitees), and for a listed public group to anyone signed in — for an org room, only to that org's members (SDS §16.1, audit P2-20). |
 | DELETE | `/v1/groups/{id}` | | Owner. Soft delete; members see `group.deleted`; content purged within 30 days. |
 | GET | `/v1/groups/{id}/members` | `?state=` | `{members:[{address, handle, role, state, invited_by, joined_at, revision}]}`. Active members see active/keying members; admins also see invitations and bans. |
 | POST | `/v1/groups/{id}/members` **K** | `{request_key, invite:[address\|handle]}` | Admins, or members when `members_can_invite`. ≤ 200 per request, ≤ 1,000 per day per group. `{results:[{address, status: invited\|already_member\|banned\|not_admitted\|unresolved\|group_full}]}`. A recipient who blocked the inviter gets no record (`not_admitted`). |
@@ -211,6 +212,8 @@ Allowed timers: `null` (off), 300, 3600, 28800, 86400, 604800, 2419200 seconds.
 * Groups: `PATCH /v1/groups/{id} {ephemeral_secs, expected_revision}`; admins, or members when
   `members_can_change_timer`. Items carry `expires_at`.
 * The clock starts at send (D-25); changing a timer affects only new messages.
+* Org rooms: the org's `room_max_ephemeral_secs` bounds every message (the shorter timer wins; Off is
+  not exempt), and a new room starts with `room_default_ephemeral_secs` (`docs/orgs.md`).
 * The postbox deletes expired rows every 30 s, releases attachments and emits `message.expired`.
   Reads never return expired content. Clients must also drop expired items locally by their own
   timer, before rendering, even when they missed the event.
