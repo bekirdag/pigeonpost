@@ -671,6 +671,7 @@ async fn create(
         let account = ctx.account.clone();
         let member = ctx.member.id.clone();
         let namespace = ctx.org.namespace.clone();
+        let internal = ctx.org.internal_account.clone();
         let ip = Some(cip.as_str().to_string());
         let (secret, last4) = new_key();
         let hash = crate::sha256(secret.as_bytes());
@@ -697,11 +698,16 @@ async fn create(
                         } else {
                             format!("/{namespace}/{}", raw.to_ascii_lowercase())
                         };
+                        // Only an org-owned agent/service mailbox (minted under the org's internal
+                        // account) may be a key's sender, never a person's identity (P2-10).
                         let found: Option<String> = tx
                             .query_row(
-                                "SELECT identity FROM org_agents WHERE org_id = ?1
-                                    AND (handle = ?2 OR identity = ?3) AND status = 'active'",
-                                params![id, handle, raw],
+                                "SELECT a.identity FROM org_agents a JOIN identities i ON i.address = a.identity
+                                  WHERE a.org_id = ?1 AND (a.handle = ?2 OR a.identity = ?3) AND a.status = 'active'
+                                    AND i.account_id = ?4
+                                    AND NOT EXISTS (SELECT 1 FROM org_members m
+                                                     WHERE m.identity = a.identity AND m.status <> 'removed')",
+                                params![id, handle, raw, internal],
                                 |r| r.get(0),
                             )
                             .optional()?;
