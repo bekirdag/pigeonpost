@@ -499,3 +499,43 @@ async fn owner_prose_is_chat_and_strangers_stay_held() {
     .unwrap_err();
     assert_eq!(err.code, "invalid_verb");
 }
+
+/// Nests B6: the postbox releases the KEK and replays every deleted Nest as a tombstone.
+#[tokio::test]
+async fn the_unlocker_sends_the_kek_and_tombstones() {
+    let mut state = state();
+    let mut rt = nests::Runtime::capture();
+    rt.kek = Some(zeroize::Zeroizing::new("ab".repeat(32)));
+    state.nests = Arc::new(rt);
+    account(&state, "acct_nestunlock").await;
+    let (_, internal) = serve(state.clone()).await;
+    flag(&internal, "acct_nestunlock", true).await;
+    let (s, v) = create(
+        &internal,
+        json!({ "account_id": "acct_nestunlock", "label": "Gone" }),
+    )
+    .await;
+    assert_eq!(s, 201);
+    let id = v["nest_id"].as_str().unwrap().to_string();
+    let (s, _) = call(
+        reqwest::Method::DELETE,
+        format!("{internal}/internal/v1/nests/{id}"),
+        OPS,
+        None,
+    )
+    .await;
+    assert_eq!(s, 200);
+    nests::unlock_once(&state).await.unwrap();
+    let unlock = state
+        .nests
+        .calls()
+        .into_iter()
+        .find(|c| c.path == "/v1/unlock")
+        .unwrap();
+    let body = unlock.body.unwrap();
+    assert_eq!(body["kek"], "ab".repeat(32));
+    assert_eq!(body["tombstones"], json!([id]));
+    // Without a KEK nothing is sent.
+    let plain = crate::tests::test_state();
+    assert!(nests::unlock_once(&plain).await.is_err());
+}

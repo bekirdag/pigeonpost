@@ -13,6 +13,23 @@ pub struct Config {
     pub sandbox: SandboxConfig,
     pub storage: StorageConfig,
     pub broker: BrokerConfig,
+    /// Phase B6: where `pigeonpost-nestd alert-relay` sends Alertmanager notifications.
+    #[serde(default)]
+    pub alerts: Option<AlertsConfig>,
+}
+
+/// Alertmanager's webhook, relayed as a Pigeonpost message to the operator.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AlertsConfig {
+    /// Loopback address Alertmanager posts to, e.g. `127.0.0.1:9796`.
+    pub bind: String,
+    /// The postbox's public base URL.
+    pub postbox_url: String,
+    /// File holding the capability token of the dedicated alerts mailbox (0400 root).
+    pub token_file: PathBuf,
+    /// The operator's Pigeonpost address.
+    pub to: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -32,6 +49,13 @@ pub struct ControlConfig {
     /// Reconcile the host against the ledger this often (and once at start).
     #[serde(default = "default_reconcile")]
     pub reconcile_secs: u64,
+    /// Phase B6: Prometheus metrics on a loopback address (`127.0.0.1:9790`); unset = off.
+    #[serde(default)]
+    pub metrics_bind: Option<String>,
+    /// File whose content is the Unix time of the last successful backup (written by
+    /// `nests-backup`), exported as `nests_backup_last_success_seconds`.
+    #[serde(default)]
+    pub backup_marker: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -88,6 +112,14 @@ pub struct StorageConfig {
     /// The uid/gid the sandbox runs as; the volume's top directories are owned by it.
     #[serde(default = "default_uid")]
     pub sandbox_uid: u32,
+    /// Phase B6: store volume keys wrapped under the KEK the postbox releases (`POST /v1/unlock`).
+    /// On by default; `false` only for development hosts.
+    #[serde(default = "default_true")]
+    pub key_wrap: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -253,6 +285,8 @@ pub(crate) fn test_config(dir: &std::path::Path) -> Config {
         control: ControlConfig {
             bind: "127.0.0.1:0".into(),
             token_sha256_file: dir.join("control.sha256"),
+            metrics_bind: None,
+            backup_marker: None,
             idle_stop_secs: 900,
             max_running: 2,
             reconcile_secs: 60,
@@ -282,6 +316,7 @@ pub(crate) fn test_config(dir: &std::path::Path) -> Config {
             default_gib: 1,
             max_total_gib: 3,
             sandbox_uid: 10001,
+            key_wrap: false,
         },
         broker: BrokerConfig {
             bind: "127.0.0.1:0".into(),
@@ -296,6 +331,7 @@ pub(crate) fn test_config(dir: &std::path::Path) -> Config {
             global_monthly_input_cap: None,
             global_monthly_output_cap: None,
         },
+        alerts: None,
     }
 }
 

@@ -164,3 +164,20 @@ Workspace hours are shown, not yet metered (B5).
 
 Clients show files, usage and pause/delete with export on every platform (client work follows the
 server PRs).
+
+## B6 — data safety
+
+- **Backups:** borg append-only to raijin's HDD over WireGuard, nightly ([backups.md](backups.md));
+  this replaces the plan's "restic to a Wodo target". Each archive now writes a success marker.
+- **Off-host LUKS unlock:** volume keys are wrapped (ChaCha20-Poly1305, bound to the Nest id)
+  under a host KEK held only by the postbox (`POSTBOX_NESTS_KEK_FILE`). The postbox releases it
+  every minute over WireGuard (`POST /v1/unlock`). nestd is locked until then; a wrong KEK is
+  refused by fingerprint. A copy of nests-1's disk, a VMware snapshot or a backup no longer
+  contains a usable key. A live compromise of running nestd (which holds the KEK in memory) is not
+  covered, and that is stated plainly.
+- **Tombstones:** each unlock carries the postbox's deleted Nest ids; nestd destroys any it still
+  has, so a restore cannot bring a revoked Nest back.
+- **Monitoring:** nestd `/metrics` on loopback (no ids or content). Prometheus, Alertmanager and
+  node_exporter run on nests-1; alerts arrive as Pigeonpost messages through the alert relay.
+  Rules are in `deploy/nests/monitoring/`.
+- **Restore rehearsal:** RPO ≤ 24 h (nightly), RTO ≤ 4 h. Rehearsed on deploy; evidence is in the ledger.

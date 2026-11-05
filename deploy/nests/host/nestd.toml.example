@@ -11,6 +11,10 @@ idle_stop_secs = 900
 # fits the ~4.8 GiB the VMware balloon leaves this guest, with headroom; see phase-a-plan.md §5.
 max_running = 15
 reconcile_secs = 60
+# Phase B6: Prometheus metrics on loopback (scraped by the local Prometheus), and the backup's
+# success marker exported as nests_backup_last_success_seconds.
+metrics_bind = "127.0.0.1:9790"
+backup_marker = "/var/lib/nests/backup-last-success"
 
 [sandbox]
 runtime = "gvisor"
@@ -39,6 +43,9 @@ default_gib = 5
 # Thin pool is 62.6 GiB; no overcommit.
 max_total_gib = 60
 sandbox_uid = 10001
+# Phase B6: volume keys are stored wrapped under the host KEK, which only the postbox holds and
+# releases over WireGuard (POST /v1/unlock). Until then nestd is locked: nothing starts.
+key_wrap = true
 
 [broker]
 bind = "10.67.255.1:8788"
@@ -66,3 +73,10 @@ nest_monthly_input_cap = 1000000
 nest_monthly_output_cap = 100000
 global_monthly_input_cap = 5000000
 global_monthly_output_cap = 500000
+
+# Phase B6: Alertmanager's webhook relayed as a Pigeonpost message (pigeonpost-nestd alert-relay).
+[alerts]
+bind = "127.0.0.1:9796"
+postbox_url = "https://postbox.pigeonpost.dev"
+token_file = "/run/credentials/nests-alert-relay.service/alerts.token"
+to = "/bekir"

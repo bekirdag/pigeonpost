@@ -527,6 +527,7 @@ async fn serve(cfg: Config) {
     googleplay_routes::start_reconciliation(state.clone());
     appstore_routes::start_reconciliation(state.clone());
     nest_commerce::start_reconciliation(state.clone());
+    nests::start_unlocker(state.clone());
     start_internal_listener(&state).await;
     // Disappearing-message expiry and group maintenance (SDS §17.2, §4.3), every 30 s.
     ephemeral::start_worker(state.clone());

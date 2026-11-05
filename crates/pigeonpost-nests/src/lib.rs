@@ -24,6 +24,8 @@ pub mod config;
 pub mod control;
 pub mod db;
 pub mod files;
+pub mod keywrap;
+pub mod metrics;
 pub mod mock_upstream;
 pub mod parse;
 pub mod sandbox;

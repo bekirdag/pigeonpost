@@ -102,6 +102,9 @@ pub(crate) struct Runtime {
     pub(crate) output_tokens: u64,
     /// Last wake sent per Nest, for the debounce.
     woken: Mutex<HashMap<String, u64>>,
+    /// Phase B6: the Nests host's key-encryption key, released to nestd over the private link
+    /// (`POSTBOX_NESTS_KEK_FILE`, 64 hex characters). Never logged, never sent anywhere else.
+    pub(crate) kek: Option<zeroize::Zeroizing<String>>,
 }
 
 impl Default for Runtime {
@@ -112,6 +115,7 @@ impl Default for Runtime {
             input_tokens: 1_000_000,
             output_tokens: 100_000,
             woken: Mutex::new(HashMap::new()),
+            kek: None,
         }
     }
 }
@@ -183,6 +187,7 @@ impl Runtime {
             input_tokens: env_num("POSTBOX_NESTS_INPUT_TOKENS", d.input_tokens),
             output_tokens: env_num("POSTBOX_NESTS_OUTPUT_TOKENS", d.output_tokens),
             woken: Mutex::new(HashMap::new()),
+            kek: read_kek(),
         }
     }
 
@@ -386,6 +391,93 @@ pub(crate) async fn is_nest_mailbox(state: &AppState, address: &str) -> bool {
         })
         .await
         .unwrap_or(false)
+}
+
+/// The KEK file named by `POSTBOX_NESTS_KEK_FILE`, if it holds exactly 64 hex characters.
+fn read_kek() -> Option<zeroize::Zeroizing<String>> {
+    let path = std::env::var("POSTBOX_NESTS_KEK_FILE").ok()?;
+    let text = zeroize::Zeroizing::new(std::fs::read_to_string(path.trim()).ok()?);
+    let hex = text.trim();
+    if hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        Some(zeroize::Zeroizing::new(hex.to_ascii_lowercase()))
+    } else {
+        tracing::warn!(
+            "POSTBOX_NESTS_KEK_FILE does not hold a 64-hex-character key; Nests stay locked"
+        );
+        None
+    }
+}
+
+/// Deleted Nests nestd must not keep (or bring back from a restore): the newest 1000.
+async fn tombstones(state: &AppState) -> Vec<String> {
+    state
+        .store
+        .group_read(|c| -> GResult<Vec<String>> {
+            let mut stmt = c.prepare(
+                "SELECT id FROM nests WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC LIMIT 1000",
+            )?;
+            let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+            Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+        })
+        .await
+        .unwrap_or_default()
+}
+
+/// One unlock call: release the KEK and replay tombstones. Idempotent on nestd.
+pub(crate) async fn unlock_once(state: &AppState) -> Result<Value, NestdError> {
+    let Some(kek) = state.nests.kek.as_ref() else {
+        return Err(NestdError::Unavailable);
+    };
+    let body = json!({ "kek": kek.as_str(), "tombstones": tombstones(state).await });
+    match state
+        .nests
+        .call(reqwest::Method::POST, "/v1/unlock", Some(body))
+        .await?
+    {
+        (200, v) => Ok(v),
+        (status, v) => Err(NestdError::Failed(format!(
+            "nestd answered {status}: {}",
+            v["error"].as_str().unwrap_or("error")
+        ))),
+    }
+}
+
+/// Phase B6: keep the Nests host unlocked and its deletions in line with ours. Every minute, so a
+/// rebooted host waits at most a minute, and a restored host destroys revoked Nests promptly.
+pub(crate) fn start_unlocker(state: AppState) {
+    if !state.nests.configured() || state.nests.kek.is_none() {
+        return;
+    }
+    tokio::spawn(async move {
+        let mut timer = tokio::time::interval(std::time::Duration::from_secs(60));
+        timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut was_ok = false;
+        loop {
+            timer.tick().await;
+            match unlock_once(&state).await {
+                Ok(v) => {
+                    if !was_ok {
+                        tracing::info!("Nests host unlocked");
+                    }
+                    if let Some(t) = v["tombstoned"].as_array().filter(|t| !t.is_empty()) {
+                        tracing::warn!(
+                            count = t.len(),
+                            "Nests host destroyed Nests the postbox had deleted"
+                        );
+                    }
+                    was_ok = true;
+                }
+                Err(e) => {
+                    let detail = match e {
+                        NestdError::Unavailable => "not configured".to_string(),
+                        NestdError::Failed(d) => d,
+                    };
+                    tracing::warn!(%detail, "Nests host unlock failed");
+                    was_ok = false;
+                }
+            }
+        }
+    });
 }
 
 // ---- wake on mail -------------------------------------------------------------------------------

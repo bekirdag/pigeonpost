@@ -27,6 +27,8 @@ pub struct Ctx {
     pub token_sha256: Arc<String>,
     /// Who holds the leases this process takes (host name + boot id).
     pub holder: Arc<String>,
+    /// The off-host KEK, once the postbox released it (Phase B6).
+    pub vault: Arc<crate::keywrap::Vault>,
     locks: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
 }
 
@@ -46,8 +48,20 @@ impl Ctx {
             volumes,
             token_sha256: Arc::new(token_sha256),
             holder: Arc::new(holder),
+            vault: Arc::new(crate::keywrap::Vault::new()),
             locks: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    /// Share `vault` with the volume backend (production: both hold the same KEK).
+    pub fn with_vault(mut self, vault: Arc<crate::keywrap::Vault>) -> Self {
+        self.vault = vault;
+        self
+    }
+
+    /// Whether volumes cannot be opened yet: keys are wrapped and the KEK not released.
+    pub fn locked(&self) -> bool {
+        self.cfg.storage.backend == "lvm-luks" && self.cfg.storage.key_wrap && self.vault.locked()
     }
 
     /// One operation per Nest at a time; different Nests proceed in parallel.
@@ -114,7 +128,19 @@ fn valid_code(code: &str) -> bool {
     })
 }
 
+fn refuse_locked(ctx: &Ctx) -> Result<(), ApiError> {
+    if ctx.locked() {
+        return Err(ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "locked",
+            "the host key has not been released yet",
+        ));
+    }
+    Ok(())
+}
+
 pub async fn create(ctx: &Ctx, req: CreateNest) -> ApiResult {
+    refuse_locked(ctx)?;
     if !valid_nest_id(&req.nest_id) {
         return Err(ApiError::new(
             StatusCode::BAD_REQUEST,
@@ -545,6 +571,12 @@ fn month_start(t: i64) -> i64 {
 /// Bring the host in line with the ledger. Runs at start (after a reboot nothing is running and
 /// every volume is closed) and periodically.
 pub async fn reconcile(ctx: &Ctx) -> Result<(), String> {
+    // Locked after a restart: nothing that needs a volume key can happen yet, and failing every
+    // start would mark healthy Nests failed. Running sandboxes keep running meanwhile.
+    if ctx.locked() {
+        tracing::warn!("locked: waiting for the postbox to release the host key");
+        return Ok(());
+    }
     let nests = ctx.db.nests(true)?;
     let present = {
         let s = ctx.sandbox.clone();
@@ -738,12 +770,101 @@ pub fn router(ctx: Ctx) -> Router {
         ));
     Router::new()
         .route("/v1/health", get(health))
+        .route("/v1/unlock", post(http_unlock))
         .route("/v1/nests", post(http_create).get(http_list))
         .route("/v1/nests/{id}", get(http_get).delete(http_delete))
         .route("/v1/nests/{id}/{action}", post(http_action))
         .layer(axum::extract::DefaultBodyLimit::max(16 * 1024))
         .merge(files)
         .with_state(ctx)
+}
+
+// ---- unlock and tombstones (Phase B6) -----------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UnlockReq {
+    /// The host KEK, 64 hex characters.
+    pub kek: String,
+    /// Nests the postbox has deleted. Any of them still present here (a restored ledger or volume,
+    /// a missed delete) is destroyed now, so a revoked Nest stays revoked after a restore.
+    #[serde(default)]
+    pub tombstones: Vec<String>,
+}
+
+fn fpr_path(ctx: &Ctx) -> PathBuf {
+    ctx.cfg
+        .storage
+        .key_dir
+        .parent()
+        .map(|p| p.join("kek.fpr"))
+        .unwrap_or_else(|| PathBuf::from("kek.fpr"))
+}
+
+/// `POST /v1/unlock` — the postbox releases the KEK (idempotent; a different KEK is refused) and
+/// replays deletion tombstones.
+pub async fn unlock(ctx: &Ctx, req: UnlockReq) -> ApiResult {
+    let mut kek = crate::keywrap::parse_kek(&req.kek)
+        .ok_or_else(|| ApiError::new(StatusCode::BAD_REQUEST, "bad_kek", "64 hex characters"))?;
+    let path = fpr_path(ctx);
+    let expected = std::fs::read_to_string(&path)
+        .ok()
+        .map(|s| s.trim().to_string());
+    let result = ctx.vault.unlock(kek, expected.as_deref());
+    zeroize::Zeroize::zeroize(&mut kek);
+    let fpr = result.map_err(|e| ApiError::new(StatusCode::FORBIDDEN, "wrong_kek", e))?;
+    if expected.is_none() {
+        crate::storage::write_private(&path, fpr.as_bytes()).map_err(ApiError::internal)?;
+    }
+    let mut destroyed = Vec::new();
+    for id in req.tombstones.iter().take(10_000) {
+        if !valid_nest_id(id) {
+            continue;
+        }
+        let present = ctx
+            .db
+            .nest(id)
+            .map_err(ApiError::internal)?
+            .is_some_and(|n| n.state != "deleted");
+        if present {
+            match delete(ctx, id).await {
+                Ok(_) => {
+                    ctx.db.event(
+                        Some(id),
+                        "tombstone",
+                        "deleted by the postbox; destroyed here",
+                    );
+                    destroyed.push(id.clone());
+                }
+                Err(e) => {
+                    tracing::warn!(nest = %id, error = ?e, "tombstone replay failed; will retry")
+                }
+            }
+        }
+    }
+    Ok(Json(
+        json!({ "locked": ctx.locked(), "fingerprint": fpr, "tombstoned": destroyed }),
+    ))
+}
+
+async fn http_unlock(
+    State(ctx): State<Ctx>,
+    headers: HeaderMap,
+    Json(req): Json<UnlockReq>,
+) -> ApiResult {
+    authorized(&ctx, &headers)?;
+    let first = ctx.locked();
+    let out = unlock(&ctx, req).await?;
+    if first && !ctx.locked() {
+        tracing::info!("unlocked by the postbox; reconciling");
+        let c = ctx.clone();
+        tokio::spawn(async move {
+            if let Err(e) = reconcile(&c).await {
+                tracing::warn!(error = %e, "reconcile after unlock failed");
+            }
+        });
+    }
+    Ok(out)
 }
 
 // ---- files (Phase B4) --------------------------------------------------------------------------
@@ -1130,6 +1251,7 @@ async fn health(State(ctx): State<Ctx>, headers: HeaderMap) -> ApiResult {
         "nests": nests.len(),
         "running": running,
         "max_running": ctx.cfg.control.max_running,
+        "locked": ctx.locked(),
     })))
 }
 
@@ -1220,6 +1342,121 @@ mod tests {
             budgets: None,
             quota_gib: None,
         }
+    }
+
+    #[tokio::test]
+    async fn unlock_records_the_kek_refuses_another_and_replays_tombstones() {
+        let (c, fake) = ctx();
+        let id = "nst_00000000000000d1";
+        let _ = create(&c, req(id)).await.unwrap();
+        let kek = "11".repeat(32);
+        let v = unlock(
+            &c,
+            UnlockReq {
+                kek: kek.clone(),
+                tombstones: vec![id.into(), "bad/../id".into()],
+            },
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(v["tombstoned"], json!([id]));
+        assert_eq!(c.db.nest(id).unwrap().unwrap().state, "deleted");
+        assert!(fake.state(id).unwrap() == RuntimeState::Absent);
+        // The same key again is fine; another one is refused, also after a restart.
+        assert!(unlock(
+            &c,
+            UnlockReq {
+                kek: kek.clone(),
+                tombstones: vec![]
+            }
+        )
+        .await
+        .is_ok());
+        assert!(unlock(
+            &c,
+            UnlockReq {
+                kek: "22".repeat(32),
+                tombstones: vec![]
+            }
+        )
+        .await
+        .is_err());
+        let restarted = Ctx::new(
+            (*c.cfg).clone(),
+            Db::open_memory().unwrap(),
+            fake.clone(),
+            c.volumes.clone(),
+            sha256_hex(b"x"),
+            "h".into(),
+        );
+        assert!(unlock(
+            &restarted,
+            UnlockReq {
+                kek: "22".repeat(32),
+                tombstones: vec![]
+            }
+        )
+        .await
+        .is_err());
+        assert!(unlock(
+            &restarted,
+            UnlockReq {
+                kek,
+                tombstones: vec![]
+            }
+        )
+        .await
+        .is_ok());
+    }
+
+    #[tokio::test]
+    async fn metrics_count_states_and_never_name_a_nest() {
+        let (c, _fake) = ctx();
+        let _ = create(&c, req("nst_00000000000000a7")).await.unwrap();
+        let m = crate::metrics::render(&c);
+        assert!(m.contains("nests_total{state=\"running\"} 1"), "{m}");
+        assert!(m.contains("nests_locked 0"));
+        assert!(m.contains("nests_volume_allocated_gib 1"));
+        assert!(
+            !m.contains("nst_") && !m.contains("acc_1") && !m.contains("/k/"),
+            "{m}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_locked_host_creates_and_starts_nothing() {
+        let (c, _fake) = ctx();
+        let mut cfg = (*c.cfg).clone();
+        cfg.storage.backend = "lvm-luks".into();
+        cfg.storage.key_wrap = true;
+        let locked = Ctx::new(
+            cfg,
+            Db::open_memory().unwrap(),
+            Arc::new(Fake::default()),
+            c.volumes.clone(),
+            sha256_hex(b"x"),
+            "h".into(),
+        );
+        assert!(locked.locked());
+        let e = create(&locked, req("nst_00000000000000d2"))
+            .await
+            .unwrap_err();
+        assert_eq!(e.1, "locked");
+        assert!(
+            reconcile(&locked).await.is_ok(),
+            "waits rather than failing Nests"
+        );
+        let _ = unlock(
+            &locked,
+            UnlockReq {
+                kek: "33".repeat(32),
+                tombstones: vec![],
+            },
+        )
+        .await
+        .unwrap();
+        assert!(!locked.locked());
     }
 
     #[tokio::test]

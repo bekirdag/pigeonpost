@@ -68,3 +68,47 @@ peer and the egress allowance for `10.66.0.2:8790`.
 1. On the postbox host write a new `nst_…` token (≥ 32 random bytes) to `/opt/pigeonpost-postbox/nests-service-token` and to `POSTBOX_NESTS_TOKEN` in `postbox.env`.
 2. On nests-1: `pigeonpost-nestd hash-token > /etc/nests/control-token.sha256` (paste the token on stdin), `systemctl restart nestd-control`.
 3. Recreate the postbox container so it reads the new env; check health.
+
+## Phase B6: off-host key, tombstones, monitoring
+
+**Host key (KEK).** Volume keys in `/var/lib/nests/keys` are stored wrapped under a 32-byte host
+key that only the postbox holds: `POSTBOX_NESTS_KEK_FILE` points at a root-only file with 64 hex
+characters. Escrow copy: the owner's Mac Keychain, service `pigeonpost-nests-kek`.
+- Every minute the postbox calls `POST /v1/unlock {kek, tombstones}` over WireGuard.
+- After any nestd restart or reboot, nestd is **locked** until that call. It creates and starts
+  nothing, and reconcile waits. Sandboxes that were already running keep running.
+- The first unlock records the key's fingerprint in `/var/lib/nests/kek.fpr`; a different key is
+  refused from then on.
+- Phase A key files are wrapped in place the first time each one is read while unlocked.
+- Lose the KEK and every Nest volume, including every backup of it, is unreadable. Keep the escrow.
+
+Create it once, on the postbox host (never on nests-1):
+
+```sh
+umask 077; openssl rand -hex 32 > /opt/pigeonpost-postbox/nests-kek
+# add POSTBOX_NESTS_KEK_FILE=/opt/pigeonpost-postbox/nests-kek to the postbox environment, restart
+```
+
+**Tombstones.** The same call carries the ids of every Nest the postbox has deleted (newest
+1000). nestd destroys any of them it still has: a missed delete, or a ledger or volume brought
+back by `nests-restore`. A revoked Nest therefore stays revoked after a restore. Its mailbox
+credential was revoked at delete time anyway.
+
+**Restore order.**
+1. `nests-restore ledger|volume …`.
+2. Start nestd. It is locked.
+3. Wait one minute: the postbox unlocks it and replays tombstones.
+4. Reconcile starts what should run.
+
+**Monitoring** (`monitoring/`). All of it runs on nests-1, on loopback:
+- Prometheus (`127.0.0.1:9090`, 15 days) scrapes nestd's metrics (`127.0.0.1:9790`, no ids or
+  content) and node_exporter (`127.0.0.1:9100`).
+- `nests-rules.yml` covers: nestd down, locked, failed Nests, admission limit, thin pool, volume
+  allocation, stale or missing backups, memory (the VMware balloon), root disk, and
+  platform-error tokens.
+- Alertmanager (`127.0.0.1:9093`) posts to `pigeonpost-nestd alert-relay` (`127.0.0.1:9796`).
+  The relay sends one Pigeonpost message per notification from a dedicated alerts mailbox.
+  Its token is `/etc/nests/alerts.token`, root 0400, passed with `LoadCredential`.
+- The backup writes `/var/lib/nests/backup-last-success` after each archive.
+- Packages: Debian `prometheus`, `prometheus-alertmanager`, `prometheus-node-exporter`
+  (Apache-2.0). Bind each to loopback in `/etc/default/*`.
