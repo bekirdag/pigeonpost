@@ -382,10 +382,30 @@ pub struct Allowance {
     pub duplicates: Vec<Funding>,
 }
 
+/// Who pays for the Nests held by `account`: the account itself, or — for an organization's
+/// internal account — the organization (Nests B7).
+pub(crate) fn funding_subject(
+    c: &Connection,
+    account: &str,
+) -> Result<(&'static str, String), StoreError> {
+    let org: Option<String> = c
+        .query_row(
+            "SELECT id FROM orgs WHERE internal_account_id = ?1",
+            [account],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(match org {
+        Some(org) => ("org", org),
+        None => ("account", account.to_string()),
+    })
+}
+
 /// The account's Nest allowance: its best live Nest entitlement decides it.
 pub(crate) fn allowance(c: &Connection, account: &str, now: u64) -> Result<Allowance, StoreError> {
+    let (kind, subject) = funding_subject(c, account)?;
     let mut live: Vec<(Funding, &'static Package)> =
-        entitlements::for_subject(c, "account", account, now)?
+        entitlements::for_subject(c, kind, &subject, now)?
             .into_iter()
             .filter(|e| e.active)
             .filter_map(|e| {
@@ -621,6 +641,11 @@ pub(crate) fn ensure_funded_setup(
     account: &str,
     now: u64,
 ) -> Result<Option<Setup>, StoreError> {
+    // An organization's Nests are created by its admins under handles they choose (B7), never
+    // set up automatically under the org's internal account.
+    if funding_subject(c, account)?.0 == "org" {
+        return Ok(None);
+    }
     let allowance = allowance(c, account, now)?;
     let Some(funding) = allowance.funding else {
         return Ok(None);
@@ -856,7 +881,8 @@ pub(crate) fn apply_funding(
 /// window's start).
 pub(crate) fn last_paid_through(c: &Connection, account: &str) -> Result<Option<i64>, StoreError> {
     let mut best: Option<i64> = None;
-    for e in entitlements::for_subject(c, "account", account, 0)? {
+    let (kind, subject) = funding_subject(c, account)?;
+    for e in entitlements::for_subject(c, kind, &subject, 0)? {
         if nest_catalog::for_plan_code(&e.plan_code).is_some() {
             best = best.max(e.paid_through);
         }
@@ -868,7 +894,9 @@ pub(crate) fn last_paid_through(c: &Connection, account: &str) -> Result<Option<
 pub(crate) fn funded_accounts(c: &Connection) -> Result<Vec<String>, StoreError> {
     let mut stmt = c.prepare(
         "SELECT DISTINCT account_id FROM nests WHERE funding='package' AND deleted_at IS NULL
-         UNION SELECT DISTINCT subject_id FROM entitlements WHERE subject_kind='account' AND (plan_code LIKE 'nest.%' OR plan_code LIKE 'nest-%')",
+         UNION SELECT DISTINCT subject_id FROM entitlements WHERE subject_kind='account' AND (plan_code LIKE 'nest.%' OR plan_code LIKE 'nest-%')
+         UNION SELECT DISTINCT o.internal_account_id FROM entitlements e JOIN orgs o ON o.id = e.subject_id
+               WHERE e.subject_kind='org' AND o.internal_account_id IS NOT NULL AND (e.plan_code LIKE 'nest.%' OR e.plan_code LIKE 'nest-%')",
     )?;
     let rows = stmt
         .query_map([], |r| r.get::<_, String>(0))?

@@ -14,16 +14,16 @@
 use crate::groups::{GErr, GResult};
 use crate::nest_catalog;
 use crate::nests::NestdError;
-use crate::policy::{authorize, Action, Actor, Facts, Resource};
+use crate::policy::Action;
 use crate::store::nest_funding;
-use crate::{capabilities, now_unix, principal_for_token, rand_hex, sha256, AppState};
+use crate::{now_unix, rand_hex, sha256, AppState};
 use axum::body::Bytes;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get};
 use axum::{Json, Router};
-use rusqlite::{params, OptionalExtension};
+use rusqlite::params;
 use serde_json::{json, Value};
 
 pub(crate) const SCHEMA: &str = "
@@ -68,66 +68,22 @@ pub(crate) fn router() -> Router<AppState> {
         .route("/v1/nests/{nest}/files/{file}", delete(remove))
 }
 
-/// The caller's account, authorized for `action`, with the `nests` flag on, owning `nest`.
+/// The caller (any role on the Nest) and the Nest's holding account and funding.
 async fn owner(
     state: &AppState,
     headers: &HeaderMap,
     action: Action,
     nest: &str,
-) -> GResult<(String, Option<String>)> {
-    let principal = principal_for_token(state, crate::bearer(headers)).await?;
-    let account = capabilities::principal_account(&principal)
-        .map(str::to_string)
-        .ok_or_else(|| {
-            GErr::forbidden(
-                "credential_not_accepted",
-                "an account credential is required",
-            )
-        })?;
-    let facts = Facts {
-        now: now_unix(),
-        ..Facts::default()
-    };
-    authorize(
-        &Actor::Principal(&principal),
+) -> GResult<(String, String, String)> {
+    let (caller, _role, nref) = crate::nest_access::authorize_nest(
+        state,
+        headers,
         action,
-        &Resource::Account(&account),
-        &facts,
+        nest,
+        crate::nest_access::Role::Operator,
     )
-    .map_err(|deny| {
-        let code = deny.code();
-        GErr::new(
-            deny.into_response().status(),
-            code,
-            "this credential may not do that",
-        )
-    })?;
-    if !crate::filtering::feature_on(state, Some(&account), capabilities::NESTS).await {
-        return Err(GErr::forbidden(
-            "feature_disabled",
-            "Nests are not enabled for this account",
-        ));
-    }
-    let missing = || GErr::new(StatusCode::NOT_FOUND, "no_nest", "no such Nest");
-    if !crate::nests::nest_id_ok(nest) {
-        return Err(missing());
-    }
-    let (n, acct) = (nest.to_string(), account.clone());
-    let row: Option<(String, String)> = state
-        .store
-        .group_read(move |c| -> GResult<Option<(String, String)>> {
-            Ok(c.query_row(
-                "SELECT account_id, funding FROM nests WHERE id = ?1 AND deleted_at IS NULL",
-                [&n],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .optional()?)
-        })
-        .await?;
-    match row {
-        Some((a, funding)) if a == acct => Ok((account, Some(funding))),
-        _ => Err(missing()),
-    }
+    .await?;
+    Ok((caller, nref.account_id, nref.funding))
 }
 
 fn file_json(r: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
@@ -168,9 +124,8 @@ async fn list(
     Path(nest): Path<String>,
 ) -> Response {
     let result = async {
-        let (account, funding) = owner(&state, &headers, Action::NestView, &nest).await?;
+        let (_caller, account, funding) = owner(&state, &headers, Action::NestView, &nest).await?;
         let now = now_unix();
-        let funding = funding.unwrap_or_default();
         let body = state
             .store
             .group_read(move |c| -> GResult<Value> {
@@ -202,7 +157,7 @@ async fn upload(
     body: Bytes,
 ) -> Response {
     let result = async {
-        let (account, funding) = owner(&state, &headers, Action::NestOwn, &nest).await?;
+        let (account, holder, funding) = owner(&state, &headers, Action::NestOwn, &nest).await?;
         if body.is_empty() || body.len() > MAX_UPLOAD_BYTES {
             return Err(GErr::new(StatusCode::PAYLOAD_TOO_LARGE, "too_large", "a file of 1 byte to 25 MiB"));
         }
@@ -220,7 +175,7 @@ async fn upload(
         // Reserve: rate, count and quota in one transaction with the row that holds the space.
         {
             let (n, acct, fid, nm, dg) = (nest.clone(), account.clone(), file_id.clone(), name.clone(), digest.clone());
-            let funding = funding.clone().unwrap_or_default();
+            let (funding, holder) = (funding.clone(), holder.clone());
             state
                 .store
                 .group_tx(move |tx| -> GResult<()> {
@@ -240,7 +195,7 @@ async fn upload(
                     if count >= MAX_FILES {
                         return Err(GErr::conflict("too_many_files", "this Nest holds its maximum number of files"));
                     }
-                    let quota = quota_in(tx, &acct, &funding, now)?;
+                    let quota = quota_in(tx, &holder, &funding, now)?;
                     if used + bytes > quota {
                         return Err(GErr::new(StatusCode::INSUFFICIENT_STORAGE, "storage_full", "this Nest's storage is full")
                             .with("used_bytes", used)

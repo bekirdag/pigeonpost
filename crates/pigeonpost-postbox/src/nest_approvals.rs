@@ -26,7 +26,7 @@
 
 use crate::groups::{GErr, GResult};
 use crate::policy::{authorize, Action, Actor, Facts, Resource};
-use crate::{capabilities, now_unix, principal_for_token, rand_hex, sha256, AppState, Principal};
+use crate::{now_unix, principal_for_token, rand_hex, sha256, AppState, Principal};
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -201,57 +201,25 @@ async fn propose(
     result.unwrap_or_else(|e: GErr| e.into_response())
 }
 
-/// The caller's account for an owner route, authorized for `action`, flag on, owning `nest`.
+/// The caller (owner or operator), the Nest's holding account and its mailbox address.
 async fn owner(
     state: &AppState,
     headers: &HeaderMap,
     action: Action,
     nest: &str,
-) -> GResult<(String, String)> {
-    let principal = principal_for_token(state, crate::bearer(headers)).await?;
-    let account = capabilities::principal_account(&principal)
-        .map(str::to_string)
-        .ok_or_else(|| {
-            GErr::forbidden(
-                "credential_not_accepted",
-                "an account credential is required",
-            )
-        })?;
-    let facts = Facts {
-        now: now_unix(),
-        ..Facts::default()
-    };
-    authorize(
-        &Actor::Principal(&principal),
+) -> GResult<(String, String, String)> {
+    let (caller, _role, nref) = crate::nest_access::authorize_nest(
+        state,
+        headers,
         action,
-        &Resource::Account(&account),
-        &facts,
+        nest,
+        crate::nest_access::Role::Operator,
     )
-    .map_err(deny_err)?;
-    if !crate::filtering::feature_on(state, Some(&account), capabilities::NESTS).await {
-        return Err(GErr::forbidden(
-            "feature_disabled",
-            "Nests are not enabled for this account",
-        ));
-    }
-    let missing = || GErr::new(StatusCode::NOT_FOUND, "no_nest", "no such Nest");
-    if !crate::nests::nest_id_ok(nest) {
-        return Err(missing());
-    }
-    let (n, acct) = (nest.to_string(), account.clone());
-    let address: Option<String> = state
-        .store
-        .group_read(move |c| -> GResult<Option<String>> {
-            Ok(c.query_row(
-                "SELECT address FROM nests WHERE id = ?1 AND account_id = ?2 AND deleted_at IS NULL",
-                params![n, acct],
-                |r| r.get(0),
-            )
-            .optional()?
-            .flatten())
-        })
-        .await?;
-    address.map(|a| (account, a)).ok_or_else(missing)
+    .await?;
+    let address = nref
+        .address
+        .ok_or_else(|| GErr::new(StatusCode::NOT_FOUND, "no_nest", "no such Nest"))?;
+    Ok((caller, nref.account_id, address))
 }
 
 fn card_json(r: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
@@ -276,7 +244,7 @@ async fn list(
     Path(nest): Path<String>,
 ) -> Response {
     let result = async {
-        owner(&state, &headers, Action::NestView, &nest).await?;
+        let _ = owner(&state, &headers, Action::NestView, &nest).await?;
         let now = now_unix() as i64;
         let cards = state
             .store
@@ -333,12 +301,14 @@ async fn decide(
         if decision != "approve" && decision != "reject" {
             return Err(GErr::new(StatusCode::NOT_FOUND, "not_found", "unknown decision"));
         }
-        let (account, nest_address) = owner(&state, &headers, Action::NestApprove, &nest).await?;
+        // `account` is the person deciding (whose contacts the destination policy uses); the
+        // card itself belongs to the Nest's holding account.
+        let (account, holder, nest_address) = owner(&state, &headers, Action::NestApprove, &nest).await?;
         let Json(req) = body.map_err(|_| GErr::bad("invalid_json", "expected {args_hash}"))?;
         let shown = req["args_hash"].as_str().unwrap_or("").to_string();
         let now = now_unix() as i64;
         let approve = decision == "approve";
-        let (acct, n, a, addr) = (account.clone(), nest.clone(), approval.clone(), nest_address.clone());
+        let (acct, n, a, addr, hold) = (account.clone(), nest.clone(), approval.clone(), nest_address.clone(), holder.clone());
         // Claim the card in one transaction: pending, unexpired, this hash, this Nest. Only then is
         // anything executed, so a double click or a race executes once.
         let claimed: (String, Value) = state
@@ -347,7 +317,7 @@ async fn decide(
                 let row: Option<(String, String, String, String, i64)> = tx
                     .query_row(
                         "SELECT tool, args, args_hash, status, expires_at FROM nest_approvals WHERE id = ?1 AND nest_id = ?2 AND account_id = ?3",
-                        params![a, n, acct],
+                        params![a, n, hold],
                         |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
                     )
                     .optional()?;

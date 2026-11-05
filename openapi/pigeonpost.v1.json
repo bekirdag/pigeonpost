@@ -8955,6 +8955,229 @@
         }
       }
     },
+    "/v1/orgs/{org}/nests": {
+      "parameters": [
+        {
+          "name": "org",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "nests"
+        ],
+        "operationId": "listOrgNests",
+        "summary": "The organization's Nests a member may act on (feature `nests`)",
+        "description": "Nest admins (owner, admin, agent_admin) see every org Nest; other members see the ones they hold a live `operate_nest` delegation for. Includes the org's Nest allowance.",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The Nests.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "nests": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "nest_id": {
+                            "type": "string"
+                          },
+                          "address": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "state": {
+                            "type": "string"
+                          },
+                          "role": {
+                            "type": "string",
+                            "enum": [
+                              "owner",
+                              "operator"
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    "allowance": {
+                      "type": "object",
+                      "properties": {
+                        "slots": {
+                          "type": "integer"
+                        },
+                        "used": {
+                          "type": "integer"
+                        }
+                      }
+                    },
+                    "package": {
+                      "type": [
+                        "object",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "description": "`feature_disabled` or `not_org_member`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "nests"
+        ],
+        "operationId": "createOrgNest",
+        "summary": "Create an org-owned Nest on a new org agent address (ManageAgents)",
+        "description": "Uses one of the org's agent addresses (10 × seats) and, separately, a free slot of a Nest package the organization bought. Each listed member gets the `operate_nest` delegation.",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "handle",
+                  "label"
+                ],
+                "properties": {
+                  "handle": {
+                    "type": "string"
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "operators": {
+                    "type": "array",
+                    "maxItems": 50,
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created; the sandbox enrolls within seconds.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "nest_id": {
+                      "type": "string"
+                    },
+                    "address": {
+                      "type": "string"
+                    },
+                    "handle": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`bad_label`, `invalid_member` or an invalid handle",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "description": "`no_nest_slot`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`feature_disabled` or the role does not allow it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`agent_limit` or `handle_taken`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/nests/enroll": {
       "post": {
         "tags": [
@@ -22218,6 +22441,21 @@
               "paused",
               "unavailable"
             ]
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "owner",
+              "operator"
+            ],
+            "description": "The caller's role (org Nests have operators)."
+          },
+          "org_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Set for an organization-owned Nest."
           },
           "status_reason": {
             "type": [

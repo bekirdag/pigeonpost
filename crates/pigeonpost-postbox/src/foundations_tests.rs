@@ -618,6 +618,7 @@ fn every_route_is_in_the_openapi_spec_and_nothing_else_is() {
         (include_str!("nest_files.rs"), "pub(crate) fn router("),
         (include_str!("nest_approvals.rs"), "pub(crate) fn router("),
         (include_str!("nest_manage.rs"), "pub(crate) fn router("),
+        (include_str!("nest_org.rs"), "pub(crate) fn router("),
     ] {
         served.extend(routes_in(source, router_fn));
     }

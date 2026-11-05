@@ -181,3 +181,28 @@ server PRs).
   node_exporter run on nests-1; alerts arrive as Pigeonpost messages through the alert relay.
   Rules are in `deploy/nests/monitoring/`.
 - **Restore rehearsal:** RPO ≤ 24 h (nightly), RTO ≤ 4 h. Rehearsed on deploy; evidence is in the ledger.
+
+## B7 — organization-owned Nests
+
+- **Ownership.** An org Nest's mailbox is an **org agent** under the org's internal account, with a
+  handle in the org's namespace. It therefore uses one of the org's agent addresses (10 × seats,
+  unchanged). Separately it needs a free slot of a Nest package bought by the **organization**
+  (`entitlements.subject_kind = 'org'`, Nest plan codes). Address accounting and compute
+  entitlement never stand in for each other. An org Nest package never changes the org's seats.
+- **Who acts** (`nest_access.rs`), resolved from live state on every request:
+  - Nest admins (owner, admin, agent_admin of an active org) manage: pause, resume, rename,
+    delete, export.
+  - Operators are active members holding a live `operate_nest` delegation on the Nest's mailbox.
+    They chat, upload files, approve its actions and read usage.
+  - Anyone else gets 404.
+- **Chat authority.** An org Nest ignores contact grants. A message is acted on only when its
+  sender (a person's mailbox, or their org member mailbox) is a Nest admin or a live operator. This
+  is checked per sender on every inbox read.
+- **Offboarding.** Removing a member, or revoking the delegation, ends that person's access to
+  every route at once. Their earlier messages are no longer acted on. The Nest and its data stay
+  with the organization.
+- **Routes.** `GET|POST /v1/orgs/{org}/nests`. The per-Nest routes (`/v1/nests/{nest}/…`) serve
+  both kinds of Nest.
+- **Billing.** Org Nest packages arrive as org entitlements through the internal API, the same
+  path as org seat plans. The enterprise portal's purchase flow for them is a follow-up
+  (build plan §12 OD-23).

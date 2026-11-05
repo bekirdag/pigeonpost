@@ -777,6 +777,7 @@ async fn create_inner(
             ),
             quota_gib: None,
             audit_service: Some(service),
+            address: None,
         },
         Some((headers, peer)),
     )
@@ -807,6 +808,9 @@ pub(crate) struct Provision {
     pub budgets: (i64, i64),
     pub quota_gib: Option<u64>,
     pub audit_service: Option<&'static str>,
+    /// An existing mailbox to run the Nest as (an organization's agent, Nests B7) instead of
+    /// minting one. Its credential is still rotated by the enrollment, as for a minted one.
+    pub address: Option<String>,
 }
 
 /// Create one Nest: reserve the slot, mint its mailbox, grant the named senders, issue the one-time
@@ -825,6 +829,7 @@ pub(crate) async fn provision(
         budgets,
         quota_gib,
         audit_service,
+        address: existing,
     } = p;
     if !state.nests.configured() {
         return Err(GErr::new(
@@ -891,13 +896,18 @@ pub(crate) async fn provision(
     }
 
     // 2. The mailbox. Its capability token is dropped here, unread: nobody ever holds it.
-    let minted = crate::do_create_identity(
-        state,
-        Some(account.clone()),
-        Some(format!("nest: {label}")),
-        None,
-    )
-    .await;
+    let minted = match existing {
+        Some(a) => Ok(json!({ "address": a })),
+        None => {
+            crate::do_create_identity(
+                state,
+                Some(account.clone()),
+                Some(format!("nest: {label}")),
+                None,
+            )
+            .await
+        }
+    };
     let address = match minted {
         Ok(v) => v["address"].as_str().unwrap_or_default().to_string(),
         Err(e) => {

@@ -254,10 +254,10 @@ fn validate(input: &EntitlementInput) -> Result<(), Response> {
         let Some(package) = crate::nest_catalog::for_plan_code(&input.plan_code) else {
             return Err(bad("invalid_plan_code", "not a Nest package plan code"));
         };
-        if input.subject_kind != "account" {
+        if input.subject_kind != "account" && input.subject_kind != "org" {
             return Err(bad(
                 "invalid_subject",
-                "Nest packages are bought by accounts",
+                "Nest packages are bought by accounts and organizations",
             ));
         }
         if input.names.is_some() || input.seats.is_some() || input.agent_limit.is_some() {

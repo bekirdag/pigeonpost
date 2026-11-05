@@ -38,6 +38,8 @@ pub(crate) const CAPABILITIES: &[&str] = &[
     "ssh",
     "configure_rules",
     "read_inbox",
+    // Nests B7: operate an org-owned Nest — chat with it, upload files, approve its actions.
+    "operate_nest",
 ];
 /// What a device credential may do: be the agent's mailbox.
 const DEVICE_CAPS: &str = "[\"mailbox\"]";
@@ -509,7 +511,7 @@ pub(crate) fn create_agent_in(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn delegate_in(
+pub(crate) fn delegate_in(
     tx: &Connection,
     org_id: &str,
     member_id: &str,

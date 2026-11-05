@@ -117,7 +117,11 @@ pub(super) fn follow_entitlement(c: &Connection, org: &str, now: u64) -> Result<
     if current.status == "deleted" {
         return Ok(());
     }
-    let rows = entitlements::for_subject(c, "org", org, now)?;
+    // Nest packages bought by an org fund Nest slots, never seats (Nests B7).
+    let rows: Vec<_> = entitlements::for_subject(c, "org", org, now)?
+        .into_iter()
+        .filter(|e| !crate::nest_catalog::is_nest_plan_code(&e.plan_code))
+        .collect();
     let best = rows
         .iter()
         .filter(|e| e.active)

@@ -11,18 +11,19 @@
 //! Every route answers 404 for another account's Nest, the same as for a Nest that does not exist.
 
 use crate::groups::{GErr, GResult};
+use crate::nest_access::Role;
 use crate::nest_catalog;
 use crate::nests::NestdError;
-use crate::policy::{authorize, Action, Actor, Facts, Resource};
+use crate::policy::Action;
 use crate::store::nest_funding;
-use crate::{capabilities, now_unix, principal_for_token, AppState};
+use crate::{now_unix, AppState};
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use rusqlite::{params, OptionalExtension};
+use rusqlite::params;
 use serde_json::{json, Value};
 
 pub(crate) fn router() -> Router<AppState> {
@@ -35,7 +36,10 @@ pub(crate) fn router() -> Router<AppState> {
 
 /// One owned Nest, as these routes need it.
 pub(crate) struct Owned {
+    /// The person acting.
     pub account: String,
+    /// The account holding the Nest (a person's, or an organization's internal account).
+    pub holder: String,
     pub nest_id: String,
     pub address: Option<String>,
     pub label: String,
@@ -50,66 +54,23 @@ pub(crate) async fn owned(
     action: Action,
     nest: &str,
 ) -> GResult<Owned> {
-    let principal = principal_for_token(state, crate::bearer(headers)).await?;
-    let account = capabilities::principal_account(&principal)
-        .map(str::to_string)
-        .ok_or_else(|| {
-            GErr::forbidden(
-                "credential_not_accepted",
-                "an account credential is required",
-            )
-        })?;
-    let facts = Facts {
-        now: now_unix(),
-        ..Facts::default()
+    // Reading usage is for anyone who operates the Nest; everything else here manages it.
+    let min = if action == Action::NestView {
+        Role::Operator
+    } else {
+        Role::Owner
     };
-    authorize(
-        &Actor::Principal(&principal),
-        action,
-        &Resource::Account(&account),
-        &facts,
-    )
-    .map_err(|deny| {
-        let code = deny.code();
-        GErr::new(
-            deny.into_response().status(),
-            code,
-            "this credential may not do that",
-        )
-    })?;
-    if !crate::filtering::feature_on(state, Some(&account), capabilities::NESTS).await {
-        return Err(GErr::forbidden(
-            "feature_disabled",
-            "Nests are not enabled for this account",
-        ));
-    }
-    let missing = || GErr::new(StatusCode::NOT_FOUND, "no_nest", "no such Nest");
-    if !crate::nests::nest_id_ok(nest) {
-        return Err(missing());
-    }
-    let (n, acct) = (nest.to_string(), account.clone());
-    type Row = (Option<String>, String, String, String, Option<String>);
-    let row: Option<Row> = state
-        .store
-        .group_read(move |c| -> GResult<Option<Row>> {
-            Ok(c.query_row(
-                "SELECT address, label, state, funding, paused_reason FROM nests
-                  WHERE id = ?1 AND account_id = ?2 AND deleted_at IS NULL",
-                params![n, acct],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
-            )
-            .optional()?)
-        })
-        .await?;
-    let (address, label, st, funding, paused_reason) = row.ok_or_else(missing)?;
+    let (caller, _role, n) =
+        crate::nest_access::authorize_nest(state, headers, action, nest, min).await?;
     Ok(Owned {
-        account,
-        nest_id: nest.to_string(),
-        address,
-        label,
-        state: st,
-        funding,
-        paused_reason,
+        account: caller,
+        holder: n.account_id,
+        nest_id: n.nest_id,
+        address: n.address,
+        label: n.label,
+        state: n.state,
+        funding: n.funding,
+        paused_reason: n.paused_reason,
     })
 }
 
@@ -312,7 +273,7 @@ async fn usage(
         if status != 200 {
             return Err(GErr::new(StatusCode::BAD_GATEWAY, "nestd_failed", format!("the Nests host answered {status}")));
         }
-        let (acct, n, funding) = (o.account.clone(), nest.clone(), o.funding.clone());
+        let (acct, n, funding) = (o.holder.clone(), nest.clone(), o.funding.clone());
         let now = now_unix();
         let (stored, package): (i64, Option<Value>) = state
             .store

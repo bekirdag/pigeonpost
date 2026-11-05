@@ -99,6 +99,7 @@ mod mls;
 mod msgactions;
 #[cfg(test)]
 mod msgactions_tests;
+mod nest_access;
 mod nest_approvals;
 mod nest_catalog;
 mod nest_commerce;
@@ -106,6 +107,9 @@ mod nest_commerce;
 mod nest_commerce_tests;
 mod nest_files;
 mod nest_manage;
+mod nest_org;
+#[cfg(test)]
+mod nest_org_tests;
 mod nests;
 #[cfg(test)]
 mod nests_tests;
@@ -1033,6 +1037,7 @@ fn build_router(state: AppState) -> Router {
         .merge(nest_files::router())
         .merge(nest_approvals::router())
         .merge(nest_manage::router())
+        .merge(nest_org::router())
         // Phase 3B: calendar and scheduled meetings (SDS §14B.5, docs/calendar.md).
         .route(
             "/v1/calendars",
@@ -4110,8 +4115,22 @@ pub(crate) async fn do_inbox_page(
         }
     }
 
-    // Is this mailbox a live Nest (Nests B3)? Only a Nest treats granted prose as `chat`.
+    // Is this mailbox a live Nest (Nests B3)? Only a Nest treats granted prose as `chat`. An
+    // organization's Nest (B7) takes its senders from live org authority instead of contact grants:
+    // the org's Nest admins and members with a live `operate_nest` delegation, checked per sender
+    // on every read, so an offboarded operator is ignored at once.
     let me_is_nest = nests::is_nest_mailbox(state, &me.address).await;
+    let me_is_org_nest = me_is_nest && {
+        let a = me.address.clone();
+        state
+            .store
+            .group_read(move |c| -> groups::GResult<bool> { Ok(nest_access::is_org_nest(c, &a)?) })
+            .await
+            .unwrap_or(false)
+    };
+    let mut org_nest_senders: std::collections::HashMap<String, bool> =
+        std::collections::HashMap::new();
+    let nest_verbs: Vec<String> = vec!["answer_question".into(), verbs::NEST_CHAT.into()];
 
     // Company rules per distinct sender, evaluated once (SDS §9.3).
     let mut org_verdicts: std::collections::HashMap<String, Option<org_rules::Verdict>> =
@@ -4344,6 +4363,26 @@ pub(crate) async fn do_inbox_page(
                 granted
             } else {
                 &org_granted
+            };
+            let (auto, granted): (bool, &[String]) = if me_is_org_nest {
+                if !org_nest_senders.contains_key(&from) {
+                    let (a, f, now) = (me.address.clone(), from.clone(), now_unix());
+                    let ok = state
+                        .store
+                        .group_read(move |c| -> groups::GResult<bool> {
+                            Ok(nest_access::org_sender_ok(c, &a, &f, now)?)
+                        })
+                        .await
+                        .unwrap_or(false);
+                    org_nest_senders.insert(from.clone(), ok);
+                }
+                if org_nest_senders.get(&from).copied().unwrap_or(false) {
+                    (true, &nest_verbs)
+                } else {
+                    (false, &[])
+                }
+            } else {
+                (auto, granted)
             };
             let decision = verbs::decide_for(&latest_body, auto, granted, me_is_nest);
             // An edit is evaluated as the request it now is, but never raises a held original:

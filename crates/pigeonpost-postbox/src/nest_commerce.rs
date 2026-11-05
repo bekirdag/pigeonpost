@@ -41,7 +41,6 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use rusqlite::OptionalExtension;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -212,18 +211,6 @@ async fn list(State(state): State<AppState>, headers: HeaderMap) -> Response {
 
 // ---- status header (B3) --------------------------------------------------------------------------
 
-/// `(account, address, label, state, funding, paused_reason, unfunded_since, created_at)`.
-type NestRowView = (
-    String,
-    Option<String>,
-    String,
-    String,
-    String,
-    Option<String>,
-    Option<i64>,
-    i64,
-);
-
 /// How long after a `working` receipt a Nest still counts as working (a run that died without
 /// reporting must not spin forever).
 const WORKING_WINDOW_SECS: i64 = 900;
@@ -276,49 +263,46 @@ async fn one(
     Path(nest): Path<String>,
 ) -> Response {
     let result = async {
-        let account = member(&state, &headers, Action::NestView).await?;
-        let missing = || GErr::new(StatusCode::NOT_FOUND, "no_nest", "no such Nest");
-        if !crate::nests::nest_id_ok(&nest) {
-            return Err(missing());
-        }
+        let (_caller, role, n) = crate::nest_access::authorize_nest(
+            &state,
+            &headers,
+            Action::NestView,
+            &nest,
+            crate::nest_access::Role::Operator,
+        )
+        .await?;
         let now = now_unix();
+        let id = nest.clone();
         let found = state
             .store
-            .group_read(move |c| -> GResult<Option<Value>> {
-                let row: Option<NestRowView> = c
-                    .query_row(
-                        "SELECT account_id, address, label, state, funding, paused_reason, unfunded_since, created_at
-                           FROM nests WHERE id = ?1 AND deleted_at IS NULL",
-                        [&nest],
-                        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?)),
-                    )
-                    .optional()?;
-                let Some((owner, address, label, st, funding, reason, since, created)) = row else {
-                    return Ok(None);
-                };
-                if owner != account {
-                    return Ok(None);
-                }
-                let working = match &address {
+            .group_read(move |c| -> GResult<Value> {
+                let (unfunded_since, created): (Option<i64>, i64) = c.query_row(
+                    "SELECT unfunded_since, created_at FROM nests WHERE id = ?1",
+                    [&id],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )?;
+                let working = match &n.address {
                     Some(a) => working_in(c, a, now)?,
                     None => false,
                 };
-                let (status, why) = nest_status(&st, reason.as_deref(), working);
-                Ok(Some(json!({
-                    "nest_id": nest,
-                    "address": address,
-                    "label": label,
-                    "state": st,
-                    "funding": funding,
+                let (status, why) = nest_status(&n.state, n.paused_reason.as_deref(), working);
+                Ok(json!({
+                    "nest_id": id,
+                    "address": n.address,
+                    "label": n.label,
+                    "state": n.state,
+                    "funding": n.funding,
+                    "org_id": n.org_id,
+                    "role": if role == crate::nest_access::Role::Owner { "owner" } else { "operator" },
                     "status": status,
                     "status_reason": why,
-                    "paused_reason": reason,
-                    "delete_after": since.map(|s| s + nest_funding::EXPORT_WINDOW_SECS),
+                    "paused_reason": n.paused_reason,
+                    "delete_after": unfunded_since.map(|s| s + nest_funding::EXPORT_WINDOW_SECS),
                     "created_at": created,
-                })))
+                }))
             })
             .await?;
-        Ok(Json(found.ok_or_else(missing)?).into_response())
+        Ok::<_, GErr>(Json(found).into_response())
     }
     .await;
     result.unwrap_or_else(|e: GErr| e.into_response())
@@ -394,6 +378,7 @@ pub(crate) async fn create_funded(
             budgets: package.per_nest_tokens(),
             quota_gib: Some(gib.max(1)),
             audit_service: None,
+            address: None,
         },
         None,
     )
