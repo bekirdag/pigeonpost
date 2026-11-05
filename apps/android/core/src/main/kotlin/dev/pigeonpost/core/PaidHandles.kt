@@ -55,8 +55,12 @@ sealed interface PlayUpdate {
 interface PlayBilling {
     val updates: Flow<PlayUpdate>
     suspend fun prices(products: List<String>, basePlan: String): List<PlayPrice>
+    /** Prices for subscriptions with another billing period (Nest packages: `monthly`, `P1M`). */
+    suspend fun subscriptionPrices(products: List<String>, basePlan: String, period: String): List<PlayPrice> = prices(products, basePlan)
     suspend fun purchases(): List<PlayPurchase>
     fun launch(productId: String, accountId: String)
+    /** Change an owned subscription to `productId` (an upgrade applies now, a downgrade at renewal). */
+    fun launchReplacing(productId: String, accountId: String, oldPurchaseToken: String, upgrade: Boolean) = launch(productId, accountId)
     fun close() {}
 }
 

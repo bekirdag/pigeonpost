@@ -54,3 +54,37 @@ Keep the following acceptance matrix for future billing changes. The live checks
 Automated coverage lives in `PaidHandleStoreTest`, `PaidHandleUiTest`, and the Rust `googleplay`/`store::googleplay` tests. The release build must also pass Android lint and Rust Clippy. Emulator fixtures and synthetic provider payloads do not replace acceptance of a real Google Play test receipt.
 
 References: [Billing integration](https://developer.android.com/google/play/billing/integrate), [server verification](https://developer.android.com/google/play/billing/security), [subscription lifecycle](https://developer.android.com/google/play/billing/lifecycle/subscriptions), [Publisher API setup](https://developers.google.com/android-publisher/getting_started).
+
+## Nest packages (Nests Phase B, behind the `nests` feature)
+
+The Products screen has three tabs: Buy an Inbox, Buy Nests and Services. Settings shows it only
+when the postbox reports the `nests` feature.
+
+**Play catalog**
+- Subscriptions: `pigeonpost.nests.ai.starter`, `pigeonpost.nests.ai.plus` and
+  `pigeonpost.nests.host.starter`, each with base plan `monthly` (`P1M`).
+- They are created by `.github/scripts/play_nest_catalog.py` once the catalog permission exists.
+  Until then Play returns no product and the cards say "Not available".
+- Prices come only from Play `ProductDetails`.
+
+**Purchase order**
+1. `POST /v1/nest-purchases/intents {package, rail:"google"}`. The server refuses a second charge:
+   a package bought on another platform, or the same package again.
+2. Play checkout with `setObfuscatedAccountId(google_account_id)`.
+3. `POST /v1/nest-purchases/google {purchase_token}`.
+
+The **server** acknowledges, only after it has recorded the purchase. The app never acknowledges.
+
+**Lifecycle**
+- Every load claims the Nest subscriptions Play still reports as owned. That recovers a payment
+  made while the app died or was closed.
+- Pending purchases and purchases bound to another account grant nothing.
+- A package change replaces the owned subscription: a larger one now (`WITH_TIME_PRORATION`), a
+  smaller one at renewal (`DEFERRED`).
+- A paid Nest that is still being set up shows "Paid · being set up" with Retry setup.
+
+**A Nest's page:** status, Chat, Pause/Resume, Export (SAF), files (SAF picker, up to 25 MB,
+`x-file-name` percent-encoded), approvals (approve/reject sends the `args_hash` shown), usage,
+rename, and delete with the name typed back.
+
+**Coverage:** `NestStoreTest` (JVM) and `NestProductsUiTest` (instrumented).

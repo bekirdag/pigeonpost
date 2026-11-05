@@ -138,7 +138,7 @@ class PostboxClient(
     private val allowLoopbackForTests: Boolean = false,
     /** The inbox origin, where the calls service lives (`/calls/v1`). */
     private val inbox: HttpUrl = "https://inbox.pigeonpost.dev/".toHttpUrl(),
-) : PostboxApi, PaidHandleApi, AccountHandleApi, DevicePushApi, GroupTransport, CalendarTransport, CalendarMeetingApi, DevicePairingApi {
+) : PostboxApi, PaidHandleApi, AccountHandleApi, DevicePushApi, GroupTransport, CalendarTransport, CalendarMeetingApi, DevicePairingApi, dev.pigeonpost.core.nests.NestApi {
     init {
         require(base.isHttps || allowLoopbackForTests && base.host in setOf("127.0.0.1", "localhost", "::1", "10.0.2.2")) { "The postbox must use HTTPS." }
         require(base.username.isEmpty() && base.password.isEmpty() && base.query == null && base.fragment == null && base.encodedPath == "/") { "Expected a postbox origin." }
@@ -194,6 +194,64 @@ class PostboxClient(
     override suspend fun assignPlayHandle(productId: String, name: String) = decode<PlayClaim>(request("claims/google/assign", "POST", json = buildJsonObject {
         put("product_id", productId); put("namespace", tidyHandle(name))
     }))
+    // ---- Nests Phase B (docs/nests/phase-b.md) ----------------------------------------------------
+    private fun nestPath(id: String, tail: String = ""): String {
+        require(dev.pigeonpost.core.nests.NestRules.validNestId(id)) { "Invalid Nest id." }
+        return "nests/$id$tail"
+    }
+    override suspend fun nestPackages() = decode<dev.pigeonpost.core.nests.NestCatalog>(request("nest-packages"))
+    override suspend fun nests() = decode<dev.pigeonpost.core.nests.NestSnapshot>(request("nests"))
+    override suspend fun nest(id: String) = decode<dev.pigeonpost.core.nests.NestView>(request(nestPath(id)))
+    override suspend fun nestIntent(packageCode: String, rail: String) = decode<dev.pigeonpost.core.nests.NestIntent>(request("nest-purchases/intents", "POST", json = buildJsonObject {
+        put("package", packageCode); put("rail", rail)
+    }))
+    // Retryable: the server binds this receipt to this account once and answers the same again.
+    override suspend fun claimNestGoogle(purchaseToken: String) = decode<dev.pigeonpost.core.nests.NestSnapshot>(request("nest-purchases/google", "POST", json = buildJsonObject {
+        put("purchase_token", purchaseToken)
+    }, retryable = true))
+    override suspend fun retryNestSetup(setupId: String) = decode<dev.pigeonpost.core.nests.NestSnapshot>(request("nest-setups/${safeId(setupId)}/retry", "POST", json = buildJsonObject {}))
+    override suspend fun nestFiles(id: String) = decode<dev.pigeonpost.core.nests.NestFiles>(request(nestPath(id, "/files")))
+    override suspend fun uploadNestFile(id: String, name: String, bytes: ByteArray): dev.pigeonpost.core.nests.NestFile = withContext(
+        Dispatchers.IO + (currentCoroutineContext()[AuthorizationContext] ?: AuthorizationContext(tokens.authorizationLease?.child()))
+    ) {
+        require(bytes.isNotEmpty() && bytes.size <= dev.pigeonpost.core.nests.NestRules.MAX_UPLOAD_BYTES) { "Files can be at most 25 MB." }
+        val request = Request.Builder().url(url(nestPath(id, "/files")))
+            .header("x-file-name", dev.pigeonpost.core.nests.NestRules.encodeFileName(name))
+            .post(bytes.toRequestBody("application/octet-stream".toMediaType())).build()
+        // Never retried: a second upload would store the file twice.
+        val text = authenticated(request).use { readAuthorized(it) }
+        decode<dev.pigeonpost.core.nests.NestFile>(text)
+    }
+    override suspend fun deleteNestFile(id: String, fileId: String) { request(nestPath(id, "/files/${safeId(fileId)}"), "DELETE") }
+    override suspend fun nestApprovals(id: String) = decode<dev.pigeonpost.core.nests.NestApprovals>(request(nestPath(id, "/approvals")))
+    override suspend fun decideNestApproval(id: String, approvalId: String, approve: Boolean, argsHash: String) {
+        request(nestPath(id, "/approvals/${safeId(approvalId)}/${if (approve) "approve" else "reject"}"), "POST", json = buildJsonObject { put("args_hash", argsHash) })
+    }
+    override suspend fun nestUsage(id: String) = decode<dev.pigeonpost.core.nests.NestUsage>(request(nestPath(id, "/usage")))
+    override suspend fun nestAction(id: String, action: String) {
+        require(action == "pause" || action == "resume") { "Unknown action." }
+        request(nestPath(id, "/$action"), "POST", json = buildJsonObject {})
+    }
+    override suspend fun renameNest(id: String, label: String) { request(nestPath(id), "PATCH", json = buildJsonObject { put("label", label) }) }
+    override suspend fun deleteNest(id: String, confirm: String) { request(nestPath(id), "DELETE", json = buildJsonObject { put("confirm", confirm) }) }
+    override suspend fun exportNest(id: String): ByteArray = withContext(
+        Dispatchers.IO + (currentCoroutineContext()[AuthorizationContext] ?: AuthorizationContext(tokens.authorizationLease?.child()))
+    ) {
+        val request = Request.Builder().url(url(nestPath(id, "/export"))).header("Accept", "application/zip").get().build()
+        authenticated(request).use { limitedBytes(it, 512L * 1024 * 1024 + 64L * 1024 * 1024) }
+    }
+    override suspend fun nestOrganizations(): List<dev.pigeonpost.core.nests.OrgSummary> {
+        val root = WireJson.parseToJsonElement(request("orgs").text) as? JsonObject ?: return emptyList()
+        val list = root["orgs"] as? kotlinx.serialization.json.JsonArray ?: return emptyList()
+        return list.mapNotNull { item ->
+            val o = item as? JsonObject ?: return@mapNotNull null
+            val org = (o["org"] as? JsonObject) ?: o
+            val id = (org["id"] as? JsonPrimitive)?.contentOrNull ?: return@mapNotNull null
+            dev.pigeonpost.core.nests.OrgSummary(id, (org["name"] as? JsonPrimitive)?.contentOrNull.orEmpty())
+        }
+    }
+    override suspend fun orgNests(orgId: String) = decode<dev.pigeonpost.core.nests.OrgNests>(request("orgs/${safeId(orgId)}/nests"))
+
     override suspend fun whoami(identity: String) = decode<WhoAmI>(request("whoami", identity = identity))
     override suspend fun createIdentity(handle: String?) = decode<CreatedIdentity>(request("identities", "POST", json = buildJsonObject { handle?.let { put("handle", it) } })).address
     override suspend fun inbox(identity: String, wait: Int?) = inboxRequest(identity, wait, actions = false)

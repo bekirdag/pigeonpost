@@ -154,6 +154,10 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
         MeetingNotesStore(TransportMeetingNotesApi(transport) { inbox.state.value.acting?.address }, { notesKeys.current() }, storeScope,
             onSessionExpired = { signOut() })
     }
+    private val productsPage = MutableStateFlow(false)
+    val productsOpen = productsPage.asStateFlow()
+    fun openProducts() { if (nests != null) productsPage.value = true }
+    fun closeProducts() { productsPage.value = false; nests?.close() }
     private val notesPage = MutableStateFlow(false)
     val meetingNotesOpen = notesPage.asStateFlow()
     fun openMeetingNotes() { val notes = meetingNotes ?: return; if (!notes.state.value.enabled) return; notes.back(); notes.load(); notesPage.value = true }
@@ -182,6 +186,46 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
     val paidHandles = (graph.api as? PaidHandleApi)?.let { api -> billing?.let {
         PaidHandleStore(api, it, storeScope, onRegistered = { inbox.loadAccount(); accountHandles?.refresh() }, onSessionExpired = { signOut() })
     } }
+    /** Nests Phase B: packages on Google Play, the account's Nests, files, approvals, management. */
+    val nests = (graph.api as? dev.pigeonpost.core.nests.NestApi)?.let { dev.pigeonpost.core.nests.NestStore(it, billing, storeScope, onSessionExpired = { signOut() }) }
+    /** Set by the activity: open the system file picker / save dialog for a Nest. */
+    var nestFilePicker: (() -> Unit)? = null
+    var nestExportPicker: ((String) -> Unit)? = null
+    fun pickNestFile() { nestFilePicker?.invoke() }
+    fun exportNest() { val label = nests?.state?.value?.detail?.view?.label ?: return; nestExportPicker?.invoke("nest-${label.filter { it.isLetterOrDigit() || it == '-' }.ifEmpty { "export" }}.zip") }
+    /** A file the person picked for the open Nest: read (at most 25 MB) and uploaded. */
+    fun nestFileChosen(uri: Uri?) {
+        val store = nests ?: return
+        if (uri == null) return
+        storeScope.launch {
+            val app = getApplication<Application>()
+            val name = app.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                if (c.moveToFirst()) c.getString(0) else null
+            } ?: "file"
+            val bytes = withContext(Dispatchers.IO) {
+                app.contentResolver.openInputStream(uri)?.use { input ->
+                    // One byte over the limit is enough to refuse; never read a huge file whole.
+                    val limit = dev.pigeonpost.core.nests.NestRules.MAX_UPLOAD_BYTES + 1
+                    val out = java.io.ByteArrayOutputStream()
+                    val buf = ByteArray(64 * 1024)
+                    while (out.size() < limit) {
+                        val n = input.read(buf, 0, minOf(buf.size.toLong(), limit - out.size()).toInt())
+                        if (n < 0) break
+                        out.write(buf, 0, n)
+                    }
+                    out.toByteArray()
+                }
+            } ?: return@launch
+            store.upload(name, bytes)
+        }
+    }
+    /** Where the person chose to save the open Nest's export. */
+    fun nestExportTo(uri: Uri?) {
+        val store = nests ?: return
+        if (uri == null) return
+        val app = getApplication<Application>()
+        store.export { bytes -> withContext(Dispatchers.IO) { app.contentResolver.openOutputStream(uri)?.use { it.write(bytes) } ?: error("Could not save the export.") } }
+    }
     private val loadingAttachments = MutableStateFlow<Map<DraftKey, Int>>(emptyMap())
     val stagingAttachments = loadingAttachments.asStateFlow()
     // Hold the rich-content payload until its temporary URI permission has been used.
@@ -299,7 +343,7 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
         roomPage.value = false; cancelRoomPreparation(); organizationRooms?.reset()
         storeScope.retire()
         activation.value = null
-        inbox.reset(); handles.reset(); paidHandles?.reset(); accountHandles?.reset(); avatars.reset(); groups?.reset(); calendar?.reset(); meetingLookup?.reset(); meetingNotes?.reset(); notesPage.value = false; profile.reset(); pictures.clear()
+        inbox.reset(); handles.reset(); paidHandles?.reset(); nests?.reset(); productsPage.value = false; accountHandles?.reset(); avatars.reset(); groups?.reset(); calendar?.reset(); meetingLookup?.reset(); meetingNotes?.reset(); notesPage.value = false; profile.reset(); pictures.clear()
         if (meetingIntentRoot?.isValid == false) closeMeetingLink()
         stagedForGroups.value.values.flatten().forEach { it.file.delete() }
         stagedForGroups.value = emptyMap(); attachmentTarget = null; groupAttachTarget = null; pendingSave = null
