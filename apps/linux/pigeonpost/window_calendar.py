@@ -548,7 +548,7 @@ class CalendarMixin:
                     row.append(button("Remove " + name, lambda att=a: self.cal_remove_guest(event, att, window), "list-remove-symbolic", "flat"))
                 content.append(row)
             if role == "organizer" and CALENDAR_EMAIL not in self.features and any(a["kind"] == "external" for a in event["attendees"]):
-                content.append(label("Invitations to email addresses are not sent yet. Copy each guest’s invitation link and send it "
+                content.append(label("Invitations to contact addresses are not sent yet. Copy each guest’s invitation link and send it "
                                      "yourself.", "dim-label", wrap=True))
         if role is not None and event["status"] == "confirmed":
             buttons.append(button("Reminders…", lambda: self.cal_reminders_dialog(event)))
@@ -855,7 +855,7 @@ class CalendarMixin:
         guests.update_property([Gtk.AccessibleProperty.LABEL], ["Guests to add, separated by commas"])
         content.append(guests)
         if CALENDAR_EMAIL not in self.features:
-            content.append(label("Guests added by email address get no invitation message yet: after saving, open the event and "
+            content.append(label("Guests added by contact address get no invitation message yet: after saving, open the event and "
                                  "copy each guest’s invitation link to send it yourself.", "dim-label", wrap=True))
         meeting = reminder = None
         if not editing:

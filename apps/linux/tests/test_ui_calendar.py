@@ -292,7 +292,7 @@ class CalendarPageTests(unittest.TestCase):
         self.assertEqual(len(sent), 1, "one notification per reminder")
         del window.get_application
 
-    def test_organizer_copies_an_email_guests_link_and_the_editor_says_so(self):
+    def test_organizer_copies_a_contact_guests_link_and_the_editor_says_so(self):
         window = self.window
         att = "att_" + "e" * 26
         self.api.event["my"] = {"role": "organizer", "attendee_id": None, "rsvp": None}
@@ -311,7 +311,7 @@ class CalendarPageTests(unittest.TestCase):
             while child:
                 stack.append(child)
                 child = child.get_next_sibling()
-        self.assertEqual(len(buttons), 1, "only the email guest has a personal link")
+        self.assertEqual(len(buttons), 1, "only the contact-address guest has a personal link")
         self.assertTrue(any("Copy each guest’s invitation link" in t for t in labels))
         buttons[0].emit("clicked")
         pump(lambda: any(c[1].endswith(f"/attendees/{att}/link") for c in self.api.calls), timeout=3)
