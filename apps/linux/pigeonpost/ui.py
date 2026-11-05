@@ -29,6 +29,7 @@ from .binding import Lease, Retired
 from .protected import open_store
 from .window_calendar import CalendarMixin
 from .window_calls import CallsMixin
+from .window_contacts import ContactsMixin
 from .window_groups import GroupsMixin
 from .window_messages import MessagesMixin
 from .window_notes import NotesMixin
@@ -68,7 +69,7 @@ def main_later(seconds, fn):
     GLib.timeout_add_seconds(seconds, lambda: (fn(), False)[1])
 
 
-class Window(MessagesMixin, NotesMixin, PairingMixin, OrgsMixin, CalendarMixin, PrivacyMixin, CallsMixin, GroupsMixin, Adw.ApplicationWindow):
+class Window(ContactsMixin, MessagesMixin, NotesMixin, PairingMixin, OrgsMixin, CalendarMixin, PrivacyMixin, CallsMixin, GroupsMixin, Adw.ApplicationWindow):
     def __init__(self, app, session=None, api=None, restore=True, preferences=None, calls=None, protected=None):
         super().__init__(application=app, title="Pigeonpost", default_width=1180, default_height=780)
         self.set_size_request(800, 540)
@@ -104,6 +105,7 @@ class Window(MessagesMixin, NotesMixin, PairingMixin, OrgsMixin, CalendarMixin, 
         self.reset_pairing()
         self.reset_messages()
         self.reset_notes(keep_login=False)
+        self.reset_contacts()
         self.drafts, self.files = {}, {}
         self.previews = ThumbnailCache()
         self.polling = self.sending = self.rendering = self.acking = False
@@ -291,6 +293,7 @@ class Window(MessagesMixin, NotesMixin, PairingMixin, OrgsMixin, CalendarMixin, 
             if self.lease is not None:
                 self.lease.retire()
             self.lease = Lease(self.session)
+        self.bind_aliases()
         self.mailboxes = rows
         self.account_button.set_sensitive(True)
         self.refresh_button.set_sensitive(True)
@@ -343,6 +346,7 @@ class Window(MessagesMixin, NotesMixin, PairingMixin, OrgsMixin, CalendarMixin, 
         self.side_data_at = GLib.get_monotonic_time()
         self.load_calls(quiet=True)
         self.load_filtered()
+        self.refresh_profiles()
 
     def create_inbox(self):
         self.create_button.set_sensitive(False)
@@ -457,8 +461,16 @@ class Window(MessagesMixin, NotesMixin, PairingMixin, OrgsMixin, CalendarMixin, 
         self.peer_avatar = box(0)
         toolbar.append(self.peer_avatar)
         self.peer_title = label("Your inbox", "pp-title")
-        self.peer_title.set_hexpand(True)
-        toolbar.append(self.peer_title)
+        # The address or handle stays one glance away under any chosen name (contacts-and-phone.md §6.3).
+        self.peer_subtitle = label("", "dim-label")
+        self.peer_subtitle.set_selectable(True)
+        self.peer_subtitle.set_visible(False)
+        title_box = box(0)
+        title_box.set_hexpand(True)
+        title_box.set_valign(Gtk.Align.CENTER)
+        title_box.append(self.peer_title)
+        title_box.append(self.peer_subtitle)
+        toolbar.append(title_box)
         self.timer_badge = label("", "pp-meta")
         self.timer_badge.set_visible(False)
         toolbar.append(self.timer_badge)
@@ -472,7 +484,7 @@ class Window(MessagesMixin, NotesMixin, PairingMixin, OrgsMixin, CalendarMixin, 
         # Conversation menu: Block (SDS §15.2) and Disappearing messages (§17.1).
         conversation_actions = Gio.SimpleActionGroup()
         for name, handler in (("block", lambda: self.ask_block(self.peer, self.peer_title.get_text())),
-                              ("timer", self.choose_direct_timer)):
+                              ("timer", self.choose_direct_timer), ("alias", lambda: self.edit_alias(self.peer))):
             action = Gio.SimpleAction.new(name, None)
             action.connect("activate", lambda *_, run=handler: run())
             conversation_actions.add_action(action)
@@ -598,6 +610,7 @@ class Window(MessagesMixin, NotesMixin, PairingMixin, OrgsMixin, CalendarMixin, 
         self.reset_calendar()
         self.reset_orgs()
         self.reset_notes()
+        self.reset_contacts()
         self.avatars.reset(AVATARS in self.features)
         if self.page() != "conversation":
             self.main_stack.set_visible_child_name("conversation")
@@ -740,8 +753,7 @@ class Window(MessagesMixin, NotesMixin, PairingMixin, OrgsMixin, CalendarMixin, 
         if self.peer:
             rows.setdefault(self.peer, [])
         for peer, messages in list(rows.items())[:1000]:
-            contact = contact_for(peer, self.contacts)
-            name = contact.get("alias") or display_name(peer)
+            name = self.peer_name(peer)
             if peer in self.archived or search not in (name + " " + peer).casefold():
                 continue
             row = Gtk.ListBoxRow()
@@ -860,6 +872,7 @@ class Window(MessagesMixin, NotesMixin, PairingMixin, OrgsMixin, CalendarMixin, 
             self.blocked_banner.set_visible(blocked)
             if DISAPPEARING in self.features and self.direct_timer_thread():
                 menu.append("Disappearing messages…", "conversation.timer")
+            menu.append("Edit name…", "conversation.alias")
             if not blocked:
                 menu.append("Block…", "conversation.block")
         self.conversation_menu.set_menu_model(menu)
@@ -880,10 +893,13 @@ class Window(MessagesMixin, NotesMixin, PairingMixin, OrgsMixin, CalendarMixin, 
     def render_messages(self):
         if not self.peer:
             self.peer_title.set_text("Your inbox")
+            self.peer_subtitle.set_visible(False)
             self.render_conversation_chrome()
             self.empty_thread("Choose a conversation, or start a new one.")
             return
-        self.peer_title.set_text(contact_for(self.peer, self.contacts).get("alias") or display_name(self.peer))
+        self.peer_title.set_text(self.peer_name(self.peer))
+        self.peer_subtitle.set_text(self.peer)
+        self.peer_subtitle.set_visible(self.peer_title.get_text() != self.peer)
         self.render_conversation_chrome()
         adj = self.message_scroll.get_vadjustment()
         bottom = adj.get_value() + adj.get_page_size() >= adj.get_upper() - 80
@@ -1000,7 +1016,7 @@ class Window(MessagesMixin, NotesMixin, PairingMixin, OrgsMixin, CalendarMixin, 
 
     def block_sender(self, message):
         peer = self.peer or message.get("peer_handle") or message.get("from")
-        self.ask_block(peer, contact_for(peer, self.contacts).get("alias") or display_name(peer), message_id=message.get("message_id"))
+        self.ask_block(peer, self.peer_name(peer), message_id=message.get("message_id"))
 
     def message_actions(self, message, outgoing):
         group = Gio.SimpleActionGroup()
@@ -1527,6 +1543,9 @@ class Window(MessagesMixin, NotesMixin, PairingMixin, OrgsMixin, CalendarMixin, 
                                              lambda: self.blocked_settings(navigation)))
         if privacy_rows:
             settings_group(content, *privacy_rows)
+        contact_rows = self.contacts_settings_rows(navigation)
+        if contact_rows:
+            settings_group(content, *contact_rows)
         pairing_rows = self.pairing_settings_rows(navigation) if self.identity else []
         if pairing_rows:
             settings_group(content, *pairing_rows)
@@ -1785,6 +1804,7 @@ class Window(MessagesMixin, NotesMixin, PairingMixin, OrgsMixin, CalendarMixin, 
         self.reset_orgs()
         self.reset_pairing()
         self.reset_notes(keep_login=False)
+        self.reset_contacts()
         self.calendar_button.set_visible(False)
         self.orgs_button.set_visible(False)
         self.notes_button.set_visible(False)
@@ -1815,6 +1835,7 @@ class Window(MessagesMixin, NotesMixin, PairingMixin, OrgsMixin, CalendarMixin, 
             owner = self.lease.owner if self.lease is not None else None
             notes_key = self.notes_state.get("key_id")
             self.generation += 1
+            self.aliases.clear_all()  # local aliases end with the session (contacts-and-phone.md §6.2)
             self.clear_account()
             self.show_signin("Signing out…")
             self.login_button.set_sensitive(False)
