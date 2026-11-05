@@ -106,3 +106,48 @@ Workspace hours are shown, not yet metered (B5).
   mswarm's self-hosted load balancer with `qwen-latest-flash-next`, the owner's choice "for now".
 - **End to end:** `tests/nests/e2e.mjs chat` (two turns; with a real model the codeword must be
   remembered) and `tests/nests/e2e.mjs stranger` (no answer in 30 s).
+
+## B4 — files and tools
+
+- **Upload.** `POST /v1/nests/{nest}/files`: a person only; at most 25 MiB, 60 uploads an hour,
+  1000 files per Nest, within the Nest's storage quota. The name is display text and never a path.
+  The bytes go to nestd over the private link and are stored as `files/quarantine/<id>` on the
+  Nest's encrypted volume.
+- **Parser sandbox.** nestd parses every file in a separate gVisor container from the runner image
+  (`pigeonpost-nest-parser`):
+  - no network, read-only root, uid 10001, no capabilities;
+  - the input read-only at `/in`, an empty output directory at `/out`;
+  - 256 MiB memory, 16 processes, 1 CPU, killed after 120 s.
+
+  It never runs inside the Nest's own sandbox, so a parser exploit cannot reach the Nest's mailbox
+  or broker credentials.
+- **Formats and bounds** (`crates/pigeonpost-nests/src/parse.rs`).
+  - The kind comes from the bytes: text/Markdown, CSV, PDF (a small FlateDecode/text-operator
+    extractor; encrypted files are refused), DOCX, XLSX, ZIP.
+  - Limits: 2M output characters; ZIP at most 500 entries, 100 MiB inflated, a 200:1 ratio per
+    entry, one nesting level. Lying size headers, links and unsafe entry names (`..`, absolute,
+    drive, backslash) are skipped.
+  - Output names are always `part-NNNN.txt`.
+  - nestd then verifies the output: the manifest parses, there are no stray files or links, and the
+    size is bounded. Otherwise it discards everything.
+  - Coverage (pages/sheets/entries with text) and warnings are reported to the person.
+- **Using files.** In chat, the runner adds the best-matching excerpts from `files/parsed/` to the
+  system turn, fenced as untrusted file content with the file's name. File text is never the user's
+  turn, and the model is told never to follow instructions inside files.
+- **Tools and approvals.** A Nest never performs an external write.
+  - The runner may end a reply with one ```` ```pigeonpost-action ```` block. It turns that into a
+    proposal (`POST /v1/nest-approvals`, the Nest's mailbox credential) and tells the person that
+    approval is needed.
+  - Tool vocabulary: `send_message {to, body}` only. The never-auto categories do not exist as tools.
+  - The card binds `args_hash` (SHA-256 of the canonical call). A newer proposal for the same
+    recipient supersedes the pending one, which is how an edited request invalidates an old approval.
+  - Approving needs a person and the hash they saw. Cards are single-use and expire after 24 h; at
+    most 20 are open per Nest.
+  - The postbox carries the call out as the tool broker under its destination policy: the owner's
+    own mailboxes or contacts they allowed, never a wildcard or the Nest itself; 50 sends a day.
+- **Tests.**
+  - Archive traversal names, bombs, nesting, entry limits, hostile bytes.
+  - Output verification (strays, links, missing parts).
+  - The parser sandbox profile.
+  - Prompt injection: a file's instruction produces at most a card the destination policy refuses.
+  - Approval binding: superseded, changed hash, single use, automation and other people refused.

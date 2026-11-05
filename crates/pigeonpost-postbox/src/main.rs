@@ -99,10 +99,12 @@ mod mls;
 mod msgactions;
 #[cfg(test)]
 mod msgactions_tests;
+mod nest_approvals;
 mod nest_catalog;
 mod nest_commerce;
 #[cfg(test)]
 mod nest_commerce_tests;
+mod nest_files;
 mod nests;
 #[cfg(test)]
 mod nests_tests;
@@ -1026,6 +1028,8 @@ fn build_router(state: AppState) -> Router {
         // Nests Phase A: a hosted agent redeems its one-time enrollment code.
         .merge(nests::router())
         .merge(nest_commerce::router())
+        .merge(nest_files::router())
+        .merge(nest_approvals::router())
         // Phase 3B: calendar and scheduled meetings (SDS §14B.5, docs/calendar.md).
         .route(
             "/v1/calendars",

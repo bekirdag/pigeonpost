@@ -263,6 +263,77 @@ impl Runtime {
     }
 }
 
+impl Runtime {
+    /// Upload one file's bytes to nestd (`PUT /v1/nests/{id}/files/{file}`), Phase B4. Longer
+    /// timeout than lifecycle calls: nestd parses the file in its own sandbox before answering.
+    pub(crate) async fn put_file(
+        &self,
+        nest_id: &str,
+        file_id: &str,
+        name: &str,
+        data: Vec<u8>,
+    ) -> Result<(u16, Value), NestdError> {
+        let path = format!("/v1/nests/{nest_id}/files/{file_id}");
+        match &self.transport {
+            Transport::Disabled => Err(NestdError::Unavailable),
+            Transport::Capture { calls, fail } => {
+                calls.lock().expect("capture lock").push(NestdCall {
+                    method: "PUT".into(),
+                    path,
+                    body: Some(json!({ "bytes": data.len(), "name": name })),
+                });
+                if fail.load(Ordering::SeqCst) {
+                    return Ok((500, json!({ "error": "capture_failure" })));
+                }
+                // The parser itself is tested in pigeonpost-nests; this answers as it would.
+                let m = pigeonpost_core_parse_stub(&data);
+                Ok((200, m))
+            }
+            Transport::Http { url, token, client } => {
+                let encoded: String = name
+                    .bytes()
+                    .map(|b| {
+                        if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {
+                            (b as char).to_string()
+                        } else {
+                            format!("%{b:02X}")
+                        }
+                    })
+                    .collect();
+                let resp = client
+                    .put(format!("{url}{path}"))
+                    .bearer_auth(token)
+                    .header("content-type", "application/octet-stream")
+                    .header("x-nest-file-name", encoded)
+                    .timeout(std::time::Duration::from_secs(180))
+                    .body(data)
+                    .send()
+                    .await
+                    .map_err(|e| NestdError::Failed(e.without_url().to_string()))?;
+                let status = resp.status().as_u16();
+                let value = resp.json::<Value>().await.unwrap_or(Value::Null);
+                Ok((status, value))
+            }
+        }
+    }
+}
+
+/// Tests only: what nestd answers for an upload, without parsing (text-like bytes parse, others
+/// are rejected), so postbox tests do not depend on the Nests crate.
+fn pigeonpost_core_parse_stub(data: &[u8]) -> Value {
+    let text = std::str::from_utf8(data).is_ok() && !data.contains(&0);
+    json!({
+        "kind": if text { "text" } else { "unknown" },
+        "status": if text { "parsed" } else { "rejected" },
+        "reason": if text { Value::Null } else { json!("unsupported file type") },
+        "bytes": data.len(),
+        "coverage": { "units_total": 1, "units_text": if text { 1 } else { 0 } },
+        "parts": if text { 1 } else { 0 },
+        "chars": if text { data.len() } else { 0 },
+        "warnings": [],
+    })
+}
+
 /// Is `address` the mailbox of a Nest that has not been deleted?
 pub(crate) async fn is_nest_mailbox(state: &AppState, address: &str) -> bool {
     let address = address.to_string();

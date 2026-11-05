@@ -4,7 +4,7 @@
 use crate::config::Config;
 use crate::db::Db;
 use crate::sandbox::{RuntimeState, Sandbox, Spec};
-use crate::storage::{write_for_sandbox, Volumes};
+use crate::storage::{dir_for_sandbox, write_for_sandbox, Volumes};
 use crate::util::{ct_eq, now, period_of, random_hex, sha256_hex, valid_nest_id};
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -14,6 +14,7 @@ use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone)]
@@ -726,13 +727,220 @@ fn authorized(ctx: &Ctx, headers: &HeaderMap) -> Result<(), ApiError> {
 }
 
 pub fn router(ctx: Ctx) -> Router {
+    let files = Router::new()
+        .route(
+            "/v1/nests/{id}/files/{file}",
+            axum::routing::put(http_upload).delete(http_remove_file),
+        )
+        .layer(axum::extract::DefaultBodyLimit::max(
+            crate::parse::MAX_INPUT_BYTES + 1,
+        ));
     Router::new()
         .route("/v1/health", get(health))
         .route("/v1/nests", post(http_create).get(http_list))
         .route("/v1/nests/{id}", get(http_get).delete(http_delete))
         .route("/v1/nests/{id}/{action}", post(http_action))
         .layer(axum::extract::DefaultBodyLimit::max(16 * 1024))
+        .merge(files)
         .with_state(ctx)
+}
+
+// ---- files (Phase B4) --------------------------------------------------------------------------
+
+/// How long one parse may take before its sandbox is killed.
+const PARSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// Run `f` with the Nest's volume open, closing it again afterwards when the Nest was not running
+/// (an idle-stopped Nest's volume stays locked between uses). Caller holds the Nest's lock.
+async fn with_volume<T: Send + 'static>(
+    ctx: &Ctx,
+    id: &str,
+    f: impl FnOnce(PathBuf) -> Result<T, String> + Send + 'static,
+) -> Result<T, ApiError> {
+    let nest = ctx
+        .db
+        .nest(id)
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "no_nest", id.to_string()))?;
+    if matches!(nest.state.as_str(), "deleted" | "deleting" | "creating") {
+        return Err(ApiError::new(StatusCode::CONFLICT, "not_ready", nest.state));
+    }
+    let open_now = matches!(nest.state.as_str(), "running" | "paused");
+    let volumes = ctx.volumes.clone();
+    let nest_id = id.to_string();
+    blocking(move || {
+        let root = volumes.open(&nest_id)?;
+        let out = f(root);
+        if !open_now {
+            let _ = volumes.close(&nest_id);
+        }
+        out
+    })
+    .await
+    .map_err(|e| {
+        if e.starts_with("no_space") {
+            ApiError::new(
+                StatusCode::INSUFFICIENT_STORAGE,
+                "no_space",
+                "this Nest's storage is full",
+            )
+        } else {
+            ApiError::internal(e)
+        }
+    })
+}
+
+/// `PUT /v1/nests/{id}/files/{file}` — store one upload in quarantine, parse it in its own
+/// sandbox, and keep only verified output. Answers the manifest without any text.
+pub async fn upload(ctx: &Ctx, id: &str, file_id: &str, name: String, data: Vec<u8>) -> ApiResult {
+    if !valid_nest_id(id) || !crate::files::valid_file_id(file_id) {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "bad_id",
+            "nest or file id",
+        ));
+    }
+    if data.is_empty() || data.len() > crate::parse::MAX_INPUT_BYTES {
+        return Err(ApiError::new(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "too_large",
+            "1 byte to 25 MiB",
+        ));
+    }
+    let lock = ctx.lock_for(id);
+    let _guard = lock.lock().await;
+    let uid = ctx.cfg.storage.sandbox_uid;
+    let sandbox = ctx.sandbox.clone();
+    let volumes = ctx.volumes.clone();
+    let (nest, file) = (id.to_string(), file_id.to_string());
+    let sha = sha256_hex(&data);
+    let bytes = data.len();
+    let manifest = with_volume(ctx, id, move |root| {
+        // Room for the original, its quarantine copy and the extracted text.
+        if let Some((used, size)) = volumes.usage(&nest) {
+            if used + 3 * bytes as u64 > size {
+                return Err("no_space".into());
+            }
+        }
+        let p = crate::files::paths(&root, &file);
+        for d in ["files", "files/quarantine", "files/originals", "files/parsed"] {
+            dir_for_sandbox(&root.join(d), uid, 0o700)?;
+        }
+        if p.parsed.exists() || p.original.exists() {
+            return Err("file id already used".into());
+        }
+        write_for_sandbox(&p.quarantine, &data, uid)?;
+        let work = p.parsed.with_extension("tmp");
+        let _ = std::fs::remove_dir_all(&work);
+        dir_for_sandbox(&work, uid, 0o700)?;
+        let parsed = sandbox
+            .run_parser(&p.quarantine, &work, PARSE_TIMEOUT)
+            .and_then(|()| crate::files::verify_output(&work));
+        let manifest = match parsed {
+            Ok(m) => {
+                std::fs::rename(&work, &p.parsed).map_err(|e| e.to_string())?;
+                let meta = json!({"name": crate::parse::display_name(&name), "bytes": bytes, "sha256": sha, "uploaded_at": now()});
+                write_for_sandbox(&p.parsed.join("meta.json"), meta.to_string().as_bytes(), uid)?;
+                m
+            }
+            Err(e) => {
+                let _ = std::fs::remove_dir_all(&work);
+                tracing::warn!(nest = %nest, file = %file, error = %e, "file parse failed");
+                let mut m = crate::parse::parse(b"");
+                m.reason = Some("the file could not be parsed safely".into());
+                m.bytes = bytes;
+                m
+            }
+        };
+        std::fs::rename(&p.quarantine, &p.original).map_err(|e| e.to_string())?;
+        Ok(manifest)
+    })
+    .await?;
+    ctx.db.event(
+        Some(id),
+        "file",
+        &format!("{file_id} {:?}", manifest.status),
+    );
+    Ok(Json(json!({
+        "file_id": file_id,
+        "kind": manifest.kind,
+        "status": manifest.status,
+        "reason": manifest.reason,
+        "bytes": manifest.bytes,
+        "coverage": manifest.coverage,
+        "parts": manifest.parts.len(),
+        "chars": manifest.parts.iter().map(|p| p.chars).sum::<usize>(),
+        "warnings": manifest.warnings,
+    })))
+}
+
+/// `DELETE /v1/nests/{id}/files/{file}` — remove the original and everything parsed from it.
+/// Idempotent.
+pub async fn remove_file(ctx: &Ctx, id: &str, file_id: &str) -> ApiResult {
+    if !valid_nest_id(id) || !crate::files::valid_file_id(file_id) {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "bad_id",
+            "nest or file id",
+        ));
+    }
+    let lock = ctx.lock_for(id);
+    let _guard = lock.lock().await;
+    let file = file_id.to_string();
+    with_volume(ctx, id, move |root| {
+        let p = crate::files::paths(&root, &file);
+        let _ = std::fs::remove_file(&p.quarantine);
+        let _ = std::fs::remove_file(&p.original);
+        let _ = std::fs::remove_dir_all(&p.parsed);
+        let _ = std::fs::remove_dir_all(p.parsed.with_extension("tmp"));
+        Ok(())
+    })
+    .await?;
+    ctx.db.event(Some(id), "file_removed", file_id);
+    Ok(Json(json!({"file_id": file_id, "removed": true})))
+}
+
+async fn http_upload(
+    State(ctx): State<Ctx>,
+    headers: HeaderMap,
+    Path((id, file)): Path<(String, String)>,
+    body: axum::body::Bytes,
+) -> ApiResult {
+    authorized(&ctx, &headers)?;
+    // The display name travels percent-encoded in a header; it is only ever shown, never a path.
+    let name = headers
+        .get("x-nest-file-name")
+        .and_then(|v| v.to_str().ok())
+        .map(percent_decode)
+        .unwrap_or_default();
+    upload(&ctx, &id, &file, name, body.to_vec()).await
+}
+
+async fn http_remove_file(
+    State(ctx): State<Ctx>,
+    headers: HeaderMap,
+    Path((id, file)): Path<(String, String)>,
+) -> ApiResult {
+    authorized(&ctx, &headers)?;
+    remove_file(&ctx, &id, &file).await
+}
+
+fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                out.push(v);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 async fn health(State(ctx): State<Ctx>, headers: HeaderMap) -> ApiResult {
@@ -835,6 +1043,94 @@ mod tests {
             budgets: None,
             quota_gib: None,
         }
+    }
+
+    #[tokio::test]
+    async fn uploads_are_quarantined_parsed_verified_and_removable() {
+        let (c, _fake) = ctx();
+        let id = "nst_00000000000000f1";
+        let _ = create(&c, req(id)).await.unwrap();
+        let fid = "nfl_0123456789abcdef01234567";
+        let v = upload(&c, id, fid, "Q3 plan.txt".into(), b"budget is 42".to_vec())
+            .await
+            .unwrap()
+            .0;
+        assert_eq!(v["status"], "parsed");
+        assert_eq!(v["kind"], "text");
+        assert!(
+            !v.to_string().contains("budget is 42"),
+            "no text in the answer"
+        );
+        let root = c.volumes.open(id).unwrap();
+        let p = crate::files::paths(&root, fid);
+        assert!(p.original.exists() && !p.quarantine.exists());
+        assert_eq!(
+            std::fs::read_to_string(p.parsed.join("part-0001.txt")).unwrap(),
+            "budget is 42"
+        );
+        let meta: Value =
+            serde_json::from_slice(&std::fs::read(p.parsed.join("meta.json")).unwrap()).unwrap();
+        assert_eq!(meta["name"], "Q3 plan.txt");
+        // The same id twice is refused; bad ids and empty bodies are refused.
+        assert!(upload(&c, id, fid, "x".into(), b"again".to_vec())
+            .await
+            .is_err());
+        assert!(upload(&c, id, "nfl_../../x", "x".into(), b"a".to_vec())
+            .await
+            .is_err());
+        assert!(upload(
+            &c,
+            id,
+            "nfl_0123456789abcdef01234568",
+            "x".into(),
+            Vec::new()
+        )
+        .await
+        .is_err());
+        // An unsupported file is kept as an original but yields nothing to read.
+        let bin = "nfl_0123456789abcdef0123456a";
+        let v = upload(&c, id, bin, "a.bin".into(), vec![0xff, 0xfe, 0x00, 0x9b])
+            .await
+            .unwrap()
+            .0;
+        assert_eq!(v["status"], "rejected");
+        // Remove is complete and idempotent.
+        let _ = remove_file(&c, id, fid).await.unwrap();
+        assert!(!p.original.exists() && !p.parsed.exists());
+        let _ = remove_file(&c, id, fid).await.unwrap();
+        assert_eq!(percent_decode("Q3%20plan%2F..%2F.txt"), "Q3 plan/../.txt");
+    }
+
+    #[test]
+    fn the_parser_sandbox_has_no_network_and_reads_its_input_read_only() {
+        let dir = std::env::temp_dir();
+        let cfg = crate::config::test_config(&dir);
+        let a = crate::sandbox::GvisorPodman::parser_args(
+            &cfg.sandbox,
+            "nest-parse-x",
+            std::path::Path::new("/v/files/quarantine/f"),
+            std::path::Path::new("/v/files/parsed/f.tmp"),
+        );
+        let j = a.join(" ");
+        for must in [
+            "--network none",
+            "--read-only",
+            "--cap-drop ALL",
+            "--user 10001:10001",
+            "no-new-privileges",
+            "/v/files/quarantine/f:/in:ro,nosuid,nodev,noexec",
+            "/v/files/parsed/f.tmp:/out:rw,nosuid,nodev,noexec",
+            "--memory 256m",
+            "--pids-limit 16",
+            "--pull never",
+        ] {
+            assert!(j.contains(must), "missing {must}: {j}");
+        }
+        assert!(j.contains(&format!("--runtime {}", cfg.sandbox.oci_runtime)));
+        assert!(
+            !j.contains("--add-host") && !j.contains("broker"),
+            "no route to anything"
+        );
     }
 
     #[tokio::test]

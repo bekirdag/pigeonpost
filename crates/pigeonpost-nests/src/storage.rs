@@ -390,6 +390,12 @@ pub(crate) fn write_for_sandbox(path: &Path, data: &[u8], uid: u32) -> Result<()
     set_owner_mode(path, uid, 0o400)
 }
 
+/// Create a directory (and parents) owned by the sandbox user with `mode`.
+pub(crate) fn dir_for_sandbox(path: &Path, uid: u32, mode: u32) -> Result<(), String> {
+    std::fs::create_dir_all(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    set_owner_mode(path, uid, mode)
+}
+
 #[cfg(unix)]
 fn set_owner_mode(path: &Path, uid: u32, mode: u32) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;

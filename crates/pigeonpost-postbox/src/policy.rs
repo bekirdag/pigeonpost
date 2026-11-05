@@ -85,6 +85,11 @@ pub(crate) enum Action {
     /// Start or claim a Nest package purchase, restore one, retry a paid setup (build plan §4
     /// `NestPurchase`): a person, never automation — buying is never automatic.
     NestPurchase,
+    /// A Nest proposes a typed tool call for its owner to approve (`POST /v1/nest-approvals`):
+    /// the Nest's own mailbox credential only, never an account or a connector.
+    NestToolRequest,
+    /// Approve or reject a Nest's proposed call: a person, never automation.
+    NestApprove,
     /// Take part in a group as one's own mailbox: read, post, leave, own keys (SDS §4.4). Agents
     /// may; a connector acting for the member may not reach E2EE content at all.
     GroupParticipate,
@@ -280,7 +285,8 @@ impl Action {
             Action::ViewProfile => Requirement::AnyPrincipal,
             Action::SmsOptOut => Requirement::Anyone,
             Action::NestView => Requirement::AccountHolder,
-            Action::NestOwn | Action::NestPurchase => Requirement::Human,
+            Action::NestOwn | Action::NestPurchase | Action::NestApprove => Requirement::Human,
+            Action::NestToolRequest => Requirement::Mailbox,
         }
     }
 }
