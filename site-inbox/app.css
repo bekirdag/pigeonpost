@@ -2742,3 +2742,21 @@ audio.viewer-media { width: min(560px, 100%); background: none; }
 #discover-found-section h3, #discover-missing-section h3 { margin: 16px 0 8px; font-size: 13.5px; font-weight: 600; color: var(--label); }
 .invite-text { margin: 0 0 12px; padding: 10px 12px; border-left: 3px solid var(--edge); background: var(--inset);
   border-radius: 6px; color: var(--ink); font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
+
+/* Nests B3: the status header above a conversation with a Nest */
+.nest-status { display: flex; gap: .5rem; align-items: center; padding: .35rem .9rem; font-size: .9em; border-bottom: 1px solid var(--rule); }
+.nest-status-dot { width: .55rem; height: .55rem; border-radius: 50%; background: var(--faint); flex: none; }
+.nest-status[data-status="ready"] .nest-status-dot { background: var(--tick-seen); }
+.nest-status[data-status="working"] .nest-status-dot { background: var(--accent-fill); }
+.nest-status[data-status="needs_you"] .nest-status-dot { background: var(--amber); }
+.nest-status[data-status="paused"] .nest-status-dot { background: var(--faint); }
+.nest-status[data-status="unavailable"] .nest-status-dot { background: var(--muted); }
+.nest-status-note { opacity: .75; flex: 1; }
+@media (prefers-reduced-motion: no-preference) { .nest-status[data-status="working"] .nest-status-dot { animation: nest-pulse 1.4s ease-in-out infinite; } }
+@keyframes nest-pulse { 50% { opacity: .35; } }
+.nest-section { margin: 1rem 0; }
+.nest-card { border: 1px solid var(--card-edge); border-radius: .5rem; padding: .6rem .75rem; margin: .5rem 0; }
+.nest-call { white-space: pre-wrap; word-break: break-word; margin: .25rem 0 .5rem; }
+.nest-actions { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; margin: .4rem 0; }
+.nest-files { list-style: none; padding: 0; }
+.nest-files li { padding: .3rem 0; }

@@ -1687,6 +1687,7 @@
     archiveBtn.setAttribute("aria-label", archiveBtn.title);
 
     if (!open) {
+      window.PigeonpostNests?.renderHead(null); // Nests B3
       $("blocked-banner").hidden = true;
       resetConversationView();
       $("messages").textContent = "";
@@ -1715,6 +1716,7 @@
     $("peer-name-btn").setAttribute("aria-label", "About " + threadName(thread));
     $("peer-sub").textContent = thread.mine ? thread.peer + " · your mailbox" : thread.peer;
     paintAvatar($("peer-avatar"), thread.peer, threadName(thread));
+    window.PigeonpostNests?.renderHead(thread.peer); // Nests B3: status header for a Nest
     $("delete-thread-btn").hidden = !showing?.id;
     renderMessages(thread.messages, showing?.id || "");
 
@@ -4569,6 +4571,7 @@
     window.PigeonpostGroups?.onMailbox(); // Phase 3a
     window.PigeonpostCalendar?.onMailbox(); // Phase 3B
     window.PigeonpostNotes?.onMailbox(); // Phase 7
+    window.PigeonpostNests?.onMailbox(); // Nests B3
   }
 
   function resetPhase1b() {
@@ -6919,6 +6922,16 @@
     token: () => getToken(),
     renew: () => renewSession(),
     mailbox: () => (state.me ? { address: state.me.address, handle: state.me.handle || null } : null),
+    features: () => new Set(features),
+    toast,
+  };
+
+  // Nests B3–B5: what nests.js may ask of the inbox. It shows a status header for conversations
+  // with the account's Nests and manages them; the composer stays ordinary chat.
+  window.PigeonpostNestsHost = {
+    postbox: () => cfg.postbox,
+    token: () => getToken(),
+    renew: () => renewSession(),
     features: () => new Set(features),
     toast,
   };

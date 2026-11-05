@@ -277,6 +277,7 @@
         <h2>Your account</h2>
         <button class="btn btn-small" id="ac-logout">Sign out</button>
       </div>
+      <div class="ac-card" id="ac-products"></div>
       ${searchBlock()}
       <div class="ac-card"><h3>Your handles</h3><p class="muted">Names belong to your Pigeonpost account across mobile, desktop and web.</p><button class="btn btn-small" id="ac-handles-refresh">Refresh handles</button><div id="ac-subs"><p class="muted">Loading…</p></div></div>
       <div class="ac-card">
@@ -312,6 +313,45 @@
     loadOverview();
     loadPostbox();
     loadKeys();
+    mountProducts();
+  }
+
+  // ---- Products (Nests Phase B2) --------------------------------------------------------------
+  //
+  // products.js renders the three tabs with this page's own authenticated helpers; it holds no
+  // token itself. Nest purchases use the same hosted checkout page as Cloud plans.
+  async function mountProducts() {
+    const box = $("#ac-products");
+    if (!box || !window.PPProducts) return;
+    let features = new Set();
+    try {
+      const caps = await pbFetch("/v1/capabilities");
+      if (Array.isArray(caps.features)) features = new Set(caps.features.map(String));
+    } catch (_) { /* an older postbox: nothing new is on */ }
+    window.PPProducts.mount(box, {
+      features,
+      pb: (path, init) => pbFetch(path, init),
+      bridgeGet: (path) => apiGet(path),
+      bridgeAction: (path, body, method) => apiAction(path, body, method),
+      startCheckout: (pending) => {
+        TS.setItem("pp_cloud_checkout", JSON.stringify(pending));
+        window.location.href = cloudCfg().checkoutPath || "/billing/checkout";
+      },
+      billingProfileId: async () => (await ensureOverview()).profileId || null,
+      goBilling: () => focusStep("#ac-billing", 'input[name="legal_name"]'),
+      focusInbox: () => focusStep(".ac-search-card", "#ac-handle"),
+      toast,
+      randomHex32: () => randomString(16),
+      search: window.location.search,
+      clearReturn: (key) => {
+        const params = new URLSearchParams(window.location.search);
+        params.delete(key);
+        history.replaceState({}, "", window.location.pathname + (params.size ? "?" + params : "") + window.location.hash);
+      },
+      preferredCurrency: defaultCurrency(),
+      locale: /^tr\b/i.test(navigator.language || "") ? "tr" : "en",
+    });
+    if (window.location.hash === "#products" && box.scrollIntoView) box.scrollIntoView({ block: "start" });
   }
 
   function renderDeletion(el) {
