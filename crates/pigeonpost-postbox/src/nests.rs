@@ -59,8 +59,9 @@ use std::sync::Mutex;
 pub(crate) const CODE_SECS: u64 = 900;
 /// The signed message a sandbox proves its device key with.
 pub(crate) const ENROLL_CONTEXT: &str = "pigeonpost-nest-enroll-v1\0";
-/// The only verb a Phase A Nest is granted for its owner's own mailboxes.
-const GRANTED_VERB: &str = "answer_question";
+/// What a new Nest grants its owner's own mailboxes: questions as request envelopes (Phase A) and
+/// plain conversation (`chat`, Phase B3).
+const GRANTED_VERBS: &[&str] = &["answer_question", crate::verbs::NEST_CHAT];
 const MAX_ALLOW_SENDERS: usize = 8;
 /// At most one wake per Nest in this many seconds.
 pub(crate) const WAKE_DEBOUNCE_SECS: u64 = 10;
@@ -260,6 +261,22 @@ impl Runtime {
             }
         }
     }
+}
+
+/// Is `address` the mailbox of a Nest that has not been deleted?
+pub(crate) async fn is_nest_mailbox(state: &AppState, address: &str) -> bool {
+    let address = address.to_string();
+    state
+        .store
+        .group_read(move |c| -> GResult<bool> {
+            Ok(c.query_row(
+                "SELECT EXISTS(SELECT 1 FROM nests WHERE address = ?1 AND deleted_at IS NULL)",
+                [&address],
+                |r| r.get(0),
+            )?)
+        })
+        .await
+        .unwrap_or(false)
 }
 
 // ---- wake on mail -------------------------------------------------------------------------------
@@ -698,7 +715,23 @@ pub(crate) async fn provision(
         }
     };
 
-    // 3. The named senders, granted the one verb this phase answers.
+    // The row names its mailbox before any grant is written: a `chat` grant is only accepted on a
+    // mailbox that is a Nest.
+    {
+        let (id, addr) = (nest_id.clone(), address.clone());
+        state
+            .store
+            .group_tx(move |tx| -> GResult<()> {
+                tx.execute(
+                    "UPDATE nests SET address = ?2, updated_at = ?3 WHERE id = ?1",
+                    params![id, addr, now as i64],
+                )?;
+                Ok(())
+            })
+            .await?;
+    }
+
+    // 3. The named senders, granted what a Nest answers (questions and conversation).
     let me = state
         .store
         .get(address.clone())
@@ -719,7 +752,7 @@ pub(crate) async fn provision(
             None,
             Some(crate::ADMISSION_ALLOW.to_string()),
             Some(crate::AUTONOMY_AUTO.to_string()),
-            Some(vec![GRANTED_VERB.to_string()]),
+            Some(GRANTED_VERBS.iter().map(|v| v.to_string()).collect()),
             crate::TrustActor::Human,
         )
         .await?;

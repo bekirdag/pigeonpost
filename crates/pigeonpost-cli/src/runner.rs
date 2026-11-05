@@ -110,6 +110,9 @@ pub struct Run {
 /// deliberate: who this is, what is being asked, then the untrusted material last, after the
 /// instruction that it is not instructions.
 pub fn prompt(action: &Action, sender: &str) -> String {
+    if action.verb == "chat" {
+        return nest_turn(action, sender);
+    }
     let mut out = String::new();
     out.push_str(&format!(
         "You are the Pigeonpost mailbox {} for the project at {}.\n\n",
@@ -365,6 +368,21 @@ pub fn argv(
             StdinSource::File(prompt_file.to_path_buf()),
         ),
     }
+}
+
+/// A `chat` turn for the Nest runner: structured, so the runner can keep the conversation per
+/// sender and put the sender's text in the user role rather than inside an instruction. Every
+/// string here is the sender's or the postbox's; the runner treats all of it as data.
+pub fn nest_turn(action: &Action, sender: &str) -> String {
+    serde_json::json!({
+        "nest_turn": 1,
+        "kind": "chat",
+        "sender": sender,
+        "text": action.question.clone().unwrap_or_default(),
+        "reply_context": action.reply_context,
+        "amendment": action.amendment,
+    })
+    .to_string()
 }
 
 /// The program a `runtime = "nest"` route spawns, from `PATH` inside the Nest image.

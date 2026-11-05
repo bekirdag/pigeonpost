@@ -520,6 +520,23 @@ async fn a_grant_funds_one_nest_for_testing_without_any_purchase() {
     assert_eq!(b["allowance"]["slots"], 1);
     assert_eq!(b["nests"].as_array().unwrap().len(), 1, "{b}");
     assert_eq!(b["nests"][0]["label"], "Pigeonpost AI");
+    // The status header: the capture transport answers `running`, so the Nest is ready.
+    let id = b["nests"][0]["nest_id"].as_str().unwrap().to_string();
+    let (s, one) = srv.get(&format!("/v1/nests/{id}"), &p.token).await;
+    assert_eq!(s, 200, "{one}");
+    assert!(
+        ["ready", "unavailable"].contains(&one["status"].as_str().unwrap()),
+        "{one}"
+    );
+    assert_eq!(one["status"], b["nests"][0]["status"]);
+    // Someone else's Nest is not found, and a mailbox token is never the account.
+    let other = person(&srv, "other", true).await;
+    let (s, _) = srv.get(&format!("/v1/nests/{id}"), &other.token).await;
+    assert_eq!(s, 404);
+    let (s, _) = srv.get(&format!("/v1/nests/{id}"), &p.cap).await;
+    assert_eq!(s, 403);
+    let (s, _) = srv.get("/v1/nests/nst_..%2F", &p.token).await;
+    assert_eq!(s, 404);
     // The account's own mailbox is the one the Nest answers.
     let (s, b) = srv
         .post(

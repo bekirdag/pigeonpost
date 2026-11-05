@@ -2522,7 +2522,10 @@ pub(crate) async fn do_set_contact(
     // Refuse a bad grant now rather than storing one that could never match. A denied verb is not
     // a typo to be shrugged off — it is someone asking for the one thing this design will not sell.
     if let Some(v) = &allowed_verbs {
-        verbs::validate_grant(v).map_err(|detail| ApiError::bad("invalid_verb", &detail))?;
+        let is_nest = v.iter().any(|x| x == verbs::NEST_CHAT)
+            && nests::is_nest_mailbox(state, &me.address).await;
+        verbs::validate_grant_for(v, is_nest)
+            .map_err(|detail| ApiError::bad("invalid_verb", &detail))?;
     }
 
     if actor == TrustActor::Agent {
@@ -4100,6 +4103,9 @@ pub(crate) async fn do_inbox_page(
         }
     }
 
+    // Is this mailbox a live Nest (Nests B3)? Only a Nest treats granted prose as `chat`.
+    let me_is_nest = nests::is_nest_mailbox(state, &me.address).await;
+
     // Company rules per distinct sender, evaluated once (SDS §9.3).
     let mut org_verdicts: std::collections::HashMap<String, Option<org_rules::Verdict>> =
         std::collections::HashMap::new();
@@ -4332,15 +4338,15 @@ pub(crate) async fn do_inbox_page(
             } else {
                 &org_granted
             };
-            let decision = verbs::decide(&latest_body, auto, granted);
+            let decision = verbs::decide_for(&latest_body, auto, granted, me_is_nest);
             // An edit is evaluated as the request it now is, but never raises a held original:
             // only the recipient's grants can do that (SDS §14C.3).
             let original_decision = if own_edits.is_empty() || !view.fold {
                 root_body
                     .as_deref()
-                    .map(|b| verbs::decide(b, auto, granted))
+                    .map(|b| verbs::decide_for(b, auto, granted, me_is_nest))
             } else {
-                Some(verbs::decide(&original_body, auto, granted))
+                Some(verbs::decide_for(&original_body, auto, granted, me_is_nest))
             };
             let decision = match (&decision, original_decision) {
                 (verbs::Decision::Auto { verb }, Some(verbs::Decision::Review { held, .. })) => {

@@ -41,6 +41,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use rusqlite::OptionalExtension;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -48,6 +49,7 @@ pub(crate) fn router() -> Router<AppState> {
     Router::new()
         .route("/v1/nest-packages", get(packages))
         .route("/v1/nests", get(list).post(create))
+        .route("/v1/nests/{nest}", get(one))
         .route("/v1/nest-purchases/intents", post(intent))
         .route("/v1/nest-purchases/apple", post(claim_apple))
         .route("/v1/nest-purchases/google", post(claim_google))
@@ -157,7 +159,16 @@ async fn snapshot(state: &AppState, account: String) -> GResult<Value> {
             let nests = stmt
                 .query_map([&account], |r| {
                     let unfunded_since: Option<i64> = r.get(6)?;
+                    let st: String = r.get(3)?;
+                    let reason: Option<String> = r.get(5)?;
+                    let working = match r.get::<_, Option<String>>(1)? {
+                        Some(a) => working_in(c, &a, now)?,
+                        None => false,
+                    };
+                    let (status, why) = nest_status(&st, reason.as_deref(), working);
                     Ok(json!({
+                        "status": status,
+                        "status_reason": why,
                         "nest_id": r.get::<_, String>(0)?,
                         "address": r.get::<_, Option<String>>(1)?,
                         "label": r.get::<_, String>(2)?,
@@ -192,6 +203,120 @@ async fn list(State(state): State<AppState>, headers: HeaderMap) -> Response {
     }
     .await;
     result.unwrap_or_else(|e| e.into_response())
+}
+
+// ---- status header (B3) --------------------------------------------------------------------------
+
+/// `(account, address, label, state, funding, paused_reason, unfunded_since, created_at)`.
+type NestRowView = (
+    String,
+    Option<String>,
+    String,
+    String,
+    String,
+    Option<String>,
+    Option<i64>,
+    i64,
+);
+
+/// How long after a `working` receipt a Nest still counts as working (a run that died without
+/// reporting must not spin forever).
+const WORKING_WINDOW_SECS: i64 = 900;
+
+/// The header a client shows above a Nest conversation (build plan B3): `ready`, `working`,
+/// `needs_you`, `paused` or `unavailable`, with a machine-readable reason. Pure, so every state is
+/// tested; the caller supplies the stored row and whether a run is in progress.
+pub(crate) fn nest_status(
+    state: &str,
+    paused_reason: Option<&str>,
+    working: bool,
+) -> (&'static str, Option<&'static str>) {
+    match state {
+        "creating" | "enrolling" | "provisioning" => ("unavailable", Some("setting_up")),
+        "failed" => ("unavailable", Some("failed")),
+        "deleted" => ("unavailable", Some("deleted")),
+        "paused" => match paused_reason {
+            // The owner has to do something: pay (or restore) to bring it back.
+            Some("unfunded") => ("needs_you", Some("payment")),
+            Some("over_capacity") => ("paused", Some("over_capacity")),
+            _ => ("paused", None),
+        },
+        // An idle-stopped Nest is woken by the next message: to the person it is ready.
+        "ready" | "running" | "stopped" => {
+            if working {
+                ("working", None)
+            } else {
+                ("ready", None)
+            }
+        }
+        _ => ("unavailable", Some("unknown")),
+    }
+}
+
+fn working_in(c: &rusqlite::Connection, address: &str, now: u64) -> rusqlite::Result<bool> {
+    c.query_row(
+        "SELECT EXISTS(SELECT 1 FROM message_meta mm JOIN messages m ON m.id = mm.id
+           WHERE m.direction = 'out' AND m.recipient = ?1 AND mm.agent_status = 'working'
+             AND mm.agent_status_at > ?2)",
+        rusqlite::params![address, now as i64 - WORKING_WINDOW_SECS],
+        |r| r.get(0),
+    )
+}
+
+/// `GET /v1/nests/{nest}` — one of the caller's Nests with its status header. Another account's
+/// Nest answers 404, the same as one that does not exist.
+async fn one(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(nest): Path<String>,
+) -> Response {
+    let result = async {
+        let account = member(&state, &headers, Action::NestView).await?;
+        let missing = || GErr::new(StatusCode::NOT_FOUND, "no_nest", "no such Nest");
+        if !crate::nests::nest_id_ok(&nest) {
+            return Err(missing());
+        }
+        let now = now_unix();
+        let found = state
+            .store
+            .group_read(move |c| -> GResult<Option<Value>> {
+                let row: Option<NestRowView> = c
+                    .query_row(
+                        "SELECT account_id, address, label, state, funding, paused_reason, unfunded_since, created_at
+                           FROM nests WHERE id = ?1 AND deleted_at IS NULL",
+                        [&nest],
+                        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?)),
+                    )
+                    .optional()?;
+                let Some((owner, address, label, st, funding, reason, since, created)) = row else {
+                    return Ok(None);
+                };
+                if owner != account {
+                    return Ok(None);
+                }
+                let working = match &address {
+                    Some(a) => working_in(c, a, now)?,
+                    None => false,
+                };
+                let (status, why) = nest_status(&st, reason.as_deref(), working);
+                Ok(Some(json!({
+                    "nest_id": nest,
+                    "address": address,
+                    "label": label,
+                    "state": st,
+                    "funding": funding,
+                    "status": status,
+                    "status_reason": why,
+                    "paused_reason": reason,
+                    "delete_after": since.map(|s| s + nest_funding::EXPORT_WINDOW_SECS),
+                    "created_at": created,
+                })))
+            })
+            .await?;
+        Ok(Json(found.ok_or_else(missing)?).into_response())
+    }
+    .await;
+    result.unwrap_or_else(|e: GErr| e.into_response())
 }
 
 // ---- create -------------------------------------------------------------------------------------
@@ -1071,4 +1196,37 @@ pub(crate) async fn reconcile_once(state: &AppState) {
     reconcile_purchases(state).await;
     sweep(state).await;
     reconcile_setups(state).await;
+}
+
+#[cfg(test)]
+mod status_tests {
+    use super::nest_status;
+
+    #[test]
+    fn every_state_maps_to_one_header() {
+        assert_eq!(nest_status("ready", None, false), ("ready", None));
+        assert_eq!(nest_status("stopped", None, false), ("ready", None));
+        assert_eq!(nest_status("running", None, true), ("working", None));
+        assert_eq!(
+            nest_status("paused", Some("unfunded"), true),
+            ("needs_you", Some("payment"))
+        );
+        assert_eq!(
+            nest_status("paused", Some("over_capacity"), false),
+            ("paused", Some("over_capacity"))
+        );
+        assert_eq!(nest_status("paused", None, false), ("paused", None));
+        assert_eq!(
+            nest_status("provisioning", None, false),
+            ("unavailable", Some("setting_up"))
+        );
+        assert_eq!(
+            nest_status("failed", None, false),
+            ("unavailable", Some("failed"))
+        );
+        assert_eq!(
+            nest_status("weird", None, false),
+            ("unavailable", Some("unknown"))
+        );
+    }
 }

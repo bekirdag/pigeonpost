@@ -71,3 +71,38 @@ Workspace hours are shown, not yet metered (B5).
   Apple purchases must carry the account's `appAccountToken`, Google purchases its obfuscated id.
 - Replaced (upgraded) Google tokens are retired and cannot be revived by a late verification;
   refunds cut the paid-through to the refund time.
+
+## B3 — chat with a Nest
+
+- **Verb.** Plain prose to a Nest mailbox from a sender its owner granted `chat` is decided `auto`
+  with verb `chat` (`verbs::decide_for`). It applies only when all of these hold:
+  - the recipient is a live Nest;
+  - the body is not a request envelope;
+  - it is 1–8000 characters.
+
+  Anywhere else prose stays held for a person. The `chat` grant itself is refused on a mailbox
+  that is not a Nest. A new Nest grants its owner's own mailboxes `answer_question` and `chat`;
+  strangers get nothing, so their mail stays data.
+- **agentd.** `chat` is runnable only on a `runtime = "nest"` route; a runtime with tools never
+  takes prose as work. The Nest runner's route enables `answer_question` and `chat`, read-only,
+  one run at a time.
+- **Runner.** A chat turn arrives as structured JSON (`nest_turn: 1`). The runner sends:
+  - a chat system prompt;
+  - the stored conversation with that sender;
+  - the new text in the user role.
+
+  History is one file per sender (hashed address) on the Nest's encrypted volume: the newest 40
+  turns, at most 24k characters replayed. A replied-to message and an edit notice ride in the
+  system role as labelled data.
+- **No-AI profile.** A Nest with no model allowance (Empty Nest) gets `402 no_model` from the
+  broker, and the runner replies that no AI is connected. It never says the allowance ran out.
+- **Status header.** `GET /v1/nests/{nest}` (and each item of `GET /v1/nests`) carries `status`:
+  - `ready`, which includes idle-stopped;
+  - `working`, when a run reported `working` in the last 15 minutes;
+  - `needs_you`, when it is unfunded (`payment`);
+  - `paused`;
+  - `unavailable`, while setting up or after a failure.
+- **Model route.** The broker upstream is configuration (`upstream_url`, `model`). Today it is
+  mswarm's self-hosted load balancer with `qwen-latest-flash-next`, the owner's choice "for now".
+- **End to end:** `tests/nests/e2e.mjs chat` (two turns; with a real model the codeword must be
+  remembered) and `tests/nests/e2e.mjs stranger` (no answer in 30 s).

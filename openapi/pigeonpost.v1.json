@@ -7725,6 +7725,70 @@
         }
       }
     },
+    "/v1/nests/{nest}": {
+      "parameters": [
+        {
+          "name": "nest",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^nst_[0-9a-f]{1,60}$"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "nests"
+        ],
+        "operationId": "getNest",
+        "summary": "One of this account's Nests with its status header (feature `nests`)",
+        "description": "`status` is what a client shows above the conversation: `ready`, `working` (a run reported `working` in the last 15 minutes), `needs_you` (`status_reason: payment`), `paused` (`over_capacity` or by the owner) or `unavailable` (`setting_up`, `failed`). Another account's Nest answers 404.",
+        "security": [
+          {
+            "apiKey": []
+          },
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The Nest.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NestView"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "description": "`feature_disabled` or `credential_not_accepted`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`no_nest`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/nests/enroll": {
       "post": {
         "tags": [
@@ -20823,6 +20887,67 @@
           }
         }
       },
+      "NestView": {
+        "type": "object",
+        "properties": {
+          "nest_id": {
+            "type": "string"
+          },
+          "address": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "label": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "funding": {
+            "type": "string",
+            "enum": [
+              "ops",
+              "package"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "working",
+              "needs_you",
+              "paused",
+              "unavailable"
+            ]
+          },
+          "status_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`payment`, `over_capacity`, `setting_up`, `failed` or null"
+          },
+          "paused_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`unfunded`, `over_capacity` or null"
+          },
+          "delete_after": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Unfunded Nests are deleted after this (end of the 30-day export window)."
+          },
+          "created_at": {
+            "type": "integer"
+          }
+        }
+      },
       "NestSnapshot": {
         "type": "object",
         "properties": {
@@ -20866,48 +20991,7 @@
           "nests": {
             "type": "array",
             "items": {
-              "type": "object",
-              "properties": {
-                "nest_id": {
-                  "type": "string"
-                },
-                "address": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "label": {
-                  "type": "string"
-                },
-                "state": {
-                  "type": "string"
-                },
-                "funding": {
-                  "type": "string",
-                  "enum": [
-                    "ops",
-                    "package"
-                  ]
-                },
-                "paused_reason": {
-                  "type": [
-                    "string",
-                    "null"
-                  ],
-                  "description": "`unfunded`, `over_capacity` or null"
-                },
-                "delete_after": {
-                  "type": [
-                    "integer",
-                    "null"
-                  ],
-                  "description": "Unfunded Nests are deleted after this (end of the 30-day export window)."
-                },
-                "created_at": {
-                  "type": "integer"
-                }
-              }
+              "$ref": "#/components/schemas/NestView"
             }
           },
           "setups": {

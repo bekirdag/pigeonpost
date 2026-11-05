@@ -151,6 +151,8 @@ pub enum ReserveError {
     Busy,
     /// The monthly input or output allowance cannot cover this request's reservation.
     Exhausted(&'static str),
+    /// This Nest has no model allowance at all (an Empty Nest package: no AI connected).
+    NoModel,
     /// The operator's host-wide monthly cap (all Nests together) cannot cover this reservation.
     PlatformCap(&'static str),
     Store(String),
@@ -574,6 +576,9 @@ impl Db {
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
             )
             .map_err(se)?;
+        if in_limit <= 0 || out_limit <= 0 {
+            return Err(ReserveError::NoModel);
+        }
         if in_used + in_res + input_tokens > in_limit {
             return Err(ReserveError::Exhausted("input"));
         }
@@ -783,6 +788,13 @@ mod tests {
             db.reserve(&tok, 10, 50, "m"),
             Err(ReserveError::Exhausted("output"))
         );
+    }
+
+    #[test]
+    fn a_nest_without_a_model_allowance_is_told_so_not_exhausted() {
+        let db = Db::open_memory().unwrap();
+        let tok = running_nest(&db, "nst_0000000000000009", 0, 0);
+        assert_eq!(db.reserve(&tok, 1, 1, "m"), Err(ReserveError::NoModel));
     }
 
     #[test]
