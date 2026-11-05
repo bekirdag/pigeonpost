@@ -14,7 +14,7 @@ use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path as FsPath, PathBuf};
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone)]
@@ -732,6 +732,7 @@ pub fn router(ctx: Ctx) -> Router {
             "/v1/nests/{id}/files/{file}",
             axum::routing::put(http_upload).delete(http_remove_file),
         )
+        .route("/v1/nests/{id}/export", get(http_export))
         .layer(axum::extract::DefaultBodyLimit::max(
             crate::parse::MAX_INPUT_BYTES + 1,
         ));
@@ -925,6 +926,182 @@ async fn http_remove_file(
     remove_file(&ctx, &id, &file).await
 }
 
+// ---- export (Phase B5) -------------------------------------------------------------------------
+
+/// Build the owner's export of one Nest: every original file under its display name, the text
+/// parsed from it, and each conversation's history, as one zip held in memory (never written to
+/// the host disk, which is not encrypted). Bounded by [`MAX_EXPORT_BYTES`] of originals and one
+/// export at a time on the host; a larger Nest is exported by ops from its volume.
+pub fn build_export(root: &FsPath) -> Result<Vec<u8>, String> {
+    use std::io::Write;
+    let mut used = std::collections::HashSet::new();
+    let mut unique = |wanted: String| -> String {
+        let clean: String = wanted
+            .chars()
+            .map(|c| {
+                if c.is_control() || matches!(c, '/' | '\\' | ':') {
+                    '_'
+                } else {
+                    c
+                }
+            })
+            .take(120)
+            .collect::<String>()
+            .replace("..", "_");
+        let clean = if clean.trim().is_empty() || clean.starts_with('.') {
+            format!("file{clean}")
+        } else {
+            clean
+        };
+        let mut name = clean.clone();
+        let mut n = 2;
+        while !used.insert(name.clone()) {
+            name = format!("{n}-{clean}");
+            n += 1;
+        }
+        name
+    };
+    let mut buf = std::io::Cursor::new(Vec::new());
+    {
+        let mut zip = zip::ZipWriter::new(&mut buf);
+        let opts = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated)
+            .large_file(true);
+        let mut index = Vec::new();
+        let files = root.join("files");
+        if let Ok(entries) = std::fs::read_dir(files.join("originals")) {
+            let mut ids: Vec<String> = entries
+                .flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect();
+            ids.sort();
+            for id in ids {
+                if !crate::files::valid_file_id(&id) {
+                    continue;
+                }
+                let p = crate::files::paths(root, &id);
+                let meta: serde_json::Value = std::fs::read(p.parsed.join("meta.json"))
+                    .ok()
+                    .and_then(|m| serde_json::from_slice(&m).ok())
+                    .unwrap_or_default();
+                let name = unique(meta["name"].as_str().unwrap_or(&id).to_string());
+                let data = std::fs::read(&p.original).map_err(|e| e.to_string())?;
+                zip.start_file(format!("files/{name}"), opts)
+                    .map_err(|e| e.to_string())?;
+                zip.write_all(&data).map_err(|e| e.to_string())?;
+                let mut parts: Vec<PathBuf> = std::fs::read_dir(&p.parsed)
+                    .map(|d| {
+                        d.flatten()
+                            .map(|e| e.path())
+                            .filter(|q| q.extension().is_some_and(|x| x == "txt"))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                parts.sort();
+                if !parts.is_empty() {
+                    let mut text = String::new();
+                    for part in parts {
+                        text.push_str(&std::fs::read_to_string(part).unwrap_or_default());
+                        text.push('\n');
+                    }
+                    zip.start_file(format!("text/{name}.txt"), opts)
+                        .map_err(|e| e.to_string())?;
+                    zip.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
+                }
+                index.push(json!({"file": format!("files/{name}"), "bytes": data.len(), "sha256": meta["sha256"], "uploaded_at": meta["uploaded_at"]}));
+            }
+        }
+        if let Ok(entries) = std::fs::read_dir(root.join("chat")) {
+            let mut chats: Vec<PathBuf> = entries
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.extension().is_some_and(|x| x == "jsonl"))
+                .collect();
+            chats.sort();
+            for (i, chat) in chats.iter().enumerate() {
+                let data = std::fs::read(chat).map_err(|e| e.to_string())?;
+                zip.start_file(format!("conversations/conversation-{}.jsonl", i + 1), opts)
+                    .map_err(|e| e.to_string())?;
+                zip.write_all(&data).map_err(|e| e.to_string())?;
+            }
+        }
+        zip.start_file("index.json", opts)
+            .map_err(|e| e.to_string())?;
+        zip.write_all(
+            json!({"exported_at": now(), "files": index})
+                .to_string()
+                .as_bytes(),
+        )
+        .map_err(|e| e.to_string())?;
+        zip.finish().map_err(|e| e.to_string())?;
+    }
+    Ok(buf.into_inner())
+}
+
+/// Most bytes of originals one download may carry (it is built in memory on a host with ~4.8 GiB).
+const MAX_EXPORT_BYTES: u64 = 512 * 1024 * 1024;
+/// One export at a time on the host.
+static EXPORTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+
+fn originals_bytes(root: &FsPath) -> u64 {
+    std::fs::read_dir(root.join("files").join("originals"))
+        .map(|d| {
+            d.flatten()
+                .filter_map(|e| e.metadata().ok())
+                .map(|m| m.len())
+                .sum()
+        })
+        .unwrap_or(0)
+}
+
+pub async fn export(ctx: &Ctx, id: &str) -> Result<Vec<u8>, ApiError> {
+    if !valid_nest_id(id) {
+        return Err(ApiError::new(StatusCode::BAD_REQUEST, "bad_id", "nest id"));
+    }
+    let _one = EXPORTS
+        .acquire()
+        .await
+        .map_err(|_| ApiError::internal("export semaphore closed"))?;
+    let lock = ctx.lock_for(id);
+    let _guard = lock.lock().await;
+    with_volume(ctx, id, move |root| {
+        if originals_bytes(&root) > MAX_EXPORT_BYTES {
+            return Err("too_large_for_download".into());
+        }
+        build_export(&root)
+    })
+    .await
+    .map_err(|e| {
+        if e.2.contains("too_large_for_download") {
+            ApiError::new(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "export_too_large",
+                "this Nest is larger than one download; contact support",
+            )
+        } else {
+            e
+        }
+    })
+}
+
+async fn http_export(
+    State(ctx): State<Ctx>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Response {
+    if let Err(e) = authorized(&ctx, &headers) {
+        return e.into_response();
+    }
+    match export(&ctx, &id).await {
+        Ok(bytes) => (
+            [(axum::http::header::CONTENT_TYPE, "application/zip")],
+            bytes,
+        )
+            .into_response(),
+        Err(e) => e.into_response(),
+    }
+}
+
 fn percent_decode(s: &str) -> String {
     let b = s.as_bytes();
     let mut out = Vec::with_capacity(b.len());
@@ -1043,6 +1220,55 @@ mod tests {
             budgets: None,
             quota_gib: None,
         }
+    }
+
+    #[tokio::test]
+    async fn an_export_carries_originals_text_and_conversations_under_safe_names() {
+        let (c, _fake) = ctx();
+        let id = "nst_00000000000000e1";
+        let _ = create(&c, req(id)).await.unwrap();
+        for (fid, name, data) in [
+            (
+                "nfl_0123456789abcdef0123456b",
+                "../../etc/passwd",
+                &b"one"[..],
+            ),
+            ("nfl_0123456789abcdef0123456c", "notes.txt", b"two"),
+            ("nfl_0123456789abcdef0123456d", "notes.txt", b"three"),
+        ] {
+            let _ = upload(&c, id, fid, name.into(), data.to_vec())
+                .await
+                .unwrap();
+        }
+        let root = c.volumes.open(id).unwrap();
+        std::fs::create_dir_all(root.join("chat")).unwrap();
+        std::fs::write(
+            root.join("chat/abc.jsonl"),
+            "{\"u\":\"hi\",\"a\":\"hello\"}\n",
+        )
+        .unwrap();
+        let zip_bytes = export(&c, id).await.unwrap();
+        let mut z = zip::ZipArchive::new(std::io::Cursor::new(zip_bytes)).unwrap();
+        let names: Vec<String> = (0..z.len())
+            .map(|i| z.by_index(i).unwrap().name().to_string())
+            .collect();
+        assert!(
+            names
+                .iter()
+                .all(|n| !n.contains("..") && !n.starts_with('/')),
+            "{names:?}"
+        );
+        assert!(
+            names.contains(&"files/notes.txt".to_string())
+                && names.contains(&"files/2-notes.txt".to_string()),
+            "{names:?}"
+        );
+        assert!(names
+            .iter()
+            .any(|n| n.starts_with("files/") && n.contains("etc_passwd")));
+        assert!(names.contains(&"conversations/conversation-1.jsonl".to_string()));
+        assert!(names.contains(&"index.json".to_string()));
+        assert!(names.contains(&"text/notes.txt.txt".to_string()));
     }
 
     #[tokio::test]

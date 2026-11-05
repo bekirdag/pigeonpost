@@ -105,6 +105,7 @@ mod nest_commerce;
 #[cfg(test)]
 mod nest_commerce_tests;
 mod nest_files;
+mod nest_manage;
 mod nests;
 #[cfg(test)]
 mod nests_tests;
@@ -1030,6 +1031,7 @@ fn build_router(state: AppState) -> Router {
         .merge(nest_commerce::router())
         .merge(nest_files::router())
         .merge(nest_approvals::router())
+        .merge(nest_manage::router())
         // Phase 3B: calendar and scheduled meetings (SDS §14B.5, docs/calendar.md).
         .route(
             "/v1/calendars",

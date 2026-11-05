@@ -318,6 +318,44 @@ impl Runtime {
     }
 }
 
+impl Runtime {
+    /// Download bytes from nestd (the export zip, Phase B5). Bounded by nestd's own export limit.
+    pub(crate) async fn get_bytes(&self, path: &str) -> Result<(u16, Vec<u8>), NestdError> {
+        match &self.transport {
+            Transport::Disabled => Err(NestdError::Unavailable),
+            Transport::Capture { calls, fail } => {
+                calls.lock().expect("capture lock").push(NestdCall {
+                    method: "GET".into(),
+                    path: path.to_string(),
+                    body: None,
+                });
+                if fail.load(Ordering::SeqCst) {
+                    return Ok((500, Vec::new()));
+                }
+                // An empty zip: end-of-central-directory record only.
+                let mut zip = b"PK\x05\x06".to_vec();
+                zip.extend_from_slice(&[0u8; 18]);
+                Ok((200, zip))
+            }
+            Transport::Http { url, token, client } => {
+                let resp = client
+                    .get(format!("{url}{path}"))
+                    .bearer_auth(token)
+                    .timeout(std::time::Duration::from_secs(600))
+                    .send()
+                    .await
+                    .map_err(|e| NestdError::Failed(e.without_url().to_string()))?;
+                let status = resp.status().as_u16();
+                let bytes = resp
+                    .bytes()
+                    .await
+                    .map_err(|e| NestdError::Failed(e.without_url().to_string()))?;
+                Ok((status, bytes.to_vec()))
+            }
+        }
+    }
+}
+
 /// Tests only: what nestd answers for an upload, without parsing (text-like bytes parse, others
 /// are rejected), so postbox tests do not depend on the Nests crate.
 fn pigeonpost_core_parse_stub(data: &[u8]) -> Value {

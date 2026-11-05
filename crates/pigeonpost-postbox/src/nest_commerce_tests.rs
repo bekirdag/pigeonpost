@@ -871,3 +871,146 @@ async fn a_nest_only_proposes_and_its_owner_approves_exactly_what_was_shown() {
     .await;
     assert_eq!((s, b["status"].as_str()), (200, Some("rejected")));
 }
+
+#[tokio::test]
+async fn the_owner_manages_a_nest_and_funding_pauses_are_not_theirs_to_lift() {
+    let srv = serve().await;
+    let p = person(&srv, "mgmt", true).await;
+    let (nest, _addr, _tok) = enrolled_nest(&srv, &p).await;
+    let other = person(&srv, "mgmt2", true).await;
+    let post = |token: String, path: String| {
+        let url = format!("{}{path}", srv.public);
+        async move {
+            let r = reqwest::Client::new()
+                .post(url)
+                .bearer_auth(token)
+                .send()
+                .await
+                .unwrap();
+            let s = r.status().as_u16();
+            (s, r.json::<Value>().await.unwrap_or(Value::Null))
+        }
+    };
+    let send = |method: reqwest::Method, token: String, path: String, body: Value| {
+        let url = format!("{}{path}", srv.public);
+        async move {
+            let r = reqwest::Client::new()
+                .request(method, url)
+                .bearer_auth(token)
+                .json(&body)
+                .send()
+                .await
+                .unwrap();
+            let s = r.status().as_u16();
+            (s, r.json::<Value>().await.unwrap_or(Value::Null))
+        }
+    };
+    // Pause and resume: the owner (a person) only.
+    assert_eq!(
+        post(p.api_key.clone(), format!("/v1/nests/{nest}/pause"))
+            .await
+            .0,
+        403
+    );
+    assert_eq!(
+        post(other.token.clone(), format!("/v1/nests/{nest}/pause"))
+            .await
+            .0,
+        404
+    );
+    let (s, b) = post(p.token.clone(), format!("/v1/nests/{nest}/pause")).await;
+    assert_eq!((s, b["state"].as_str()), (200, Some("paused")), "{b}");
+    let (_, one) = srv.get(&format!("/v1/nests/{nest}"), &p.token).await;
+    assert_eq!(one["status"], "paused");
+    // The funding sweep does not resume an owner's pause.
+    nest_commerce::reconcile_once(&srv.state).await;
+    let (_, one) = srv.get(&format!("/v1/nests/{nest}"), &p.token).await;
+    assert_eq!(one["state"], "paused");
+    let (s, _) = post(p.token.clone(), format!("/v1/nests/{nest}/resume")).await;
+    assert_eq!(s, 200);
+    // A Nest paused for funding is not resumed by its owner.
+    srv.state
+        .store
+        .group_tx({
+            let n = nest.clone();
+            move |tx| -> crate::groups::GResult<()> {
+                tx.execute(
+                    "UPDATE nests SET state='paused', paused_reason='unfunded' WHERE id=?1",
+                    [&n],
+                )?;
+                Ok(())
+            }
+        })
+        .await
+        .unwrap();
+    let (s, b) = post(p.token.clone(), format!("/v1/nests/{nest}/resume")).await;
+    assert_eq!((s, b["error"].as_str()), (402, Some("needs_payment")));
+    // The sweep resumes it: the grant still funds it.
+    nest_commerce::reconcile_once(&srv.state).await;
+    let (_, one) = srv.get(&format!("/v1/nests/{nest}"), &p.token).await;
+    assert_eq!(one["state"], "running", "{one}");
+    // Rename.
+    let (s, _) = send(
+        reqwest::Method::PATCH,
+        p.token.clone(),
+        format!("/v1/nests/{nest}"),
+        json!({"label": "Research"}),
+    )
+    .await;
+    assert_eq!(s, 200);
+    let (s, _) = send(
+        reqwest::Method::PATCH,
+        p.token.clone(),
+        format!("/v1/nests/{nest}"),
+        json!({"label": ""}),
+    )
+    .await;
+    assert_eq!(s, 400);
+    // Usage and export read through to the Nests host.
+    let (s, u) = srv
+        .get(&format!("/v1/nests/{nest}/usage"), &p.api_key)
+        .await;
+    assert_eq!(s, 200, "{u}");
+    assert_eq!(u["package"]["code"], "nest.ai.starter.monthly");
+    let r = reqwest::Client::new()
+        .get(format!("{}/v1/nests/{nest}/export", srv.public))
+        .bearer_auth(&p.token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.headers()["content-type"], "application/zip");
+    assert!(r.bytes().await.unwrap().starts_with(b"PK"));
+    let r = reqwest::Client::new()
+        .get(format!("{}/v1/nests/{nest}/export", srv.public))
+        .bearer_auth(&p.api_key)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 403, "automation does not download a Nest");
+    // Delete needs the name typed back; then the slot is free again.
+    let (s, _) = send(
+        reqwest::Method::DELETE,
+        p.token.clone(),
+        format!("/v1/nests/{nest}"),
+        json!({"confirm": "research"}),
+    )
+    .await;
+    assert_eq!(s, 400);
+    let (s, b) = send(
+        reqwest::Method::DELETE,
+        p.token.clone(),
+        format!("/v1/nests/{nest}"),
+        json!({"confirm": "Research"}),
+    )
+    .await;
+    assert_eq!((s, b["state"].as_str()), (200, Some("deleted")), "{b}");
+    let (_, l) = srv.get("/v1/nests", &p.token).await;
+    assert_eq!(l["allowance"]["used"], 0);
+    let (s, _) = srv.get(&format!("/v1/nests/{nest}"), &p.token).await;
+    assert_eq!(s, 404);
+    // Deleting one's last Nest does not bring a new one back.
+    nest_commerce::reconcile_once(&srv.state).await;
+    let (_, l) = srv.get("/v1/nests", &p.token).await;
+    assert!(l["nests"].as_array().unwrap().is_empty());
+}

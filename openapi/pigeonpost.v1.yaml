@@ -4515,6 +4515,69 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+    patch:
+      tags: [nests]
+      operationId: renameNest
+      summary: Rename a Nest (a person only)
+      security:
+        - memberToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [label]
+              properties:
+                label: {type: string, minLength: 1, maxLength: 64}
+      responses:
+        '200':
+          description: Renamed.
+          content: {application/json: {schema: {type: object, properties: {nest_id: {type: string}, label: {type: string}}}}}
+        '400':
+          description: '`bad_label`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403':
+          description: '`feature_disabled` or `human_required`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '404':
+          description: '`no_nest`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+    delete:
+      tags: [nests]
+      operationId: deleteNest
+      summary: Delete a Nest (a person only; the label typed back as confirmation)
+      description: 'Destroys the runtime and the encrypted volume, revokes the mailbox credential and closes open approvals. Export first. A package slot is free again at once.'
+      security:
+        - memberToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirm]
+              properties:
+                confirm: {type: string, description: The Nest's label, exactly.}
+      responses:
+        '200':
+          description: Deleted.
+          content: {application/json: {schema: {type: object, properties: {nest_id: {type: string}, state: {type: string}}}}}
+        '400':
+          description: '`confirm_required`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403':
+          description: '`feature_disabled` or `human_required`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '404':
+          description: '`no_nest`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '502':
+          description: '`nestd_failed`: nothing was revoked; retry'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
   /v1/nests/{nest}/files:
     parameters:
       - name: nest
@@ -4757,6 +4820,124 @@ paths:
           content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
         '502':
           description: '`tool_failed`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+  /v1/nests/{nest}/pause:
+    parameters:
+      - {name: nest, in: path, required: true, schema: {type: string, pattern: '^nst_[0-9a-f]{1,60}$'}}
+    post:
+      tags: [nests]
+      operationId: pauseNest
+      summary: Pause a Nest (a person only); mail waits until it is resumed
+      security:
+        - memberToken: []
+      responses:
+        '200':
+          description: Paused.
+          content: {application/json: {schema: {type: object, properties: {nest_id: {type: string}, state: {type: string}}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403':
+          description: '`feature_disabled` or `human_required`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '404':
+          description: '`no_nest`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '502':
+          description: '`nestd_failed`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+  /v1/nests/{nest}/resume:
+    parameters:
+      - {name: nest, in: path, required: true, schema: {type: string, pattern: '^nst_[0-9a-f]{1,60}$'}}
+    post:
+      tags: [nests]
+      operationId: resumeNest
+      summary: Resume a Nest its owner paused (a person only)
+      description: 'A Nest paused for funding (`needs_payment`) or over its package (`over_capacity`) resumes only when that is resolved.'
+      security:
+        - memberToken: []
+      responses:
+        '200':
+          description: Running.
+          content: {application/json: {schema: {type: object, properties: {nest_id: {type: string}, state: {type: string}}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402':
+          description: '`needs_payment`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '403':
+          description: '`feature_disabled` or `human_required`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '404':
+          description: '`no_nest`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '409':
+          description: '`over_capacity`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '502':
+          description: '`nestd_failed`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+  /v1/nests/{nest}/usage:
+    parameters:
+      - {name: nest, in: path, required: true, schema: {type: string, pattern: '^nst_[0-9a-f]{1,60}$'}}
+    get:
+      tags: [nests]
+      operationId: getNestUsage
+      summary: This month's model tokens, running time and storage, from the Nests ledger
+      security:
+        - apiKey: []
+        - memberToken: []
+      responses:
+        '200':
+          description: Usage.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  nest_id: {type: string}
+                  period: {type: ['string', 'null']}
+                  input_tokens: {type: object}
+                  output_tokens: {type: object}
+                  requests: {type: ['integer', 'null']}
+                  running_secs: {type: ['integer', 'null']}
+                  files_bytes: {type: integer}
+                  disk: {type: ['object', 'null']}
+                  package: {type: ['object', 'null']}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403':
+          description: '`feature_disabled` or `credential_not_accepted`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '404':
+          description: '`no_nest`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '502':
+          description: '`nestd_failed`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+  /v1/nests/{nest}/export:
+    parameters:
+      - {name: nest, in: path, required: true, schema: {type: string, pattern: '^nst_[0-9a-f]{1,60}$'}}
+    get:
+      tags: [nests]
+      operationId: exportNest
+      summary: Download the Nest's files, their text and its conversations as a zip (a person only)
+      security:
+        - memberToken: []
+      responses:
+        '200':
+          description: The zip.
+          content:
+            application/zip:
+              schema: {type: string, format: binary}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403':
+          description: '`feature_disabled` or `human_required`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '404':
+          description: '`no_nest`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '413':
+          description: '`export_too_large` (over 512 MiB of files: contact support)'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '502':
+          description: '`nestd_failed`'
           content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
   /v1/nests/enroll:
     post:

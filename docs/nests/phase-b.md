@@ -151,3 +151,16 @@ Workspace hours are shown, not yet metered (B5).
   - The parser sandbox profile.
   - Prompt injection: a file's instruction produces at most a card the destination policy refuses.
   - Approval binding: superseded, changed hash, single use, automation and other people refused.
+
+## B5 — management
+
+| Route | Who | What |
+|---|---|---|
+| `POST /v1/nests/{nest}/pause`, `/resume` | the owner, a person | Pause holds mail until resume. A Nest paused for funding (`needs_payment`) or over its package (`over_capacity`) cannot be resumed by its owner; the funding sweep resumes it once it is paid for. The sweep never lifts an owner's own pause. |
+| `PATCH /v1/nests/{nest}` | the owner, a person | Rename. |
+| `DELETE /v1/nests/{nest}` | the owner, a person | Requires `{confirm: <label>}`. Runtime, volume and mailbox credential are destroyed, open approvals closed, the slot freed. Deleting one's last Nest never brings a new one back. |
+| `GET /v1/nests/{nest}/usage` | the account | This month's model tokens (used/limit), requests and running seconds, taken from the Nests ledger, plus stored file bytes and the package's pooled hours. |
+| `GET /v1/nests/{nest}/export` | the owner, a person | A zip built on the Nests host from the Nest's own volume: `files/` originals under sanitized, de-duplicated display names, `text/` parsed text, `conversations/`, `index.json`. It is built in memory, never on the unencrypted host disk, one export at a time, at most 512 MiB of files. |
+
+Clients show files, usage and pause/delete with export on every platform (client work follows the
+server PRs).

@@ -49,7 +49,12 @@ pub(crate) fn router() -> Router<AppState> {
     Router::new()
         .route("/v1/nest-packages", get(packages))
         .route("/v1/nests", get(list).post(create))
-        .route("/v1/nests/{nest}", get(one))
+        .route(
+            "/v1/nests/{nest}",
+            get(one)
+                .patch(crate::nest_manage::rename)
+                .delete(crate::nest_manage::remove),
+        )
         .route("/v1/nest-purchases/intents", post(intent))
         .route("/v1/nest-purchases/apple", post(claim_apple))
         .route("/v1/nest-purchases/google", post(claim_google))

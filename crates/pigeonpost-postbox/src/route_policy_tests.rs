@@ -60,6 +60,7 @@ const ROUTERS: &[(&str, &str)] = &[
     ("nest_commerce.rs", "pub(crate) fn router("),
     ("nest_files.rs", "pub(crate) fn router("),
     ("nest_approvals.rs", "pub(crate) fn router("),
+    ("nest_manage.rs", "pub(crate) fn router("),
 ];
 
 const DEPTH: usize = 4;
