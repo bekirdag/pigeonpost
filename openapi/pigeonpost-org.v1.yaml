@@ -1554,7 +1554,7 @@ paths:
                     operators:
                       - member_id: mem_qh4pnxpiqns7heuhs3whvjj7ok
                         handle: /acme/jane
-                        capabilities: [enroll, bind_handle]
+                        capabilities: [enroll]
                 next_cursor: eyJhZnRlciI6IjIwMjYtMTAtMjcifQ
         '400':
           description: '`invalid_cursor`'
@@ -1828,7 +1828,7 @@ paths:
                   operators:
                     - member_id: mem_qh4pnxpiqns7heuhs3whvjj7ok
                       handle: /acme/jane
-                      capabilities: [enroll, bind_handle]
+                      capabilities: [enroll]
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2040,7 +2040,7 @@ paths:
                   operators:
                     - member_id: mem_qh4pnxpiqns7heuhs3whvjj7ok
                       handle: /acme/jane
-                      capabilities: [enroll, bind_handle]
+                      capabilities: [enroll]
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2146,7 +2146,7 @@ paths:
                   - id: dlg_mwvymtqv42dq5ptjxi5yvzxyfi
                     member_id: mem_qh4pnxpiqns7heuhs3whvjj7ok
                     member_handle: /acme/jane
-                    capabilities: [enroll, bind_handle]
+                    capabilities: [enroll]
                     expires_at: null
                     granted_at: '2026-10-02T14:01:00Z'
                 next_cursor: eyJhZnRlciI6IjIwMjYtMTAtMjcifQ
@@ -5463,7 +5463,7 @@ components:
           type: array
           items:
             type: string
-            enum: [enroll, bind_handle, configure_rules, read_inbox, ssh]
+            enum: [enroll, read_inbox, ssh]
       additionalProperties: false
     Agent:
       type: object
@@ -5520,7 +5520,7 @@ components:
           type: array
           items:
             type: string
-            enum: [enroll, bind_handle, configure_rules, read_inbox, ssh]
+            enum: [enroll, read_inbox, ssh]
         expires_at:
           type: [string, 'null']
           format: date-time

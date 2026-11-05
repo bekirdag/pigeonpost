@@ -23,8 +23,6 @@
   ];
   const CAPABILITIES = [
     ["enroll", "Log it in on a machine"],
-    ["bind_handle", "Bind the address to a machine's mailbox"],
-    ["configure_rules", "Change its personal rules"],
     ["read_inbox", "Read its inbox in the apps"],
     ["ssh", "Open a terminal on its workspace (SSH)"],
   ];
@@ -103,7 +101,12 @@
     const s = app.org.status;
     if (s === "past_due") return el("div", { class: "banner" }, "The last payment didn't go through. Update the card in Billing to avoid interruption.");
     if (s === "read_only") return el("div", { class: "banner banner-danger" }, "The organization is read-only: no new invitations or agents, and company mailboxes can't send. Update the payment in Billing.");
-    if (s === "suspended") return el("div", { class: "banner banner-danger" }, "The organization is suspended: company addresses don't receive mail. Renew in Billing to restore it.");
+    if (s === "suspended") {
+      // D-14: a suspended organization is deleted on this date unless it is renewed first.
+      const at = app.org.deletion_at ? new Date(app.org.deletion_at * 1000).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" }) : null;
+      return el("div", { class: "banner banner-danger" }, "The organization is suspended: company addresses don't receive mail. Renew in Billing to restore it." +
+        (at ? ` If it isn't renewed, it will be deleted on ${at}, with its rooms and company addresses.` : ""));
+    }
     return null;
   }
 

@@ -26,6 +26,14 @@ CREATE TABLE IF NOT EXISTS orgs (
     create_operation_id TEXT NOT NULL UNIQUE,
     create_hash TEXT NOT NULL
 );
+-- D-14: the deletion warnings already given to a suspended org (one row per stage). Cleared when
+-- the org leaves `suspended`; the `suspended` row's time also guarantees a week's notice.
+CREATE TABLE IF NOT EXISTS org_deletion_notices (
+    org_id TEXT NOT NULL,
+    stage TEXT NOT NULL,
+    sent_at INTEGER NOT NULL,
+    PRIMARY KEY (org_id, stage)
+);
 CREATE UNIQUE INDEX IF NOT EXISTS orgs_live_namespace ON orgs(namespace)
     WHERE status IN ('active','past_due','read_only','suspended');
 CREATE INDEX IF NOT EXISTS orgs_by_owner ON orgs(owner_account);

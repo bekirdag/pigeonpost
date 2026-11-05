@@ -63,6 +63,42 @@ pub(crate) fn may_create_in(c: &Connection, org_id: &str, mailbox: &str) -> GRes
     Ok(())
 }
 
+/// An org's room timers (SDS §17.1): `(default, maximum)` in seconds.
+pub(crate) fn org_timers(c: &Connection, org_id: &str) -> GResult<(Option<i64>, Option<i64>)> {
+    Ok(crate::org::load_org(c, org_id)?
+        .map(|o| {
+            (
+                o.settings.room_default_ephemeral_secs,
+                o.settings.room_max_ephemeral_secs,
+            )
+        })
+        .unwrap_or((None, None)))
+}
+
+/// How long a new message in `g` lives: the room's own timer, bounded by its org's maximum
+/// (audit 2026-11-03 P2-5). Off means no room timer, never exemption from the org limit.
+pub(crate) fn effective_timer(c: &Connection, g: &crate::groups::GroupRow) -> GResult<Option<i64>> {
+    let max = match &g.org_id {
+        Some(org) => org_timers(c, org)?.1,
+        None => None,
+    };
+    Ok(match (g.ephemeral_secs, max) {
+        (Some(t), Some(m)) => Some(t.min(m)),
+        (t, m) => t.or(m),
+    })
+}
+
+/// A new org room starts with the org's default timer, if any.
+pub(crate) fn apply_default_timer_in(c: &Connection, gid: &str, org_id: &str) -> GResult<()> {
+    if let (Some(t), _) = org_timers(c, org_id)? {
+        c.execute(
+            "UPDATE groups SET ephemeral_secs = ?2 WHERE id = ?1 AND ephemeral_secs IS NULL",
+            params![gid, t],
+        )?;
+    }
+    Ok(())
+}
+
 pub(crate) struct NewRoom<'a> {
     pub org_id: &'a str,
     pub name: &'a str,
@@ -102,6 +138,7 @@ pub(crate) fn create_room_in(c: &Connection, r: &NewRoom<'_>, now: u64) -> GResu
          VALUES (?1, ?2, 'owner', 'keying', ?3, ?3)",
         params![gid, r.creator, now as i64],
     )?;
+    apply_default_timer_in(c, &gid, r.org_id)?;
     Ok(gid)
 }
 
