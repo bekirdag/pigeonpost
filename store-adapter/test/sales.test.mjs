@@ -65,7 +65,7 @@ test("a lead is emailed to a person through the pigeonpost-notice workflow, with
   const { base, stateDir } = await spawnBridge(t, { SALES_NOTIFY_URL: `http://127.0.0.1:${saas.address().port}`,
     SALES_NOTIFY_KEY: "notify-fixture-key", SALES_NOTIFY_TO: "sales@example.test" });
   const res = await post(base, { ...good, message: "<script>x</script> & more" });
-  assert.equal(res.status, 202, "answered while the email is still in flight");
+  assert.equal(res.status, 202, "answered while the notification is still in flight");
   for (let i = 0; i < 50 && !seen.length; i++) await new Promise((r) => setTimeout(r, 20));
   release();
   assert.equal(seen.length, 1);
@@ -77,14 +77,14 @@ test("a lead is emailed to a person through the pigeonpost-notice workflow, with
   assert.equal(body.payload.notice_kind, "sales_lead");
   assert.equal(idem, body.transaction_id);
   const recorded = JSON.parse(readFileSync(join(stateDir, "sales-requests.jsonl"), "utf8").trim());
-  assert.equal(body.payload.ref_id, recorded.id, "the email names the recorded request");
+  assert.equal(body.payload.ref_id, recorded.id, "the notification names the recorded request");
   assert.ok(!body.html.includes("<script>x"), "the lead is escaped");
   assert.ok(body.html.includes("&lt;script&gt;x&lt;/script&gt; &amp; more"));
   assert.ok(body.text.includes("Example Corp") && body.text.includes("ada@example.test"));
   assert.ok(!/<img|https?:\/\//i.test(body.html), "no images and no tracked links");
 });
 
-test("the lead email matches the notice schema and the subject stays one line", () => {
+test("the lead notification matches the notice schema and the subject stays one line", () => {
   const lead = { id: "lead_0123456789abcdef01", at: "2026-11-04T10:00:00.000Z", name: "Ada", company: "Evil\r\nBcc: x@y", contact: "a@b.test", size: "900" };
   const body = noticeRequest(lead, "info@pigeonpost.dev", "no-reply@pigeonpost.dev");
   assert.equal(body.tenant_id, "pigeonpost");

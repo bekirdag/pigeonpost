@@ -2,7 +2,7 @@
 //
 // The bridge holds no mailbox, so it cannot write to /pigeonpost/sales itself. A request is
 // validated, rate-limited per source address, and appended to a bounded JSON-lines file in the
-// bridge's private state directory (the durable record). A person is then told by email: saas_be's
+// bridge's private state directory (the durable record). A person is then told through saas_be's
 // `pigeonpost-notice` workflow (Novu → the tracking-off Postmark server "Pigeonpost") sends it to
 // SALES_NOTIFY_TO, default info@pigeonpost.dev. Sending never delays or changes the answer; it is
 // retried a few times in the background, and the file stays the record if it never goes out.
@@ -41,7 +41,7 @@ export function renderLead(lead) {
   return { subject, html, text };
 }
 
-/// The saas_be internal email request for one lead (`pigeonpost-notice`).
+/// The saas_be internal notification request for one lead (`pigeonpost-notice`).
 export function noticeRequest(lead, to, from) {
   const { subject, html, text } = renderLead(lead);
   const delivery = `pp-sales-${lead.id}`;
