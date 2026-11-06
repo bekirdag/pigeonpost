@@ -8,6 +8,24 @@ live, stage invitations through the call view; CallKit while talking in a stream
 reader, the composer keeping focus after Send, and new camera/microphone usage strings. Notes for
 testers: `Store/TESTFLIGHT-NOTES.txt`.
 
+## 1.2 (51)
+
+Builds from main after the November 4, 2026 release round: `MARKETING_VERSION = 1.2`,
+`CURRENT_PROJECT_VERSION = 51` for both targets. Dispatch `ios-testflight.yml` and `mac-appstore.yml`
+with `build_number=51`, confirm both builds are `IN_BETA_TESTING`, then submit both versions. App
+Privacy already declares Phone Number (contact discovery). The Mac adds the sandbox address-book
+entitlement, which needs no profile capability, so the App Store profiles from 1.1 still apply.
+
+What's New:
+
+- Message actions: Copy and Reply (Edit and Copy on your own messages) in one row outside the bubble.
+- A new conversation opens as soon as its first message is sent.
+- Find people you know from your contacts (optional), invite others by SMS, and choose a free name.
+- On the free plan, Meeting notes shows the plans; summaries are included in every paid plan.
+- More reliable calls: answering from the lock screen connects, and audio or video that stops on one
+  end restarts.
+- Reply to and edit group messages, with a clear reason when that is not allowed.
+
 Before submitting 1.1 (in this order):
 
 1. **Remove China mainland from availability** (Pricing and Availability → Edit → untick China

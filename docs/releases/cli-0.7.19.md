@@ -1,6 +1,14 @@
-# Pigeonpost CLI — next release notes (unpublished)
+# Pigeonpost CLI 0.7.19 release notes
 
-Not yet published to npm; these notes go into the release when the next CLI version is tagged.
+Published to npm as `@bekirdag/pigeonpost@0.7.19` from tag `v0.7.19`. Upgrading the package does not
+upgrade a running agentd: run `pigeonpost agentd install`, then restart the daemon.
+
+## Agent SSH
+
+- **`pigeonpost ssh`** opens a shell on an agent's machine through the Pigeonpost tunnel, with a
+  step-up check on the client. The machine's agentd must allow it under `[mailbox.shell]`.
+- Allowlisted commands run inside the agent's workspace container, not on the host.
+- Commands that arrive after a session is torn down are refused.
 
 ## Organization agents (enterprise beta)
 
