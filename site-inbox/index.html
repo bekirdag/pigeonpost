@@ -21,9 +21,9 @@
 <link rel="apple-touch-icon" sizes="180x180" href="/favicon-180.png">
 <script src="theme.js?v=20261025-web1"></script>
 <link rel="preload" href="fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="app.css?v=20261104-green1">
+<link rel="stylesheet" href="app.css?v=20261104-orgs1">
 <link rel="stylesheet" href="calls-summary.css?v=20261103-d17">
-<link rel="stylesheet" href="groups.css?v=20261103-msgactions1">
+<link rel="stylesheet" href="groups.css?v=20261104-block1">
 <link rel="stylesheet" href="calendar.css?v=20261025-web1">
 </head>
 <body>
@@ -50,6 +50,7 @@
           <span class="avatar" id="me-avatar" aria-hidden="true"></span>
           <span class="me-text">
             <span class="me-name" id="me-name">…</span>
+            <span class="me-sub" id="me-org" hidden></span>
           </span>
           <svg class="chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
@@ -242,6 +243,7 @@
         <input id="new-peer" type="text" autocomplete="off" autocapitalize="off" spellcheck="false"
                placeholder="/bekir/agent1 or /k/…">
       </label>
+      <datalist id="new-peer-org"></datalist>
       <p class="field-note">A handle like <code>/bekir/agent1</code>, a whole namespace like
         <code>/bekir</code>, or a key address.</p>
       <label class="field">
@@ -720,10 +722,11 @@
 <script src="names.js?v=20261025-web1"></script>
 <script src="crop.js?v=20261025-web1"></script>
 <script src="groups-core.js?v=20261025-web1"></script>
-<script src="groups.js?v=85a44600665c3d8873bf0f9e0650778b2addf57c843eaa9394bb39e0fb5b13c2"></script>
+<script src="orgs.js?v=20261104-orgs1"></script>
+<script src="groups.js?v=edd4e6d9029ac4e7b831f5809d87278e2b5542750120e016ec19b14e027f5540"></script>
 <script src="calendar.js?v=20261025-web1"></script>
 <script src="contacts.js?v=20261029-contacts1"></script>
-<script src="app.js?v=20261104-d17paid"></script>
+<script src="app.js?v=20261104-block1"></script>
 <script src="calls-summary.js?v=20261104-d17paid"></script>
 <script src="calls.js?v=20261104-revive1"></script>
 <script src="live.js?v=20261027-live1"></script>
