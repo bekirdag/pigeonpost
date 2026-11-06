@@ -389,6 +389,49 @@ impl Store {
         .map_err(|_| StoreError::Join)?
     }
 
+    /// Whether `owner` blocks any of `peers` (`(address, handle)`), by the same rule as
+    /// [`Store::relationship`]: exact rows outrank a namespace wildcard, and between exact rows a
+    /// block wins. One pass over every peer, however many mailboxes an account has (audit
+    /// 2026-11-03 P3-4: contact discovery used to check only the first 50).
+    pub async fn blocks_any(
+        &self,
+        owner: String,
+        peers: Vec<(String, Option<String>)>,
+    ) -> Result<bool, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<bool, StoreError> {
+            let c = conn.lock().expect("store lock");
+            let mut stmt = c.prepare_cached(
+                "SELECT peer, admission FROM contacts
+                  WHERE owner = ?1 AND (peer = ?2 OR peer = ?3 OR peer = ?4)",
+            )?;
+            for (address, handle) in peers {
+                let wildcard = handle.as_deref().and_then(namespace_wildcard);
+                let rows: Vec<(String, String)> = stmt
+                    .query_map(params![owner, address, handle, wildcard], |r| {
+                        Ok((r.get(0)?, r.get(1)?))
+                    })?
+                    .collect::<rusqlite::Result<_>>()?;
+                let exact: Vec<&str> = rows
+                    .iter()
+                    .filter(|(peer, _)| Some(peer) != wildcard.as_ref())
+                    .map(|(_, a)| a.as_str())
+                    .collect();
+                let governing: Vec<&str> = if exact.is_empty() {
+                    rows.iter().map(|(_, a)| a.as_str()).collect()
+                } else {
+                    exact
+                };
+                if governing.contains(&"block") {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
     /// How `owner` stands with the mailbox at `peer_address` (which answers to `peer_handle`, if
     /// it has one).
     ///

@@ -437,8 +437,10 @@ A handle is a name bound to a key, not a second mailbox: `/bekir/superaiagent1` 
 `/k/…` address are the same inbox, and everything — sealing, admission, reputation — behaves
 identically whichever you use.
 
-Ownership is granted by the entitlement service through `PUT /v1/namespaces`, never by the account
-itself. It expires with the subscription; a lapsed entitlement stops minting on its own.
+Ownership comes from a purchase (App Store, Google Play or a web plan, through the entitlement
+routes), never from the account itself; an operator can also bind one by hand with the ops-only
+`PUT /internal/v1/namespaces` (the public `PUT /v1/namespaces` was retired on 2026-11-04). It
+expires with the subscription; a lapsed entitlement stops minting on its own.
 
 ### Workspace context
 

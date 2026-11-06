@@ -1599,15 +1599,16 @@ async fn discover_inner(
         } => (new, remaining, matches),
     };
 
-    // Who may see what: the matched person must not have blocked any of the caller's mailboxes,
-    // their mailbox must be open, and their name follows its own visibility.
+    // Who may see what: the matched person must not have blocked any of the caller's mailboxes
+    // (every one of them, not only the first few: audit 2026-11-03 P3-4), their mailbox must be
+    // open, and their name follows its own visibility. A block check that cannot be read hides
+    // the match.
     let mine: Vec<(String, Option<String>)> = state
         .store
         .list_by_account(account.clone())
         .await
         .map_err(GErr::from)?
         .into_iter()
-        .take(50)
         .map(|m| (m.address, m.handle))
         .collect();
     let mut out = Vec::new();
@@ -1615,20 +1616,12 @@ async fn discover_inner(
         let Some(owner) = crate::resolve_recipient(state, &address).await? else {
             continue;
         };
-        let mut blocked = false;
-        for (addr, handle) in &mine {
-            if state
-                .store
-                .relationship(owner.address.clone(), addr.clone(), handle.clone())
-                .await
-                .map(|r| r.blocked)
-                .unwrap_or(true)
-            {
-                blocked = true;
-                break;
-            }
-        }
-        if blocked {
+        if state
+            .store
+            .blocks_any(owner.address.clone(), mine.clone())
+            .await
+            .unwrap_or(true)
+        {
             continue;
         }
         let display_name =
