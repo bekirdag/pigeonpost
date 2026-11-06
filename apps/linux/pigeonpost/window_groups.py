@@ -322,7 +322,17 @@ class GroupsMixin:
         rows = [g for g in self.groups if (g.get("my") or {}).get("state") != "invited" and not g.get("deleted_at")
                 and (not search or search in str(g.get("name", "")).casefold())]
         rows.sort(key=lambda g: -(g.get("last_at") or 0))
+        # SDS §5.4: the selected org inbox's rooms sit under a Company section with Browse rooms.
+        company, org = self.company_rooms(rows)
+        split = None
+        if org is not None:
+            self.peer_list.append(self.company_header(org))
+            others = [g for g in rows if g not in company]
+            split = others[0]["id"] if company and others else None
+            rows = company + others
         for g in rows:
+            if g["id"] == split:
+                self.peer_list.append(self.section_row("Groups"))
             row = Gtk.ListBoxRow()
             row.kind, row.group_id, row.peer = "group", g["id"], None
             content = box(10, horizontal=True, margin=9)
@@ -358,6 +368,30 @@ class GroupsMixin:
             self.peer_list.append(row)
             if g["id"] == self.group_open and self.page() == "group":
                 self.peer_list.select_row(row)
+
+    def section_row(self, title):
+        row = Gtk.ListBoxRow(activatable=False, selectable=False)
+        row.kind = "section"
+        heading = label(title, "pp-overline")
+        heading.set_margin_start(9)
+        heading.set_margin_top(8)
+        row.set_child(heading)
+        return row
+
+    def company_header(self, org):
+        """"Company" with the organization's name and a Browse rooms entry."""
+        row = Gtk.ListBoxRow(activatable=False, selectable=False)
+        row.kind = "company"
+        content = box(6, horizontal=True, margin=6)
+        heading = label("Company · " + org["name"], "pp-overline")
+        heading.set_hexpand(True)
+        heading.set_margin_start(3)
+        content.append(heading)
+        browse = button("Browse rooms", lambda: self.browse_company_rooms(org), style="flat")
+        content.append(browse)
+        row.set_child(content)
+        row.update_property([Gtk.AccessibleProperty.LABEL], [f"Company, {org['name']}"])
+        return row
 
     def invitation_row(self, g):
         row = Gtk.ListBoxRow(activatable=False, selectable=False)
