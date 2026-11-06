@@ -97,7 +97,7 @@ public sealed partial class PostboxClient(HttpClient http, IAccessTokenProvider 
 
     // One account event stream wakes the desktop for every mailbox. Periodic refresh remains
     // the fallback for read-state changes and networks that block long-lived connections.
-    public async Task WatchMailAsync(Func<Task> changed, CancellationToken cancellationToken, Action<string>? log = null)
+    public async Task WatchMailAsync(Func<Task> changed, CancellationToken cancellationToken, Action<string>? log = null, Func<string, string, Task>? typed = null)
     {
         using var operation = AuthorizationContext.Capture(tokens.AcceptedAuthorization);
         var owner = new RequestAuthorization(tokens);
@@ -132,6 +132,7 @@ public sealed partial class PostboxClient(HttpClient http, IAccessTokenProvider 
                     using var idle = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                     string? eventName = null;
                     long? eventId = null;
+                    System.Text.StringBuilder? data = null;
                     while (!cancellationToken.IsCancellationRequested)
                     {
                         idle.CancelAfter(TimeSpan.FromSeconds(45));
@@ -142,12 +143,17 @@ public sealed partial class PostboxClient(HttpClient http, IAccessTokenProvider 
                         if (line.Length == 0)
                         {
                             if (eventName == "mail") { log?.Invoke("Account event: new mail"); await changed().ConfigureAwait(false); }
+                            // Calendar invitations and reminders (event.invite, event.reminder) carry locators only.
+                            else if (typed is not null && eventName is "event.invite" or "event.reminder" && data is not null)
+                                await typed(eventName, data.ToString()).ConfigureAwait(false);
                             if (cancellationToken.IsCancellationRequested) return;
                             owner.Check(cancellationToken);
                             if (eventId is { } next) cursor = next;
-                            eventName = null; eventId = null;
+                            eventName = null; eventId = null; data = null;
                         }
                         else if (line.StartsWith("event:")) eventName = line[6..].Trim();
+                        else if (line.StartsWith("data:") && typed is not null && (data?.Length ?? 0) + line.Length <= 16384)
+                            (data ??= new()).Append(line[5..].TrimStart());
                         else if (line.StartsWith("id:") && long.TryParse(line[3..].Trim(), out var next) && next >= 0) eventId = next;
                     }
                 }

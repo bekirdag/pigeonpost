@@ -9,6 +9,8 @@ $stateFile = Join-Path $directory 'calendar-state.json'
 $env:PIGEONPOST_UI_CALENDAR_STATE = $stateFile
 $env:PIGEONPOST_UI_CALENDAR_FOLDER = (New-Item -ItemType Directory -Force (Join-Path $directory 'calendar-protected')).FullName
 $env:PIGEONPOST_UI_CALENDAR_LOSSES = '2'
+$env:PIGEONPOST_UI_CALENDAR_IMPORT_FILE = Join-Path $directory 'calendar-import.ics'
+"BEGIN:VCALENDAR`r`nVERSION:2.0`r`nBEGIN:VEVENT`r`nSUMMARY:Fixture import one`r`nEND:VEVENT`r`nBEGIN:VEVENT`r`nSUMMARY:Fixture import two`r`nEND:VEVENT`r`nEND:VCALENDAR`r`n" | Set-Content -NoNewline -Encoding utf8 $env:PIGEONPOST_UI_CALENDAR_IMPORT_FILE
 $process = $null; $root = $null
 $checks = [Collections.Generic.List[string]]::new()
 function Check([bool]$Condition, [string]$Detail) { if (-not $Condition) { throw $Detail }; $checks.Add($Detail) }
@@ -61,6 +63,24 @@ try {
     Invoke-Control 'Calendar'; $null = Wait-Control 'New event'
     Check ($null -ne (Control 'Today')) 'Calendar navigation opens the month and day controls'
     Capture 'calendar-month.png'
+    function Like([string]$Pattern) {
+        foreach ($e in $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)) { if ($e.Current.Name -like $Pattern) { return $e } }
+        $null
+    }
+    # Audit P2-18: week and day time grids with the now line.
+    $today = (State).today
+    Invoke-Control 'Week view'; $null = Wait-Control 'Week time grid'
+    $null = Wait-Control "Open event Design review, 09:00–10:00, $today"
+    Check ($null -ne (Like 'Now, *')) 'The week grid places today''s events by time and draws the now line'
+    Check ($null -ne (Control 'Next week') -and $null -ne (Control 'Previous week')) 'Week navigation steps by a week'
+    Capture 'calendar-week.png'
+    Invoke-Control 'Day view'; $null = Wait-Control 'Day time grid'
+    $null = Wait-Control "Open event Design review, 09:00–10:00, $today"
+    Check ($null -ne (Like 'Now, *')) 'The day grid shows the now line on today'
+    Capture 'calendar-day.png'
+    Invoke-Control 'Next day'
+    Wait-Check { $null -eq (Like 'Now, *') } 'Another day has no now line'
+    Invoke-Control 'Previous day'; Invoke-Control 'Month view'; $null = Wait-Control 'Previous month'
     (Wait-Control 'Calendars').GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
     Invoke-Control 'No calendars'
     Wait-Check { $null -eq (Control 'Open event Design review, 09:00–10:00') } 'Selecting no calendars hides the agenda instead of showing every calendar'
@@ -76,6 +96,27 @@ try {
     $previews = Wait-Control 'Show event details in reminder notifications'; $previews.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle()
     Invoke-Control 'Save'
     Wait-Check { $s = State; $s -and $s.settingsSaves -eq 1 -and -not $s.settings.previews } 'Calendar settings save the reminder-preview preference'
+    # P3-7: the organizer can copy a guest's own invitation link (the fallback when invitation email is off).
+    Invoke-Control 'Open event Native calendar edited title, 09:00–10:00'
+    (Wait-Control 'People').GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
+    Invoke-Control 'Copy invitation link for Fixture Guest (guest@fixture.invalid)'
+    $null = Wait-Control 'Invitation link for Fixture Guest (guest@fixture.invalid)'
+    Wait-Check { (State).links -eq 1 } 'The organizer copies one guest-only invitation link'
+    Capture 'calendar-guest-link.png'; Invoke-Control 'Done'
+    # Audit P2-18: subscription links and .ics import.
+    Invoke-Control 'Subscription links'; Invoke-Control 'Turn on link for Work'
+    $null = Wait-Control 'Subscription link for Work'
+    Wait-Check { (State).feeds.cal_work -eq 'busy' } 'A subscription link is made for busy times only by default'
+    Check ($null -ne (Control 'Reset link for Work') -and $null -ne (Control 'Turn off link for Work')) 'An active link can be reset or turned off'
+    Capture 'calendar-feeds.png'
+    Invoke-Control 'Turn off link for Work'; $null = Wait-Control 'Turn on link for Work'
+    Wait-Check { $null -eq (State).feeds.cal_work } 'Turning the link off revokes it'
+    Invoke-Control 'Done'
+    Invoke-Control 'Import calendar file'
+    $null = Wait-Control "Import Fixture import one — $today 10:00 Europe/Istanbul"
+    Capture 'calendar-import.png'
+    Invoke-Control 'Import 2 events'
+    Wait-Check { (State).imported -eq 2 } 'The previewed import creates the ticked events only after confirming'
     Invoke-Control 'New event'; Set-Text 'Event title' 'Native pending event'
     Set-Text 'Start date (YYYY-MM-DD)' '2026-03-08'; Set-Text 'Last date (YYYY-MM-DD)' '2026-03-08'
     Set-Text 'Start time (HH:mm)' '02:30'; Set-Text 'End time (HH:mm)' '03:30'; Set-Text 'Time zone' 'America/New_York'; Invoke-Control 'Create event'
@@ -108,6 +149,6 @@ try {
     @{ passed = $false; checks = $checks; error = $_.Exception.Message } | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $directory 'calendar-ui.json')
     throw
 } finally {
-    Remove-Item Env:PIGEONPOST_UI_CALENDAR_STATE, Env:PIGEONPOST_UI_CALENDAR_FOLDER, Env:PIGEONPOST_UI_CALENDAR_LOSSES -ErrorAction SilentlyContinue
+    Remove-Item Env:PIGEONPOST_UI_CALENDAR_STATE, Env:PIGEONPOST_UI_CALENDAR_FOLDER, Env:PIGEONPOST_UI_CALENDAR_LOSSES, Env:PIGEONPOST_UI_CALENDAR_IMPORT_FILE -ErrorAction SilentlyContinue
     if ($process -and -not $process.HasExited) { $null = $process.CloseMainWindow(); if (-not $process.WaitForExit(5000)) { $process.Kill() } }
 }
