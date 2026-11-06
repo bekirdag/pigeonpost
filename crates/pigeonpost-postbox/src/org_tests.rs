@@ -16,6 +16,10 @@ pub(crate) struct Srv {
     pub internal: String,
     pub http: Client,
     pub state: AppState,
+    /// This server's client address (sent as `X-Forwarded-For`). Per-address rate limits are
+    /// process-wide, so each test server gets its own address and tests cannot use up each
+    /// other's invitation or preview budgets.
+    pub ip: String,
 }
 
 pub(crate) async fn serve() -> Srv {
@@ -36,6 +40,7 @@ pub(crate) async fn serve_with(adjust: impl FnOnce(&mut AppState)) -> Srv {
         acr_values: vec!["mfa".into()],
         max_age: 600,
     });
+    state.trusted_proxy_hops = 1;
     adjust(&mut state);
     let public = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let internal = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -44,6 +49,11 @@ pub(crate) async fn serve_with(adjust: impl FnOnce(&mut AppState)) -> Srv {
         internal: format!("http://{}", internal.local_addr().unwrap()),
         http: Client::new(),
         state: state.clone(),
+        ip: {
+            let r = crate::rand_hex(3);
+            let b = |i: usize| u8::from_str_radix(&r[i..i + 2], 16).unwrap_or(1);
+            format!("10.{}.{}.{}", b(0), b(2), b(4))
+        },
     };
     let app =
         build_router(state.clone()).into_make_service_with_connect_info::<std::net::SocketAddr>();
@@ -77,6 +87,7 @@ impl Srv {
             &self.public
         };
         let mut req = self.http.request(method, format!("{base}{path}"));
+        req = req.header("x-forwarded-for", &self.ip);
         if let Some(t) = token {
             req = req.bearer_auth(t);
         }
@@ -1237,7 +1248,7 @@ async fn agent_limit_and_org_rooms() {
     srv.global_flag("orgs").await;
     srv.global_flag("groups").await;
     let owner = srv.person("owner").await;
-    let org = srv.org(&owner, "tiny", 1).await;
+    let org = srv.org(&owner, "tiny", 5).await;
     // No address yet: room creation asks for one.
     let (s, v) = srv
         .post(
@@ -1253,7 +1264,8 @@ async fn agent_limit_and_org_rooms() {
         json!({ "handle": "me" }),
     )
     .await;
-    for i in 0..10 {
+    // Five seats: 50 agent addresses (R-09).
+    for i in 0..50 {
         assert_eq!(
             srv.post(
                 &format!("/v1/orgs/{org}/agents"),
@@ -1269,7 +1281,7 @@ async fn agent_limit_and_org_rooms() {
         .post(
             &format!("/v1/orgs/{org}/agents"),
             &owner.token,
-            json!({ "handle": "a10" }),
+            json!({ "handle": "a50" }),
         )
         .await;
     assert_eq!((s, v["error"].as_str()), (409, Some("agent_limit")));

@@ -1,0 +1,19 @@
+meta {
+  name: Remove it
+  type: http
+  seq: 26
+}
+
+delete {
+  url: {{baseUrl}}/v1/groups/:id/picture
+  body: none
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}

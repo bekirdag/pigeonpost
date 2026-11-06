@@ -987,6 +987,9 @@ pub(crate) fn group_view(c: &Connection, g: &GroupRow, m: &MemberRow, now: u64) 
         "name": g.name,
         "description": g.description,
         "avatar_id": g.avatar_id,
+        "picture": crate::avatars::owned_json(
+            crate::store::owned_avatar_in(c, crate::store::OwnedKind::Group, &g.id)?.as_ref(),
+        ),
         "join_policy": g.join_policy,
         "post_policy": g.post_policy,
         "visibility": g.visibility,
@@ -1370,6 +1373,9 @@ pub(crate) async fn create(
                          VALUES (?1, ?2, 'owner', 'keying', ?3, ?3)",
                         params![gid, me, now as i64],
                     )?;
+                    if let Some(org) = &org_id {
+                        crate::org_rooms::apply_default_timer_in(tx, &gid, org)?;
+                    }
                     let g = load_group(tx, &gid)?.ok_or_else(GErr::not_found)?;
                     let mut out = Outcome::default();
                     let invitations = invite_in(tx, &g, &me, &invitees, now, &mut out)?;
@@ -3018,8 +3024,21 @@ pub(crate) struct PostReq {
     pub mentions: Vec<String>,
 }
 
-/// The group's storage allowance: 1 GB when the owner is on a paid plan, else 100 MB (D-06).
+/// The group's storage allowance: 1 GB when the owner is on a paid plan, else 100 MB (D-06). An
+/// org room draws on its organization's pooled storage instead (`orgs.storage_bytes`, D-06; audit
+/// 2026-11-03 P2-5): what the org's other rooms have not used.
 async fn group_quota(state: &AppState, gid: &str) -> u64 {
+    let pooled = {
+        let gid = gid.to_string();
+        state
+            .store
+            .group_read(move |c: &Connection| -> GResult<Option<u64>> { org_pool_quota(c, &gid) })
+            .await
+            .unwrap_or(None)
+    };
+    if let Some(q) = pooled {
+        return q;
+    }
     let gid = gid.to_string();
     let owner: Option<String> = state
         .store
@@ -3045,6 +3064,29 @@ async fn group_quota(state: &AppState, gid: &str) -> u64 {
         }
         _ => QUOTA_FREE,
     }
+}
+
+/// For an org room: the org's pool less what its other live rooms hold. `None` for other groups.
+pub(crate) fn org_pool_quota(c: &Connection, gid: &str) -> GResult<Option<u64>> {
+    let org: Option<(String, i64)> = c
+        .query_row(
+            "SELECT o.id, o.storage_bytes FROM groups g JOIN orgs o ON o.id = g.org_id WHERE g.id = ?1",
+            params![gid],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    let Some((org, pool)) = org else {
+        return Ok(None);
+    };
+    let used: i64 = c.query_row(
+        "SELECT COALESCE((SELECT SUM(m.bytes) FROM group_messages m JOIN groups g ON g.id = m.group_id
+                           WHERE g.org_id = ?1 AND g.id <> ?2 AND g.deleted_at IS NULL), 0)
+              + COALESCE((SELECT SUM(a.bytes) FROM group_attachments a JOIN groups g ON g.id = a.group_id
+                           WHERE g.org_id = ?1 AND g.id <> ?2 AND g.deleted_at IS NULL), 0)",
+        params![org, gid],
+        |r| r.get(0),
+    )?;
+    Ok(Some((pool - used).max(0) as u64))
 }
 
 pub(crate) fn group_bytes(c: &Connection, gid: &str) -> GResult<u64> {
@@ -3203,7 +3245,16 @@ pub(crate) fn post_in(
     };
     let seq = alloc_seq(tx, gid, now)?;
     let id = format!("gm_{}", rand_b32(12));
-    let expires_at = edit_expiry.unwrap_or_else(|| g.ephemeral_secs.map(|s| now as i64 + s));
+    let timer = crate::org_rooms::effective_timer(tx, &g)?;
+    let expires_at = match edit_expiry {
+        // An edit keeps its chain's deadline, still bounded by the org maximum.
+        Some(e) => match (e, timer.filter(|_| g.org_id.is_some())) {
+            (Some(e), Some(t)) => Some(e.min(now as i64 + t)),
+            (None, Some(t)) => Some(now as i64 + t),
+            (e, None) => e,
+        },
+        None => timer.map(|s| now as i64 + s),
+    };
     let mut atts = Vec::new();
     for att in &req.attachments {
         let row: Option<(i64, Option<i64>, String)> = tx

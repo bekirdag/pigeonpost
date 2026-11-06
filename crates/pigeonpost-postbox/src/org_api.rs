@@ -1511,7 +1511,7 @@ async fn agent_delegations(
                             "id": r.get::<_, String>(0)?,
                             "member_id": r.get::<_, String>(1)?,
                             "member_handle": r.get::<_, Option<String>>(2)?,
-                            "capabilities": serde_json::from_str::<Value>(&caps).unwrap_or(Value::Null),
+                            "capabilities": crate::org_agents::live_caps(&caps),
                             "expires_at": iso(r.get::<_, Option<i64>>(4)?),
                             "granted_at": iso(r.get::<_, Option<i64>>(5)?),
                         }))
