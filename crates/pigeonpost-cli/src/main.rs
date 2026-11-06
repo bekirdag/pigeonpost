@@ -6,6 +6,7 @@
 
 mod agentd_cmd;
 mod agentd_edits;
+mod calendar_cmd;
 mod device_login_cmd;
 mod directory_cmd;
 mod executor;
@@ -305,6 +306,9 @@ enum Command {
 
     /// End-to-end encrypted groups from a hosted mailbox: create, invite, join, send, read.
     Group(group_cmd::GroupArgs),
+
+    /// A hosted mailbox's calendar: list occurrences, create handle-only events, answer invitations.
+    Calendar(calendar_cmd::CalendarArgs),
 }
 
 #[derive(Subcommand)]
@@ -1530,6 +1534,9 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     if let Command::Group(args) = &cli.command {
         return group_cmd::run(&home, args, cli.json).await;
     }
+    if let Command::Calendar(args) = &cli.command {
+        return calendar_cmd::run(&home, args, cli.json).await;
+    }
 
     // Hosted mailboxes are independent of the local agent key, so — like the read-only commands
     // above — they must not mint an identity in someone's home as a side effect.
@@ -2299,6 +2306,7 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         | Command::Install { .. }
         | Command::Postbox { .. }
         | Command::Group(_)
+        | Command::Calendar(_)
         | Command::Login { .. }
         | Command::Whoami
         | Command::Ssh { .. }
