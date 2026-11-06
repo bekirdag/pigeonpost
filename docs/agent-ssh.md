@@ -26,7 +26,7 @@ every 15 s (and immediately after a revocation) for every open session:
 |---|---|---|
 | 1 | A **person**: a validated interactive sign-in. Account API keys, org API keys, connectors, another agent's mailbox credential and the agent's own credential are refused. | `human_required` |
 | 2 | A **recent strong sign-in**: `auth_time` within 10 minutes and an allowlisted `acr` (§3.4). | `step_up_required` (RFC 9470 challenge) |
-| 3 | The person **owns** the agent (a mailbox on their own account), or — for an org agent — is the org **owner**, or holds a live delegation carrying `ssh` for exactly this agent. Org admins and agent admins get no shell implicitly (SDS §6.4). | `delegation_required`; non-members get `no_agent` (existence is not revealed) |
+| 3 | The person **owns** the agent (a mailbox on their own account), or — for an org agent — holds a live delegation carrying `ssh` for exactly this agent. No org role gets a shell implicitly: not admins, not agent admins, not the owner, who delegates `ssh` to themselves like anyone else (SDS §6.4; audit 2026-11-03 P2-14). | `delegation_required`; non-members get `no_agent` (existence is not revealed) |
 | 4 | For an org agent: the org's `ssh_allowed` setting (off by default; turning it on needs step-up) **and** the agent admin's per-agent switch (off by default; turning it on needs step-up). | `ssh_not_allowed`, `ssh_not_enabled` |
 | 5 | The agent's machine has **opted in locally** (`[mailbox.shell]`), is connected, and its host key is the pinned one. | `shell_not_offered`, `agent_offline`, `host_key_pending` |
 | 6 | Optional: the org's `ssh_requires_approval` — an owner, admin or agent admin other than the requester approves (with step-up), then the requester collects credentials with a fresh step-up. | `202 awaiting_approval` |
@@ -114,7 +114,7 @@ Every session is announced in `agentd.log`, as a desktop notification, and in
 
 | Mode | Boundary | Platforms |
 |---|---|---|
-| `container` (recommended) | Podman (rootless, `--userns keep-id`; preferred) or Docker (`--user` = this machine's uid). Docker is refused when `docker info` shows a rootful daemon without user-namespace remapping (container root = host root after an escape), unless the owner sets `docker_rootful_acknowledged = true`; rootless Docker, `userns-remap` and Docker Desktop's VM are accepted. The default image is `debian:13` pinned by digest. Only the workspace, bind-mounted at `/workspace`; `--cap-drop ALL`, `no-new-privileges`, read-only root filesystem, 64 MB `/tmp`, 256 pids, 1 GB, 1 CPU, `--init`, network `none` unless `outbound`, never the runtime socket. Named per session and removed on teardown. | Linux; macOS through Docker Desktop's VM (exercised by the end-to-end harness) |
+| `container` (recommended) | Podman (rootless, `--userns keep-id`; preferred; rootful Podman — agentd as root or a rootful service connection — is refused) or Docker (`--user` = this machine's uid). Docker is refused when `docker info` shows a rootful daemon without user-namespace remapping (container root = host root after an escape), unless the owner sets `docker_rootful_acknowledged = true`; rootless Docker, `userns-remap` and Docker Desktop's VM are accepted. The default image is `debian:13` pinned by digest. Only the workspace, bind-mounted at `/workspace`; `--cap-drop ALL`, `no-new-privileges`, read-only root filesystem, 64 MB `/tmp`, 256 pids, 1 GB, 1 CPU, `--init`, network `none` unless `outbound`, never the runtime socket. Named per session and removed on teardown. | Linux; macOS through Docker Desktop's VM (exercised by the end-to-end harness) |
 | `allowlist` | No shell and no terminal. Each request is one exact argv from `[[mailbox.shell.command]]` (absolute program; shells, interpreters and launchers such as `env`, `xargs`, `find`, `sudo` are refused in the config), executed as the container entrypoint — never through a shell on the host — within the same boundary, limits, network policy and runtime checks as `container` mode. Up to `paths` trailing arguments, each a relative path that resolves, symlinks included, inside the workspace. Characters a shell would interpret are refused outright. Validated workspace paths map to `/workspace` inside the container. | Linux; macOS through the runtime VM |
 | `unconfined` | The machine user's login shell, `cwd` = workspace. Needs `unconfined_acknowledged = true` as a second explicit statement. Same risk as the existing `full` tier. | Linux, macOS |
 | `user` (SDS) | Not implemented in this build; refused by name rather than run as something weaker. | — |
@@ -138,6 +138,20 @@ workspace-controlled hooks or configuration. Those hooks now execute inside the 
 Treat workspace contents as executable/untrusted, use `read_only` when writes are unnecessary, and
 keep `network = "none"` unless outbound access is intended. The container is the isolation boundary;
 it does not make arbitrary hooks harmless to the mounted workspace.
+
+**`network = "outbound"` is the public internet only.** Before the session's program starts, an
+egress policy runs inside the container's own network namespace: policy-routing rules refuse
+`0/8`, `10/8`, `100.64/10` (carrier-grade NAT), `169.254/16` (link-local, cloud metadata), `172.16/12`,
+`192.0.0/24`, `192.168/16`, `198.18/15`, multicast and reserved ranges, the container's gateway (the
+host), and on IPv6 `fc00::/7`, `fe80::/10`, multicast, NAT64 and v4-mapped addresses. DNS to the
+configured resolvers stays open on port 53 only. It then becomes this machine's user with no
+capabilities and no-new-privileges, so the session cannot undo the rules. The image needs `ip`
+(iproute2) and `setpriv` (util-linux) for this — the default Debian image has `setpriv` but not
+`iproute2` — and any failure refuses the session rather than run with open egress (exit 126).
+Confined workspaces may not contain sockets (a socket in a bind mount reaches the service behind it),
+above all a container runtime's. agentd removes its own session containers left over from a crash
+when it starts. An unconfined session's processes carry `PIGEONPOST_SSH_SESSION`; on Linux, teardown
+also ends those that left the process group with `setsid` (elsewhere only the process group).
 
 Recording (`record = true`) is not implemented and is refused.
 
