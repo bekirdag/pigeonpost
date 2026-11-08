@@ -15,13 +15,17 @@ import * as postbox from "./postbox.js";
 import { publicCatalog, isUuid } from "./catalog.js";
 import { State } from "./state.js";
 import { createBilling } from "./billing.js";
+import { createNotifier, createSales, sourceOf } from "./sales.js";
 import * as tax from "./tax.js";
-import { createSales, sourceOf } from "./sales.js";
 import { createLimiter } from "./limits.js";
 
 const state = new State(config.stateDir);
 const billing = createBilling(state);
-const sales = createSales(config.stateDir);
+const sales = createSales(config.stateDir, { notifier: createNotifier({
+  url: process.env.SALES_NOTIFY_URL, key: process.env.SALES_NOTIFY_KEY,
+  to: process.env.SALES_NOTIFY_TO || "info@pigeonpost.dev", from: process.env.SALES_NOTIFY_FROM || "no-reply@pigeonpost.dev",
+  delays: (process.env.SALES_NOTIFY_DELAYS_MS || "0,30000,120000,600000").split(",").map(Number).filter((n) => Number.isFinite(n) && n >= 0),
+}) });
 const publicLimiter = createLimiter({ perMinute: config.publicRequestsPerMinute });
 const MAX_BODY = 64 * 1024;
 
@@ -73,7 +77,7 @@ const server = http.createServer(async (req, res) => {
 
   try {
     if (method === "GET" && path === "/healthz") {
-      return send(res, 200, { ok: true, configured: configured(), product: config.masaasProductSlug }, origin);
+      return send(res, 200, { ok: true, configured: configured(), product: config.masaasProductSlug, sales_notify: sales.notifier?.health() }, origin);
     }
 
     // Public: the approved price list.
@@ -200,7 +204,7 @@ const server = http.createServer(async (req, res) => {
   } catch (err) {
     const status = statusFrom(err);
     if (status >= 500) console.error(`${method} ${path}: ${status} ${err.code || ""}`.trim());
-    return send(res, status, { error: err.message || "bridge error", ...(err.code ? { code: err.code } : {}) }, origin);
+    return send(res, status, { error: err.message || "bridge error", ...(err.code ? { code: err.code } : {}), ...(status < 500 && err.extra ? err.extra : {}) }, origin);
   }
 });
 

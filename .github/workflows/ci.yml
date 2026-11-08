@@ -243,6 +243,8 @@ jobs:
           # The synthetic local OIDC issuer uses the same fixed verified-address claim names.
           # org_notify.rs calls saas_be's internal notification route, whose path segment is the
           # transport's name in saas_be's API; the message it sends is a Pigeonpost invitation.
+          # store-adapter/src/sales.js (and its test) calls the same saas_be route to tell a person
+          # about a "Talk to sales" request; only the route's path segment uses the word.
           # mail_layout.rs renders those contact-address messages: it names the published logo
           # path on pigeonpost.dev and the client meta tags by their fixed spellings.
           # The vendored LiveKit client bundles sdp-transform, whose SDP grammar names the
@@ -265,6 +267,8 @@ jobs:
               ':(exclude)crates/pigeonpost-postbox/src/googleplay.rs' \
               ':(exclude)crates/pigeonpost-postbox/src/fcm.rs' \
               ':(exclude)crates/pigeonpost-postbox/src/org_notify.rs' \
+              ':(exclude)store-adapter/src/sales.js' \
+              ':(exclude)store-adapter/test/sales.test.mjs' \
               ':(exclude)crates/pigeonpost-postbox/src/mail_layout.rs' \
               ':(exclude)apps/ios/Tests/main.swift' \
               ':(exclude)apps/ios/Shared/Auth/Session.swift' \
