@@ -281,7 +281,12 @@ test("the postbox client posts the documented bodies with the service token, and
   });
   assert.equal(seen[1].url, "http://127.0.0.1:18991/internal/v1/call-ring-cancel");
   assert.deepEqual(JSON.parse(seen[1].opts.body), { room_id: "r".repeat(22), to: "/bob", kind: "video", from: { address: "/k/a" }, reason: "declined" });
-  assert.equal(on.health().devices, 4);
+  await on.ring({ room: "r".repeat(22), code: "ABC234", kind: "audio", from: { address: "/k/a" }, to: "/k/b", token, expiresAt: 1_792_500_045_500, group_id: "grp_x", group_name: "ignored" });
+  assert.deepEqual(JSON.parse(seen[2].opts.body), {
+    room_id: "r".repeat(22), code: "ABC234", kind: "audio", ring_token: token,
+    from: { address: "/k/a" }, to: "/k/b", expires_at: 1_792_500_045, group_id: "grp_x",
+  }, "a group ring names its group; the postbox looks its name up");
+  assert.equal(on.health().devices, 6);
   // A failing postbox never throws into the call path.
   const broken = createRingAlerts({ enabled: true, url: "http://x", token: "svc_y", fetch: async () => { throw new Error("down"); } });
   assert.equal(await broken.ring({ room: "r", to: "/b", from: null, expiresAt: 0 }), null);

@@ -4,7 +4,7 @@
     "title": "Pigeonpost postbox API",
     "version": "1.2.0",
     "summary": "HTTP API of the Pigeonpost postbox (hosted mailboxes for agents).",
-    "description": "The postbox hosts end-to-end sealed mailboxes. Every mailbox has a key-derived `/k/…` address\nand may also answer to a handle such as `/bekir/agent1`.\n\nCredentials (all sent as `Authorization: Bearer <token>`):\n\n* **Capability token** (`cap_…`) — bound to exactly one mailbox. Acts as that mailbox only.\n* **Account API key** (`pk_live_…`) — acts for an account, which may own many mailboxes.\n  Messaging routes then take an `identity` selector when the account has more than one.\n* **Member token** — a Keycloak-issued JWT (starts with `eyJ`) for a signed-in person. Resolves\n  to (and on first use creates) that person's account.\n* Shared secrets for operator routes (`/metrics`, `PUT /v1/namespaces`) and per-service tokens\n  (`svc_…`) for the internal listener.\n\nErrors are JSON: `{\"error\": \"<stable_code>\", \"detail\": \"<human-readable text>\"}`. `detail`\nmay be absent. Clients should branch on `error`, never on `detail`. Rate-limit refusals may\ncarry a `Retry-After` header. Unknown fields in success bodies must be ignored.\n"
+    "description": "The postbox hosts end-to-end sealed mailboxes. Every mailbox has a key-derived `/k/…` address\nand may also answer to a handle such as `/bekir/agent1`.\n\nCredentials (all sent as `Authorization: Bearer <token>`):\n\n* **Capability token** (`cap_…`) — bound to exactly one mailbox. Acts as that mailbox only.\n* **Account API key** (`pk_live_…`) — acts for an account, which may own many mailboxes.\n  Messaging routes then take an `identity` selector when the account has more than one.\n* **Member token** — a Keycloak-issued JWT (starts with `eyJ`) for a signed-in person. Resolves\n  to (and on first use creates) that person's account.\n* A shared secret for the operator route `/metrics`, and per-service tokens\n  (`svc_…`) for the internal listener.\n\nErrors are JSON: `{\"error\": \"<stable_code>\", \"detail\": \"<human-readable text>\"}`. `detail`\nmay be absent. Clients should branch on `error`, never on `detail`. Rate-limit refusals may\ncarry a `Retry-After` header. Unknown fields in success bodies must be ignored.\n"
   },
   "servers": [
     {
@@ -2644,106 +2644,6 @@
           },
           "403": {
             "$ref": "#/components/responses/WrongIdentity"
-          },
-          "500": {
-            "$ref": "#/components/responses/ServerError"
-          }
-        }
-      }
-    },
-    "/v1/namespaces": {
-      "put": {
-        "tags": [
-          "operator"
-        ],
-        "operationId": "grantNamespace",
-        "summary": "Bind a purchased namespace to an account",
-        "description": "Called by the billing/entitlement service only. Returns 404 `not_found` when no grant secret\nis configured. Also ensures the namespace has a first mailbox (`/<namespace>/main`);\n`mailbox` is null if that best-effort step failed.\n",
-        "security": [
-          {
-            "namespaceGrant": []
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "namespace",
-                  "account_id"
-                ],
-                "properties": {
-                  "namespace": {
-                    "type": "string"
-                  },
-                  "account_id": {
-                    "type": "string"
-                  },
-                  "expires_at": {
-                    "type": [
-                      "integer",
-                      "null"
-                    ],
-                    "description": "Unix seconds; null means until revoked."
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Granted.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "properties": {
-                    "namespace": {
-                      "type": "string"
-                    },
-                    "account_id": {
-                      "type": "string"
-                    },
-                    "mailbox": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "`invalid_namespace`",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "409": {
-            "description": "`namespace_taken`",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
           },
           "500": {
             "$ref": "#/components/responses/ServerError"
@@ -8227,6 +8127,177 @@
           },
           "403": {
             "$ref": "#/components/responses/EndpointNotAllowed"
+          }
+        }
+      }
+    },
+    "/internal/v1/namespaces": {
+      "put": {
+        "tags": [
+          "internal"
+        ],
+        "x-internal": true,
+        "operationId": "internalGrantNamespace",
+        "summary": "Bind a namespace to an account by hand (operator)",
+        "description": "Ops token only. Purchases bind names through the entitlement routes; this is the operator's\ntool for a manual bind or a test harness. It replaces the public `PUT /v1/namespaces` and its\n`NAMESPACE_GRANT_TOKEN` secret, retired 2026-11-04. Also ensures the namespace has a first\nmailbox (`/<namespace>/main`); `mailbox` is null if that best-effort step failed. Audited as\n`namespace.grant`.\n",
+        "security": [
+          {
+            "serviceToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "namespace",
+                  "account_id"
+                ],
+                "properties": {
+                  "namespace": {
+                    "type": "string"
+                  },
+                  "account_id": {
+                    "type": "string"
+                  },
+                  "expires_at": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "description": "Unix seconds; null means until revoked."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Granted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "properties": {
+                    "namespace": {
+                      "type": "string"
+                    },
+                    "account_id": {
+                      "type": "string"
+                    },
+                    "mailbox": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid_namespace`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/EndpointNotAllowed"
+          },
+          "409": {
+            "description": "`namespace_taken`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/internal/v1/account-deletions/{request_id}/cancel-calendar": {
+      "post": {
+        "tags": [
+          "internal"
+        ],
+        "x-internal": true,
+        "operationId": "internalCancelCalendarForDeletion",
+        "summary": "Cancel what a person being erased organizes (operator)",
+        "description": "Ops token only; run by `deploy/account-deletions.py --cancel-calendar` before `--erase`. Cancels every upcoming event the account of a pending deletion request organizes, through the same path as an organizer's own cancellation: contact-address guests get the cancellation through the delivery worker (subject to `calendar_email`, unsubscribes and the daily cancellation budget), handle invitees get `event.cancelled`. Idempotent; reports the cancellation notices still waiting to be sent, which `--erase` waits for.",
+        "security": [
+          {
+            "serviceToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^del_[a-f0-9]{32}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cancelled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "events_cancelled",
+                    "pending_notices"
+                  ],
+                  "properties": {
+                    "events_cancelled": {
+                      "type": "integer"
+                    },
+                    "pending_notices": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/EndpointNotAllowed"
+          },
+          "404": {
+            "description": "`no_request`: no pending deletion request with this id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
           }
         }
       }
@@ -19377,11 +19448,6 @@
         "scheme": "bearer",
         "bearerFormat": "JWT",
         "description": "Keycloak member access token (JWT, `eyJ…`) for a signed-in person. Resolves to that person's account."
-      },
-      "namespaceGrant": {
-        "type": "http",
-        "scheme": "bearer",
-        "description": "Shared secret held by the billing/entitlement service for `PUT /v1/namespaces`."
       },
       "metricsToken": {
         "type": "http",

@@ -245,6 +245,22 @@ token) at create, ring and join, and during the call (SDS §4.7):
 - If the postbox cannot be asked for longer than `CALLS_GROUP_BLIND_MS` (90 s by default), the
   call ends with `membership_unverifiable`.
 
+**Closed apps ring too** (audit 2026-11-03 P1-11), behind the same switches as 1:1 calls
+(`CALLS_RING_PUSH=1` and the postbox `call_push` flag, see `docs/call-alerting.md`):
+
+- Each rung member gets their own ring token and one `POST /internal/v1/call-ring` carrying
+  `group_id`. The postbox does not apply the 1:1 stranger rule there: caller and callee must both
+  be active members of that live group, an explicit block still wins, and the callee's call rules
+  decide (as in the group-call admission). The payloads add `group_id` and the group's name, looked
+  up by the postbox (`title` = "Caller · Group", body "Incoming group voice/video call").
+- When one member answers, declines or is removed, only that member's push is cancelled
+  (`call-ring-cancel`); when the ring ends (timeout, no answer, everyone declined) the rest are.
+- A member's ring token reads (`GET /calls/v1/rings/{room}`) and declines
+  (`POST …/decline`, for that member only) the ring, and answers it from a session opened after
+  the push (`POST /calls/v1/rooms/{room}/accept {session, ring_token}`). Such a session is also
+  rung as soon as its event stream opens. The call ends only when nothing rings any more and
+  nobody else is in it.
+
 Calls keep the six-person mesh cap; meeting-link guests stay separate and never gain group
 membership. Start and end appear in the group as `call_started` /
 `call_ended` notices.

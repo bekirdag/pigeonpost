@@ -1379,6 +1379,15 @@ async fn patch_member(
                 ctx.step_up(&state)?;
             }
         }
+        // Suspending or reinstating a full admin is as sensitive as taking the role away (§3.4,
+        // audit 2026-11-03 P2-15).
+        if req.status.is_some() && current_target_roles.has(Role::Admin) {
+            // Someone who could never do it hears so before being asked to re-authenticate.
+            if !can_manage(&ctx.roles, &current_target_roles, target == ctx.member.id) {
+                return Err(GErr::forbidden("forbidden", "your role cannot change this person"));
+            }
+            ctx.step_up(&state)?;
+        }
         let auditor = state.auditor.clone();
         let account = ctx.account.clone();
         let ipaddr = ip(&Extension(cip));
@@ -1440,6 +1449,9 @@ async fn patch_member(
                     changed.push("roles");
                 }
                 if let Some(s) = &req.status {
+                    if target_roles.has(Role::Admin) && !current_target_roles.has(Role::Admin) {
+                        return Err(GErr::conflict("roles_changed", "their roles changed; try again"));
+                    }
                     if m.status == "invited" {
                         return Err(GErr::conflict("invite_pending", "they have not joined yet; revoke the invitation instead"));
                     }
@@ -1509,6 +1521,22 @@ async fn remove_member(
         if !matches!(mode.as_str(), "reserve" | "delete") {
             return Err(GErr::bad("bad_request", "mode is reserve or delete"));
         }
+        // Removing a full admin takes their authority away for good: step-up, like revoking the
+        // role (§3.4, audit 2026-11-03 P2-15).
+        let current = {
+            let (id2, t2) = (id.clone(), target.clone());
+            state
+                .store
+                .group_read(move |c: &Connection| -> GResult<Roles> { org::roles_of(c, &id2, &t2) })
+                .await?
+        };
+        let target_is_admin = current.has(Role::Admin);
+        if target_is_admin && !current.has(Role::Owner) {
+            if !can_manage(&ctx.roles, &current, target == ctx.member.id) {
+                return Err(GErr::forbidden("forbidden", "your role cannot remove this person"));
+            }
+            ctx.step_up(&state)?;
+        }
         let actor_roles = ctx.roles.clone();
         let me = ctx.member.id.clone();
         let auditor = state.auditor.clone();
@@ -1525,6 +1553,10 @@ async fn remove_member(
                 let target_roles = org::roles_of(tx, &id, &m.id)?;
                 if target_roles.has(Role::Owner) {
                     return Err(GErr::forbidden("owner_only", "transfer ownership before removing the owner"));
+                }
+                if target_roles.has(Role::Admin) && !target_is_admin {
+                    // Made an admin since the step-up check: ask again.
+                    return Err(GErr::conflict("roles_changed", "their roles changed; try again"));
                 }
                 if !can_manage(&actor_roles, &target_roles, m.id == me) {
                     return Err(GErr::forbidden("forbidden", "your role cannot remove this person"));

@@ -4249,38 +4249,6 @@
             },
             "description": "Returns 404 `not_found` when no metrics secret is configured on this postbox."
           }
-        },
-        {
-          "name": "Bind a purchased namespace to an account",
-          "request": {
-            "method": "PUT",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/v1/namespaces",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "namespaces"
-              ]
-            },
-            "description": "Called by the billing/entitlement service only. Returns 404 `not_found` when no grant secret\nis configured. Also ensures the namespace has a first mailbox (`/<namespace>/main`);\n`mailbox` is null if that best-effort step failed.\n",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"namespace\": \"string\",\n  \"account_id\": \"string\",\n  \"expires_at\": 0\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            }
-          }
         }
       ]
     },

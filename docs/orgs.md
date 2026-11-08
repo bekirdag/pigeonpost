@@ -9,6 +9,12 @@ The portal additionally checks **`enterprise_portal`** in `GET /v1/capabilities`
 `/start` and `/app`. Invitation messages are sent only when **`org_invite_email`** is on; until
 then the admin copies the link that the create/resend response returns once.
 
+The portal is in English and Turkish (D-05). `site-enterprise/i18n.js` picks the language from
+`?lang=en|tr` (remembered in the viewer's browser), then the remembered choice, then the browser's
+languages, and the header has a switch. Turkish text lives in `site-enterprise/i18n-tr.js`, keyed by
+the English source text; the checkout `locale` follows the chosen language. Server `detail` text
+that the portal has no entry for is shown as sent.
+
 Base URL: `https://postbox.pigeonpost.dev`. Bearer: a member JWT (`pigeonpost-web`; invitation acceptance
 also requests the realm's standard address scope), unless a route says otherwise. CORS admits
 `https://enterprise.pigeonpost.dev` and `https://inbox.pigeonpost.dev`.
