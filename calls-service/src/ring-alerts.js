@@ -64,13 +64,15 @@ export function createRingAlerts({ enabled, url, token, fetch, timeoutMs = 3_000
 
   return {
     configured,
-    // `ring` = { room, code, kind, from, to, token, expiresAt }
+    // `ring` = { room, code, kind, from, to, token, expiresAt, group_id? }. A group call's ring
+    // (P1-11) names its group; the postbox looks the group's name up itself.
     ring(r) {
       if (!configured) return Promise.resolve(null);
       counters.rings++;
       return post("/internal/v1/call-ring", {
         room_id: r.room, code: r.code, kind: r.kind, ring_token: r.token,
         from: who(r.from), to: r.to, expires_at: Math.floor(r.expiresAt / 1000),
+        ...(r.group_id ? { group_id: r.group_id } : {}),
       });
     },
     cancel(r, reason) {

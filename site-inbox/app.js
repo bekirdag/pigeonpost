@@ -1468,6 +1468,14 @@
     $("identity-btn").setAttribute("aria-label", "Acting as " + displayName(name) + ". Change mailbox");
     paintAvatar($("me-avatar"), name);
     $("identity-btn").disabled = false;
+    // SDS §5.4: an org mailbox carries its organization and this person's role there.
+    const org = window.PigeonpostOrgs?.enabled() ? window.PigeonpostOrgs.orgFor(state.me.address) : null;
+    const orgLine = $("me-org");
+    if (orgLine) {
+      orgLine.hidden = !org;
+      orgLine.textContent = org ? org.name + " · " + window.PigeonpostOrgs.roleLabel(org) : "";
+    }
+    if (org) $("identity-btn").setAttribute("aria-label", "Acting as " + displayName(name) + ", " + org.name + ". Change mailbox");
   }
 
   function orderedIdentities() {
@@ -1511,6 +1519,13 @@
       sub.className = "mi-sub";
       sub.textContent = id.handle || id.address;
       text.append(nm, sub);
+      const org = window.PigeonpostOrgs?.enabled() ? window.PigeonpostOrgs.orgFor(id.address) : null;
+      if (org) {
+        const badge = document.createElement("span");
+        badge.className = "mi-org";
+        badge.textContent = org.name;
+        text.append(badge);
+      }
 
       btn.append(av, text);
       btn.onclick = () => {
@@ -2808,6 +2823,20 @@
     add(facts, "Contact", c ? (c.peer === thread.peer ? "yes" : "via " + c.peer) : "not a contact");
     add(facts, "Granted verbs", c?.allowed_verbs?.length ? c.allowed_verbs.join(", ") : "none");
     if (lastIn?.standing) add(facts, "Standing", lastIn.standing + (lastIn.tier ? " · " + lastIn.tier : ""));
+    // SDS §5.4: a colleague's profile names the organization ("Acme Inc. · Member").
+    const Orgs = window.PigeonpostOrgs;
+    if (Orgs?.enabled() && state.me && !thread.mine) {
+      const peer = thread.peer, acting = state.me.address;
+      Orgs.membershipOf(peer, acting).then((hit) => {
+        if (!hit || state.openPeer !== peer || !state.me || state.me.address !== acting || $("peer-info-sheet").hidden) return;
+        if (facts.querySelector("[data-org]")) return;
+        const dt = document.createElement("dt"), dd = document.createElement("dd");
+        dt.textContent = "Organization";
+        dd.dataset.org = "1";
+        dd.textContent = hit.org.name + " · " + (hit.entry.kind === "agent" ? "Agent" : "Member");
+        facts.prepend(dt, dd);
+      });
+    }
 
     $("peer-known").checked = Boolean(exact);
     $("peer-known").disabled = unavailable;
@@ -3845,8 +3874,34 @@
 
   // ---- new conversation -------------------------------------------------------------------------
 
+  // SDS §5.4: acting as an org mailbox, colleagues and org agents autocomplete from the org
+  // directory. The list only suggests; whatever is typed is still checked when it is sent.
+  let orgSuggestGen = 0;
+  function suggestOrgPeers() {
+    const list = $("new-peer-org");
+    const Orgs = window.PigeonpostOrgs;
+    const org = Orgs?.enabled() && state.me ? Orgs.orgFor(state.me.address) : null;
+    const input = $("new-peer");
+    if (!org) { input.removeAttribute("list"); if (list) list.textContent = ""; return; }
+    input.setAttribute("list", "new-peer-org");
+    const q = input.value.trim().replace(/^\/+/, "").split("/").filter(Boolean).pop() || "";
+    const gen = ++orgSuggestGen;
+    Orgs.directory(org.id, q).then((rows) => {
+      if (gen !== orgSuggestGen || !list) return;
+      list.textContent = "";
+      for (const r of rows) {
+        if (state.me && (r.address === state.me.address || r.handle === state.me.handle)) continue;
+        const option = document.createElement("option");
+        option.value = r.handle;
+        option.label = (r.name ? r.name + " · " : "") + (r.kind === "agent" ? "Agent" : org.name);
+        list.append(option);
+      }
+    });
+  }
+
   function openNewConversation() {
     $("new-peer").value = "/";
+    suggestOrgPeers();
     $("new-body").value = "";
     $("new-error").hidden = true;
     $("new-send").disabled = false;
@@ -4239,7 +4294,7 @@
     $("new-close").onclick = () => closeSheet("new-sheet");
     $("new-cancel").onclick = () => closeSheet("new-sheet");
     $("new-send").onclick = () => sendNewConversation();
-    $("new-peer").addEventListener("input", e => { if (!e.isComposing) normaliseAddressInput(e.target); });
+    $("new-peer").addEventListener("input", e => { if (!e.isComposing) { normaliseAddressInput(e.target); suggestOrgPeers(); } });
     $("new-peer").addEventListener("compositionend", e => normaliseAddressInput(e.target));
     wireSheet("new-sheet");
 
@@ -4566,6 +4621,7 @@
     features = next;
     Avatars.enabled = has("avatars");
     syncSideNav();
+    window.PigeonpostOrgs?.load(); // SDS §5.4: renders when the catalog arrives
     window.PigeonpostGroups?.onMailbox(); // Phase 3a
     window.PigeonpostCalendar?.onMailbox(); // Phase 3B
     window.PigeonpostNotes?.onMailbox(); // Phase 7
@@ -4573,6 +4629,7 @@
 
   function resetPhase1b() {
     features = new Set();
+    window.PigeonpostOrgs?.reset();
     Avatars.reset();
     resetPhase10();
     blockTarget = null;
@@ -4628,6 +4685,7 @@
     }
     if (/^(group\.|mls\.|message\.expired|thread\.settings)/.test(event)) window.PigeonpostGroups?.onEvent(event, frame); // Phase 3a
     if (/^event\./.test(event)) window.PigeonpostCalendar?.onEvent(event, frame); // Phase 3B
+    if (/^org\./.test(event)) window.PigeonpostOrgs?.load(); // SDS §5.4: membership, policy or status changed
     if (/^meeting\./.test(event)) window.PigeonpostNotes?.onEvent(event, frame); // Phase 7
   }
 
@@ -5097,6 +5155,8 @@
     const name = target.name || displayName(target.peer);
     $("peer-block-title").textContent = "Block " + name + "?";
     $("peer-block-report").checked = Boolean(target.report);
+    // A group message is end-to-end encrypted: there is no postbox message to report.
+    $("peer-block-report").closest("label").hidden = target.origin === "group";
     const wide = wildcardFor(target.peer);
     $("peer-block-wide-row").hidden = !wide;
     $("peer-block-wide").checked = false;
@@ -5112,7 +5172,7 @@
     const target = blockTarget;
     if (!target || $("peer-block-confirm").disabled) return;
     const wide = !$("peer-block-wide-row").hidden && $("peer-block-wide").checked;
-    const report = $("peer-block-report").checked;
+    const report = $("peer-block-report").checked && target.origin !== "group";
     const peer = wide ? wildcardFor(target.peer) : target.peer;
     if (target.origin === "info" && !wide) {
       await updateSender(peer, "block");
@@ -6859,6 +6919,9 @@
     if (state.inbound.length !== before) render();
   }
   setInterval(pruneExpiredDirect, 5000);
+  // SDS §5.4: the org catalog arrives after the mailbox renders; show its name when it does.
+  window.PigeonpostOrgs?.onChange(() => { if (state.me) { renderMe(); renderIdentityMenu(); } });
+
   window.PigeonpostGroupsHost = {
     api: (path, opts) => api(path, opts),
     postbox: () => cfg.postbox,
@@ -6872,6 +6935,10 @@
     filter: () => state.filter || "",
     onPhone: () => onPhone(),
     displayName, paintAvatar, toast, listTime, clockTime, actionFlags,
+    // SDS §15.2: whether any of these keys (a mailbox's address or handle) is blocked, and the
+    // same Block sheet the conversation uses.
+    blocked: (keys) => keys.some((key) => typeof key === "string" && contactFor(key)?.admission === "block"),
+    askBlock: (peer, name) => askBlock({ peer, name, origin: "group" }),
     closeConversation: () => {
       if (!state.openPeer) return;
       stashDraft();

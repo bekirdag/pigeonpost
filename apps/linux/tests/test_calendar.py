@@ -187,6 +187,20 @@ class Requests(unittest.TestCase):
         with self.assertRaises(CalendarError):
             client.occurrences(0, 63 * 86400)
 
+    def test_guest_link_route_and_answer(self):
+        att = "att_" + "e" * 26
+        fake = Fake([{"url": "https://inbox.pigeonpost.dev/m/ABCDEFGHJK#t=tok", "expires_at": 1},
+                     {"url": "javascript:alert(1)"}, {"url": "https://x y"}])
+        client = CalendarClient(fake, "/k/" + "a" * 26)
+        self.assertEqual(client.guest_link(EVT, att), "https://inbox.pigeonpost.dev/m/ABCDEFGHJK#t=tok")
+        self.assertEqual(fake.calls[0][:2], ("POST", f"/v1/calendar/events/{EVT}/attendees/{att}/link"))
+        self.assertEqual(fake.calls[0][3], b"{}")
+        for _ in range(2):
+            with self.assertRaises(APIError):
+                client.guest_link(EVT, att)
+        with self.assertRaises(CalendarError):
+            client.guest_link(EVT, "att_../../x")
+
 
 class Protected(unittest.TestCase):
     def setUp(self):

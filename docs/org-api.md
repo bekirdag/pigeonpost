@@ -165,6 +165,19 @@ path (`do_send`: personal blocks, org rules, inbox policy, filters, quotas), whi
 exactly as every hosted direct message already is. A target that is a room, a group or a mailbox
 outside the org is refused (`409 room_encrypted`, `403 recipient_not_in_org`).
 
+**Decision P2-10 (2026-11-04): send-as is restricted, and the code is the rule.** The org API may
+send as an org identity only through this custodial path, and only:
+
+- **as an org-owned agent or service mailbox**: one created through `POST /agents` (minted under the
+  organization's internal account, listed in the org's agents, active). A key's `send_as` can never
+  name a member's personal or org mailbox; such a key is refused at creation (`400 invalid_send_as`),
+  and a send whose sender is not such a mailbox is refused (`409 send_as_unavailable`);
+- **to recipients inside the same org**: active members' org mailboxes and the org's own agents.
+  Personal mailboxes and mailboxes of other organizations are refused (`403 recipient_not_in_org`).
+
+An admin key therefore cannot impersonate a person. A person sends from their own client, and an
+automation that must act outside the org uses a normal enrolled agent mailbox (SDS §3.2, §18.1).
+
 To post into a room from automation, enroll an org agent on the machine with an enrollment code a
 person issued (`pigeonpost login --enroll-stdin`), then have it join a public org room
 (`pigeonpost group join <grp_id>`; accepting an invitation is a person's decision, so agents join
