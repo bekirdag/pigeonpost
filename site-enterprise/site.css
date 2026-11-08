@@ -39,6 +39,8 @@ p { margin: 0 0 1em; }
 :root[data-theme="dark"] .brand .logo-dark { display: inline; }
 .brand-tag { color: var(--muted); font-weight: 500; }
 .top-spacer { flex: 1; }
+.lang-switch { margin-right: 6px; }
+@media (max-width: 480px) { .top { gap: 8px; } .lang-switch { margin-right: 0; padding-inline: 8px; } }
 .account { display: flex; align-items: center; gap: 10px; font-size: 14px; }
 .who { color: var(--muted); max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 

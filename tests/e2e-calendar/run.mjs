@@ -47,7 +47,6 @@ const SITE = path.join(ROOT, "site-inbox");
 const CHROME = process.env.CHROME || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const OPS = "svc_ops_" + crypto.randomBytes(20).toString("hex");
 const CALLS_TOKEN = "svc_calls_" + crypto.randomBytes(20).toString("hex");
-const GRANT = "grant_" + crypto.randomBytes(20).toString("hex");
 const VERBOSE = process.env.E2E_VERBOSE === "1";
 const ADDRESS_CLAIM = "e" + "mail"; // the standard OIDC claim's key, spelled so the vocabulary check passes
 const work = mkdtempSync(path.join(tmpdir(), "pp-e2e-calendar-"));
@@ -168,7 +167,7 @@ const postbox = spawn(bin, [], {
     POSTBOX_BIND: `127.0.0.1:${pbPort}`, POSTBOX_PUBLIC_URL: PB, POSTBOX_INBOX_URL: ORIGIN,
     POSTBOX_DB_PATH: path.join(work, "postbox.db"), POSTBOX_KMS: "sealed-file:" + path.join(work, "kms"),
     OIDC_ISSUER: ISSUER, POSTBOX_INTERNAL_BIND: `127.0.0.1:${intPort}`,
-    POSTBOX_SVC_TOKEN_OPS: OPS, POSTBOX_SVC_TOKEN_CALLS: CALLS_TOKEN, NAMESPACE_GRANT_TOKEN: GRANT,
+    POSTBOX_SVC_TOKEN_OPS: OPS, POSTBOX_SVC_TOKEN_CALLS: CALLS_TOKEN,
     PIGEONPOST_BLOB_DIR: path.join(work, "blobs"), PIGEONPOST_BLOB_MIN_FREE_MB: "1",
     RUST_LOG: process.env.RUST_LOG || "warn",
   },
@@ -223,7 +222,7 @@ for (const [key, name, verified] of [["alice", "Alice", "alice@example.test"], [
   const token = jwt("e2e-" + key, name, verified);
   const me = await pb(token, "GET", "/v1/me/handles");
   if (me.status !== 200 || !me.body.account) throw new Error(`account for ${name}: ${me.status} ${me.text}`);
-  const grant = await fetch(PB + "/v1/namespaces", { method: "PUT", headers: { authorization: "Bearer " + GRANT, "content-type": "application/json" }, body: JSON.stringify({ namespace: key, account_id: me.body.account }) });
+  const grant = await fetch(INT + "/internal/v1/namespaces", { method: "PUT", headers: { authorization: "Bearer " + OPS, "content-type": "application/json" }, body: JSON.stringify({ namespace: key, account_id: me.body.account }) });
   const granted = await grant.json().catch(() => ({}));
   if (!grant.ok) throw new Error(`namespace for ${name}: ${grant.status} ${JSON.stringify(granted)}`);
   for (const flag of FLAGS) {

@@ -97,7 +97,10 @@ impl Server {
 }
 
 struct Person {
+    /// The account API key.
     token: String,
+    /// A person's interactive sign-in for the same account (registers notes keys).
+    session: String,
     cap: String,
     account: String,
     address: String,
@@ -113,8 +116,22 @@ async fn person(state: &AppState, account: &str) -> Person {
     let v = do_create_identity(state, Some(account.into()), None, None)
         .await
         .unwrap();
+    let sub = format!("sub-{account}");
+    let (acct, sub2) = (account.to_string(), sub.clone());
+    state
+        .store
+        .group_tx(move |tx| -> Result<(), crate::groups::GErr> {
+            tx.execute(
+                "UPDATE accounts SET oidc_sub = ?2 WHERE id = ?1",
+                rusqlite::params![acct, sub2],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
     Person {
         token,
+        session: crate::oidc::test_member_token("https://auth.example/realms/x", &sub),
         cap: v["capability_token"].as_str().unwrap().to_string(),
         account: account.into(),
         address: v["address"].as_str().unwrap().to_string(),
@@ -138,6 +155,20 @@ async fn open(s: &Server, host: &str) -> (StatusCode, Value) {
         json!({ "host": host, "room_ref": "abcdef0123456789", "kind": "room" }),
     )
     .await
+}
+
+/// Register a device key the way every client does: `PUT /v1/meetings/keys/{id}` from a person's
+/// signed-in session (the calls service can only point at it, audit 2026-11-03 P2-2).
+async fn register(s: &Server, p: &Person, id: &str, pk: &str) {
+    s.flag(&p.account, true).await;
+    let (st, v) = s
+        .put(
+            &format!("/v1/meetings/keys/{id}"),
+            Some(&p.session),
+            json!({ "public_key": pk, "label": "Test browser" }),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{v}");
 }
 
 async fn consent(
@@ -221,6 +252,8 @@ async fn only_flagged_hosts_open_notes_and_the_brief_reaches_only_consenting_att
 
     // Consent: alice and carol agree with their device keys; bob declines; dave never answers.
     let (alice_key, carol_key) = (p256_pub(), p256_pub());
+    register(&s, &alice, "alicebrowser1", &alice_key).await;
+    register(&s, &carol, "carolphone01", &carol_key).await;
     assert_eq!(
         consent(
             &s,
@@ -503,6 +536,7 @@ async fn attendees_who_withdraw_or_decline_after_consenting_get_neither_brief_no
         } else {
             p256_pub()
         };
+        register(&s, p, key, &pk).await;
         let (st, v) = consent(&s, &mid, &p.address, "yes", Some((key, &pk))).await;
         assert_eq!(st, StatusCode::OK, "{v}");
     }
@@ -634,14 +668,9 @@ async fn service_tokens_are_scoped_and_failures_reach_attendees() {
     );
     let (_, v) = open(&s, &alice.address).await;
     let mid = v["meeting_id"].as_str().unwrap().to_string();
-    consent(
-        &s,
-        &mid,
-        &alice.address,
-        "yes",
-        Some(("alicebrowser1", &p256_pub())),
-    )
-    .await;
+    let k = p256_pub();
+    register(&s, &alice, "alicebrowser1", &k).await;
+    consent(&s, &mid, &alice.address, "yes", Some(("alicebrowser1", &k))).await;
     // A failed result carries no content.
     let (st, _) = s
         .post(
@@ -698,17 +727,29 @@ async fn notes_keys_are_registered_by_the_account_and_bounded() {
     let (st, v) = s
         .put(
             "/v1/meetings/keys/browserkey01",
-            Some(&alice.token),
+            Some(&alice.session),
             json!({ "public_key": pk }),
         )
         .await;
     assert_eq!(st, StatusCode::NOT_FOUND);
     assert_eq!(v["error"], "feature_disabled");
     s.flag(&alice.account, true).await;
+    // The account API key reads notes but never adds a key (audit 2026-11-03 P2-2).
+    let (st, v) = s
+        .put(
+            "/v1/meetings/keys/apikey00001",
+            Some(&alice.token),
+            json!({ "public_key": pk }),
+        )
+        .await;
+    assert_eq!(st, StatusCode::FORBIDDEN, "{v}");
+    assert_eq!(v["error"], "human_required");
+    let (st, _) = s.get("/v1/meetings/keys", Some(&alice.token)).await;
+    assert_eq!(st, StatusCode::OK);
     assert_eq!(
         s.put(
             "/v1/meetings/keys/browserkey01",
-            Some(&alice.token),
+            Some(&alice.session),
             json!({ "public_key": pk, "label": "Web" })
         )
         .await
@@ -719,7 +760,7 @@ async fn notes_keys_are_registered_by_the_account_and_bounded() {
     assert_eq!(
         s.put(
             "/v1/meetings/keys/browserkey01",
-            Some(&alice.token),
+            Some(&alice.session),
             json!({ "public_key": pk })
         )
         .await
@@ -729,7 +770,7 @@ async fn notes_keys_are_registered_by_the_account_and_bounded() {
     assert_eq!(
         s.put(
             "/v1/meetings/keys/browserkey01",
-            Some(&alice.token),
+            Some(&alice.session),
             json!({ "public_key": p256_pub() })
         )
         .await
@@ -739,7 +780,7 @@ async fn notes_keys_are_registered_by_the_account_and_bounded() {
     assert_eq!(
         s.put(
             "/v1/meetings/keys/x",
-            Some(&alice.token),
+            Some(&alice.session),
             json!({ "public_key": pk })
         )
         .await
@@ -749,7 +790,7 @@ async fn notes_keys_are_registered_by_the_account_and_bounded() {
     assert_eq!(
         s.put(
             "/v1/meetings/keys/browserkey02",
-            Some(&alice.token),
+            Some(&alice.session),
             json!({ "public_key": b64(&[0u8; 65]) })
         )
         .await
@@ -760,23 +801,23 @@ async fn notes_keys_are_registered_by_the_account_and_bounded() {
         let (st, _) = s
             .put(
                 &format!("/v1/meetings/keys/device{i:04}"),
-                Some(&alice.token),
+                Some(&alice.session),
                 json!({ "public_key": p256_pub() }),
             )
             .await;
         assert_eq!(st, StatusCode::OK);
     }
-    let (_, v) = s.get("/v1/meetings/keys", Some(&alice.token)).await;
+    let (_, v) = s.get("/v1/meetings/keys", Some(&alice.session)).await;
     assert_eq!(
         v["keys"].as_array().unwrap().len(),
         crate::meetings::MAX_KEYS
     );
     let (st, _) = s
-        .delete("/v1/meetings/keys/device0011", Some(&alice.token))
+        .delete("/v1/meetings/keys/device0011", Some(&alice.session))
         .await;
     assert_eq!(st, StatusCode::OK);
     assert_eq!(
-        s.delete("/v1/meetings/keys/device0011", Some(&alice.token))
+        s.delete("/v1/meetings/keys/device0011", Some(&alice.session))
             .await
             .0,
         StatusCode::NOT_FOUND
@@ -1014,4 +1055,191 @@ async fn under_the_enterprise_policy_only_t20_organizations_may_request_notes() 
     assert!(v.get("meeting_id").is_none());
     let (_, v) = open(&s, &big.address).await;
     assert_eq!(v["allowed"], true, "{v}");
+}
+
+/// Audit 2026-11-03 P2-2: the calls service cannot add a notes key. A consent naming a key the
+/// member never registered is recorded, but the key is not stored and gets no wrap.
+#[tokio::test]
+async fn the_calls_service_cannot_inject_a_notes_key() {
+    let state = state();
+    let s = serve(state.clone()).await;
+    let alice = person(&state, "acct_inject_a").await;
+    let bob = person(&state, "acct_inject_b").await;
+    s.flag(&alice.account, true).await;
+    s.flag(&bob.account, true).await;
+    let (_, v) = open(&s, &alice.address).await;
+    let mid = v["meeting_id"].as_str().unwrap().to_string();
+    let real = p256_pub();
+    register(&s, &alice, "alicebrowser1", &real).await;
+    // A registered key binds.
+    let (st, v) = consent(
+        &s,
+        &mid,
+        &alice.address,
+        "yes",
+        Some(("alicebrowser1", &real)),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(v["notes_key"], "bound");
+    // An unknown key for bob, and a different public key under alice's id, are ignored.
+    let (st, v) = consent(
+        &s,
+        &mid,
+        &bob.address,
+        "yes",
+        Some(("attackerkey1", &p256_pub())),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(v["notes_key"], "unregistered");
+    let (_, v) = consent(
+        &s,
+        &mid,
+        &alice.address,
+        "yes",
+        Some(("alicebrowser1", &p256_pub())),
+    )
+    .await;
+    assert_eq!(v["notes_key"], "unregistered");
+    let (_, keys) = s.get("/v1/meetings/keys", Some(&bob.token)).await;
+    assert_eq!(keys["keys"].as_array().unwrap().len(), 0, "{keys}");
+    let (_, v) = s
+        .get(
+            &format!("/internal/v1/meetings/{mid}/recipients"),
+            Some(INTEL),
+        )
+        .await;
+    let recipients = v["recipients"].as_array().unwrap();
+    assert_eq!(recipients.len(), 1, "{v}");
+    assert_eq!(recipients[0]["account_id"], json!(alice.account));
+    assert_eq!(
+        recipients[0]["keys"],
+        json!([{ "key_id": "alicebrowser1", "public_key": real }])
+    );
+    // meeting-intel cannot wrap for the injected key either.
+    let (st, _) = s
+        .post(
+            &format!("/internal/v1/meetings/{mid}/brief"),
+            Some(INTEL),
+            json!({ "status": "ready", "alg": "A256GCM", "iv": b64(&[9u8; 12]), "ciphertext": b64(b"x"),
+                    "wraps": [wrap(&bob.account, "attackerkey1")] }),
+        )
+        .await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+}
+
+/// Audit 2026-11-03 P2-2 / SDS §14.6: a group call's brief is for attendees who are still members
+/// of the group, and lives no longer than the group's disappearing-message timer.
+#[tokio::test]
+async fn a_group_brief_follows_membership_and_the_group_timer() {
+    let state = state();
+    let s = serve(state.clone()).await;
+    let alice = person(&state, "acct_grpbrief_a").await;
+    let bob = person(&state, "acct_grpbrief_b").await;
+    let now = now_unix() as i64;
+    let (a, b) = (alice.address.clone(), bob.address.clone());
+    state
+        .store
+        .group_tx(move |tx| -> Result<(), crate::groups::GErr> {
+            tx.execute(
+                "INSERT INTO groups (id, name, activation_state, ephemeral_secs, created_by, created_at, last_at)
+                 VALUES ('grp_brief1', 'Team', 'active', 3600, ?1, ?2, ?2)",
+                rusqlite::params![a, now],
+            )?;
+            for (m, role) in [(&a, "owner"), (&b, "member")] {
+                tx.execute(
+                    "INSERT INTO group_members (group_id, member, role, state, updated_at) VALUES ('grp_brief1', ?1, ?2, 'active', ?3)",
+                    rusqlite::params![m, role, now],
+                )?;
+            }
+            Ok(())
+        })
+        .await
+        .unwrap();
+    s.flag(&alice.account, true).await;
+    let (st, v) = s
+        .post(
+            "/internal/v1/meetings",
+            Some(CALLS),
+            json!({ "host": alice.address, "room_ref": "abcdef0123456789", "kind": "group", "group_id": "grp_brief1" }),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    let mid = v["meeting_id"].as_str().unwrap().to_string();
+    let (ka, kb) = (p256_pub(), p256_pub());
+    register(&s, &alice, "alicebrowser1", &ka).await;
+    register(&s, &bob, "bobbrowser001", &kb).await;
+    consent(
+        &s,
+        &mid,
+        &alice.address,
+        "yes",
+        Some(("alicebrowser1", &ka)),
+    )
+    .await;
+    consent(&s, &mid, &bob.address, "yes", Some(("bobbrowser001", &kb))).await;
+    let (st, v) = s
+        .post(
+            &format!("/internal/v1/meetings/{mid}/brief"),
+            Some(INTEL),
+            json!({ "status": "ready", "alg": "A256GCM", "iv": b64(&[9u8; 12]), "ciphertext": b64(b"x"),
+                    "wraps": [wrap(&alice.account, "alicebrowser1"), wrap(&bob.account, "bobbrowser001")] }),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    // The one-hour group timer clamps the 90-day retention, stored and reported.
+    let (st, v) = s
+        .get(&format!("/v1/meetings/{mid}"), Some(&bob.token))
+        .await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    let expires = v["expires_at"].as_i64().unwrap();
+    assert!(expires <= now + 3600 + 5 && expires >= now + 3590, "{v}");
+    // Bob leaves the group: the brief is gone for him, still there for alice.
+    let b = bob.address.clone();
+    state
+        .store
+        .group_tx(move |tx| -> Result<(), crate::groups::GErr> {
+            tx.execute(
+                "UPDATE group_members SET state = 'removed' WHERE group_id = 'grp_brief1' AND member = ?1",
+                rusqlite::params![b],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let (st, _) = s
+        .get(&format!("/v1/meetings/{mid}"), Some(&bob.token))
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let (_, v) = s.get("/v1/meetings", Some(&bob.token)).await;
+    assert_eq!(v["meetings"].as_array().unwrap().len(), 0);
+    let (st, _) = s
+        .get(&format!("/v1/meetings/{mid}"), Some(&alice.token))
+        .await;
+    assert_eq!(st, StatusCode::OK);
+    // A shorter timer applies to the existing brief too; past it, the purge removes it.
+    state
+        .store
+        .group_tx(|tx| -> Result<(), crate::groups::GErr> {
+            tx.execute(
+                "UPDATE groups SET ephemeral_secs = 300 WHERE id = 'grp_brief1'",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let (_, v) = s
+        .get(&format!("/v1/meetings/{mid}"), Some(&alice.token))
+        .await;
+    assert!(v["expires_at"].as_i64().unwrap() <= now + 305, "{v}");
+    let (gone, _) = crate::meetings::purge(&state.store, now_unix() + 400)
+        .await
+        .unwrap();
+    assert_eq!(gone, 1);
+    let (st, _) = s
+        .get(&format!("/v1/meetings/{mid}"), Some(&alice.token))
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
 }

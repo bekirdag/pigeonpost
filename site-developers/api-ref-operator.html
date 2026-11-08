@@ -66,7 +66,7 @@
 <h1>operator</h1>
 <nav class="tagnav"><a href="/api-reference">All</a><a href="/api-ref-calendar">calendar</a><a href="/api-ref-meta">meta</a><a href="/api-ref-meetings">meetings</a><a href="/api-ref-accounts">accounts</a><a href="/api-ref-identities">identities</a><a href="/api-ref-messaging">messaging</a><a href="/api-ref-attachments">attachments</a><a href="/api-ref-threads">threads</a><a href="/api-ref-trust">trust</a><a href="/api-ref-calls">calls</a><a href="/api-ref-profile">profile</a><a href="/api-ref-phone">phone</a><a href="/api-ref-contacts">contacts</a><a href="/api-ref-events">events</a><a href="/api-ref-handles">handles</a><a href="/api-ref-purchases">purchases</a><a href="/api-ref-devices">devices</a><a href="/api-ref-mcp">mcp</a><a href="/api-ref-operator" class="on">operator</a><a href="/api-ref-groups">groups</a><a href="/api-ref-streams">streams</a><a href="/api-ref-shell">shell</a><a href="/api-ref-mls">mls</a><a href="/api-ref-organizations">organizations</a><a href="/api-ref-device-login">device-login</a></nav>
 <p>Operator-only routes authenticated by shared secrets.</p>
-<div class="tw"><table><thead><tr><th>Method</th><th>Path</th><th>Does</th></tr></thead><tbody><tr><td><a href="#metrics"><span class="method">GET</span></a></td><td><code>/metrics</code></td><td>Prometheus metrics for attachment storage</td></tr><tr><td><a href="#grantNamespace"><span class="method">PUT</span></a></td><td><code>/v1/namespaces</code></td><td>Bind a purchased namespace to an account</td></tr></tbody></table></div>
+<div class="tw"><table><thead><tr><th>Method</th><th>Path</th><th>Does</th></tr></thead><tbody><tr><td><a href="#metrics"><span class="method">GET</span></a></td><td><code>/metrics</code></td><td>Prometheus metrics for attachment storage</td></tr></tbody></table></div>
 <p>Base URL <code>https://postbox.pigeonpost.dev</code>. Overview: <a href="/api">HTTP API</a>.</p>
 <section class="op">
 <h2 id="metrics"><span class="method">GET</span> <code class="path">/metrics</code><a class="ah" href="#metrics">#</a></h2>
@@ -81,32 +81,6 @@
 <h3>Example</h3>
 <pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/metrics&quot; \
   -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre>
-</section>
-<section class="op">
-<h2 id="grantNamespace"><span class="method">PUT</span> <code class="path">/v1/namespaces</code><a class="ah" href="#grantNamespace">#</a></h2>
-<p class="op-sum">Bind a purchased namespace to an account</p>
-<p class="op-facts">Credentials: <code>namespaceGrant</code></p>
-<p>Called by the billing/entitlement service only. Returns 404 <code>not_found</code> when no grant secret is configured. Also ensures the namespace has a first mailbox (<code>/&lt;namespace&gt;/main</code>); <code>mailbox</code> is null if that best-effort step failed.</p>
-<h3>Request body</h3><p><code>application/json</code></p>
-<pre class="lang-json"><code>{
-  &quot;namespace&quot;: &quot;string&quot;,
-  &quot;account_id&quot;: &quot;string&quot;,
-  &quot;expires_at&quot;: 0
-}</code></pre>
-<h3>Responses</h3>
-<p class="resp"><code>200</code> Granted.</p>
-<pre class="lang-json"><code>{
-  &quot;namespace&quot;: &quot;string&quot;,
-  &quot;account_id&quot;: &quot;string&quot;,
-  &quot;mailbox&quot;: &quot;string&quot;
-}</code></pre>
-<h3>Errors</h3>
-<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td><code>invalid_namespace</code></td></tr><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>404</code></td><td><code>not_found</code></td></tr><tr><td><code>409</code></td><td><code>namespace_taken</code></td></tr><tr><td><code>500</code></td><td><code>store_error</code> (or another server-side code such as <code>vault_error</code>).</td></tr></tbody></table></div>
-<h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X PUT &quot;https://postbox.pigeonpost.dev/v1/namespaces&quot; \
-  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
-  -H &quot;Content-Type: application/json&quot; \
-  -d &#x27;{&quot;namespace&quot;: &quot;string&quot;, &quot;account_id&quot;: &quot;string&quot;, &quot;expires_at&quot;: 0}&#x27;</code></pre>
 </section>
     <footer class="pagefoot">
       <nav>
