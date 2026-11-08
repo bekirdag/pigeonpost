@@ -166,3 +166,7 @@
 .gb-room-text .gi-name { overflow-wrap: anywhere; }
 .gb-room-text .note { margin: 2px 0 0; overflow-wrap: anywhere; }
 #gc-browse { margin-top: 4px; align-self: flex-start; }
+
+/* Group Block and Unban (SDS §15.2, §4.4). */
+.blocked-msg .bubble { opacity: .8; }
+.gi-banned .pill { background: var(--hover); }

@@ -5155,6 +5155,8 @@
     const name = target.name || displayName(target.peer);
     $("peer-block-title").textContent = "Block " + name + "?";
     $("peer-block-report").checked = Boolean(target.report);
+    // A group message is end-to-end encrypted: there is no postbox message to report.
+    $("peer-block-report").closest("label").hidden = target.origin === "group";
     const wide = wildcardFor(target.peer);
     $("peer-block-wide-row").hidden = !wide;
     $("peer-block-wide").checked = false;
@@ -5170,7 +5172,7 @@
     const target = blockTarget;
     if (!target || $("peer-block-confirm").disabled) return;
     const wide = !$("peer-block-wide-row").hidden && $("peer-block-wide").checked;
-    const report = $("peer-block-report").checked;
+    const report = $("peer-block-report").checked && target.origin !== "group";
     const peer = wide ? wildcardFor(target.peer) : target.peer;
     if (target.origin === "info" && !wide) {
       await updateSender(peer, "block");
@@ -6933,6 +6935,10 @@
     filter: () => state.filter || "",
     onPhone: () => onPhone(),
     displayName, paintAvatar, toast, listTime, clockTime, actionFlags,
+    // SDS §15.2: whether any of these keys (a mailbox's address or handle) is blocked, and the
+    // same Block sheet the conversation uses.
+    blocked: (keys) => keys.some((key) => typeof key === "string" && contactFor(key)?.admission === "block"),
+    askBlock: (peer, name) => askBlock({ peer, name, origin: "group" }),
     closeConversation: () => {
       if (!state.openPeer) return;
       stashDraft();
