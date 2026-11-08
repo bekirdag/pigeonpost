@@ -52,6 +52,24 @@
     }
   }
 
+  function confirmOtherStore(pending, message) {
+    $("#pp-pay-title").textContent = "You already have a store plan";
+    say(message);
+    const box = $("#pp-pay-form");
+    const buy = document.createElement("button");
+    buy.type = "button";
+    buy.className = "btn btn-primary";
+    buy.id = "pp-pay-confirm";
+    buy.textContent = "Buy the web plan as well";
+    buy.addEventListener("click", () => {
+      sessionStorage.setItem("pp_cloud_checkout", JSON.stringify({ ...pending, confirm_other_store: true }));
+      box.replaceChildren();
+      say("Preparing the iyzico payment form…");
+      run();
+    });
+    box.replaceChildren(buy);
+  }
+
   // EU/UK consumers buy in the apps, where Apple or Google is the seller and handles VAT; businesses
   // buy here with a verified VAT number (docs/billing-tax.md).
   const APPS = [["App Store (iPhone, iPad, Mac)", "https://apps.apple.com/app/pigeonpost-inbox/id6803521541"],
@@ -89,12 +107,15 @@
         return;
       }
       const r = await post("/v1/cloud/checkout", { intent_id: pending.intent_id, plan_code: pending.plan_code,
-        billing_profile_id: pending.billing_profile_id, locale: pending.locale });
+        billing_profile_id: pending.billing_profile_id, locale: pending.locale, ...(pending.confirm_other_store ? { confirm_other_store: true } : {}) });
       const names = /cloud-(\d+)names/.exec(r.plan_code)?.[1];
       say(`Pigeonpost Cloud, ${names} name${names === "1" ? "" : "s"}: ${money(Number(r.amount), r.currency)} per year, renewing yearly until you cancel.`);
       mount(r.checkout_form_content);
     } catch (e) {
       if (e.status === 401) return back("Your session expired. Sign in and try again.");
+      // Names already paid for in the App Store or Google Play: a web plan would be a second charge.
+      // Say so, and start the form only when the person chooses to buy this one as well.
+      if (e.status === 409 && e.code === "store_subscription_active") return confirmOtherStore(pending, e.message);
       // A refused intent is finished; the account page starts a fresh one after the fix.
       if ([400, 403, 409, 429].includes(e.status)) sessionStorage.removeItem("pp_cloud_checkout");
       say("The payment form could not be opened: " + e.message);

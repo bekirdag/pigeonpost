@@ -61,7 +61,7 @@ function fixture() {
     }
     // ---- postbox public
     if (p === "/v1/me/handles") return auth === MEMBER ? json(res, 200, { account: ACCOUNT, handles: [] }) : json(res, 401, {});
-    if (p === "/v1/me/entitlements") return json(res, 200, { account: ACCOUNT, entitlements: [], web_plan: s.webPlan });
+    if (p === "/v1/me/entitlements") return json(res, 200, { account: ACCOUNT, entitlements: s.entitlements || [], web_plan: s.webPlan });
     if (p === "/v1/claims/plan") return json(res, 200, { namespace: `/${body.namespace}`, capacity: 3, used: 1 });
     if (p === "/v1/capabilities") return auth === MEMBER ? json(res, 200, { api_version: "1.2", features: s.features }) : json(res, 401, {});
     if (p === "/v1/nest-purchases/intents" && req.method === "POST") {
@@ -468,6 +468,8 @@ test("enterprise checkout drafts the org, starts with pp-org and activates on re
   assert.equal(done.body.status, "active");
   const activation = s.orgCalls.find((c) => c.op === "activate");
   assert.equal(activation.body.entitlement.seats, 30);
+  // The pooled storage travels with the seats (catalog storage_gb, in bytes).
+  assert.equal(activation.body.entitlement.storage_bytes, s.catalog.plans["ent-30-yearly-usd"].storage_gb * 1024 ** 3);
   assert.equal(activation.body.entitlement.reference, r.body.subscription_id);
   assert.equal(activation.body.operation_id, "activate-org_draftfixture01");
 });
@@ -764,6 +766,41 @@ test("Nest prices are not public; a signed-in account with Nests sees them", asy
   assert.ok(!nests.some((p) => p.code.includes("pro")));
 });
 
+test("a fixed USD edition keeps selling when saas_be reports pricing year 2027", async (t) => {
+  const { s, call } = await setup(t);
+  s.offerOverride = { pricing_year: 2027 };
+  const r = await checkout(call, intent(901), "cloud-2names-yearly-usd");
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.amount, s.edition("cloud-2names-yearly-usd").amount);
+  // A 2027 offer whose plan id or amount is not a listed edition still fails closed.
+  s.offerOverride = { pricing_year: 2027, plan_id: uuid(998) };
+  assert.equal((await checkout(call, intent(902), "cloud-2names-yearly-usd")).status, 503);
+  s.offerOverride = { pricing_year: 2027, amount: "17.00" };
+  assert.equal((await checkout(call, intent(903), "cloud-2names-yearly-usd")).status, 503);
+});
+
+test("a web Cloud checkout warns about an App Store or Google Play plan and goes on only when confirmed", async (t) => {
+  const { s, call } = await setup(t);
+  const starts = () => s.calls.filter((c) => c.path === "/v1/integrations/iyzico/subscriptions" && c.method === "POST").length;
+  s.entitlements = [{ source: "apple", active: true, plan_code: "handles.3.yearly", status: "active" }];
+  const warned = await checkout(call, intent(911), "cloud-3names-yearly-usd");
+  assert.equal(warned.status, 409);
+  assert.equal(warned.body.code, "store_subscription_active");
+  assert.equal(warned.body.store, "app_store");
+  assert.match(warned.body.error, /App Store/);
+  assert.equal(starts(), 0, "nothing is started before the person confirms");
+  s.entitlements = [{ source: "google", active: true, plan_code: "pigeonpost.handle.02", status: "active" }];
+  const google = await checkout(call, intent(912), "cloud-3names-yearly-usd");
+  assert.equal(google.body.store, "google_play");
+  assert.equal((await checkout(call, intent(913), "cloud-3names-yearly-usd", { confirm_other_store: "yes" })).status, 400);
+  const confirmed = await checkout(call, intent(914), "cloud-3names-yearly-usd", { confirm_other_store: true });
+  assert.equal(confirmed.status, 200, JSON.stringify(confirmed.body));
+  assert.equal(starts(), 1);
+  // A lapsed store plan, or a web/grant entitlement, is no reason to warn.
+  s.entitlements = [{ source: "apple", active: false, status: "expired" }, { source: "grant", active: true, status: "active" }];
+  assert.equal((await checkout(call, intent(915), "cloud-3names-yearly-usd")).status, 200);
+});
+
 // ---- EU/UK VAT on web sales (docs/billing-tax.md) -----------------------------------------------
 
 const starts = (s) => s.calls.filter((c) => c.path === "/v1/integrations/iyzico/subscriptions" && c.method === "POST").length;
@@ -900,4 +937,14 @@ test("enterprise checkout applies the same rule before drafting an org", async (
   const ok = await call("POST", "/ent/checkout", { intent_id: intent(771), plan_code: "ent-5-yearly-usd", billing_profile_id: PROFILE,
     org: { name: "Acme", namespace: "acme" } });
   assert.equal(ok.status, 200, JSON.stringify(ok.body));
+});
+
+test("Nest checkouts follow the EU/UK VAT rule and take no store-plan confirmation", async (t) => {
+  const { s, call } = await setup(t);
+  s.profiles = [profile("Germany")];
+  const refused = await nestCheckout(call, intent(951));
+  assert.deepEqual([refused.status, refused.body.code], [403, "eu_uk_consumer_web_unavailable"]);
+  assert.equal(starts(s), 0, "nothing is started for a refused buyer");
+  s.profiles = [profile("United States")];
+  assert.equal((await nestCheckout(call, intent(952), undefined, { confirm_other_store: true })).status, 400);
 });

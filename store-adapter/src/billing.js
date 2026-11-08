@@ -26,6 +26,12 @@ const now = () => Math.floor(Date.now() / 1000);
 const catalog_ = () => catalog_data;
 const fingerprint = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const environment = () => (config.iyzicoMode === "live" ? "live" : "test");
+const GIB = 1024 ** 3;
+/// An enterprise plan's pooled storage: the catalog's `storage_gb`, else the postbox's default of
+/// 5 GB per seat (store/orgs.rs STORAGE_PER_SEAT).
+export const storageBytes = (limits, seats) =>
+  Number.isInteger(limits?.storage_gb) && limits.storage_gb > 0 ? limits.storage_gb * GIB
+    : Number.isInteger(seats) && seats > 0 ? seats * 5 * GIB : null;
 const seconds = (value) => (value ? Math.floor(Date.parse(value) / 1000) : null);
 
 function strict(body, allowed, required = allowed) {
@@ -90,11 +96,15 @@ export function createBilling(state) {
   async function edition(token, entry) {
     const offer = saas.validOffer(await saas.offer(token, entry.package_slug, entry.currency),
       { currency: entry.currency, interval: entry.interval });
-    const listed = entry.editions[String(offer.pricing_year)];
-    if (!listed?.plan_id || listed.plan_id !== offer.plan_id || listed.amount !== String(offer.amount)) {
+    // The edition is found by its saas_be plan id, not by the offer's pricing year: USD and EUR
+    // editions are fixed (no 2027 edition), so in 2027 saas_be keeps offering the 2026 one, and
+    // whatever year it reports, the plan id and the amount must match a listed edition exactly.
+    const found = Object.entries(entry.editions).find(([, e]) => e?.plan_id && e.plan_id === offer.plan_id);
+    const [year, listed] = found || [];
+    if (!listed || listed.amount !== String(offer.amount)) {
       fail(503, "Plan pricing has changed and is being reviewed. Try again later.", "offer_mismatch");
     }
-    return { plan_id: offer.plan_id, package_id: offer.package_id, amount: listed.amount, year: offer.pricing_year };
+    return { plan_id: offer.plan_id, package_id: offer.package_id, amount: listed.amount, year: Number(year) };
   }
 
   async function start(token, intent, entry, body) {
@@ -185,7 +195,7 @@ export function createBilling(state) {
     } else {
       const seats = limits.seats ?? ref.seats;
       const entitlement = { provider: "iyzico", environment: environment(), reference: id, plan_code: body.plan_code,
-        plan_version: body.plan_version, seats, status: body.status, period_end: body.period_end,
+        plan_version: body.plan_version, seats, storage_bytes: storageBytes(limits, seats), status: body.status, period_end: body.period_end,
         paid_through: body.paid_through, reconciliation_version: version };
       result = ref.org_active
         ? await postbox.putOrgEntitlement(ref.draft_id, entitlement)
@@ -238,7 +248,8 @@ export function createBilling(state) {
   };
 
   async function individualCheckout(family, token, body, { ipCountry = null } = {}) {
-    strict(body, ["intent_id", "plan_code", "billing_profile_id", "locale"], ["intent_id", "plan_code", "billing_profile_id"]);
+    strict(body, ["intent_id", "plan_code", "billing_profile_id", "locale", ...(family === "cloud" ? ["confirm_other_store"] : [])], ["intent_id", "plan_code", "billing_profile_id"]);
+    if (body.confirm_other_store !== undefined && typeof body.confirm_other_store !== "boolean") fail(400, "confirm_other_store must be true or false.", "invalid_request");
     const id = intentId(body.intent_id);
     const entry = plan(body.plan_code);
     if (!entry || entry.family !== family) fail(400, `Choose a ${FAMILY[family].label} plan.`, "invalid_plan");
@@ -257,6 +268,16 @@ export function createBilling(state) {
           : "You already have a Nest package. Change its plan instead.", "already_subscribed");
       }
       if (family === "nest") await postbox.memberPost(token, "/v1/nest-purchases/intents", { package: entry.package, rail: "web" });
+      // A plan bought in the App Store or Google Play adds to this one (SDS §8.8): say so before a
+      // second store charges for names the person may already pay for, and go on only when they
+      // confirm.
+      if (family === "cloud" && body.confirm_other_store !== true) {
+        const store = await otherStore(token);
+        if (store) {
+          fail(409, `You already pay for Pigeonpost names through ${store.name}. A web plan is charged separately and adds to it; manage the ${store.name} plan there. Confirm to buy this one as well.`,
+            "store_subscription_active", { store: store.id });
+        }
+      }
     }
     const decided = known?.tax ? null : (await taxDecision(token, body.billing_profile_id, ipCountry)).decision;
     const intent = await reserve({
@@ -267,6 +288,14 @@ export function createBilling(state) {
       return_url: `${config.allowedOrigins[0]}/account?${FAMILY[family].returnParam}=${id}`,
     }, { ...request, account });
     return start(token, intent, entry, request);
+  }
+
+  /// A live App Store or Google Play entitlement on the caller's account, if any.
+  async function otherStore(token) {
+    const view_ = await postbox.memberGet(token, "/v1/me/entitlements");
+    const live = (view_?.entitlements || []).find((e) => e && e.active === true && (e.source === "apple" || e.source === "google"));
+    if (!live) return null;
+    return live.source === "apple" ? { id: "app_store", name: "the App Store" } : { id: "google_play", name: "Google Play" };
   }
 
   async function individualStatus(family, token, id) {
