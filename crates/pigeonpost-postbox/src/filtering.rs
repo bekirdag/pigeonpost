@@ -332,6 +332,17 @@ pub(crate) async fn mailbox_for(
     action: Action,
 ) -> Result<(Principal, store::StoredIdentity), ApiError> {
     let principal = principal_for_token(state, bearer(headers)).await?;
+    mailbox_for_principal(state, principal, identity, action).await
+}
+
+/// [`mailbox_for`] for a caller a transport already authenticated (the MCP connector): the same
+/// selection, delegation lookup and policy decision, without reading a bearer header.
+pub(crate) async fn mailbox_for_principal(
+    state: &AppState,
+    principal: Principal,
+    identity: Option<&str>,
+    action: Action,
+) -> Result<(Principal, store::StoredIdentity), ApiError> {
     // The selection logic stays the existing one; the decision comes from the policy over the
     // stored binding, never from the request.
     let account_view = match &principal {
