@@ -142,6 +142,89 @@ class AccountDeletionTests(unittest.TestCase):
         self.assertEqual(self.db.execute("SELECT count(*) FROM messages").fetchone()[0], 2)
         self.assertTrue((self.root / "bb" / "bb" / self.private).exists())
 
+    # ---- calendar (audit 2026-11-03 P2-17) ----------------------------------------------------
+
+    def _calendar_tables(self):
+        for table, cols in {
+            "events": "id TEXT, status TEXT, span_to INTEGER, created_by_account TEXT, organizer TEXT, calendar_id TEXT",
+            "event_attendees": "id TEXT, event_id TEXT, address TEXT",
+            "event_occurrences": "id TEXT, event_id TEXT",
+            "event_overrides": "occurrence_id TEXT",
+            "event_occurrence_attendees": "occurrence_id TEXT, attendee_id TEXT",
+            "event_join_tickets": "occurrence_id TEXT, attendee_id TEXT",
+            "event_reminders": "event_id TEXT, owner_identity TEXT, attendee_id TEXT",
+            "calendar_delivery_outbox": "id TEXT, event_id TEXT, workflow TEXT, state TEXT, account_id TEXT",
+            "calendars": "id TEXT, owner_identity TEXT",
+        }.items():
+            self.db.execute("CREATE TABLE " + table + " (" + cols + ")")
+        self.db.execute("INSERT INTO events VALUES ('ev1','confirmed',9999999999,'a','/k/a','cal1')")
+        self.db.execute("INSERT INTO event_attendees VALUES ('att1','ev1','guest@example.test')")
+        # Someone else's event is not the erased person's to cancel.
+        self.db.execute("INSERT INTO events VALUES ('ev2','confirmed',9999999999,'b','/k/b','cal2')")
+        self.db.commit()
+
+    def test_upcoming_organized_events_block_erasure_until_their_cancellations_leave(self):
+        self._calendar_tables()
+        with self.assertRaises(ValueError) as caught:
+            ops.erase(self.db, self.request, self.root, self.evidence)
+        self.assertIn("--cancel-calendar", str(caught.exception))
+        self.assertEqual(self.db.execute("SELECT count(*) FROM accounts").fetchone()[0], 2)
+        # Cancelled through the postbox; the guest's notice is still in the outbox.
+        self.db.execute("UPDATE events SET status='cancelled' WHERE id='ev1'")
+        self.db.execute("INSERT INTO calendar_delivery_outbox VALUES ('d1','ev1','cancel','queued','a')")
+        self.db.commit()
+        with self.assertRaises(ValueError) as caught:
+            ops.erase(self.db, self.request, self.root, self.evidence)
+        self.assertIn("still waiting", str(caught.exception))
+        # Handed to the provider: erasure proceeds and removes the event with its guest.
+        self.db.execute("UPDATE calendar_delivery_outbox SET state='accepted'")
+        self.db.commit()
+        ops.erase(self.db, self.request, self.root, self.evidence)
+        self.assertEqual([r[0] for r in self.db.execute("SELECT id FROM events")], ["ev2"])
+        self.assertEqual(self.db.execute("SELECT count(*) FROM event_attendees").fetchone()[0], 0)
+
+    def test_past_events_and_an_explicit_waiver_do_not_block(self):
+        self._calendar_tables()
+        self.evidence["calendar_cancellations_waived"] = True
+        ops.erase(self.db, self.request, self.root, self.evidence)
+        self.assertEqual([r[0] for r in self.db.execute("SELECT id FROM events")], ["ev2"])
+
+    def test_events_that_already_ended_need_no_cancellation(self):
+        self._calendar_tables()
+        self.db.execute("UPDATE events SET span_to=5 WHERE id='ev1'")
+        self.db.commit()
+        ops.erase(self.db, self.request, self.root, self.evidence)
+        self.assertEqual([r[0] for r in self.db.execute("SELECT id FROM events")], ["ev2"])
+
+    def test_cancel_calendar_posts_to_the_loopback_internal_api_with_the_ops_token(self):
+        token = self.root / "ops-token"
+        token.write_text("svc_ops_example\n")
+        seen = []
+
+        class Reply:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self):
+                return b'{"events_cancelled": 2, "pending_notices": 1}'
+
+        def opener(req, timeout):
+            seen.append(req)
+            return Reply()
+
+        result = ops.cancel_calendar(self.request, "http://127.0.0.1:8991", token, opener=opener)
+        self.assertEqual(result, {"events_cancelled": 2, "pending_notices": 1})
+        self.assertTrue(seen[0].full_url.endswith("/internal/v1/account-deletions/" + self.request + "/cancel-calendar"))
+        self.assertEqual(seen[0].get_method(), "POST")
+        self.assertEqual(seen[0].get_header("Authorization"), "Bearer svc_ops_example")
+        for url, request in (("https://postbox.example", self.request), ("http://127.0.0.1:8991", "del_x")):
+            with self.assertRaises(ValueError):
+                ops.cancel_calendar(request, url, token, opener=opener)
+        self.assertEqual(len(seen), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

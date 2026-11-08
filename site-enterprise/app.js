@@ -7,6 +7,8 @@
   const R = PPE.rules;
   const el = PPE.el;
   const cfg = window.PPE_CONFIG || {};
+  // Text built from translated pieces (core.js PPE.t); plain English if a cached core.js lacks it.
+  const T = (text, vars) => (PPE.t ? PPE.t(text, vars) : String(text).replace(/\{(\d+)\}/g, (m, n) => (vars && vars[n] !== undefined ? String(vars[n]) : m)));
 
   const ADMIN = ["owner", "admin", "people_admin", "agent_admin", "billing_admin"];
   const ROLE_NAMES = { owner: "Owner", admin: "Admin", people_admin: "People admin", agent_admin: "Agent admin", billing_admin: "Billing admin" };
@@ -89,7 +91,7 @@
       pick.addEventListener("change", () => { PPE.store.set("ppe_org", pick.value); load(pick.value).then(() => go(app.page, true)); });
       nav.append(pick);
     }
-    nav.append(el("div", { class: "org-name" }, app.org.name), el("div", { class: "org-ns" }, `/${app.org.namespace}`));
+    nav.append(el("div", { class: "org-name", translate: "no" }, app.org.name), el("div", { class: "org-ns", translate: "no" }, `/${app.org.namespace}`));
     for (const p of PAGES) {
       if (!app.can(p.key)) continue;
       const a = el("a", { href: `/app/${p.key}`, "aria-current": p.key === app.page ? "page" : null }, p.title);
@@ -725,7 +727,7 @@
       const per = INTERVAL[sub.interval] || "yearly";
       const prices = (cfg.prices && cfg.prices[cur] && cfg.prices[cur][per]) || {};
       const pick = el("select", { "aria-label": "Seats" }, (sub.options || []).map((o) => el("option", { value: o.plan_code, selected: o.current, disabled: !o.fits && !o.current },
-        `${o.seats} seats${prices[o.seats] ? ` — ${PPE.money(prices[o.seats], cur)} ${per === "yearly" ? "per year" : "per month"}` : ""}${o.current ? " (current)" : !o.fits ? " (too small)" : ""}`)));
+        `${T("{1} seats", { 1: o.seats })}${prices[o.seats] ? ` — ${PPE.money(prices[o.seats], cur)} ${T(per === "yearly" ? "per year" : "per month")}` : ""}${o.current ? ` ${T("(current)")}` : !o.fits ? ` ${T("(too small)")}` : ""}`)));
       const explain = el("p", { class: "note", role: "status" });
       const save = el("button", { class: "btn btn-primary", type: "button", disabled: true }, "Change plan");
       const update = () => {
