@@ -1,0 +1,19 @@
+meta {
+  name: This account's Nest allowance, Nests and paid setups (feature `nests`)
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/v1/nests
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  The allowance comes only from verified purchases (App Store, Google Play, web) or grants: one funding package per account; any other live package is listed under `duplicates` and never adds slots. `setups` are paid purchases whose Nest is not provisioned yet.
+}

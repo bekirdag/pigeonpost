@@ -1,0 +1,21 @@
+meta {
+  name: Create a Nest in a free slot of the account's package (a person only)
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/v1/nests
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "label": "string"
+  }
+}

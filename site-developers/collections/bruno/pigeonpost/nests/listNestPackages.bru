@@ -1,0 +1,19 @@
+meta {
+  name: The Nest package catalog and this account's store binding tokens (feature `nests`)
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/v1/nest-packages
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  Packages, which purchase rails this server accepts, and the opaque values a native purchase must carry: StoreKit `appAccountToken` and Google Play `obfuscatedAccountId`. Prices come from the store (native) or the billing bridge (web), never from here. See docs/nests/phase-b.md.
+}
