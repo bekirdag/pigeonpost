@@ -57,7 +57,7 @@ public sealed partial class MainWindow
     // Suggestions under the address box in New conversation, only while composing from an org inbox.
     private ListView? OrganizationSuggestions(TextBox peer, NewConversationTarget target)
     {
-        if (currentOrganization is not { } current || !ReferenceEquals(current.Target, target) || !target.IsCurrent) return null;
+        if (currentOrganization is not { } current || current.Target.Mailbox != target.Mailbox || !current.Target.IsCurrent || !target.IsCurrent) return null;
         var org = current.Org;
         var list = new ListView { MaxHeight = 220, SelectionMode = ListViewSelectionMode.None, IsItemClickEnabled = true, Visibility = Visibility.Collapsed };
         AutomationProperties.SetName(list, $"{org.Name} addresses");
