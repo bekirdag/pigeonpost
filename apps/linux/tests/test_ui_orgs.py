@@ -56,6 +56,9 @@ class OrgAPI(FakeAPI):
         if path == "/v1/orgs":
             self.calls.append((method, path, identity, data))
             return copy.deepcopy(catalog())
+        if path == "/v1/orgs/org_1/directory":
+            self.calls.append((method, path, identity, kwargs.get("query")))
+            return {"entries": [{"handle": "/acme/jane", "address": "/k/" + "j" * 26, "kind": "member", "name": "Jane Doe"}]}
         if path.startswith("/v1/device-pairings"):
             self.calls.append((method, path, identity, data))
             if path.endswith("/resolve"):
@@ -86,6 +89,14 @@ class OrgAPI(FakeAPI):
             return {"group": {"id": "grp_new", "name": body["name"], "org_id": body["org_id"], "created_by": identity,
                               "my": {"role": "owner", "state": "keying"}}}
         return {}
+
+
+def walk_all(widget):
+    yield widget
+    child = widget.get_first_child()
+    while child:
+        yield from walk_all(child)
+        child = child.get_next_sibling()
 
 
 class OrgWindowTests(unittest.TestCase):
@@ -147,6 +158,49 @@ class OrgWindowTests(unittest.TestCase):
         self.assertIsNotNone(find_button(w.orgs_content, "Open"))
         self.assertIsNotNone(find_button(w.orgs_content, "Join…"))
         self.assertIn("Invite only", self.page_texts())
+
+    def test_in_app_enterprise_surfaces(self):
+        """SDS §5.4: the switcher names the org, rooms sit under Company with Browse rooms, the profile
+        says "Acme · Member", and compose suggests org addresses."""
+        from pigeonpost.widgets import SettingsNavigation
+        w = self.window
+        pump(lambda: w.mailbox_model.get_string(1) == "Acme John · Acme", timeout=3)
+        self.assertEqual(w.mailbox_model.get_string(0), "Demo")
+        self.assertEqual(w.identity, "/k/one", "relabelling keeps the selected mailbox")
+        self.assertNotIn("Company · Acme", texts(w.peer_list), "no Company section for a personal inbox")
+
+        w.mailbox_picker.set_selected(1)
+        pump(lambda: w.identity == ORG_MB, timeout=3)
+        w.groups = [{"id": "grp_gen", "name": "General", "org_id": "org_1", "my": {"state": "active", "role": "member"}},
+                    {"id": "grp_fam", "name": "Family", "my": {"state": "active", "role": "member"}}]
+        w.render_peers()
+        shown = texts(w.peer_list)
+        self.assertIn("Company · Acme", shown)
+        self.assertLess(shown.index("Company · Acme"), shown.index("General"))
+        self.assertLess(shown.index("General"), shown.index("Groups"))
+        self.assertLess(shown.index("Groups"), shown.index("Family"))
+        find_button(w.peer_list, "Browse rooms").emit("clicked")
+        pump(timeout=0.2)
+        self.assertEqual(w.page(), "orgs")
+        self.assertEqual(w.org_state["selected"], "org_1")
+
+        navigation = SettingsNavigation(w)
+        w.account_settings(navigation)
+        self.assertIn("Acme · Member", texts(navigation.window))
+        navigation.window.close()
+
+        dialog = w.new_conversation()
+        entry = next(x for x in walk_all(dialog) if x.__class__.__name__ == "Entry")
+        entry.set_text("/ja")
+        pump(lambda: dialog.suggestions.get_first_child() is not None, timeout=3)
+        asked = [c for c in self.api.calls if c[1] == "/v1/orgs/org_1/directory"]
+        self.assertEqual(asked[-1][3], {"q": "ja", "limit": "8"})
+        self.assertIn("/acme/jane · Acme", texts(dialog.suggestions))
+        find_button(dialog.suggestions, "Write to /acme/jane").emit("clicked")
+        self.assertEqual(entry.get_text(), "/acme/jane")
+        pump(timeout=0.4)
+        self.assertIsNone(dialog.suggestions.get_first_child(), "choosing a suggestion does not ask again")
+        dialog.close()
 
     def test_join_asks_server_then_person(self):
         w = self.window

@@ -13,6 +13,12 @@
 //!
 //! Application messages, commits and server notices share `groups.last_seq`, allocated inside the
 //! writing transaction. Clients process items strictly in that order.
+//!
+//! # No room handles
+//!
+//! `#room` display handles (SDS D-12) were dropped on 2026-11-04 and are not built. Groups are
+//! addressed by their opaque `grp_` id only. Databases created before that keep an unused, always
+//! NULL `groups.handle` column; nothing reads or writes it.
 
 use super::{events, Store, StoreError};
 use rusqlite::{Connection, Transaction};
@@ -24,7 +30,6 @@ CREATE TABLE IF NOT EXISTS groups (
     name              TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 80),
     description       TEXT CHECK (description IS NULL OR length(description) <= 500),
     avatar_id         TEXT,
-    handle            TEXT UNIQUE,
     join_policy       TEXT NOT NULL DEFAULT 'private' CHECK (join_policy IN ('public','private')),
     post_policy       TEXT NOT NULL DEFAULT 'everyone' CHECK (post_policy IN ('everyone','admins')),
     visibility        TEXT NOT NULL DEFAULT 'unlisted' CHECK (visibility IN ('listed','unlisted')),

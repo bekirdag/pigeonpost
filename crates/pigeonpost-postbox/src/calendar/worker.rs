@@ -51,11 +51,13 @@ pub(crate) fn queue(
             params![ev.id, recipient_id, occurrence.unwrap_or("*")],
         )?;
     }
+    let account = account.or(ev.created_by_account.as_deref());
+    let initial = churn(c, workflow, recipient_id, account, now)?;
     c.execute(
         "INSERT OR IGNORE INTO calendar_delivery_outbox (id, event_id, occurrence_id, recipient_id,
              workflow, event_revision, recipient_revision, dedupe_key, due_at, state, created_at,
-             account_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'queued', ?10, ?11)",
+             account_id, last_error)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
         params![
             new_id("dlv"),
             ev.id,
@@ -66,11 +68,98 @@ pub(crate) fn queue(
             recipient_revision,
             dedupe,
             due_at as i64,
+            initial,
             now as i64,
-            account.or(ev.created_by_account.as_deref())
+            account,
+            (initial == "suppressed").then_some("churn_limit"),
         ],
     )?;
     Ok(())
+}
+
+/// Rows of `workflows` created in the last day, for `account` or (when `recipient` is given)
+/// for that one recipient.
+fn sent_today(
+    c: &Connection,
+    workflows: &[&str],
+    account: Option<&str>,
+    recipient: Option<&str>,
+    now: u64,
+) -> GResult<i64> {
+    let list = workflows
+        .iter()
+        .map(|w| format!("'{w}'"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let since = now.saturating_sub(86_400) as i64;
+    Ok(match (account, recipient) {
+        (_, Some(r)) => c.query_row(
+            &format!(
+                "SELECT COUNT(*) FROM calendar_delivery_outbox
+                  WHERE recipient_id = ?1 AND workflow IN ({list}) AND created_at > ?2"
+            ),
+            params![r, since],
+            |row| row.get(0),
+        )?,
+        (Some(a), None) => c.query_row(
+            &format!(
+                "SELECT COUNT(*) FROM calendar_delivery_outbox
+                  WHERE account_id = ?1 AND workflow IN ({list}) AND created_at > ?2"
+            ),
+            params![a, since],
+            |row| row.get(0),
+        )?,
+        (None, None) => 0,
+    })
+}
+
+/// The D-31 churn budget for one new contact-address message (SDS §14B.14). Initial
+/// invitations have their own daily cap at the point they are created; everything else is
+/// counted here. Every row created counts, including ones later made obsolete, so an edit loop
+/// cannot refill the budget. Returns the row's initial state, or refuses an update past the
+/// account's budget.
+pub(crate) fn churn(
+    c: &Connection,
+    workflow: &str,
+    recipient_id: &str,
+    account: Option<&str>,
+    now: u64,
+) -> GResult<&'static str> {
+    if !matches!(workflow, "update" | "cancel" | "reminder_external") {
+        return Ok("queued");
+    }
+    if workflow == "update"
+        && sent_today(c, &["update", "reminder_external"], account, None, now)?
+            >= EXTERNAL_CHURN_PER_DAY
+    {
+        return Err(GErr::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            "invite_limit",
+            format!(
+                "at most {EXTERNAL_CHURN_PER_DAY} updates and reminders to contact addresses a day; try again tomorrow"
+            ),
+        ));
+    }
+    let over_account = match workflow {
+        "cancel" => sent_today(c, &["cancel"], account, None, now)? >= EXTERNAL_CANCELS_PER_DAY,
+        "reminder_external" => {
+            sent_today(c, &["update", "reminder_external"], account, None, now)?
+                >= EXTERNAL_CHURN_PER_DAY
+        }
+        _ => false,
+    };
+    let over_recipient = sent_today(
+        c,
+        &["update", "cancel", "reminder_external"],
+        None,
+        Some(recipient_id),
+        now,
+    )? >= EXTERNAL_PER_RECIPIENT_PER_DAY;
+    Ok(if over_account || over_recipient {
+        "suppressed"
+    } else {
+        "queued"
+    })
 }
 
 /// Start the worker loop (server process only).
@@ -801,11 +890,29 @@ fn materialize_reminders(
                 "reminder"
             };
             let dedupe = format!("rem:{rid}:{rev}:{}:{}", occ.id, occ.starts_at);
+            let known: Option<i64> = tx
+                .query_row(
+                    "SELECT 1 FROM calendar_delivery_outbox WHERE dedupe_key = ?1",
+                    params![dedupe],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            if known.is_some() {
+                continue;
+            }
+            // Contact-address reminders count against the organizer's churn budget (D-31).
+            let initial = churn(
+                tx,
+                workflow,
+                &recipient,
+                ev.created_by_account.as_deref(),
+                now as u64,
+            )?;
             tx.execute(
                 "INSERT OR IGNORE INTO calendar_delivery_outbox (id, event_id, occurrence_id, recipient_id,
                      workflow, event_revision, recipient_revision, reminder_id, reminder_revision,
-                     dedupe_key, due_at, state, created_at, account_id)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7, ?8, ?9, ?10, 'queued', ?11, ?12)",
+                     dedupe_key, due_at, state, created_at, account_id, last_error)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7, ?8, ?9, ?10, ?13, ?11, ?12, ?14)",
                 params![
                     new_id("dlv"),
                     ev.id,
@@ -818,7 +925,9 @@ fn materialize_reminders(
                     dedupe,
                     occ.starts_at - lead,
                     now,
-                    ev.created_by_account
+                    ev.created_by_account,
+                    initial,
+                    (initial == "suppressed").then_some("churn_limit"),
                 ],
             )?;
         }

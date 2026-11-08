@@ -7,7 +7,6 @@ use std::time::Duration;
 
 const OPS: &str = "svc_ops_0123456789abcdef0123456789abcdef";
 const CALLS: &str = "svc_calls_0123456789abcdef0123456789abcdef";
-const GRANT: &str = "grant-secret-for-tests";
 
 fn state() -> AppState {
     let mut state = crate::tests::test_state();
@@ -15,7 +14,6 @@ fn state() -> AppState {
         ("POSTBOX_SVC_TOKEN_OPS", OPS),
         ("POSTBOX_SVC_TOKEN_CALLS", CALLS),
     ]));
-    state.namespace_grant_hash = Some(sha256(GRANT.as_bytes()));
     state
 }
 
@@ -370,7 +368,7 @@ async fn service_tokens_are_checked_per_service_and_per_endpoint() {
     assert!(missing.headers().get(header::WWW_AUTHENTICATE).is_some());
     for wrong in [
         "svc_ops_0123456789abcdef0123456789abcdeX",
-        GRANT,
+        "grant-secret-for-tests",
         "pk_live_nope",
     ] {
         let r = client.get(&health).bearer_auth(wrong).send().await.unwrap();
@@ -540,7 +538,7 @@ async fn capabilities_report_flags_and_credential_provenance() {
 async fn api_key_changes_and_namespace_grants_are_audited() {
     let state = state();
     let (token, _, _) = account(&state, "acct_audit").await;
-    let (public, _) = serve(state.clone()).await;
+    let (public, internal) = serve(state.clone()).await;
     let client = reqwest::Client::new();
 
     let created = client
@@ -570,18 +568,28 @@ async fn api_key_changes_and_namespace_grants_are_audited() {
     );
     assert!(!rows[0].details.contains(&new_key));
 
-    // The grant route keeps working with its shared secret, and is recorded.
-    let wrong = client
+    // The public grant route is retired (audit P3-10): with any credential it now falls through to
+    // the unknown-`/v1` stub, like every route this postbox does not have.
+    let retired = client
         .put(format!("{public}/v1/namespaces"))
-        .bearer_auth("not-the-secret")
+        .bearer_auth(OPS)
         .json(&json!({"namespace": "auditco", "account_id": "acct_audit"}))
         .send()
         .await
         .unwrap();
-    assert_eq!(wrong.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(retired.status(), StatusCode::NOT_IMPLEMENTED);
+    // The operator route on the internal listener takes the ops token only, and is recorded.
+    let wrong = client
+        .put(format!("{internal}/internal/v1/namespaces"))
+        .bearer_auth(CALLS)
+        .json(&json!({"namespace": "auditco", "account_id": "acct_audit"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(wrong.status(), StatusCode::FORBIDDEN);
     let granted = client
-        .put(format!("{public}/v1/namespaces"))
-        .bearer_auth(GRANT)
+        .put(format!("{internal}/internal/v1/namespaces"))
+        .bearer_auth(OPS)
         .json(&json!({"namespace": "auditco", "account_id": "acct_audit"}))
         .send()
         .await
@@ -591,7 +599,8 @@ async fn api_key_changes_and_namespace_grants_are_audited() {
     assert_eq!(system.len(), 1);
     assert_eq!(system[0].action, "namespace.grant");
     assert_eq!(system[0].target.as_deref(), Some("namespace:auditco"));
-    assert!(!system[0].details.contains(GRANT));
+    assert!(system[0].details.contains("\"via\":\"ops\""));
+    assert!(!system[0].details.contains(OPS));
 }
 
 /// Every route the routers serve is in `openapi/pigeonpost.v1.yaml`, and the spec documents no
