@@ -174,7 +174,7 @@
     pay.disabled = closed;
     pay.addEventListener("click", () => {
       PPE.store.set("ppe_ent_checkout", JSON.stringify({ intent_id: wiz.intent, plan_code: plan, billing_profile_id: wiz.profileId,
-        org: { name: wiz.name, namespace: wiz.namespace }, locale: (navigator.language || "en").toLowerCase().startsWith("tr") ? "tr" : "en" }));
+        org: { name: wiz.name, namespace: wiz.namespace }, locale: (document.documentElement.lang || "en").startsWith("tr") ? "tr" : "en" }));
       window.location.assign("/checkout");
     });
     show(el("div", {},
