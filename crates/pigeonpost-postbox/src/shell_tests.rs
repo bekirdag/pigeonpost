@@ -271,6 +271,33 @@ impl OrgFixture {
             )
             .await
     }
+    /// The owner's own member id.
+    async fn owner_member(&self) -> String {
+        let (s, v) = self
+            .srv
+            .call(
+                Method::GET,
+                &format!("/v1/orgs/{}/members", self.org),
+                Some(&self.owner.token),
+                None,
+            )
+            .await;
+        assert_eq!(s, 200, "{v}");
+        v["members"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| {
+                m["roles"]
+                    .as_array()
+                    .is_some_and(|r| r.iter().any(|x| x == "owner"))
+            })
+            .expect("owner row")["id"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    }
+
     async fn delegate(&self, member: &str, caps: &[&str]) -> String {
         let (s, d) = self
             .srv
@@ -369,12 +396,20 @@ async fn authorization_matrix() {
     assert_eq!(s, 401, "enabling needs step-up");
     assert_eq!(f.switch(true).await.0, 200);
 
-    // Allowed: the org owner and a live `ssh` delegate.
+    // The org owner holds no shell implicitly (audit 2026-11-03 P2-14)...
+    assert_eq!(
+        code(&open(srv, &f.owner.strong, "/acme/agent1", 1).await),
+        (403, "delegation_required")
+    );
+    // ...but may delegate `ssh` to themselves, like anyone else.
+    let om = f.owner_member().await;
+    f.delegate(&om, &["ssh"]).await;
+    // Allowed: live `ssh` delegates, the owner's own included.
     let owner_session = open(srv, &f.owner.strong, "/acme/agent1", 1).await;
     assert_eq!(owner_session.0, 201, "{}", owner_session.1);
-    assert_eq!(owner_session.1["session"]["via"], "org_owner");
+    assert_eq!(owner_session.1["session"]["via"], "delegation");
     let ev = machine.next("shell.request").await;
-    assert_eq!(ev["via"], "org_owner");
+    assert_eq!(ev["via"], "delegation");
     let dele = open(srv, &delegate.strong, "/acme/agent1", 2).await;
     assert_eq!(dele.0, 201, "{}", dele.1);
     assert_eq!(dele.1["session"]["via"], "delegation");
