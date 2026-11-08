@@ -43,6 +43,48 @@ ATTENDEE_ROWS = ("event_occurrence_attendees", "event_attendee_tokens", "event_g
                  "event_guest_sessions", "event_join_tickets", "event_reminders")
 
 
+def calendar_blockers(conn, addresses, account, now):
+    """What must happen before the person's organized events may be erased (P2-17).
+
+    Upcoming events they organize must be cancelled through the postbox (--cancel-calendar), so
+    their guests are told; and the cancellation notices that queued must have left the outbox.
+    """
+    if not has(conn, "events"):
+        return None
+    marks = ",".join("?" * len(addresses))
+    organizer = " OR organizer IN (" + marks + ")" if addresses else ""
+    upcoming = conn.execute(
+        "SELECT COUNT(*) FROM events WHERE status='confirmed' AND (span_to IS NULL OR span_to > ?) "
+        "AND (created_by_account=?" + organizer + ")", (now, account, *addresses)).fetchone()[0]
+    if upcoming:
+        return "{} upcoming organized event(s) not cancelled; run --cancel-calendar first".format(upcoming)
+    if has(conn, "calendar_delivery_outbox"):
+        pending = conn.execute(
+            "SELECT COUNT(*) FROM calendar_delivery_outbox o JOIN events e ON e.id = o.event_id "
+            "WHERE o.workflow='cancel' AND o.state IN ('queued','leased','uncertain') "
+            "AND (e.created_by_account=?" + organizer.replace("organizer", "e.organizer") + ")",
+            (account, *addresses)).fetchone()[0]
+        if pending:
+            return "{} cancellation notice(s) still waiting to be sent; try again later".format(pending)
+    return None
+
+
+def cancel_calendar(request_id, internal_url, token_file, opener=None):
+    """Ask the running postbox to cancel the person's upcoming organized events (P2-17)."""
+    import urllib.request
+    if not re.fullmatch(r"del_[a-f0-9]{32}", request_id):
+        raise ValueError("Invalid request reference")
+    if not re.fullmatch(r"http://(127\.0\.0\.1|localhost)(:\d+)?", internal_url.rstrip("/")):
+        raise ValueError("The internal API is reached on loopback only")
+    token = Path(token_file).read_text().strip()
+    req = urllib.request.Request(
+        internal_url.rstrip("/") + "/internal/v1/account-deletions/" + request_id + "/cancel-calendar",
+        data=b"{}", method="POST",
+        headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"})
+    with (opener or urllib.request.urlopen)(req, timeout=30) as resp:
+        return json.loads(resp.read().decode())
+
+
 def erase_calendar(conn, addresses, account):
     """Events the person organized go entirely; their attendance elsewhere is removed."""
     if not has(conn, "events"):
@@ -109,6 +151,10 @@ def erase(conn, request_id, blob_root, evidence):
         if has(conn, "org_agents") and conn.execute(
                 "SELECT 1 FROM org_agents WHERE deleted_at IS NULL AND identity IN (" + marks + ")", tuple(addresses)).fetchone():
             raise ValueError("A mailbox is a live organization agent; remove it from the organization first")
+        if not evidence.get("calendar_cancellations_waived", False):
+            blocked = calendar_blockers(conn, addresses, account, now)
+            if blocked:
+                raise ValueError(blocked)
         orphan_candidates = set()
         for address in addresses:
             orphan_candidates.update(v[0] for v in conn.execute("SELECT sha256 FROM attachments WHERE owner=?", (address,)))
@@ -262,13 +308,24 @@ def notify(rows, recipient, sendmail):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--db", required=True)
+    p.add_argument("--db")
+    p.add_argument("--cancel-calendar", metavar="REQUEST_ID",
+                   help="cancel the person's upcoming organized events through the running postbox")
+    p.add_argument("--internal-url", default="http://127.0.0.1:8991")
+    p.add_argument("--token-file", default="/opt/pigeonpost-postbox/ops-service-token")
     p.add_argument("--notify-to")
     p.add_argument("--sendmail", default="/usr/sbin/sendmail")
     p.add_argument("--erase", metavar="REQUEST_ID")
     p.add_argument("--evidence", type=Path)
     p.add_argument("--blobs", type=Path)
     args = p.parse_args()
+    if args.cancel_calendar:
+        if args.erase or args.notify_to:
+            p.error("--cancel-calendar runs on its own")
+        print(json.dumps(cancel_calendar(args.cancel_calendar, args.internal_url, args.token_file)))
+        return
+    if not args.db:
+        p.error("--db is required")
     db = Path(args.db).resolve(strict=True)
     conn = sqlite3.connect(db.as_uri() + ("?mode=rw" if args.erase else "?mode=ro"), uri=True, timeout=10)
     conn.row_factory = sqlite3.Row

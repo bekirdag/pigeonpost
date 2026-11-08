@@ -42,6 +42,26 @@ pub(crate) const MAX_CIPHERTEXT_CHARS: usize = 3 * 1024 * 1024;
 /// Attendees one meeting may record (calls are capped at 30 people).
 pub(crate) const MAX_ATTENDEES: usize = 40;
 
+// ---- the brief's audience and lifetime (SDS §14.6; audit 2026-11-03 P2-2) ------------------------
+
+/// Joined into every member read, aliased `g`: the meeting's group, when it was a group call.
+const GROUP_JOIN: &str = "LEFT JOIN groups g ON g.id = m.group_id";
+
+/// A group meeting's brief is for attendees who are *still* active members of that group: a person
+/// removed, banned or gone since the call loses access, and a deleted group takes its briefs along.
+/// `a` is the caller's `meeting_attendees` row.
+const STILL_IN_GROUP: &str =
+    "(m.group_id IS NULL OR (g.id IS NOT NULL AND g.deleted_at IS NULL AND EXISTS (
+        SELECT 1 FROM group_members gm WHERE gm.group_id = m.group_id AND gm.member = a.address
+           AND gm.state IN ('active','keying'))))";
+
+/// The brief's effective expiry: the meeting's own retention, shortened by the group's
+/// disappearing-message timer counted from when the brief was ready (the earliest applicable
+/// expiry wins; changing the timer later applies to existing briefs too).
+const EFFECTIVE_EXPIRY: &str =
+    "MIN(m.expires_at, CASE WHEN g.ephemeral_secs IS NULL THEN m.expires_at
+        ELSE COALESCE(m.ready_at, m.created_at) + g.ephemeral_secs END)";
+
 fn retention_secs() -> u64 {
     std::env::var("POSTBOX_MEETING_RETENTION_DAYS")
         .ok()
@@ -266,6 +286,16 @@ fn service(
 /// The caller's account, for the member routes: the account's own credential (a person's session
 /// or the account API key), never a mailbox token or a connector acting for the member.
 async fn member(state: &AppState, headers: &HeaderMap) -> GResult<(Principal, String)> {
+    member_for(state, headers, Action::MeetingNotes).await
+}
+
+/// [`member`] for a given action: registering a notes key needs a person at a device
+/// ([`Action::MeetingNotesKey`], audit 2026-11-03 P2-2), not merely the account's credential.
+async fn member_for(
+    state: &AppState,
+    headers: &HeaderMap,
+    action: Action,
+) -> GResult<(Principal, String)> {
     let principal = principal_for_token(state, bearer(headers)).await?;
     let account = principal_account(&principal)
         .map(str::to_string)
@@ -281,12 +311,19 @@ async fn member(state: &AppState, headers: &HeaderMap) -> GResult<(Principal, St
     };
     authorize(
         &Actor::Principal(&principal),
-        Action::MeetingNotes,
+        action,
         &Resource::Account(&account),
         &facts,
     )
     .map_err(|deny| {
         let resp = deny.into_response();
+        if action == Action::MeetingNotesKey {
+            return GErr::new(
+                resp.status(),
+                "human_required",
+                "a notes key is registered from a signed-in device, not with an API key",
+            );
+        }
         GErr::new(
             resp.status(),
             "credential_not_accepted",
@@ -589,13 +626,34 @@ async fn attendee_inner(
                     params![id, account, now],
                 )?,
             };
-            if let Some(k) = req.notes_key {
-                upsert_key(tx, &account, &k, now)?;
-            }
+            // The calls service may only point at a key the member registered themselves from a
+            // signed-in device (audit 2026-11-03 P2-2): it can never add a key, and so can never
+            // widen who opens the brief. An unknown or different key is ignored, not stored.
+            let key = match req.notes_key {
+                Some(k) => {
+                    if bind_key(tx, &account, &k, now)? {
+                        "bound"
+                    } else {
+                        "unregistered"
+                    }
+                }
+                None => "none",
+            };
             crate::store::audit::append_in(tx, &row)?;
-            Ok(json!({ "recorded": true }))
+            Ok(json!({ "recorded": true, "notes_key": key }))
         })
         .await
+}
+
+/// Mark a member-registered key as used by this consent. `false` when the account has no key with
+/// this id and public key (the calls service cannot register keys).
+fn bind_key(tx: &rusqlite::Connection, account: &str, k: &NotesKey, now: u64) -> GResult<bool> {
+    let n = tx.execute(
+        "UPDATE meeting_notes_keys SET last_used_at = ?4
+          WHERE account_id = ?1 AND key_id = ?2 AND public_key = ?3",
+        params![account, k.key_id, k.public_key, now],
+    )?;
+    Ok(n > 0)
 }
 
 fn upsert_key(tx: &rusqlite::Connection, account: &str, k: &NotesKey, now: u64) -> GResult<()> {
@@ -935,6 +993,14 @@ async fn brief_inner(
                         alg = ?3, iv = ?4, ciphertext = ?5 WHERE id = ?1",
                     params![mid, now, req.alg, req.iv, req.ciphertext],
                 )?;
+                // Store the clamped expiry too, so the purge removes it on time.
+                tx.execute(
+                    &format!(
+                        "UPDATE meetings SET expires_at = (SELECT {EFFECTIVE_EXPIRY} FROM meetings m {GROUP_JOIN}
+                           WHERE m.id = ?1) WHERE id = ?1"
+                    ),
+                    params![mid],
+                )?;
                 for w in &req.wraps {
                     tx.execute(
                         "INSERT OR REPLACE INTO meeting_brief_keys (meeting_id, account_id, key_id, epk, iv, wrapped)
@@ -981,14 +1047,14 @@ async fn list_inner(state: &AppState, headers: &HeaderMap) -> GResult<Value> {
     state
         .store
         .group_read(move |c| -> GResult<Value> {
-            let mut stmt = c.prepare(
-                "SELECT m.id, m.kind, m.state, m.created_at, m.ended_at, m.ready_at, m.expires_at,
+            let mut stmt = c.prepare(&format!(
+                "SELECT m.id, m.kind, m.state, m.created_at, m.ended_at, m.ready_at, {EFFECTIVE_EXPIRY},
                         m.host_address, a.address, m.failure
-                   FROM meetings m JOIN meeting_attendees a ON a.meeting_id = m.id
+                   FROM meetings m JOIN meeting_attendees a ON a.meeting_id = m.id {GROUP_JOIN}
                   WHERE a.account_id = ?1 AND a.consented_at IS NOT NULL AND a.withdrawn_at IS NULL AND a.declined_at IS NULL AND a.removed_at IS NULL
-                    AND m.expires_at > ?2
+                    AND {EFFECTIVE_EXPIRY} > ?2 AND {STILL_IN_GROUP}
                   ORDER BY m.created_at DESC LIMIT 200",
-            )?;
+            ))?;
             let rows = stmt
                 .query_map(params![account, now], |r| {
                     Ok(json!({
@@ -1043,11 +1109,11 @@ async fn fetch_inner(state: &AppState, headers: &HeaderMap, id: String) -> GResu
             );
             let row: Option<Row> = c
                 .query_row(
-                    "SELECT m.kind, m.state, m.created_at, m.ended_at, m.ready_at, m.expires_at,
+                    &format!("SELECT m.kind, m.state, m.created_at, m.ended_at, m.ready_at, {EFFECTIVE_EXPIRY},
                             m.alg, m.iv, m.ciphertext, m.failure, m.host_address
-                       FROM meetings m JOIN meeting_attendees a ON a.meeting_id = m.id
+                       FROM meetings m JOIN meeting_attendees a ON a.meeting_id = m.id {GROUP_JOIN}
                       WHERE m.id = ?1 AND a.account_id = ?2 AND a.consented_at IS NOT NULL AND a.withdrawn_at IS NULL AND a.declined_at IS NULL
-                        AND a.removed_at IS NULL AND m.expires_at > ?3",
+                        AND a.removed_at IS NULL AND {EFFECTIVE_EXPIRY} > ?3 AND {STILL_IN_GROUP}"),
                     params![id, account, now],
                     |r| {
                         Ok((
@@ -1066,7 +1132,8 @@ async fn fetch_inner(state: &AppState, headers: &HeaderMap, id: String) -> GResu
                     },
                 )
                 .optional()?;
-            // Absent, expired, removed, declined or never attended all look the same.
+            // Absent, expired, removed, declined, no longer in the group or never attended all look
+            // the same.
             let Some((kind, st, created, ended, ready_at, expires, alg, iv, ct, failure, host)) =
                 row
             else {
@@ -1224,7 +1291,7 @@ async fn put_key_inner(
     key_id: String,
     body: Option<Json<PutKeyReq>>,
 ) -> GResult<Value> {
-    let (principal, account) = member(state, headers).await?;
+    let (principal, account) = member_for(state, headers, Action::MeetingNotesKey).await?;
     if !flag_on(state, &account).await {
         return Err(feature_off());
     }
@@ -1314,7 +1381,11 @@ pub(crate) async fn purge(store: &crate::store::Store, now: u64) -> Result<(usiz
                 params![now, now.saturating_sub(PENDING_SECS)],
             )?;
             let ids: Vec<String> = {
-                let mut stmt = tx.prepare("SELECT id FROM meetings WHERE expires_at <= ?1")?;
+                let mut stmt = tx.prepare(&format!(
+                    "SELECT m.id FROM meetings m {GROUP_JOIN}
+                      WHERE {EFFECTIVE_EXPIRY} <= ?1 OR (m.group_id IS NOT NULL AND m.state IN ('ready','failed')
+                        AND (g.id IS NULL OR g.deleted_at IS NOT NULL))"
+                ))?;
                 let ids = stmt
                     .query_map(params![now], |r| r.get(0))?
                     .collect::<Result<_, _>>()?;

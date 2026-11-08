@@ -339,6 +339,15 @@ locally (§6.2); add `phone.*` and `profile.name` event handling; update the sto
 4. **Hash:** `hashlib.sha256(...).digest()[:16].hex()`.
 5. Phone verification, invites, names, aliases (`$XDG_DATA_HOME/pigeonpost/aliases.json`, mode 600) as above.
 
+**Shipped (2026-11-04, `apps/linux/pigeonpost/contacts_core.py`, `window_contacts.py`).** Settings → Display name,
+Phone number and Find people I know, each behind its flag; Invite by SMS with one confirmation per number; "Edit
+name…" in the conversation menu for a local alias (one map per signed-in account, removed on sign-out); §6.3 names in
+the conversation list and header, with the address under the name. Deviations from the list above: E.164 uses the
+web inbox's rules (`normalizeE164`) instead of the `phonenumbers` package, so no new dependency, and the file picker
+is `Gtk.FileChooserNative` (portal-backed, GTK 4.0+). Linux has no postbox event stream, so `profile.name` changes
+appear on the next side-data refresh instead of by event. Tests: `tests/test_contacts.py` (the §3.1 vectors and the
+web tables), `tests/test_ui_contacts.py`.
+
 ## 10. Account deletion
 
 `deploy/account-deletions.py` removes the account's phone numbers, pending codes, invites it sent, discovery counters and

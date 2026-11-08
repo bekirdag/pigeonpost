@@ -1638,3 +1638,296 @@ async fn key_only_organizers_never_show_their_address_to_guests() {
     let ics = String::from_utf8(m.attachments[0].2.clone()).unwrap();
     assert!(ics.contains("ORGANIZER;CN=\"Pigeonpost\":") && !ics.contains(&org.address));
 }
+
+// ---- D-31 churn and account erasure (audit 2026-11-03 P2-17) -----------------------------------
+
+/// Pretend `n` contact-address messages of `workflow` were already queued today for `account`.
+async fn prefill(srv: &Srv, event_id: &str, account: &str, workflow: &str, n: usize) {
+    let (event_id, account, workflow) = (
+        event_id.to_string(),
+        account.to_string(),
+        workflow.to_string(),
+    );
+    srv.state
+        .store
+        .group_tx(move |tx| -> crate::groups::GResult<()> {
+            let now = now_unix() as i64;
+            for i in 0..n {
+                tx.execute(
+                    "INSERT INTO calendar_delivery_outbox (id, event_id, recipient_id, workflow, event_revision,
+                         recipient_revision, dedupe_key, due_at, state, created_at, account_id)
+                     VALUES (?1, ?2, ?3, ?4, 1, 0, ?1, ?5, 'accepted', ?5, ?6)",
+                    rusqlite::params![format!("dlv_fill_{workflow}_{i}"), event_id, format!("att_other_{i}"), workflow, now, account],
+                )?;
+            }
+            Ok(())
+        })
+        .await
+        .unwrap();
+}
+
+async fn outbox_states(srv: &Srv, event_id: &str, workflow: &str) -> Vec<(String, Option<String>)> {
+    let (event_id, workflow) = (event_id.to_string(), workflow.to_string());
+    srv.state
+        .store
+        .group_read(move |c: &rusqlite::Connection| -> crate::groups::GResult<Vec<(String, Option<String>)>> {
+            let mut stmt = c.prepare(
+                "SELECT state, last_error FROM calendar_delivery_outbox
+                  WHERE event_id = ?1 AND workflow = ?2 AND id NOT LIKE 'dlv_fill_%' ORDER BY created_at",
+            )?;
+            let rows = stmt
+                .query_map(rusqlite::params![event_id, workflow], |r| Ok((r.get(0)?, r.get(1)?)))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(rows)
+        })
+        .await
+        .unwrap()
+}
+
+fn guest_event(contacts: &[&str]) -> Value {
+    let mut body = meeting_body(Value::Array(
+        contacts.iter().map(|c| json!({ "contact": c })).collect(),
+    ));
+    body["meeting"] = json!({ "enabled": false });
+    body["start"] = json!(soon(3 * 24 * 60));
+    body["end"] = json!(soon(3 * 24 * 60 + 30));
+    body
+}
+
+#[tokio::test]
+async fn two_hundred_initial_invitations_a_day_and_no_more() {
+    let srv = serve().await;
+    let org = person(&srv, "orgq").await;
+    let first = create(&srv, &org, guest_event(&["one@example.com"])).await;
+    let id = first["id"].as_str().unwrap().to_string();
+    // 199 already went out today (one real, 198 earlier): one more fits, two do not.
+    prefill(&srv, &id, &org.account, "invite", 198).await;
+    let (s, v) = srv
+        .call(
+            Method::POST,
+            "/v1/calendar/events",
+            &org,
+            Some(guest_event(&["a@example.com", "b@example.com"])),
+        )
+        .await;
+    assert_eq!((s, v["error"].as_str()), (429, Some("invite_limit")), "{v}");
+    let (s, v) = srv
+        .call(
+            Method::POST,
+            "/v1/calendar/events",
+            &org,
+            Some(guest_event(&["a@example.com"])),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let (s, v) = srv
+        .call(
+            Method::POST,
+            "/v1/calendar/events",
+            &org,
+            Some(guest_event(&["c@example.com"])),
+        )
+        .await;
+    assert_eq!((s, v["error"].as_str()), (429, Some("invite_limit")), "{v}");
+}
+
+#[tokio::test]
+async fn updates_cancellations_and_reminders_count_against_the_daily_budget() {
+    let srv = serve().await;
+    let org = person(&srv, "orgc").await;
+    let ev = create(&srv, &org, guest_event(&["churn@example.com"])).await;
+    let id = ev["id"].as_str().unwrap().to_string();
+    // An edit within budget queues an update for the guest.
+    let (s, v) = srv
+        .call(
+            Method::PATCH,
+            &format!("/v1/calendar/events/{id}"),
+            &org,
+            Some(json!({"expected_revision": 1, "title": "Moved once"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(
+        outbox_states(&srv, &id, "update").await,
+        vec![("queued".into(), None)]
+    );
+    // An edit loop cannot refill the budget: past it, an edit that would message a contact guest
+    // is refused, and nothing changes.
+    prefill(
+        &srv,
+        &id,
+        &org.account,
+        "update",
+        super::EXTERNAL_CHURN_PER_DAY as usize,
+    )
+    .await;
+    let (s, v) = srv
+        .call(
+            Method::PATCH,
+            &format!("/v1/calendar/events/{id}"),
+            &org,
+            Some(json!({"expected_revision": 2, "title": "Moved again"})),
+        )
+        .await;
+    assert_eq!((s, v["error"].as_str()), (429, Some("invite_limit")), "{v}");
+    let (_, d) = srv
+        .call(
+            Method::GET,
+            &format!("/v1/calendar/events/{id}"),
+            &org,
+            None,
+        )
+        .await;
+    assert_eq!(d["event"]["title"], "Moved once");
+    // A cancellation always happens; past the cancellation budget its notice is recorded as
+    // suppressed instead of sent.
+    prefill(
+        &srv,
+        &id,
+        &org.account,
+        "cancel",
+        super::EXTERNAL_CANCELS_PER_DAY as usize,
+    )
+    .await;
+    let (s, v) = srv
+        .call(
+            Method::POST,
+            &format!("/v1/calendar/events/{id}/cancel"),
+            &org,
+            Some(json!({"expected_revision": 2})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["status"], "cancelled");
+    assert_eq!(
+        outbox_states(&srv, &id, "cancel").await,
+        vec![("suppressed".into(), Some("churn_limit".into()))]
+    );
+}
+
+#[tokio::test]
+async fn one_guest_gets_at_most_twenty_follow_ups_a_day() {
+    let srv = serve().await;
+    let org = person(&srv, "orgr").await;
+    let ev = create(&srv, &org, guest_event(&["often@example.com"])).await;
+    let id = ev["id"].as_str().unwrap().to_string();
+    let mut rev = 1;
+    for i in 0..(super::EXTERNAL_PER_RECIPIENT_PER_DAY + 1) {
+        let (s, v) = srv
+            .call(
+                Method::PATCH,
+                &format!("/v1/calendar/events/{id}"),
+                &org,
+                Some(json!({"expected_revision": rev, "title": format!("Take {i}")})),
+            )
+            .await;
+        assert_eq!(s, 200, "{v}");
+        rev = v["event"]["revision"].as_i64().unwrap_or(rev + 1);
+    }
+    let states = outbox_states(&srv, &id, "update").await;
+    // Each newer update makes the queued one obsolete; the last one is over the guest's cap.
+    assert_eq!(
+        states.last().unwrap(),
+        &("suppressed".to_string(), Some("churn_limit".to_string()))
+    );
+}
+
+#[tokio::test]
+async fn account_erasure_cancels_organized_meetings_and_tells_every_guest() {
+    let srv = serve().await;
+    let org = person(&srv, "orge").await;
+    let guest = person(&srv, "gste").await;
+    let mut body = guest_event(&["gone@example.com"]);
+    body["attendees"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({ "handle": guest.handle }));
+    let ev = create(&srv, &org, body).await;
+    let id = ev["id"].as_str().unwrap().to_string();
+    // An event the guest organizes is not the erased person's to cancel.
+    let theirs = create(&srv, &guest, guest_event(&["keep@example.com"])).await;
+    let request = format!("del_{}", "c".repeat(32));
+    let path = format!("/internal/v1/account-deletions/{request}/cancel-calendar");
+    // No such pending request.
+    let (s, _) = srv.raw(Method::POST, &path, Some(OPS), None, None).await;
+    assert_eq!(s, 404);
+    {
+        let (request, account) = (request.clone(), org.account.clone());
+        srv.state
+            .store
+            .group_tx(move |tx| -> crate::groups::GResult<()> {
+                tx.execute(
+                    "INSERT INTO account_deletion_requests (request_id, account_id, oidc_sub, requested_at, complete_by)
+                     VALUES (?1, ?2, 'sub-orge', 1, 2)",
+                    rusqlite::params![request, account],
+                )?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+    }
+    // Ops only.
+    let (s, _) = srv.raw(Method::POST, &path, Some(CALLS), None, None).await;
+    assert_eq!(s, 403);
+    let (s, t) = srv.raw(Method::POST, &path, Some(OPS), None, None).await;
+    assert_eq!(s, 200, "{t}");
+    let v: Value = serde_json::from_str(&t).unwrap();
+    assert_eq!(
+        (
+            v["events_cancelled"].as_i64(),
+            v["pending_notices"].as_i64()
+        ),
+        (Some(1), Some(1))
+    );
+    let (_, d) = srv
+        .call(
+            Method::GET,
+            &format!("/v1/calendar/events/{id}"),
+            &org,
+            None,
+        )
+        .await;
+    assert_eq!(d["event"]["status"], "cancelled");
+    assert_eq!(
+        outbox_states(&srv, &id, "cancel").await,
+        vec![("queued".into(), None)]
+    );
+    assert!(srv
+        .events_of(&guest.account)
+        .await
+        .iter()
+        .any(|(t, d)| t == "event.cancelled" && d["event_id"] == json!(id)));
+    let (_, d) = srv
+        .call(
+            Method::GET,
+            &format!("/v1/calendar/events/{}", theirs["id"].as_str().unwrap()),
+            &guest,
+            None,
+        )
+        .await;
+    assert_eq!(d["event"]["status"], "confirmed");
+    // Idempotent: nothing new to cancel, the notice still pending until the worker sends it.
+    let (_, t) = srv.raw(Method::POST, &path, Some(OPS), None, None).await;
+    let v: Value = serde_json::from_str(&t).unwrap();
+    assert_eq!(
+        (
+            v["events_cancelled"].as_i64(),
+            v["pending_notices"].as_i64()
+        ),
+        (Some(0), Some(1))
+    );
+    srv.flag("calendar_email", &org.account).await;
+    super::worker::run_once(&srv.state, now_unix() + 60)
+        .await
+        .unwrap();
+    let (_, t) = srv.raw(Method::POST, &path, Some(OPS), None, None).await;
+    let v: Value = serde_json::from_str(&t).unwrap();
+    assert_eq!(v["pending_notices"].as_i64(), Some(0), "{t}");
+    assert!(srv
+        .state
+        .calendar
+        .notifier
+        .sent()
+        .iter()
+        .any(|m| m.workflow == "pigeonpost-meeting-cancel"));
+}
