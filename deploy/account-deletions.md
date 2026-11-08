@@ -43,7 +43,18 @@ wait until its deadline to start. Verify the queue after every deployment.
    namespace before its paid term and release hold end. Remove this person's
    complimentary tester approval if present. Preserve other accounts' own copies
    of delivered messages and shared attachment blobs.
-6. Stop the postbox and its reaper for the short database/blob operation. Confirm
+6. While the postbox is still running, cancel the meetings the person organizes so
+   their guests are told: `python3 /opt/pigeonpost-privacy/account-deletions.py
+   --cancel-calendar REQUEST_ID` (it calls the internal API on 127.0.0.1:8991 with
+   the ops token in `/opt/pigeonpost-postbox/ops-service-token`). Contact-address
+   guests get the normal cancellation through the delivery worker; handle invitees
+   get `event.cancelled`. It prints `events_cancelled` and `pending_notices`; run it
+   again until `pending_notices` is 0 (held notices wait for `calendar_email`; a
+   notice past the daily cancellation budget is recorded as suppressed). `--erase`
+   refuses while an upcoming organized event is not cancelled or a cancellation is
+   still waiting to be sent. Only when notices cannot be sent at all, record why and
+   set `calendar_cancellations_waived: true` in the evidence file.
+7. Stop the postbox and its reaper for the short database/blob operation. Confirm
    no other process writes the database or blob directory. Take a restricted
    rollback backup and record its erasure date (within 30 days of this request).
    Prepare a private JSON evidence file with `request_id` and the following true
@@ -56,7 +67,7 @@ wait until its deadline to start. Verify the queue after every deployment.
    organization member, or holds a live organization agent: offboard it first
    through the portal or the org API, so the organization decides ownership
    transfer and keeps its own records.
-7. Run the reviewed local tool with `--erase REQUEST_ID --evidence PRIVATE_JSON
+8. Run the reviewed local tool with `--erase REQUEST_ID --evidence PRIVATE_JSON
    --db DATABASE --blobs BLOB_DIRECTORY`. It refuses requests that are missing,
    completed, or no longer owned by the confirmed subject. It removes that
    account's keys, mailboxes, message copies, contacts, settings, notification
@@ -72,7 +83,7 @@ wait until its deadline to start. Verify the queue after every deployment.
    by keyed hash, never an account, and stay. Entitlements and plan names keep their billing rows under the
    erased-account identifier. It clears the request's contact
    and subject when complete. Inspect the result before restarting services.
-8. Restart services; verify health, an unaffected account, and rejection of old
+9. Restart services; verify health, an unaffected account, and rejection of old
    credentials. Confirm completion to the member through the previously verified
    destination, including any specific retained data and its retention period.
    Record successful notice delivery and purge temporary exports. Expire the

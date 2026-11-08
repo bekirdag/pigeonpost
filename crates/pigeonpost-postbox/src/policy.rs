@@ -75,6 +75,11 @@ pub(crate) enum Action {
     ManageOwnAccount,
     /// `POST /internal/v1/accounts/{id}/purge`: remove an empty account (ops only, Phase 9).
     PurgeEmptyAccount,
+    /// `POST /internal/v1/account-deletions/{request_id}/cancel-calendar`: cancel what a person
+    /// being erased organizes, so their guests are told (ops only, audit P2-17).
+    PrepareAccountErasure,
+    /// `PUT /internal/v1/namespaces`: bind a namespace to an account by hand (ops only, P3-10).
+    GrantNamespace,
     /// `/internal/v1/nests*`: create, list, run and delete hosted agents (Nests Phase A, ops).
     ManageNests,
     /// Take part in a group as one's own mailbox: read, post, leave, own keys (SDS §4.4). Agents
@@ -252,6 +257,8 @@ impl Action {
             | Action::CallEvents
             | Action::ModerateAvatars
             | Action::PurgeEmptyAccount
+            | Action::PrepareAccountErasure
+            | Action::GrantNamespace
             | Action::ManageNests
             | Action::GroupCallAdmission => Requirement::Service,
             Action::GroupParticipate | Action::CalendarUse => Requirement::NotConnector,
