@@ -333,6 +333,51 @@ def retry_after(error, default=30):
     return max(1, min(3600, value))
 
 
+ROLE_WORDS = {"owner": "Owner", "admin": "Admin", "people_admin": "People admin", "agent_admin": "Agent admin",
+              "billing_admin": "Billing admin"}
+
+
+def role_word(roles):
+    """The member's strongest role in words, "Member" when none (SDS §5.4: "Acme Inc. · Member")."""
+    for role in ("owner", "admin", "people_admin", "agent_admin", "billing_admin"):
+        if role in (roles or ()):
+            return ROLE_WORDS[role]
+    return "Member"
+
+
+def mailbox_orgs(catalog, mailboxes):
+    """{address: org} for this account's own org inboxes (the mailbox switcher's badge)."""
+    if not catalog:
+        return {}
+    own = owned_org_mailboxes(catalog, mailboxes)
+    by_id = {o["id"]: o for o in catalog["orgs"]}
+    return {address: by_id[org_id] for org_id, address in own.items() if org_id in by_id and readable(by_id[org_id])}
+
+
+def mailbox_title(row, org=None):
+    """One mailbox switcher entry: the handle's name, with its organization when it belongs to one."""
+    from .model import display_name
+    base = display_name(row["handle"]) if row.get("handle") else row.get("label") or display_name(row["address"])
+    return f"{base} · {org['name']}" if org else base
+
+
+def parse_directory(raw, limit=8):
+    """`GET /v1/orgs/{id}/directory` → [{handle, address, kind, name}]. Bad rows are dropped."""
+    rows = raw.get("entries") if isinstance(raw, dict) else None
+    out = []
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict) or row.get("kind") not in ("member", "agent"):
+            continue
+        handle, address = row.get("handle"), row.get("address")
+        if not canonical_mailbox(address) or not isinstance(handle, str) or not handle.startswith("/") or len(handle) > 256:
+            continue
+        name = row.get("name") if isinstance(row.get("name"), str) and safe_text(row["name"], 120) else None
+        out.append({"handle": handle, "address": address, "kind": row["kind"], "name": name})
+        if len(out) >= limit:
+            break
+    return out
+
+
 class OrgsAPI:
     """The org routes, through a postbox bound to the accepted login (api.Postbox.bound)."""
 
@@ -350,6 +395,15 @@ class OrgsAPI:
         # The org_id is required: without it this would be the personal public directory.
         query = urllib.parse.urlencode({"org_id": org_id, "q": search})
         return parse_rooms(self.api.scoped("GET", "/v1/rooms?" + query, mailbox))
+
+    def directory(self, org_id, search, limit=8):
+        """Org addresses for compose autocomplete (SDS §5.4). Account-scoped: the postbox checks membership."""
+        if not identifier(org_id):
+            raise OrgError("org")
+        text = (search or "").strip()
+        if not text or len(text) > 80 or not safe_text(text, 80):
+            return []
+        return parse_directory(self.api.call("GET", f"/v1/orgs/{org_id}/directory", query={"q": text, "limit": str(limit)}), limit)
 
     def preview(self, mailbox, gid):
         if not identifier(gid):
