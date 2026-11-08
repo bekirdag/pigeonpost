@@ -20,6 +20,7 @@
 //! readable by this service. Nothing here may be described to users as end-to-end encrypted.
 
 pub(crate) mod calendars;
+pub(crate) mod erasure;
 pub(crate) mod events;
 pub(crate) mod guest;
 pub(crate) mod ics;
@@ -55,6 +56,15 @@ pub(crate) const MAX_HANDLE_ATTENDEES: usize = 500;
 pub(crate) const MAX_EXTERNAL_ATTENDEES: usize = 50;
 /// New contact-address invitations per account per day.
 pub(crate) const EXTERNAL_INVITES_PER_DAY: i64 = 200;
+/// Contact-address updates and reminders per account per day (D-31 churn, SDS §14B.14:
+/// "do not let an edit loop bypass limits"). An edit that would go past it is refused.
+pub(crate) const EXTERNAL_CHURN_PER_DAY: i64 = 2_000;
+/// Contact-address cancellations per account per day. A cancellation itself always happens;
+/// notices past this are recorded as suppressed rather than sent (a bounded queue, not an
+/// unlimited exception).
+pub(crate) const EXTERNAL_CANCELS_PER_DAY: i64 = 500;
+/// Non-invitation messages to one contact guest per day; past it they are suppressed.
+pub(crate) const EXTERNAL_PER_RECIPIENT_PER_DAY: i64 = 20;
 /// Events created per mailbox per day.
 const EVENTS_PER_DAY: usize = 500;
 /// Calendars per mailbox.

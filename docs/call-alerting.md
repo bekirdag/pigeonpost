@@ -87,6 +87,11 @@ any of them could do with it is decline one call.
 looked up by the postbox rather than trusted; `display` is cut to 60 characters and stripped of
 control and bidi characters.
 
+A group call's ring (audit P1-11) adds `"group_id": "grp_…"`, one request per rung member, each with
+its own ring token. For it the postbox requires caller and callee to be active members of that live
+group and applies the callee's call rules and blocks, not the 1:1 stranger rule; every payload then
+carries `group_id` and `group_name` (looked up here). See `docs/groups.md` §6.
+
 `POST /internal/v1/call-ring-cancel`
 
 ```json

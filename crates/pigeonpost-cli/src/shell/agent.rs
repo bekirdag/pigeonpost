@@ -246,6 +246,24 @@ pub fn start(home: &Path) {
     if routes.is_empty() {
         return;
     }
+    // No session exists yet: any session container of ours is left over from a crash (P3-5).
+    let mut runtimes: Vec<PathBuf> = Vec::new();
+    for r in routes.iter().filter(|r| r.shell.mode != Mode::Unconfined) {
+        if let Ok((rt, _)) = confine::runtime(&r.shell) {
+            if !runtimes.contains(&rt) {
+                runtimes.push(rt);
+            }
+        }
+    }
+    for rt in runtimes {
+        let n = confine::sweep_leftovers(&rt);
+        if n > 0 {
+            log_line(
+                &machine,
+                &format!("ssh: removed {n} leftover session container(s)"),
+            );
+        }
+    }
     // One host key for the machine, loaded (or made) once, before any supervisor needs it.
     let key = match host_key(&machine) {
         Ok(k) => k,
@@ -610,17 +628,22 @@ struct ProcInfo {
     closed: bool,
     pid: Option<u32>,
     container: Option<(PathBuf, String)>,
+    /// An unconfined session's [`confine::SESSION_MARKER`] value.
+    marker: Option<String>,
 }
 
 /// Kill the session's whole process group, then remove its container if it had one.
 async fn teardown(info: &Arc<Mutex<ProcInfo>>) {
-    let (pid, container) = {
+    let (pid, container, marker) = {
         let mut i = info.lock().expect("proc lock");
         i.closed = true;
-        (i.pid.take(), i.container.take())
+        (i.pid.take(), i.container.take(), i.marker.take())
     };
     if let Some(pid) = pid.and_then(|p| rustix::process::Pid::from_raw(p as i32)) {
         let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
+    }
+    if let Some(marker) = marker {
+        kill_marked(&marker);
     }
     if let Some((rt, name)) = container {
         let _ = tokio::time::timeout(
@@ -634,6 +657,43 @@ async fn teardown(info: &Arc<Mutex<ProcInfo>>) {
         )
         .await;
     }
+}
+
+/// Kill every process of this user whose environment carries the session's marker: what an
+/// unconfined session started and detached with `setsid` survives the process-group kill. Linux
+/// reads `/proc`; elsewhere only the process group is ended (docs/agent-ssh.md says so).
+fn kill_marked(marker: &str) {
+    #[cfg(target_os = "linux")]
+    {
+        let needle = format!("{}={marker}", confine::SESSION_MARKER);
+        let me = rustix::process::getuid().as_raw();
+        let mine = std::process::id();
+        let Ok(dir) = std::fs::read_dir("/proc") else {
+            return;
+        };
+        for e in dir.flatten() {
+            let Some(pid) = e.file_name().to_str().and_then(|n| n.parse::<i32>().ok()) else {
+                continue;
+            };
+            if pid as u32 == mine {
+                continue;
+            }
+            use std::os::unix::fs::MetadataExt;
+            if e.metadata().map(|m| m.uid()).ok() != Some(me) {
+                continue;
+            }
+            let Ok(env) = std::fs::read(e.path().join("environ")) else {
+                continue;
+            };
+            if env.split(|b| *b == 0).any(|kv| kv == needle.as_bytes()) {
+                if let Some(p) = rustix::process::Pid::from_raw(pid) {
+                    let _ = rustix::process::kill_process(p, rustix::process::Signal::KILL);
+                }
+            }
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = marker;
 }
 
 enum Input {
@@ -760,6 +820,13 @@ struct Spawned {
     child: tokio::process::Child,
 }
 
+fn marker_of(l: &Launch) -> Option<String> {
+    l.env
+        .iter()
+        .find(|(k, _)| k == confine::SESSION_MARKER)
+        .map(|(_, v)| v.clone())
+}
+
 fn spawn(l: &Launch, cols: u16, rows: u16, info: Arc<Mutex<ProcInfo>>) -> Result<Spawned, String> {
     // The SSH handler can outlive the task that closes its broker session. Register the child
     // under the same lock as teardown, so cleanup either sees it or prevents its launch.
@@ -782,6 +849,7 @@ fn spawn(l: &Launch, cols: u16, rows: u16, info: Arc<Mutex<ProcInfo>>) -> Result
             .map_err(|e| e.to_string())?;
         state.pid = child.id();
         state.container = l.container.clone();
+        state.marker = marker_of(l);
         let (rd, wr) = pty.into_split();
         Ok(Spawned {
             input: Input::Pty(wr),
@@ -802,6 +870,7 @@ fn spawn(l: &Launch, cols: u16, rows: u16, info: Arc<Mutex<ProcInfo>>) -> Result
         let mut child = cmd.spawn().map_err(|e| e.to_string())?;
         state.pid = child.id();
         state.container = l.container.clone();
+        state.marker = marker_of(l);
         let stdin = child.stdin.take().ok_or("no stdin")?;
         let stdout = child.stdout.take().ok_or("no stdout")?;
         let stderr = child.stderr.take().ok_or("no stderr")?;

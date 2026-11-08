@@ -17,8 +17,8 @@
 //! in timing. A token that is not `svc_` followed by at least 32 characters is refused at startup:
 //! a short shared secret is how a "private" API becomes a guessable one.
 //!
-//! `PUT /v1/namespaces` with `NAMESPACE_GRANT_TOKEN` keeps working on the public router for the
-//! billing bridge until it moves to the internal entitlement routes.
+//! The public `PUT /v1/namespaces` and its `NAMESPACE_GRANT_TOKEN` secret are retired (audit
+//! 2026-11-03 P3-10); an operator binds a namespace by hand with `PUT /internal/v1/namespaces`.
 
 use crate::audit::ActorKind;
 use crate::policy::{authorize, Action, Actor, Facts, Resource};
@@ -56,6 +56,10 @@ pub(crate) enum Endpoint {
     ModerateAvatars,
     /// `POST /internal/v1/accounts/{id}/purge` (Phase 9, ops only).
     AccountPurge,
+    /// `POST /internal/v1/account-deletions/{request_id}/cancel-calendar` (audit P2-17, ops only).
+    AccountErasure,
+    /// `PUT /internal/v1/namespaces` (audit P3-10, ops only; replaces the public grant route).
+    Namespaces,
     /// `POST /internal/v1/group-call-admission` (Phase 3a).
     GroupCallAdmission,
     /// `POST /internal/v1/call-ring` and `/call-ring-cancel` (Phase 1c).
@@ -114,6 +118,8 @@ const SERVICES: &[(&str, &str, &[Endpoint])] = &[
             Endpoint::FeaturesWrite,
             Endpoint::ModerateAvatars,
             Endpoint::AccountPurge,
+            Endpoint::AccountErasure,
+            Endpoint::Namespaces,
             Endpoint::Nests,
         ],
     ),
@@ -306,6 +312,11 @@ pub(crate) fn router(state: AppState) -> Router {
             post(crate::shell::broker_closed),
         )
         .route("/internal/v1/accounts/{id}/purge", post(purge_account))
+        .route("/internal/v1/namespaces", put(grant_namespace))
+        .route(
+            "/internal/v1/account-deletions/{request_id}/cancel-calendar",
+            post(crate::calendar::erasure::cancel_for_deletion),
+        )
         .route("/internal/v1/avatar-reports", get(crate::avatars::reports))
         .route(
             "/internal/v1/avatars/{id}/remove",
@@ -474,6 +485,25 @@ pub(crate) struct PurgeReq {
     reason: String,
 }
 
+/// `PUT /internal/v1/namespaces` — bind a namespace to an account by hand (ops token only; the
+/// public `PUT /v1/namespaces` it replaces was retired, audit 2026-11-03 P3-10).
+async fn grant_namespace(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    client_ip: Option<Extension<crate::ClientIp>>,
+    Json(req): Json<crate::GrantNamespaceReq>,
+) -> Response {
+    if let Err(resp) = authorize_service(
+        &state,
+        &headers,
+        Endpoint::Namespaces,
+        Action::GrantNamespace,
+    ) {
+        return *resp;
+    }
+    crate::grant_namespace(state, headers, client_ip, req).await
+}
+
 /// `POST /internal/v1/accounts/{id}/purge` — remove an **empty** account and its empty mailboxes
 /// (`store::purge`). Ops token only. Without `confirm: true` it is a dry run. Refuses with `409
 /// account_not_empty` and the blocking tables when anything worth keeping exists; consented
@@ -608,9 +638,32 @@ mod tests {
     }
 
     #[test]
-    fn the_namespace_grant_secret_is_not_a_service_token() {
+    fn unconfigured_services_authenticate_nobody() {
         // Unconfigured services authenticate nobody, whatever is presented.
         let tokens = ServiceTokens::default();
         assert!(tokens.authenticate(OPS).is_none());
+    }
+
+    #[test]
+    fn only_ops_may_grant_namespaces_or_prepare_an_erasure() {
+        let tokens = tokens_for_test(&[
+            ("POSTBOX_SVC_TOKEN_OPS", OPS),
+            (
+                "POSTBOX_SVC_TOKEN_CALLS",
+                "svc_calls_0123456789abcdef0123456789abcdef",
+            ),
+        ]);
+        for endpoint in [Endpoint::Namespaces, Endpoint::AccountErasure] {
+            assert!(tokens
+                .authenticate(OPS)
+                .unwrap()
+                .allowed
+                .contains(&endpoint));
+            assert!(!tokens
+                .authenticate("svc_calls_0123456789abcdef0123456789abcdef")
+                .unwrap()
+                .allowed
+                .contains(&endpoint));
+        }
     }
 }

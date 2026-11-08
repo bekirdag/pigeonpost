@@ -15,6 +15,7 @@ import * as postbox from "./postbox.js";
 import { publicCatalog, isUuid } from "./catalog.js";
 import { State } from "./state.js";
 import { createBilling } from "./billing.js";
+import * as tax from "./tax.js";
 import { createSales, sourceOf } from "./sales.js";
 import { createLimiter } from "./limits.js";
 
@@ -130,7 +131,8 @@ const server = http.createServer(async (req, res) => {
         billing.cloudOverview(token).catch(() => null),
       ]);
       return send(res, 200, { handles, billingProfiles: list(profiles), invoices: list(invoices), cloud,
-        openCurrencies: config.openCurrencies }, origin);
+        openCurrencies: config.openCurrencies,
+        tax: { euUkConsumers: config.tax.gate ? config.tax.b2cOpenRegions : ["EU", "UK"], country: tax.ipCountry(req.headers) } }, origin);
     }
 
     if (method === "GET" && path === "/v1/billing/profiles") {
@@ -158,7 +160,7 @@ const server = http.createServer(async (req, res) => {
     // ---- individual Cloud plans -------------------------------------------------------------
     if (method === "GET" && path === "/v1/cloud") return send(res, 200, await billing.cloudOverview(token), origin);
     if (method === "POST" && path === "/v1/cloud/checkout") {
-      return send(res, 200, await billing.cloudCheckout(token, await readJson(req)), origin);
+      return send(res, 200, await billing.cloudCheckout(token, await readJson(req), { ipCountry: tax.ipCountry(req.headers) }), origin);
     }
     if (method === "GET" && (match = /^\/v1\/cloud\/checkout\/([a-f0-9]{32})$/.exec(path))) {
       return send(res, 200, await billing.cloudStatus(token, match[1]), origin);
@@ -181,7 +183,7 @@ const server = http.createServer(async (req, res) => {
       return send(res, 201, await billing.enterpriseBillingProfile(token, await readJson(req)), origin);
     }
     if (method === "POST" && path === "/ent/checkout") {
-      return send(res, 200, await billing.enterpriseCheckout(token, await readJson(req)), origin);
+      return send(res, 200, await billing.enterpriseCheckout(token, await readJson(req), { ipCountry: tax.ipCountry(req.headers) }), origin);
     }
     if (method === "GET" && (match = /^\/ent\/checkout\/(org_[a-z0-9]{6,64})$/.exec(path))) {
       return send(res, 200, await billing.enterpriseStatus(token, match[1]), origin);
