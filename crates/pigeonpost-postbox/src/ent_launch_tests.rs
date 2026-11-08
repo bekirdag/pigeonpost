@@ -452,7 +452,7 @@ async fn drafts_need_a_sold_seat_tier() {
     }
 }
 
-/// P3-3: when the invitation goes by email, the response never shows the link.
+/// P3-3: when the invitation is delivered out of band, the response never shows the link.
 #[tokio::test]
 async fn emailed_invitations_do_not_show_the_link() {
     let (srv, owner, org) = setup().await;
