@@ -70,6 +70,28 @@
     box.replaceChildren(buy);
   }
 
+  // EU/UK consumers buy in the apps, where Apple or Google is the seller and handles VAT; businesses
+  // buy here with a verified VAT number (docs/billing-tax.md).
+  const APPS = [["App Store (iPhone, iPad, Mac)", "https://apps.apple.com/app/pigeonpost-inbox/id6803521541"],
+    ["Google Play (Android)", "https://play.google.com/store/apps/details?id=dev.pigeonpost.inbox"]];
+  function vatHelp(e) {
+    const box = $("#pp-pay-form");
+    box.replaceChildren();
+    const p = (text) => { const el = document.createElement("p"); el.textContent = text; return el; };
+    const links = document.createElement("ul");
+    if (["eu_uk_consumer_web_unavailable", "uk_vat_check_unavailable"].includes(e.code)) {
+      for (const [label, href] of APPS) {
+        const li = document.createElement("li"); const a = document.createElement("a");
+        a.href = href; a.rel = "noopener"; a.textContent = label; li.appendChild(a); links.appendChild(li);
+      }
+      box.append(p("Pigeonpost Cloud is available in the Pigeonpost app:"), links);
+    }
+    const fix = document.createElement("a"); fix.href = "/account"; fix.textContent = "Edit billing details";
+    const tail = p("Buying for a company in the EU or UK? Choose Company in your billing details and enter its VAT number; we verify it and sell without VAT (reverse charge). ");
+    tail.appendChild(fix);
+    box.appendChild(tail);
+  }
+
   async function run() {
     let pending;
     try { pending = JSON.parse(sessionStorage.getItem("pp_cloud_checkout") || "null"); } catch { pending = null; }
@@ -95,8 +117,9 @@
       // Say so, and start the form only when the person chooses to buy this one as well.
       if (e.status === 409 && e.code === "store_subscription_active") return confirmOtherStore(pending, e.message);
       // A refused intent is finished; the account page starts a fresh one after the fix.
-      if ([400, 409, 429].includes(e.status)) sessionStorage.removeItem("pp_cloud_checkout");
+      if ([400, 403, 409, 429].includes(e.status)) sessionStorage.removeItem("pp_cloud_checkout");
       say("The payment form could not be opened: " + e.message);
+      if (["eu_uk_consumer_web_unavailable", "uk_vat_check_unavailable", "vat_id_invalid", "billing_country_unknown"].includes(e.code)) vatHelp(e);
     }
   }
   run();

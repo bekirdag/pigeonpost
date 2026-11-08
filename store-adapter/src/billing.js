@@ -15,6 +15,7 @@ import { config } from "./config.js";
 import { catalog as catalog_data, isUuid, limitsForPackage, plan, planForLocalId, planForProviderReference } from "./catalog.js";
 import * as saas from "./saas.js";
 import * as postbox from "./postbox.js";
+import * as tax from "./tax.js";
 
 const { fail } = saas;
 const INTENT = /^[a-f0-9]{32}$/;
@@ -71,6 +72,26 @@ export function createBilling(state) {
 
   const saveIntent = (id, patch) => state.update((data) => Object.assign(data.intents[id], patch, { updated_at: Date.now() }));
 
+  /// The VAT treatment of a new purchase (docs/billing-tax.md): decided from the billing profile the
+  /// checkout uses and the country the request came from, before anything is reserved or charged.
+  async function taxDecision(token, billingProfileId, ipCountry) {
+    const profiles = await saas.listBillingProfiles(token);
+    const list = Array.isArray(profiles) ? profiles : Array.isArray(profiles?.data) ? profiles.data : [];
+    const profile = list.find((p) => p && p.id === billingProfileId);
+    if (!profile) fail(400, "Save your billing details first.", "billing_profile_required");
+    return { decision: await tax.decide(profile, ipCountry), profile };
+  }
+
+  /// Receipt wording for a subscription this bridge started, or null for older ones.
+  async function receiptFor(token, subscriptionId) {
+    const ref = await state.read((data) => data.refs[subscriptionId] && { ...data.refs[subscriptionId] });
+    if (!ref?.tax) return null;
+    const profiles = await saas.listBillingProfiles(token).catch(() => null);
+    const list = Array.isArray(profiles) ? profiles : Array.isArray(profiles?.data) ? profiles.data : [];
+    const intent = await state.read((data) => (ref.intent && data.intents[ref.intent]) ? { ...data.intents[ref.intent] } : null);
+    return tax.receipt(ref.tax, list.find((p) => p && p.id === intent?.billing_profile_id) || null);
+  }
+
   /// Resolve the saas_be edition for a plan code and check it against the catalog.
   async function edition(token, entry) {
     const offer = saas.validOffer(await saas.offer(token, entry.package_slug, entry.currency),
@@ -110,7 +131,8 @@ export function createBilling(state) {
     await saveIntent(intent.id, { subscription_id: result.subscription_id, status: "checkout_pending" });
     await state.update((data) => {
       data.refs[result.subscription_id] ||= { kind: intent.kind, account: intent.account, draft_id: intent.draft_id || null,
-        plan_code: intent.plan_code, intent: intent.id, status: "pending", paid_through: null, version: 0, pushed: null };
+        plan_code: intent.plan_code, intent: intent.id, status: "pending", paid_through: null, version: 0, pushed: null,
+        tax: intent.tax || null };
     });
     return {
       intent_id: intent.id, subscription_id: result.subscription_id, plan_code: intent.plan_code,
@@ -211,7 +233,7 @@ export function createBilling(state) {
 
   // ---- individual Cloud plans -------------------------------------------------------------
 
-  async function cloudCheckout(token, body) {
+  async function cloudCheckout(token, body, { ipCountry = null } = {}) {
     strict(body, ["intent_id", "plan_code", "billing_profile_id", "locale", "confirm_other_store"], ["intent_id", "plan_code", "billing_profile_id"]);
     if (body.confirm_other_store !== undefined && typeof body.confirm_other_store !== "boolean") fail(400, "confirm_other_store must be true or false.", "invalid_request");
     const id = intentId(body.intent_id);
@@ -239,8 +261,9 @@ export function createBilling(state) {
         }
       }
     }
+    const decided = known?.tax ? null : (await taxDecision(token, body.billing_profile_id, ipCountry)).decision;
     const intent = await reserve({
-      id, kind: "cloud", account, plan_code: entry.code,
+      id, kind: "cloud", account, plan_code: entry.code, billing_profile_id: body.billing_profile_id, tax: decided,
       // `pp-cloud:<account>` identifies the buyer; the intent suffix lets a member retry after an
       // abandoned hosted form, which saas_be keeps reserved under its client reference.
       client_reference: `pp-cloud:${account}:${id}`,
@@ -262,7 +285,7 @@ export function createBilling(state) {
     if (!intent.subscription_id) return view(intent, null, null);
     const { sub, ent } = await syncMember(token, intent.subscription_id);
     if (ent && intent.status !== "active") await saveIntent(intent.id, { status: "active" });
-    return view(intent, sub, ent);
+    return { ...view(intent, sub, ent), receipt: await receiptFor(token, intent.subscription_id) };
   }
 
   /// The member's Cloud subscriptions with their management state, and the postbox's plan view.
@@ -301,6 +324,7 @@ export function createBilling(state) {
       provider_status: sub.provider_status, paid_through: ent?.paid_through || null,
       current_period_end: sub.current_period_end, next_payment_at: sub.next_payment_at || null,
       recurring_price: sub.recurring_price || null, pending_change: sub.pending_change || null,
+      receipt: await receiptFor(token, id),
       failed_orders: (sub.orders || []).filter((o) => o.status === "FAILED").map((o) => ({
         order_reference_code: o.order_reference_code, amount: o.amount, currency: o.currency, failed_at: o.failed_at || null })) };
   }
@@ -377,7 +401,7 @@ export function createBilling(state) {
     return saas.createBillingProfile(token, profile, `pp-ent-profile-${id}`);
   }
 
-  async function enterpriseCheckout(token, body) {
+  async function enterpriseCheckout(token, body, { ipCountry = null } = {}) {
     strict(body, ["intent_id", "plan_code", "billing_profile_id", "org", "locale"], ["intent_id", "plan_code", "billing_profile_id", "org"]);
     const id = intentId(body.intent_id);
     const entry = plan(body.plan_code);
@@ -392,7 +416,10 @@ export function createBilling(state) {
     const request = { kind: "ent", plan_code: entry.code, billing_profile_id: body.billing_profile_id, locale: locale(body.locale), name, namespace };
     const account = await postbox.accountFor(token);
     await requireOrgs(token);
-    const intent = await reserve({ id, kind: "ent", account, plan_code: entry.code }, { ...request, account });
+    const known = await state.read((data) => data.intents[id]);
+    const decided = known?.tax ? null : (await taxDecision(token, body.billing_profile_id, ipCountry)).decision;
+    const intent = await reserve({ id, kind: "ent", account, plan_code: entry.code, billing_profile_id: body.billing_profile_id, tax: decided },
+      { ...request, account });
     let draftId = intent.draft_id;
     if (!draftId) {
       const created = await postbox.createOrgDraft({ operation_id: id, owner_account: account, name, namespace, plan_code: entry.code, seats: entry.seats });
@@ -414,7 +441,7 @@ export function createBilling(state) {
     if (!intent.subscription_id) return view(intent, null, null);
     const { sub, ent } = await syncMember(token, intent.subscription_id);
     const org = ent ? (await postbox.getOrg(draftId))?.org || null : null;
-    return { ...view(intent, sub, ent), org };
+    return { ...view(intent, sub, ent), org, receipt: await receiptFor(token, intent.subscription_id) };
   }
 
   // ---- enterprise plan management (portal Billing page) -----------------------------------

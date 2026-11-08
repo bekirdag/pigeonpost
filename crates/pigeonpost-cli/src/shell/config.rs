@@ -192,6 +192,7 @@ impl ShellConfig {
                         return Err("runtime is podman or docker".into());
                     }
                 }
+                check_no_sockets(&shell.workspace)?;
                 // `--mount` is comma-separated: a path with a comma or `=` could add options.
                 let ws = shell.workspace.to_string_lossy();
                 if ws.contains(',') || ws.contains('=') || ws.contains('\n') {
@@ -303,6 +304,91 @@ pub fn check_workspace(workspace: &Path, home: &Path) -> Result<PathBuf, String>
     Ok(ws)
 }
 
+/// Confined modes bind-mount the workspace: it must not carry a socket into the container
+/// (audit 2026-11-03 P3-5) — above all not a container runtime's, which is the runtime itself.
+pub fn check_no_sockets(ws: &Path) -> Result<(), String> {
+    if let Some(sock) = runtime_sockets().into_iter().find(|p| p.starts_with(ws)) {
+        return Err(format!(
+            "the workspace may not contain a container runtime socket ({})",
+            sock.display()
+        ));
+    }
+    if let Some(sock) = first_socket(ws, 3, &mut 0) {
+        return Err(format!(
+            "the workspace may not contain sockets ({}); a socket in a bind mount reaches the service behind it",
+            sock.display()
+        ));
+    }
+    Ok(())
+}
+
+/// Where container runtimes listen on this machine: the usual paths, `DOCKER_HOST`/`CONTAINER_HOST`
+/// when they name a Unix socket, and the user's runtime directory. Canonicalized when they exist.
+fn runtime_sockets() -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = [
+        "/var/run/docker.sock",
+        "/run/docker.sock",
+        "/run/podman/podman.sock",
+        "/var/run/podman/podman.sock",
+    ]
+    .iter()
+    .map(PathBuf::from)
+    .collect();
+    for var in ["DOCKER_HOST", "CONTAINER_HOST"] {
+        if let Ok(v) = std::env::var(var) {
+            if let Some(p) = v.strip_prefix("unix://") {
+                out.push(PathBuf::from(p));
+            }
+        }
+    }
+    if let Some(dir) = std::env::var_os("XDG_RUNTIME_DIR") {
+        out.push(PathBuf::from(dir));
+    }
+    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+        for rel in [
+            ".docker/run/docker.sock",
+            ".colima",
+            ".local/share/containers/podman/machine",
+            ".rd/docker.sock",
+            ".orbstack/run/docker.sock",
+        ] {
+            out.push(home.join(rel));
+        }
+    }
+    out.into_iter()
+        .map(|p| std::fs::canonicalize(&p).unwrap_or(p))
+        .collect()
+}
+
+/// The first Unix socket within `depth` directory levels of `dir` (symlinks are not followed),
+/// looking at no more than 10,000 entries in all.
+#[cfg(unix)]
+fn first_socket(dir: &Path, depth: u32, seen: &mut u32) -> Option<PathBuf> {
+    use std::os::unix::fs::FileTypeExt;
+    let entries = std::fs::read_dir(dir).ok()?;
+    for e in entries.flatten() {
+        *seen += 1;
+        if *seen > 10_000 {
+            return None;
+        }
+        let Ok(ft) = e.file_type() else { continue };
+        if ft.is_socket() {
+            return Some(e.path());
+        }
+        if ft.is_dir() && depth > 0 {
+            if let Some(found) = first_socket(&e.path(), depth - 1, seen) {
+                return Some(found);
+            }
+        }
+    }
+    None
+}
+
+#[cfg(not(unix))]
+fn first_socket(_dir: &Path, _depth: u32, _seen: &mut u32) -> Option<PathBuf> {
+    None
+}
+
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
@@ -375,6 +461,19 @@ mod tests {
         std::os::unix::fs::symlink(&home, &link).unwrap();
         assert!(check_workspace(&link, &home).is_err());
         assert!(check_workspace(&ws, &home).is_ok());
+        // A socket in the workspace (or a directory just below it) is refused in confined modes.
+        let sub = ws.join("run");
+        std::fs::create_dir_all(&sub).unwrap();
+        let sock = std::os::unix::net::UnixListener::bind(sub.join("x.sock")).unwrap();
+        assert!(
+            check_workspace(&ws, &home).is_ok(),
+            "unconfined may keep its sockets"
+        );
+        let err = check_no_sockets(&ws).unwrap_err();
+        assert!(err.contains("sockets"), "{err}");
+        drop(sock);
+        std::fs::remove_file(sub.join("x.sock")).unwrap();
+        assert!(check_no_sockets(&ws).is_ok());
         // Container mount options cannot be smuggled in through the path.
         let odd = t.path().join("a,readonly=false");
         std::fs::create_dir_all(&odd).unwrap();

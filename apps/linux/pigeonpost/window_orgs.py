@@ -140,6 +140,8 @@ class OrgsMixin:
             self.render_orgs()
             self.load_org_rooms()
             self.load_org_pending()
+            self.refresh_mailbox_titles()
+            self.render_peers()
 
         def failed(error):
             if state is not self.org_state:
@@ -249,6 +251,66 @@ class OrgsMixin:
                 content.append(row)
         if hasattr(self, "approve_device"):
             content.append(button("Approve a machine…", self.approve_device, style="pp-pill-button"))
+
+    # ---- in-app parts of enterprise (SDS §5.4) ----------------------------------------------------
+
+    def org_catalog(self):
+        return self.org_state["catalog"] if self.orgs_on() else None
+
+    def refresh_mailbox_titles(self):
+        """The mailbox switcher shows which organization an inbox belongs to ("/acme/john · Acme Inc.")."""
+        if not self.mailboxes:
+            return
+        orgs = oc.mailbox_orgs(self.org_catalog(), self.mailboxes)
+        titles = [oc.mailbox_title(row, orgs.get(row["address"])) for row in self.mailboxes]
+        current = [self.mailbox_model.get_string(i) for i in range(self.mailbox_model.get_n_items())]
+        if titles == current:
+            return
+        selected = self.mailbox_picker.get_selected()
+        self.rendering = True
+        try:
+            self.mailbox_model.splice(0, self.mailbox_model.get_n_items(), titles)
+            if selected < len(titles):
+                self.mailbox_picker.set_selected(selected)
+        finally:
+            self.rendering = False
+
+    def org_membership_line(self, address):
+        """"Acme Inc. · Member" for one of this account's own org inboxes, else None."""
+        org = oc.mailbox_orgs(self.org_catalog(), self.mailboxes).get(address)
+        return f"{org['name']} · {oc.role_word(org['roles'])}" if org else None
+
+    def company_rooms(self, groups):
+        """Org rooms of the selected mailbox, for the Company section of the conversation list."""
+        catalog = self.org_catalog()
+        if not catalog:
+            return [], None
+        org = oc.mailbox_orgs(catalog, self.mailboxes).get(self.identity)
+        if not org:
+            return [], None
+        return [g for g in groups if g.get("org_id") == org["id"]], org
+
+    def browse_company_rooms(self, org):
+        self.show_page("orgs")
+        self.choose_org(org["id"])
+
+    def org_directory_suggest(self, text, show):
+        """Compose autocomplete from the directories of this account's organizations."""
+        catalog = self.org_catalog()
+        orgs = [o for o in (catalog or {}).get("orgs", []) if oc.readable(o)][:3]
+        query = (text or "").strip().lstrip("/")
+        if not orgs or len(query) < 2 or self.lease is None:
+            show([])
+            return
+        lease = self.lease
+
+        def search():
+            api, found = self.org_api(lease), []
+            for org in orgs:
+                for entry in api.directory(org["id"], query):
+                    found.append(dict(entry, org_name=org["name"]))
+            return found[:8]
+        self.bound_work(lease, search, show, lambda _: show([]))
 
     def choose_org(self, org_id):
         state = self.org_state
