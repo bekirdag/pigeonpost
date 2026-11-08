@@ -155,3 +155,14 @@
 /* Phase 1e: group bubbles share the direct-message action row, ticks and quote (app.css). */
 .msg-info .info-names { list-style: none; margin: 0 0 4px; padding: 0; display: grid; gap: 4px; font-size: 14px; color: var(--ink); }
 .msg-info .info-group + .info-group { margin-top: 4px; }
+
+/* SDS §5.4: the Company heading, Browse rooms and the room directory sheet. */
+.groups-heading { list-style: none; padding: 10px 14px 2px; }
+.groups-heading h3 { margin: 0; font-size: 11.5px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.browse-rooms-row .tr-name { color: var(--ink); }
+.gb-rooms { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.gb-room { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--card-rule); }
+.gb-room-text { flex: 1; min-width: 0; }
+.gb-room-text .gi-name { overflow-wrap: anywhere; }
+.gb-room-text .note { margin: 2px 0 0; overflow-wrap: anywhere; }
+#gc-browse { margin-top: 4px; align-self: flex-start; }
