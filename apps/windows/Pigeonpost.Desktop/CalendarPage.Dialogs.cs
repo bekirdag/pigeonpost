@@ -82,7 +82,7 @@ internal sealed partial class CalendarPage
                 var shown = person.Kind == "external" && organizerView && person.Contact is { } contact
                     ? (person.Name is { } n && n != contact ? $"{n} ({contact})" : contact) : person.Name ?? person.Handle ?? person.Address ?? person.Contact ?? "Guest";
                 people.Children.Add(Text(shown + " · " + (person.Rsvp ?? "pending")));
-                // P3-7: when invitation email is off (or did not arrive), the organizer can hand a guest their own link.
+                // P3-7: when invitation delivery is off (or did not arrive), the organizer can hand a guest their own link.
                 if (organizerView && person.Kind == "external" && person.AttendeeId is { Length: > 0 } attendee)
                 {
                     var copy = Button("Copy invitation link", "Copy invitation link for " + shown);

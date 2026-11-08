@@ -96,7 +96,7 @@ try {
     $previews = Wait-Control 'Show event details in reminder notifications'; $previews.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle()
     Invoke-Control 'Save'
     Wait-Check { $s = State; $s -and $s.settingsSaves -eq 1 -and -not $s.settings.previews } 'Calendar settings save the reminder-preview preference'
-    # P3-7: the organizer can copy a guest's own invitation link (the fallback when invitation email is off).
+    # P3-7: the organizer can copy a guest's own invitation link (the fallback when invitation delivery is off).
     Invoke-Control 'Open event Native calendar edited title, 09:00–10:00'
     (Wait-Control 'People').GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
     Invoke-Control 'Copy invitation link for Fixture Guest (guest@fixture.invalid)'
@@ -110,7 +110,7 @@ try {
     Check ($null -ne (Control 'Reset link for Work') -and $null -ne (Control 'Turn off link for Work')) 'An active link can be reset or turned off'
     Capture 'calendar-feeds.png'
     Invoke-Control 'Turn off link for Work'; $null = Wait-Control 'Turn on link for Work'
-    Wait-Check { $null -eq (State).feeds.cal_work } 'Turning the link off revokes it'
+    Wait-Check { $state = State; $state -and -not $state.feeds.PSObject.Properties['cal_work'] } 'Turning the link off revokes it'
     Invoke-Control 'Done'
     Invoke-Control 'Import calendar file'
     $null = Wait-Control "Import Fixture import one — $today 10:00 Europe/Istanbul"
