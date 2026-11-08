@@ -75,6 +75,23 @@ export const config = {
   // Missed-return reconciliation interval. 0 disables the timer (tests drive it explicitly).
   reconcileIntervalMs: Number(process.env.RECONCILE_INTERVAL_MS ?? 60000),
 
+  // EU/UK VAT on web sales (docs/billing-tax.md). The gate is on unless explicitly turned off:
+  // until Piyote is registered for the EU non-Union OSS scheme and UK VAT, the web must not sell to
+  // EU/UK consumers. TAX_B2C_OPEN_REGIONS (EU, UK or both) opens consumer sales for a region once
+  // that registration exists; prices are then VAT-inclusive at catalog/vat-rates.json.
+  tax: {
+    gate: (process.env.TAX_EU_UK_GATE || "on").toLowerCase() !== "off",
+    b2cOpenRegions: (process.env.TAX_B2C_OPEN_REGIONS || "").split(",").map((s) => s.trim().toUpperCase()).filter((r) => ["EU", "UK"].includes(r)),
+    ipCountryHeader: (process.env.TAX_IP_COUNTRY_HEADER || "cf-ipcountry").toLowerCase(),
+    viesUrl: process.env.VIES_CHECK_URL || "https://ec.europa.eu/taxation_customs/vies/rest-api/check-vat-number",
+    hmrc: {
+      base: trimSlash(process.env.HMRC_API_BASE || "https://api.service.hmrc.gov.uk"),
+      clientId: process.env.HMRC_CLIENT_ID || "",
+      clientSecret: process.env.HMRC_CLIENT_SECRET || "",
+    },
+    checkTimeoutMs: Number(process.env.VAT_CHECK_TIMEOUT_MS || 10000),
+  },
+
   requestTimeoutMs: Number(process.env.MASAAS_TIMEOUT_MS || 15000),
   // Starting a hosted checkout can make several provider requests inside saas_be.
   checkoutTimeoutMs: Number(process.env.CHECKOUT_TIMEOUT_MS || 60000),
