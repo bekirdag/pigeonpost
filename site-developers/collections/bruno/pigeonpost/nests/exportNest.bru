@@ -1,0 +1,19 @@
+meta {
+  name: Download the Nest's files, their text and its conversations as a zip (a person only)
+  type: http
+  seq: 16
+}
+
+get {
+  url: {{baseUrl}}/v1/nests/:nest/export
+  body: none
+  auth: bearer
+}
+
+params:path {
+  nest: 
+}
+
+auth:bearer {
+  token: {{token}}
+}

@@ -101,10 +101,17 @@ mod mls;
 mod msgactions;
 #[cfg(test)]
 mod msgactions_tests;
+mod nest_access;
+mod nest_approvals;
 mod nest_catalog;
 mod nest_commerce;
 #[cfg(test)]
 mod nest_commerce_tests;
+mod nest_files;
+mod nest_manage;
+mod nest_org;
+#[cfg(test)]
+mod nest_org_tests;
 mod nests;
 #[cfg(test)]
 mod nests_tests;
@@ -520,6 +527,7 @@ async fn serve(cfg: Config) {
     googleplay_routes::start_reconciliation(state.clone());
     appstore_routes::start_reconciliation(state.clone());
     nest_commerce::start_reconciliation(state.clone());
+    nests::start_unlocker(state.clone());
     start_internal_listener(&state).await;
     // Disappearing-message expiry and group maintenance (SDS §17.2, §4.3), every 30 s.
     ephemeral::start_worker(state.clone());
@@ -1026,6 +1034,10 @@ fn build_router(state: AppState) -> Router {
         // Nests Phase A: a hosted agent redeems its one-time enrollment code.
         .merge(nests::router())
         .merge(nest_commerce::router())
+        .merge(nest_files::router())
+        .merge(nest_approvals::router())
+        .merge(nest_manage::router())
+        .merge(nest_org::router())
         // Phase 3B: calendar and scheduled meetings (SDS §14B.5, docs/calendar.md).
         .route(
             "/v1/calendars",
@@ -2522,7 +2534,10 @@ pub(crate) async fn do_set_contact(
     // Refuse a bad grant now rather than storing one that could never match. A denied verb is not
     // a typo to be shrugged off — it is someone asking for the one thing this design will not sell.
     if let Some(v) = &allowed_verbs {
-        verbs::validate_grant(v).map_err(|detail| ApiError::bad("invalid_verb", &detail))?;
+        let is_nest = v.iter().any(|x| x == verbs::NEST_CHAT)
+            && nests::is_nest_mailbox(state, &me.address).await;
+        verbs::validate_grant_for(v, is_nest)
+            .map_err(|detail| ApiError::bad("invalid_verb", &detail))?;
     }
 
     if actor == TrustActor::Agent {
@@ -4100,6 +4115,23 @@ pub(crate) async fn do_inbox_page(
         }
     }
 
+    // Is this mailbox a live Nest (Nests B3)? Only a Nest treats granted prose as `chat`. An
+    // organization's Nest (B7) takes its senders from live org authority instead of contact grants:
+    // the org's Nest admins and members with a live `operate_nest` delegation, checked per sender
+    // on every read, so an offboarded operator is ignored at once.
+    let me_is_nest = nests::is_nest_mailbox(state, &me.address).await;
+    let me_is_org_nest = me_is_nest && {
+        let a = me.address.clone();
+        state
+            .store
+            .group_read(move |c| -> groups::GResult<bool> { Ok(nest_access::is_org_nest(c, &a)?) })
+            .await
+            .unwrap_or(false)
+    };
+    let mut org_nest_senders: std::collections::HashMap<String, bool> =
+        std::collections::HashMap::new();
+    let nest_verbs: Vec<String> = vec!["answer_question".into(), verbs::NEST_CHAT.into()];
+
     // Company rules per distinct sender, evaluated once (SDS §9.3).
     let mut org_verdicts: std::collections::HashMap<String, Option<org_rules::Verdict>> =
         std::collections::HashMap::new();
@@ -4332,15 +4364,35 @@ pub(crate) async fn do_inbox_page(
             } else {
                 &org_granted
             };
-            let decision = verbs::decide(&latest_body, auto, granted);
+            let (auto, granted): (bool, &[String]) = if me_is_org_nest {
+                if !org_nest_senders.contains_key(&from) {
+                    let (a, f, now) = (me.address.clone(), from.clone(), now_unix());
+                    let ok = state
+                        .store
+                        .group_read(move |c| -> groups::GResult<bool> {
+                            Ok(nest_access::org_sender_ok(c, &a, &f, now)?)
+                        })
+                        .await
+                        .unwrap_or(false);
+                    org_nest_senders.insert(from.clone(), ok);
+                }
+                if org_nest_senders.get(&from).copied().unwrap_or(false) {
+                    (true, &nest_verbs)
+                } else {
+                    (false, &[])
+                }
+            } else {
+                (auto, granted)
+            };
+            let decision = verbs::decide_for(&latest_body, auto, granted, me_is_nest);
             // An edit is evaluated as the request it now is, but never raises a held original:
             // only the recipient's grants can do that (SDS §14C.3).
             let original_decision = if own_edits.is_empty() || !view.fold {
                 root_body
                     .as_deref()
-                    .map(|b| verbs::decide(b, auto, granted))
+                    .map(|b| verbs::decide_for(b, auto, granted, me_is_nest))
             } else {
-                Some(verbs::decide(&original_body, auto, granted))
+                Some(verbs::decide_for(&original_body, auto, granted, me_is_nest))
             };
             let decision = match (&decision, original_decision) {
                 (verbs::Decision::Auto { verb }, Some(verbs::Decision::Review { held, .. })) => {

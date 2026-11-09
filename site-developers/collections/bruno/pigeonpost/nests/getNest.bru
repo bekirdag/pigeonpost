@@ -1,0 +1,23 @@
+meta {
+  name: One of this account's Nests with its status header (feature `nests`)
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/v1/nests/:nest
+  body: none
+  auth: bearer
+}
+
+params:path {
+  nest: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  `status` is what a client shows above the conversation: `ready`, `working` (a run reported `working` in the last 15 minutes), `needs_you` (`status_reason: payment`), `paused` (`over_capacity` or by the owner) or `unavailable` (`setting_up`, `failed`). Another account's Nest answers 404.
+}

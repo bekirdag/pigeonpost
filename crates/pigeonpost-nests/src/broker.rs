@@ -198,6 +198,11 @@ async fn chat(State(b): State<Broker>, headers: HeaderMap, Json(body): Json<Valu
                     "allowance_exhausted",
                     &format!("the monthly {which} token allowance is used up"),
                 ),
+                ReserveError::NoModel => refuse(
+                    StatusCode::PAYMENT_REQUIRED,
+                    "no_model",
+                    "this Nest has no AI connected",
+                ),
                 ReserveError::PlatformCap(which) => {
                     tracing::warn!(which, "platform monthly cap reached");
                     refuse(

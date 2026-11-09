@@ -1,0 +1,47 @@
+groups:
+  - name: nests
+    rules:
+      - alert: NestdDown
+        expr: up{job="nestd"} == 0
+        for: 5m
+        annotations: {summary: "nestd metrics have not answered for 5 minutes"}
+      - alert: NestsLocked
+        expr: nests_locked == 1
+        for: 5m
+        annotations: {summary: "the postbox has not released the host key for 5 minutes; no Nest can start"}
+      - alert: NestFailed
+        expr: nests_total{state="failed"} > 0
+        for: 15m
+        annotations: {summary: "{{ $value }} Nest(s) in state failed for 15 minutes"}
+      - alert: NestsNearMaxRunning
+        expr: nests_total{state="running"} + nests_total{state="paused"} >= nests_max_running
+        for: 10m
+        annotations: {summary: "resident Nests at the admission limit"}
+      - alert: ThinPoolFilling
+        expr: nests_thin_pool_data_percent > 85
+        for: 15m
+        annotations: {summary: "Nest volume thin pool {{ $value }}% full"}
+      - alert: VolumeAllocationHigh
+        expr: nests_volume_allocated_gib / nests_volume_max_gib > 0.9
+        for: 30m
+        annotations: {summary: "Nest volume quotas above 90% of the host maximum"}
+      - alert: BackupStale
+        expr: time() - nests_backup_last_success_seconds > 26 * 3600
+        for: 30m
+        annotations: {summary: "no successful Nest backup for more than 26 hours"}
+      - alert: BackupNeverReported
+        expr: absent(nests_backup_last_success_seconds)
+        for: 30h
+        annotations: {summary: "the backup has never written its success marker"}
+      - alert: HostMemoryLow
+        expr: node_memory_MemAvailable_bytes < 512 * 1024 * 1024
+        for: 10m
+        annotations: {summary: "less than 512 MiB available on nests-1 (VMware balloon?)"}
+      - alert: HostDiskLow
+        expr: node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"} < 0.1
+        for: 30m
+        annotations: {summary: "root filesystem below 10% free"}
+      - alert: PlatformErrorTokensHigh
+        expr: nests_platform_error_tokens_month{direction="input"} > 500000
+        for: 1h
+        annotations: {summary: "many model calls ended with an unknown outcome this month"}

@@ -86,11 +86,13 @@ fn run_with_stdin(program: &str, args: &[&str], stdin: &[u8]) -> Result<(), Stri
 
 pub struct LvmLuks {
     cfg: StorageConfig,
+    /// The off-host KEK (Phase B6): volume keys are stored wrapped under it.
+    vault: std::sync::Arc<crate::keywrap::Vault>,
 }
 
 impl LvmLuks {
-    pub fn new(cfg: StorageConfig) -> Self {
-        LvmLuks { cfg }
+    pub fn new(cfg: StorageConfig, vault: std::sync::Arc<crate::keywrap::Vault>) -> Self {
+        LvmLuks { cfg, vault }
     }
     fn lv(&self, id: &str) -> String {
         format!("{}/nest-{id}", self.cfg.vg)
@@ -122,8 +124,35 @@ impl LvmLuks {
             })
             .unwrap_or(false)
     }
+    /// The volume key, unwrapped with the KEK. A Phase A key file (plaintext) is wrapped in place
+    /// the first time it is read while unlocked; while locked it is not used at all.
     fn read_key(&self, id: &str) -> Result<Vec<u8>, String> {
-        std::fs::read(self.key_path(id)).map_err(|e| format!("key for {id}: {e}"))
+        let mut file =
+            std::fs::read(self.key_path(id)).map_err(|e| format!("key for {id}: {e}"))?;
+        if !self.cfg.key_wrap {
+            return Ok(file);
+        }
+        if crate::keywrap::is_wrapped(&file) {
+            return self.vault.unwrap(id, &file);
+        }
+        let wrapped = self.vault.wrap(id, &file);
+        let wrapped = match wrapped {
+            Ok(w) => w,
+            Err(e) => {
+                zeroize::Zeroize::zeroize(&mut file);
+                return Err(e);
+            }
+        };
+        write_private(&self.key_path(id), &wrapped)?;
+        Ok(file)
+    }
+
+    fn store_key(&self, id: &str, key: &[u8]) -> Result<(), String> {
+        if self.cfg.key_wrap {
+            write_private(&self.key_path(id), &self.vault.wrap(id, key)?)
+        } else {
+            write_private(&self.key_path(id), key)
+        }
     }
     fn map(&self, id: &str) -> Result<(), String> {
         if Path::new(&self.mapper_dev(id)).exists() {
@@ -192,7 +221,10 @@ impl Volumes for LvmLuks {
         // PBKDF keeps start-up fast and memory-light.
         let mut key = [0u8; 64];
         rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut key);
-        write_private(&self.key_path(nest_id), &key)?;
+        if let Err(e) = self.store_key(nest_id, &key) {
+            zeroize::Zeroize::zeroize(&mut key);
+            return Err(e);
+        }
         let format = run_with_stdin(
             "cryptsetup",
             &[
@@ -390,6 +422,12 @@ pub(crate) fn write_for_sandbox(path: &Path, data: &[u8], uid: u32) -> Result<()
     set_owner_mode(path, uid, 0o400)
 }
 
+/// Create a directory (and parents) owned by the sandbox user with `mode`.
+pub(crate) fn dir_for_sandbox(path: &Path, uid: u32, mode: u32) -> Result<(), String> {
+    std::fs::create_dir_all(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    set_owner_mode(path, uid, mode)
+}
+
 #[cfg(unix)]
 fn set_owner_mode(path: &Path, uid: u32, mode: u32) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
@@ -433,9 +471,12 @@ fn statvfs_usage(path: &Path) -> Option<(u64, u64)> {
     Some((it.next()??, it.next()??))
 }
 
-pub fn from_config(cfg: &StorageConfig) -> Result<Box<dyn Volumes>, String> {
+pub fn from_config(
+    cfg: &StorageConfig,
+    vault: std::sync::Arc<crate::keywrap::Vault>,
+) -> Result<Box<dyn Volumes>, String> {
     match cfg.backend.as_str() {
-        "lvm-luks" => Ok(Box::new(LvmLuks::new(cfg.clone()))),
+        "lvm-luks" => Ok(Box::new(LvmLuks::new(cfg.clone(), vault))),
         "dir" => Ok(Box::new(DirVolumes::new(
             cfg.mount_root.clone(),
             cfg.sandbox_uid,

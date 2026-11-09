@@ -33,10 +33,11 @@ use serde_json::{json, Value};
 
 /// Capabilities a delegation may carry (SDS §6.5), each one enforced: `enroll` (enrollment codes
 /// for the agent), `ssh` (a shell on it, SDS §11.5) and `read_inbox` (operate its mailbox in the
-/// apps). `bind_handle` and `configure_rules` were offered but granted nothing; they are no longer
+/// apps), and `operate_nest` (Nests B7: chat with an org-owned Nest, upload files, approve its
+/// actions). `bind_handle` and `configure_rules` were offered but granted nothing; they are no longer
 /// accepted (audit 2026-11-03 P1-5). Old rows that carry them are listed as stored and still grant
 /// nothing.
-pub(crate) const CAPABILITIES: &[&str] = &["enroll", "ssh", "read_inbox"];
+pub(crate) const CAPABILITIES: &[&str] = &["enroll", "ssh", "read_inbox", "operate_nest"];
 
 /// A stored capability list as shown: only the capabilities that grant something (rows written
 /// before P1-5 may still carry `bind_handle` or `configure_rules`).
@@ -519,7 +520,7 @@ pub(crate) fn create_agent_in(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn delegate_in(
+pub(crate) fn delegate_in(
     tx: &Connection,
     org_id: &str,
     member_id: &str,
