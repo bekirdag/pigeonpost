@@ -42,7 +42,7 @@ zeroize.workspace = true
 chacha20poly1305.workspace = true
 tracing = "0.1"
 # B4 file parsing (MIT/Apache-2.0): archives and deflate only; no other format libraries.
-zip = { version = "2", default-features = false, features = ["deflate-flate2", "flate2"] }
+zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
 flate2 = "1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
