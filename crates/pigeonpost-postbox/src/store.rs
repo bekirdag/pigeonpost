@@ -20,7 +20,7 @@ mod calendar;
 mod calllog;
 pub(crate) mod contacts;
 mod deletion;
-mod entitlements;
+pub(crate) mod entitlements;
 mod ephemeral;
 mod events;
 mod features;
@@ -32,6 +32,7 @@ mod limits;
 mod listing;
 pub(crate) mod meetings;
 mod msgactions;
+pub(crate) mod nest_funding;
 mod nests;
 mod org_api;
 mod org_model;
@@ -1004,12 +1005,15 @@ impl Store {
         conn.execute_batch(contacts::SCHEMA)?;
         // Nests Phase A: hosted agents and their one-time enrollment codes.
         conn.execute_batch(nests::SCHEMA)?;
+        // Nests Phase B1: store purchases, purchase intents and paid-but-unprovisioned setups.
+        conn.execute_batch(nest_funding::SCHEMA)?;
         for stmt in MIGRATIONS
             .iter()
             .chain(filtering::MIGRATIONS)
             .chain(avatars::MIGRATIONS)
             .chain(ephemeral::MIGRATIONS)
             .chain(listing::MIGRATIONS)
+            .chain(nest_funding::MIGRATIONS)
         {
             if let Err(e) = conn.execute(stmt, []) {
                 // "duplicate column name" means the migration already applied (fresh DB) — benign.

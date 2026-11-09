@@ -93,6 +93,10 @@ pub(crate) const TABLES: &[(&str, Rule)] = &[
     ("apple_subscriptions", Block(A, "account_id = ?1")),
     ("google_subscriptions", Block(A, "account_id = ?1")),
     ("apple_handle_plans", Block(A, "account_id = ?1")),
+    // Nest package store purchases are money; intents and setups are bookkeeping of a purchase.
+    ("nest_store_purchases", Block(A, "account_id = ?1")),
+    ("nest_setups", Block(A, "account_id = ?1")),
+    ("nest_purchase_intents", Remove(A, "account_id = ?1")),
     ("apple_plan_names", Block(A, "account_id = ?1")),
     ("plan_names", Block(A, "account_id = ?1")),
     ("test_handle_claims", Block(A, "account_id = ?1")),

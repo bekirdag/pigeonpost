@@ -1,0 +1,23 @@
+meta {
+  name: A Nest sandbox redeems its one-time enrollment code (no credential)
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/v1/nests/enroll
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "code": "string",
+    "device_public_key": "string",
+    "signature": "string"
+  }
+}
+
+docs {
+  The sandbox signs `pigeonpost-nest-enroll-v1\0` + code with a fresh Ed25519 device key. Redemption rotates the Nest mailbox's capability token and returns it to the sandbox alone. Every refusal is the same `enrollment_invalid`.
+}

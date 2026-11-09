@@ -279,6 +279,7 @@ public sealed partial class MainWindow : Window
             var message = new TextBox { Header = "First message", AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 90, MaxLength = 20000 };
             var panel = new StackPanel { Spacing = 16 };
             panel.Children.Add(peer);
+            if (OrganizationSuggestions(peer, target) is { } suggestions) panel.Children.Add(suggestions);
             panel.Children.Add(message);
             panel.Children.Add(new TextBlock { Text = "Leave the message empty to open the conversation.", TextWrapping = TextWrapping.Wrap });
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(peer, "Pigeonpost address");

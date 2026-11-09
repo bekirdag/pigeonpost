@@ -237,6 +237,32 @@ pub async fn login_browser(home: &Path, issuer: &str, open_browser: bool) -> Res
     Ok(())
 }
 
+/// Whether a browser opened for this login would run somewhere that cannot reach this machine's
+/// loopback callback: an SSH session, or a Linux or BSD machine with no display.
+pub fn no_local_browser() -> bool {
+    lacks_local_browser(
+        |name| std::env::var_os(name).is_some_and(|value| !value.is_empty()),
+        cfg!(all(unix, not(target_os = "macos"))),
+    )
+}
+
+fn lacks_local_browser(is_set: impl Fn(&str) -> bool, needs_display: bool) -> bool {
+    ["SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"]
+        .iter()
+        .any(|name| is_set(name))
+        || (needs_display && !is_set("DISPLAY") && !is_set("WAYLAND_DISPLAY"))
+}
+
+/// The identity provider's own reason, when it gave one. A bare status hides the cause.
+fn device_start_error(status: u16, body: &str) -> String {
+    let parsed: serde_json::Value = serde_json::from_str(body).unwrap_or_default();
+    let reason = parsed["error_description"]
+        .as_str()
+        .or_else(|| parsed["error"].as_str())
+        .unwrap_or("no reason given");
+    format!("could not start the device sign-in (HTTP {status}): {reason}")
+}
+
 /// Sign in on a machine with no browser, by typing a short code into one that has.
 pub async fn login_device(home: &Path, issuer: &str) -> Result<(), Error> {
     let endpoints = discover(issuer).await?;
@@ -245,17 +271,27 @@ pub async fn login_device(home: &Path, issuer: &str) -> Result<(), Error> {
     )?;
     let http = http_client()?;
 
-    let auth: DeviceAuth = http
+    // This client requires S256 for every flow, the device grant included, because the same client
+    // serves the strong sign-in for SSH. Keycloak refuses a device request without it.
+    let verifier = random_verifier();
+    let challenge = b64url(&Sha256::digest(verifier.as_bytes()));
+
+    let response = http
         .post(&device_endpoint)
         .form(&[
             ("client_id", CLIENT_ID),
             ("scope", "openid profile offline_access"),
+            ("code_challenge", challenge.as_str()),
+            ("code_challenge_method", "S256"),
         ])
         .send()
-        .await?
-        .error_for_status()?
-        .json()
         .await?;
+    if !response.status().is_success() {
+        let status = response.status().as_u16();
+        let body = response.text().await.unwrap_or_default();
+        return Err(device_start_error(status, &body).into());
+    }
+    let auth: DeviceAuth = response.json().await?;
 
     println!("On any device with a browser, open:");
     println!();
@@ -293,6 +329,7 @@ pub async fn login_device(home: &Path, issuer: &str) -> Result<(), Error> {
                 ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
                 ("device_code", &auth.device_code),
                 ("client_id", CLIENT_ID),
+                ("code_verifier", &verifier),
             ])
             .send()
             .await?;
@@ -903,6 +940,145 @@ pub(crate) fn print_qr(text: &str) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn an_ssh_session_or_a_missing_display_has_no_local_browser() {
+        let ssh_set = |n: &str| n == "SSH_TTY";
+        assert!(lacks_local_browser(ssh_set, false));
+
+        let display_set = |n: &str| n == "DISPLAY";
+        assert!(!lacks_local_browser(display_set, true));
+
+        let wayland_set = |n: &str| n == "WAYLAND_DISPLAY";
+        assert!(!lacks_local_browser(wayland_set, true));
+
+        let nothing_set = |_: &str| false;
+        assert!(lacks_local_browser(nothing_set, true));
+        assert!(!lacks_local_browser(nothing_set, false));
+    }
+
+    #[test]
+    fn a_refused_device_request_shows_the_provider_reason() {
+        let body = r#"{"error":"invalid_request","error_description":"Missing parameter: code_challenge_method"}"#;
+        let result = device_start_error(400, body);
+        assert!(result.contains("Missing parameter: code_challenge_method"));
+        assert!(result.contains("400"));
+
+        let non_json_body = "not json";
+        let result2 = device_start_error(400, non_json_body);
+        assert!(result2.contains("no reason given"));
+    }
+
+    /// Answers like Keycloak with `pkce.code.challenge.method=S256` on the client: no challenge, no
+    /// device code; no matching verifier, no token.
+    fn pkce_enforcing_issuer() -> String {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let issuer = base.clone();
+        std::thread::spawn(move || {
+            let mut challenge = String::new();
+            for stream in listener.incoming() {
+                let mut stream = stream.unwrap();
+                let mut raw = Vec::new();
+                let mut buf = [0u8; 4096];
+                let (head, body) = loop {
+                    let n = stream.read(&mut buf).unwrap();
+                    raw.extend_from_slice(&buf[..n]);
+                    let text = String::from_utf8_lossy(&raw).to_string();
+                    if let Some((head, body)) = text.split_once("\r\n\r\n") {
+                        let want = head
+                            .lines()
+                            .find_map(|l| {
+                                l.to_lowercase()
+                                    .strip_prefix("content-length: ")
+                                    .map(str::to_string)
+                            })
+                            .and_then(|v| v.trim().parse::<usize>().ok())
+                            .unwrap_or(0);
+                        if body.len() >= want {
+                            break (head.to_string(), body.to_string());
+                        }
+                    }
+                };
+                let field = |name: &str| {
+                    body.split('&').find_map(|pair| {
+                        pair.split_once('=')
+                            .filter(|(k, _)| *k == name)
+                            .map(|(_, v)| urldecode(v))
+                    })
+                };
+                let path = head
+                    .split_whitespace()
+                    .nth(1)
+                    .unwrap_or_default()
+                    .to_string();
+                let (status, reply) = match path.as_str() {
+                    "/.well-known/openid-configuration" => (
+                        "200 OK",
+                        serde_json::json!({
+                            "authorization_endpoint": format!("{base}/auth"),
+                            "token_endpoint": format!("{base}/token"),
+                            "device_authorization_endpoint": format!("{base}/device"),
+                        }),
+                    ),
+                    "/device" if field("code_challenge_method").as_deref() == Some("S256") => {
+                        challenge = field("code_challenge").unwrap_or_default();
+                        (
+                            "200 OK",
+                            serde_json::json!({
+                                "device_code": "dev", "user_code": "ABCD-EFGH",
+                                "verification_uri": format!("{base}/verify"),
+                                "expires_in": 30, "interval": 0,
+                            }),
+                        )
+                    }
+                    "/device" => (
+                        "400 Bad Request",
+                        serde_json::json!({
+                            "error": "invalid_request",
+                            "error_description": "Missing parameter: code_challenge_method",
+                        }),
+                    ),
+                    "/token"
+                        if field("code_verifier").is_some_and(|v| {
+                            b64url(&Sha256::digest(v.as_bytes())) == challenge
+                        }) =>
+                    {
+                        (
+                            "200 OK",
+                            serde_json::json!({
+                                "access_token": "access", "refresh_token": "refresh", "expires_in": 300,
+                            }),
+                        )
+                    }
+                    _ => (
+                        "400 Bad Request",
+                        serde_json::json!({ "error": "invalid_grant" }),
+                    ),
+                };
+                let reply = reply.to_string();
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}",
+                    reply.len()
+                );
+            }
+        });
+        issuer
+    }
+
+    #[test]
+    fn device_login_completes_against_an_issuer_that_requires_pkce() {
+        let home = tempfile::tempdir().unwrap();
+        let issuer = pkce_enforcing_issuer();
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(login_device(home.path(), &issuer))
+            .unwrap();
+        assert_eq!(load(home.path()).unwrap().unwrap().access_token, "access");
+    }
 
     #[test]
     fn step_up_asks_for_a_fresh_strong_sign_in_without_an_offline_session() {

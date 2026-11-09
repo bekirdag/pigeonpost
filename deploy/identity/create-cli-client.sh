@@ -27,16 +27,10 @@ fi
 # publicClient + no secret: a secret shipped in every copy of a CLI is not a secret. PKCE is what
 # makes that safe, and the CLI always sends S256 (pinned against RFC 7636's own test vector).
 #
-# `pkce.code.challenge.method` is deliberately NOT set. Keycloak applies that mandate to *every*
-# flow on the client, including the device grant — which under RFC 8628 has no redirect and
-# therefore no PKCE — so setting it makes Keycloak reject its own device requests with
-# "Missing parameter: code_challenge_method". Enforcing it here would mean either giving the device
-# flow a second client id, or breaking it. The protection PKCE provides is against interception of
-# *our* authorization code, and our client always sends it.
-#
-# The empty string is deliberate rather than an omission: Keycloak *merges* attributes on update,
-# so leaving the key out keeps whatever was there before. Clearing it explicitly makes this script
-# idempotent against a client that was previously created with the mandate.
+# `pkce.code.challenge.method` is S256 for every flow on this client. The strong sign-in for SSH
+# needs it, and Keycloak applies it to the device grant too, so a device request without PKCE is
+# refused with "Missing parameter: code_challenge_method". CLI 0.7.19 and later send S256 on both;
+# older CLIs can use only the browser sign-in.
 #
 # `consentRequired` is on, and the device grant is why. Keycloak needs three things to approve a
 # device: the user code, an authenticated session, and consent. Turn consent off and the first two
@@ -63,7 +57,7 @@ payload='{
   "webOrigins": [],
   "attributes": {
     "oauth2.device.authorization.grant.enabled": "true",
-    "pkce.code.challenge.method": ""
+    "pkce.code.challenge.method": "S256"
   }
 }'
 
@@ -84,7 +78,8 @@ fi
 # Prove it: a device-code request must now be accepted rather than refused.
 probe=$(curl -s --max-time 30 -X POST \
   "$KC_URL/realms/$KC_REALM/protocol/openid-connect/auth/device" \
-  -d client_id=pigeonpost-cli -d "scope=openid profile offline_access")
+  -d client_id=pigeonpost-cli -d "scope=openid profile offline_access" \
+  -d code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM -d code_challenge_method=S256)
 if printf '%s' "$probe" | grep -q user_code; then
   echo "verified: the device grant now issues a user code"
 else

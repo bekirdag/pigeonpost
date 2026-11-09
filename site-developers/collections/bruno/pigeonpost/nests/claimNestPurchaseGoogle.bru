@@ -1,0 +1,25 @@
+meta {
+  name: Claim or restore a Google Play Nest subscription (a person only)
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/v1/nest-purchases/google
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "purchase_token": "string"
+  }
+}
+
+docs {
+  Verified with the Play Developer API (subscriptionsv2) against this account's obfuscated account id and the `monthly` base plan. Acknowledged only after it is recorded, and never when it duplicates a live package (Google then refunds it).
+}

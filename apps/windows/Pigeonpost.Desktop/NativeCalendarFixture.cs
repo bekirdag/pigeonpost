@@ -7,7 +7,7 @@ using Pigeonpost.Core.Calendar;
 namespace Pigeonpost.Desktop;
 
 // Synthetic native UI data only. This service performs no HTTP or public authentication.
-internal sealed class NativeCalendarFixture : ICalendarActionsService, IProtectedCalendarService
+internal sealed class NativeCalendarFixture : ICalendarActionsService, IProtectedCalendarService, ICalendarSharingService
 {
     private readonly PreviewInboxService inbox;
     private readonly string statePath;
@@ -15,7 +15,8 @@ internal sealed class NativeCalendarFixture : ICalendarActionsService, IProtecte
     private readonly List<CalendarFolder> calendars = [new("cal_work", "Work", "blue")];
     private readonly Dictionary<string, (string Hash, CalendarCreateReceipt Receipt)> requests = [];
     private CalendarSettings settings = new(Previews: true, Timezone: "Europe/Istanbul", WeekStart: 1);
-    private int posts, edits, answers, cancels, reminderSaves, settingsSaves, serial, losses;
+    private int posts, edits, answers, cancels, reminderSaves, settingsSaves, serial, losses, imported, links;
+    private readonly Dictionary<string, string> feeds = new(StringComparer.Ordinal);
     internal AuthorizationLease Root { get; } = new();
     public AuthorizationLease? AcceptedAuthorization => Root;
     public string? RecoveryOwnerKey => new string('a', 64);
@@ -31,7 +32,8 @@ internal sealed class NativeCalendarFixture : ICalendarActionsService, IProtecte
             AllDay: false, Start: day + "T09:00", End: day + "T10:00", Tzid: "Europe/Istanbul",
             StartsAt: new CalendarWallTime(day + "T09:00", "Europe/Istanbul").Resolve(), EndsAt: new CalendarWallTime(day + "T10:00", "Europe/Istanbul").Resolve(),
             Organizer: new(Handle: "/fixture/design", Name: "Design"), My: new(Role: role, AttendeeId: role == "attendee" ? "att_" + id : null, Rsvp: role == "attendee" ? "pending" : "accepted"),
-            CanEdit: role == "organizer", Reminders: [new(10, "push")]));
+            CanEdit: role == "organizer", Reminders: [new(10, "push")],
+            Attendees: role == "organizer" ? [new("att_guest", Kind: "external", Contact: "guest@fixture.invalid", Name: "Fixture Guest", Rsvp: "pending")] : null));
         events.Add("evt_design", Seed("evt_design", "Design review", "organizer"));
         events.Add("evt_invitation", Seed("evt_invitation", "Team invitation", "attendee"));
         events.Add("evt_filtered", Seed("evt_filtered", "Filtered invitation", "attendee"));
@@ -40,7 +42,7 @@ internal sealed class NativeCalendarFixture : ICalendarActionsService, IProtecte
     private void Check(CancellationToken ct) { ct.ThrowIfCancellationRequested(); Root.RequireActive(); }
     private void Save()
     {
-        var state = new { today, posts, edits, answers, cancels, reminderSaves, settingsSaves, requests = requests.Select(p => new { key = p.Key, sha = p.Value.Hash }),
+        var state = new { today, posts, edits, answers, cancels, reminderSaves, settingsSaves, imported, links, feeds, requests = requests.Select(p => new { key = p.Key, sha = p.Value.Hash }),
             events = events.Values.Select(v => new { id = v.Event.Id, title = v.Event.Title, revision = v.Event.Revision, status = v.Event.Status, rsvp = v.Event.My?.Rsvp }),
             settings = new { timezone = settings.Timezone, previews = settings.Previews, week_start = settings.WeekStart } };
         var temporary = statePath + ".new"; File.WriteAllText(temporary, JsonSerializer.Serialize(state)); FixtureState.Replace(temporary, statePath);
@@ -116,6 +118,35 @@ internal sealed class NativeCalendarFixture : ICalendarActionsService, IProtecte
     { Check(ct); var fields = payload.Fields(); settings = new(fields.GetProperty("previews").GetBoolean(), fields.GetProperty("timezone").GetString(), fields.GetProperty("week_start").GetInt32()); settingsSaves++; Save(); return Task.FromResult(settings); }
     public Task<byte[]> ExportCalendarEventAsync(string identity, string eventId, CancellationToken ct)
     { Check(ct); return Task.FromResult(System.Text.Encoding.UTF8.GetBytes("BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n")); }
+    public Task<CalendarFeed> GetCalendarFeedAsync(string identity, string calendarId, CancellationToken ct)
+    { Check(ct); return Task.FromResult(feeds.TryGetValue(calendarId, out var p) ? new CalendarFeed(true, p, 1) : new CalendarFeed(false)); }
+    public Task<CalendarFeed> SetCalendarFeedAsync(string identity, string calendarId, bool enabled, string? projection, CancellationToken ct)
+    {
+        Check(ct); if (enabled) feeds[calendarId] = projection!; else feeds.Remove(calendarId); Save();
+        return Task.FromResult(enabled ? new CalendarFeed(true, projection, 1, "https://calendar-ui-fixture.invalid/v1/calendar/feed/fixture-" + ++serial + ".ics") : new CalendarFeed(false));
+    }
+    public Task<CalendarImportPreview> PreviewCalendarImportAsync(string identity, string? calendarId, byte[] ics, CancellationToken ct)
+    {
+        Check(ct); var text = System.Text.Encoding.UTF8.GetString(ics);
+        if (!text.Contains("BEGIN:VCALENDAR", StringComparison.Ordinal)) throw new PostboxException(400, "import_invalid");
+        var titles = text.Split('\n').Where(l => l.StartsWith("SUMMARY:", StringComparison.Ordinal)).Select(l => l[8..].Trim()).ToArray();
+        return Task.FromResult(new CalendarImportPreview("imp_fixture", calendarId ?? "cal_work",
+            titles.Select((t, i) => new CalendarImportEntry(i, t, false, today + "T1" + i + ":00", "Europe/Istanbul", null, null, null, [], true)).ToArray(), []));
+    }
+    public Task<int> ConfirmCalendarImportAsync(string identity, string draftId, IReadOnlyList<int> select, string? calendarId, CancellationToken ct)
+    {
+        Check(ct);
+        foreach (var index in select)
+        {
+            var id = "evt_imported_" + index; var start = today + "T1" + index + ":00"; var end = today + "T1" + index + ":30";
+            events[id] = new(new(id, CalendarId: calendarId ?? "cal_work", Revision: 1, Status: "confirmed", Title: "Imported " + index, AllDay: false, Start: start, End: end,
+                Tzid: "Europe/Istanbul", StartsAt: new CalendarWallTime(start, "Europe/Istanbul").Resolve(), EndsAt: new CalendarWallTime(end, "Europe/Istanbul").Resolve(),
+                My: new(Role: "organizer"), CanEdit: true));
+        }
+        imported += select.Count; Save(); return Task.FromResult(select.Count);
+    }
+    public Task<CalendarGuestLink> CalendarGuestLinkAsync(string identity, string eventId, string attendeeId, CancellationToken ct)
+    { Check(ct); links++; Save(); return Task.FromResult(new CalendarGuestLink("https://calendar-ui-fixture.invalid/m/FIXTURECODE#t=guest-" + links, 2)); }
     public Task<InboxSnapshot> LoadAsync(string identity, CancellationToken ct) => throw new NotSupportedException();
     public Task<SendReceipt> SendAsync(string identity, string peer, string body, string? thread, CancellationToken ct) => throw new NotSupportedException();
     public Task<string> CreateThreadAsync(string identity, string peer, string title, CancellationToken ct) => throw new NotSupportedException();

@@ -567,7 +567,7 @@ pub(crate) struct Http {
 }
 
 impl Http {
-    fn new(credential: &Credential) -> Result<Self, Error> {
+    pub(crate) fn new(credential: &Credential) -> Result<Self, Error> {
         Ok(Http {
             base: credential.base_url.trim_end_matches('/').to_string(),
             token: credential.capability_token.clone(),
