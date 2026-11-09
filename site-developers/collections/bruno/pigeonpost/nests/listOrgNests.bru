@@ -1,0 +1,23 @@
+meta {
+  name: The organization's Nests a member may act on (feature `nests`)
+  type: http
+  seq: 17
+}
+
+get {
+  url: {{baseUrl}}/v1/orgs/:org/nests
+  body: none
+  auth: bearer
+}
+
+params:path {
+  org: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  Nest admins (owner, admin, agent_admin) see every org Nest; other members see the ones they hold a live `operate_nest` delegation for. Includes the org's Nest allowance.
+}

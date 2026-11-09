@@ -1,0 +1,27 @@
+meta {
+  name: Set the group's picture (raw image)
+  type: http
+  seq: 25
+}
+
+put {
+  url: {{baseUrl}}/v1/groups/:id/picture
+  body: none
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+headers {
+  Content-Type: image/jpeg
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  See docs/groups.md. Group owner or admin, a person (not an agent or key). Same processing as `PUT /v1/profile/avatar`; members get `group.settings` with `changed: [picture]`.
+}

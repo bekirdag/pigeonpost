@@ -12,9 +12,10 @@
 
 import { createHash } from "node:crypto";
 import { config } from "./config.js";
-import { catalog as catalog_data, isUuid, limitsForPackage, plan, planForLocalId, planForProviderReference } from "./catalog.js";
+import { catalog as catalog_data, isUuid, limitsForPackage, nestPackage, nestPrices, plan, planForLocalId, planForProviderReference } from "./catalog.js";
 import * as saas from "./saas.js";
 import * as postbox from "./postbox.js";
+import * as tax from "./tax.js";
 
 const { fail } = saas;
 const INTENT = /^[a-f0-9]{32}$/;
@@ -25,6 +26,12 @@ const now = () => Math.floor(Date.now() / 1000);
 const catalog_ = () => catalog_data;
 const fingerprint = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const environment = () => (config.iyzicoMode === "live" ? "live" : "test");
+const GIB = 1024 ** 3;
+/// An enterprise plan's pooled storage: the catalog's `storage_gb`, else the postbox's default of
+/// 5 GB per seat (store/orgs.rs STORAGE_PER_SEAT).
+export const storageBytes = (limits, seats) =>
+  Number.isInteger(limits?.storage_gb) && limits.storage_gb > 0 ? limits.storage_gb * GIB
+    : Number.isInteger(seats) && seats > 0 ? seats * 5 * GIB : null;
 const seconds = (value) => (value ? Math.floor(Date.parse(value) / 1000) : null);
 
 function strict(body, allowed, required = allowed) {
@@ -65,15 +72,39 @@ export function createBilling(state) {
 
   const saveIntent = (id, patch) => state.update((data) => Object.assign(data.intents[id], patch, { updated_at: Date.now() }));
 
+  /// The VAT treatment of a new purchase (docs/billing-tax.md): decided from the billing profile the
+  /// checkout uses and the country the request came from, before anything is reserved or charged.
+  async function taxDecision(token, billingProfileId, ipCountry) {
+    const profiles = await saas.listBillingProfiles(token);
+    const list = Array.isArray(profiles) ? profiles : Array.isArray(profiles?.data) ? profiles.data : [];
+    const profile = list.find((p) => p && p.id === billingProfileId);
+    if (!profile) fail(400, "Save your billing details first.", "billing_profile_required");
+    return { decision: await tax.decide(profile, ipCountry), profile };
+  }
+
+  /// Receipt wording for a subscription this bridge started, or null for older ones.
+  async function receiptFor(token, subscriptionId) {
+    const ref = await state.read((data) => data.refs[subscriptionId] && { ...data.refs[subscriptionId] });
+    if (!ref?.tax) return null;
+    const profiles = await saas.listBillingProfiles(token).catch(() => null);
+    const list = Array.isArray(profiles) ? profiles : Array.isArray(profiles?.data) ? profiles.data : [];
+    const intent = await state.read((data) => (ref.intent && data.intents[ref.intent]) ? { ...data.intents[ref.intent] } : null);
+    return tax.receipt(ref.tax, list.find((p) => p && p.id === intent?.billing_profile_id) || null);
+  }
+
   /// Resolve the saas_be edition for a plan code and check it against the catalog.
   async function edition(token, entry) {
     const offer = saas.validOffer(await saas.offer(token, entry.package_slug, entry.currency),
       { currency: entry.currency, interval: entry.interval });
-    const listed = entry.editions[String(offer.pricing_year)];
-    if (!listed?.plan_id || listed.plan_id !== offer.plan_id || listed.amount !== String(offer.amount)) {
+    // The edition is found by its saas_be plan id, not by the offer's pricing year: USD and EUR
+    // editions are fixed (no 2027 edition), so in 2027 saas_be keeps offering the 2026 one, and
+    // whatever year it reports, the plan id and the amount must match a listed edition exactly.
+    const found = Object.entries(entry.editions).find(([, e]) => e?.plan_id && e.plan_id === offer.plan_id);
+    const [year, listed] = found || [];
+    if (!listed || listed.amount !== String(offer.amount)) {
       fail(503, "Plan pricing has changed and is being reviewed. Try again later.", "offer_mismatch");
     }
-    return { plan_id: offer.plan_id, package_id: offer.package_id, amount: listed.amount, year: offer.pricing_year };
+    return { plan_id: offer.plan_id, package_id: offer.package_id, amount: listed.amount, year: Number(year) };
   }
 
   async function start(token, intent, entry, body) {
@@ -89,7 +120,7 @@ export function createBilling(state) {
         plan_id: selection.plan_id, package_id: selection.package_id, billing_profile_id: body.billing_profile_id,
         client_reference_id: intent.client_reference, method: "hosted", initial_status: "ACTIVE", quantity: 1,
         trial_period_days: 0, return_url: intent.return_url, locale: body.locale,
-      }, `${intent.kind === "ent" ? "pp-ent" : "pp-cloud"}-${intent.id}`));
+      }, `pp-${intent.kind}-${intent.id}`));
     } catch (error) {
       // A definite refusal (bad billing details, conflict) ends this intent; the page starts a new
       // one after the member fixes it. Anything ambiguous stays replayable under the same key.
@@ -100,7 +131,8 @@ export function createBilling(state) {
     await saveIntent(intent.id, { subscription_id: result.subscription_id, status: "checkout_pending" });
     await state.update((data) => {
       data.refs[result.subscription_id] ||= { kind: intent.kind, account: intent.account, draft_id: intent.draft_id || null,
-        plan_code: intent.plan_code, intent: intent.id, status: "pending", paid_through: null, version: 0, pushed: null };
+        plan_code: intent.plan_code, intent: intent.id, status: "pending", paid_through: null, version: 0, pushed: null,
+        tax: intent.tax || null };
     });
     return {
       intent_id: intent.id, subscription_id: result.subscription_id, plan_code: intent.plan_code,
@@ -146,11 +178,16 @@ export function createBilling(state) {
       if (!names) fail(502, "Unknown plan capacity", "catalog_unknown");
       Object.assign(body, { names, seats: null, agent_limit: null, storage_bytes: null });
     }
+    if (ref.kind === "nest") {
+      // The postbox maps the plan code to its Nest package (slots, storage, model allowance).
+      if (!nestPackage(body.plan_code)) fail(502, "Unknown Nest package", "catalog_unknown");
+      Object.assign(body, { names: null, seats: null, agent_limit: null, storage_bytes: null });
+    }
     const print = fingerprint(body);
     if (ref.pushed === print) return { applied: false, unchanged: true };
     const version = Math.max(Date.now(), (ref.version || 0) + 1);
     let result;
-    if (ref.kind === "cloud") {
+    if (ref.kind === "cloud" || ref.kind === "nest") {
       result = await postbox.putEntitlement("iyzico", environment(), id, {
         subject: { kind: "account", id: ref.account }, ...(subjectCheck ? { subject_check: subjectCheck } : {}),
         ...body, reconciliation_version: version, operation_id: `sync-${id}-${version}`,
@@ -158,7 +195,7 @@ export function createBilling(state) {
     } else {
       const seats = limits.seats ?? ref.seats;
       const entitlement = { provider: "iyzico", environment: environment(), reference: id, plan_code: body.plan_code,
-        plan_version: body.plan_version, seats, status: body.status, period_end: body.period_end,
+        plan_version: body.plan_version, seats, storage_bytes: storageBytes(limits, seats), status: body.status, period_end: body.period_end,
         paid_through: body.paid_through, reconciliation_version: version };
       result = ref.org_active
         ? await postbox.putOrgEntitlement(ref.draft_id, entitlement)
@@ -168,7 +205,7 @@ export function createBilling(state) {
       Object.assign(data.refs[id], {
         pushed: print, version, status: ent.status, paid_through: ent.paid_through, plan_code: ent.plan_code,
         plan_version: String(ent.plan_version), cancel_requested_at: ent.cancel_requested_at ?? null,
-        ...(ref.kind === "cloud" ? { names: body.names } : { seats: limits.seats ?? ref.seats, org_active: true,
+        ...(ref.kind === "cloud" ? { names: body.names } : ref.kind === "nest" ? {} : { seats: limits.seats ?? ref.seats, org_active: true,
           org_status: result?.org?.status || data.refs[id].org_status }),
       });
     });
@@ -199,85 +236,131 @@ export function createBilling(state) {
     return intent;
   }
 
-  // ---- individual Cloud plans -------------------------------------------------------------
+  // ---- individual plans: Pigeonpost Cloud (names) and Nest packages -------------------------
+  //
+  // Same flow for both families; a Nest checkout additionally asks the postbox first (with the
+  // member's own token) whether this purchase may happen at all: the `nests` flag, and no second
+  // charge for an account already funded on another rail or already holding the package.
 
-  async function cloudCheckout(token, body) {
-    strict(body, ["intent_id", "plan_code", "billing_profile_id", "locale"], ["intent_id", "plan_code", "billing_profile_id"]);
+  const FAMILY = {
+    cloud: { label: "Pigeonpost Cloud", ref: "pp-cloud", returnParam: "checkout" },
+    nest: { label: "Nest package", ref: "pp-nest", returnParam: "nest_checkout" },
+  };
+
+  async function individualCheckout(family, token, body, { ipCountry = null } = {}) {
+    strict(body, ["intent_id", "plan_code", "billing_profile_id", "locale", ...(family === "cloud" ? ["confirm_other_store"] : [])], ["intent_id", "plan_code", "billing_profile_id"]);
+    if (body.confirm_other_store !== undefined && typeof body.confirm_other_store !== "boolean") fail(400, "confirm_other_store must be true or false.", "invalid_request");
     const id = intentId(body.intent_id);
     const entry = plan(body.plan_code);
-    if (!entry || entry.family !== "cloud") fail(400, "Choose a Pigeonpost Cloud plan.", "invalid_plan");
+    if (!entry || entry.family !== family) fail(400, `Choose a ${FAMILY[family].label} plan.`, "invalid_plan");
     if (!config.openCurrencies.includes(entry.currency)) fail(503, `Payments in ${entry.currency} are not open yet.`, "currency_unavailable");
     if (!isUuid(body.billing_profile_id)) fail(400, "Save your billing details first.", "billing_profile_required");
-    const request = { kind: "cloud", plan_code: entry.code, billing_profile_id: body.billing_profile_id, locale: locale(body.locale) };
+    const request = { kind: family, plan_code: entry.code, billing_profile_id: body.billing_profile_id, locale: locale(body.locale) };
     const account = await postbox.accountFor(token);
     const known = await state.read((data) => data.intents[id]);
     if (!known) {
-      // One active Cloud subscription per account: more names come from changing plan, never from
-      // a second, overlapping charge.
+      // One active subscription per family and account: more capacity comes from changing plan,
+      // never from a second, overlapping charge.
       const active = (await saas.listSubscriptions(token)).find((s) =>
-        ["ACTIVE", "PENDING", "UNPAID"].includes(s.provider_status) && planForProviderReference(s.pricing_plan_reference)?.family === "cloud");
-      if (active) fail(409, "You already have a Pigeonpost Cloud subscription. Change its plan instead.", "already_subscribed");
+        ["ACTIVE", "PENDING", "UNPAID"].includes(s.provider_status) && planForProviderReference(s.pricing_plan_reference)?.family === family);
+      if (active) {
+        fail(409, family === "cloud" ? "You already have a Pigeonpost Cloud subscription. Change its plan instead."
+          : "You already have a Nest package. Change its plan instead.", "already_subscribed");
+      }
+      if (family === "nest") await postbox.memberPost(token, "/v1/nest-purchases/intents", { package: entry.package, rail: "web" });
+      // A plan bought in the App Store or Google Play adds to this one (SDS §8.8): say so before a
+      // second store charges for names the person may already pay for, and go on only when they
+      // confirm.
+      if (family === "cloud" && body.confirm_other_store !== true) {
+        const store = await otherStore(token);
+        if (store) {
+          fail(409, `You already pay for Pigeonpost names through ${store.name}. A web plan is charged separately and adds to it; manage the ${store.name} plan there. Confirm to buy this one as well.`,
+            "store_subscription_active", { store: store.id });
+        }
+      }
     }
+    const decided = known?.tax ? null : (await taxDecision(token, body.billing_profile_id, ipCountry)).decision;
     const intent = await reserve({
-      id, kind: "cloud", account, plan_code: entry.code,
-      // `pp-cloud:<account>` identifies the buyer; the intent suffix lets a member retry after an
+      id, kind: family, account, plan_code: entry.code, billing_profile_id: body.billing_profile_id, tax: decided,
+      // `pp-<family>:<account>` identifies the buyer; the intent suffix lets a member retry after an
       // abandoned hosted form, which saas_be keeps reserved under its client reference.
-      client_reference: `pp-cloud:${account}:${id}`,
-      return_url: `${config.allowedOrigins[0]}/account?checkout=${id}`,
+      client_reference: `${FAMILY[family].ref}:${account}:${id}`,
+      return_url: `${config.allowedOrigins[0]}/account?${FAMILY[family].returnParam}=${id}`,
     }, { ...request, account });
     return start(token, intent, entry, request);
   }
 
-  async function cloudStatus(token, id) {
-    const intent = await ownedIntent(token, intentId(id), "cloud");
+  /// A live App Store or Google Play entitlement on the caller's account, if any.
+  async function otherStore(token) {
+    const view_ = await postbox.memberGet(token, "/v1/me/entitlements");
+    const live = (view_?.entitlements || []).find((e) => e && e.active === true && (e.source === "apple" || e.source === "google"));
+    if (!live) return null;
+    return live.source === "apple" ? { id: "app_store", name: "the App Store" } : { id: "google_play", name: "Google Play" };
+  }
+
+  async function individualStatus(family, token, id) {
+    const intent = await ownedIntent(token, intentId(id), family);
     if (!intent.subscription_id) return view(intent, null, null);
     const { sub, ent } = await syncMember(token, intent.subscription_id);
     if (ent && intent.status !== "active") await saveIntent(intent.id, { status: "active" });
-    return view(intent, sub, ent);
+    return { ...view(intent, sub, ent), receipt: await receiptFor(token, intent.subscription_id) };
+  }
+
+  function subscriptionsOf(family, subs) {
+    return subs.map((s) => {
+      const resolved = planForProviderReference(s.pricing_plan_reference);
+      if (!resolved || resolved.family !== family) return null;
+      return { id: s.subscription_id, plan_code: resolved.code, currency: resolved.currency,
+        ...(family === "cloud" ? { names: resolved.names } : { package: resolved.package, slots: resolved.slots }),
+        provider_status: s.provider_status, recurring_price: s.recurring_price || null,
+        pending_change: s.pending_change && Object.keys(s.pending_change).length ? true : false,
+        reconciliation_required: Boolean(s.reconciliation_required) };
+    }).filter(Boolean);
   }
 
   /// The member's Cloud subscriptions with their management state, and the postbox's plan view.
   async function cloudOverview(token) {
     const [subs, plan_] = await Promise.all([saas.listSubscriptions(token), postbox.memberGet(token, "/v1/me/entitlements")]);
-    const subscriptions = subs.map((s) => {
-      const resolved = planForProviderReference(s.pricing_plan_reference);
-      if (!resolved || resolved.family !== "cloud") return null;
-      return { id: s.subscription_id, plan_code: resolved.code, names: resolved.names, currency: resolved.currency,
-        provider_status: s.provider_status, recurring_price: s.recurring_price || null,
-        pending_change: s.pending_change && Object.keys(s.pending_change).length ? true : false,
-        reconciliation_required: Boolean(s.reconciliation_required) };
-    }).filter(Boolean);
-    return { subscriptions, plan: plan_ };
+    return { subscriptions: subscriptionsOf("cloud", subs), plan: plan_ };
   }
 
-  async function ownedCloudSubscription(token, id) {
+  /// The member's Nest package subscriptions, and the postbox's Nest view (null while `nests` is
+  /// off for the account).
+  async function nestOverview(token) {
+    const [subs, nests] = await Promise.all([saas.listSubscriptions(token), postbox.memberGet(token, "/v1/nests").catch(() => null)]);
+    // Prices are shown only to accounts the postbox lets see Nests (the flag).
+    return { subscriptions: subscriptionsOf("nest", subs), nests, prices: nests ? nestPrices() : null };
+  }
+
+  async function ownedIndividual(family, token, id) {
     if (!isUuid(id)) fail(404, "Subscription not found", "not_found");
     const account = await postbox.accountFor(token);
     const sub = saas.validSubscription(await saas.getSubscription(token, id), id);
     const resolved = planForProviderReference(sub.pricing_plan_reference);
-    if (!resolved || resolved.family !== "cloud") fail(404, "Subscription not found", "not_found");
+    if (!resolved || resolved.family !== family) fail(404, "Subscription not found", "not_found");
     await state.update((data) => {
-      data.refs[id] ||= { kind: "cloud", account, plan_code: resolved.code, status: "pending", paid_through: null, version: 0, pushed: null };
+      data.refs[id] ||= { kind: family, account, plan_code: resolved.code, status: "pending", paid_through: null, version: 0, pushed: null };
     });
     const ref = await state.read((data) => ({ ...data.refs[id] }));
-    if (ref.account !== account) fail(404, "Subscription not found", "not_found");
+    if (ref.account !== account || ref.kind !== family) fail(404, "Subscription not found", "not_found");
     return { sub, resolved, ref };
   }
 
-  async function cloudSubscription(token, id) {
-    const { sub, ref } = await ownedCloudSubscription(token, id);
+  async function individualSubscription(family, token, id) {
+    const { sub, ref } = await ownedIndividual(family, token, id);
     const ent = fromSubscription(sub, ref);
     if (ent) await push(id, ref, ent);
     return { id, plan_code: ent?.plan_code || ref.plan_code, status: ent?.status || "pending",
       provider_status: sub.provider_status, paid_through: ent?.paid_through || null,
       current_period_end: sub.current_period_end, next_payment_at: sub.next_payment_at || null,
       recurring_price: sub.recurring_price || null, pending_change: sub.pending_change || null,
+      receipt: await receiptFor(token, id),
       failed_orders: (sub.orders || []).filter((o) => o.status === "FAILED").map((o) => ({
         order_reference_code: o.order_reference_code, amount: o.amount, currency: o.currency, failed_at: o.failed_at || null })) };
   }
 
-  async function cloudOperation(token, id, operation, body) {
-    const { sub, resolved, ref } = await ownedCloudSubscription(token, id);
+  async function individualOperation(family, token, id, operation, body) {
+    const { sub, resolved, ref } = await ownedIndividual(family, token, id);
     let payload, key;
     if (operation === "cancel") {
       strict(body, ["intent_id"]);
@@ -291,7 +374,7 @@ export function createBilling(state) {
     } else if (operation === "card-update") {
       strict(body, ["intent_id", "locale"], ["intent_id"]);
       payload = { scope: "subscription", return_url: `${config.allowedOrigins[0]}/account?card=${intentId(body.intent_id)}`, locale: locale(body.locale) };
-    } else if (operation === "upgrade") {
+    } else if (operation === "upgrade" && family === "cloud") {
       strict(body, ["intent_id", "plan_code", "upgrade_period"]);
       const target = plan(body.plan_code);
       if (!target || target.family !== "cloud" || target.currency !== resolved.currency || target.code === resolved.code) {
@@ -303,8 +386,18 @@ export function createBilling(state) {
       if (target.names < used) fail(409, `This account uses ${used} names. Release names before choosing a ${target.names}-name plan.`, "names_in_use");
       const selection = await edition(token, target);
       payload = { plan_id: selection.plan_id, trial_period_days: 0, upgradePeriod: body.upgrade_period };
+    } else if (operation === "upgrade" && family === "nest") {
+      strict(body, ["intent_id", "plan_code"]);
+      const target = plan(body.plan_code);
+      if (!target || target.family !== "nest" || target.currency !== resolved.currency || target.code === resolved.code) {
+        fail(400, "Choose a different Nest package in the same currency.", "invalid_plan");
+      }
+      const selection = await edition(token, target);
+      // A larger package applies now (iyzico charges it now); a smaller one at renewal, so no paid
+      // capacity is lost. Nests above a smaller package are paused, never deleted (postbox).
+      payload = { plan_id: selection.plan_id, trial_period_days: 0, upgradePeriod: target.rank > resolved.rank ? "NOW" : "NEXT_PERIOD" };
     } else fail(404, "not found", "not_found");
-    key = `pp-${operation}-${intentId(body.intent_id)}`;
+    key = `pp-${family === "cloud" ? "" : "nest-"}${operation}-${intentId(body.intent_id)}`;
     const result = await saas.operate(token, id, operation, payload, key);
     if (operation === "card-update") {
       if (typeof result?.checkout_form_content !== "string" || !result.checkout_form_content.trim() || result.checkout_form_content.length > 200_000) {
@@ -317,8 +410,18 @@ export function createBilling(state) {
     const ent = fromSubscription(fresh, { ...ref, cancel_requested_at: operation === "cancel" ? now() : ref.cancel_requested_at });
     if (ent) await push(id, await state.read((data) => ({ ...data.refs[id] })), ent);
     return { id, operation, status: ent?.status || "pending", provider_status: fresh.provider_status,
-      paid_through: ent?.paid_through || null, pending_change: fresh.pending_change || null };
+      paid_through: ent?.paid_through || null, pending_change: fresh.pending_change || null,
+      ...(payload?.upgradePeriod && family === "nest" ? { effective: payload.upgradePeriod === "NOW" ? "now" : "next_period" } : {}) };
   }
+
+  const cloudCheckout = (token, body, opts) => individualCheckout("cloud", token, body, opts);
+  const cloudStatus = (token, id) => individualStatus("cloud", token, id);
+  const cloudSubscription = (token, id) => individualSubscription("cloud", token, id);
+  const cloudOperation = (token, id, op, body) => individualOperation("cloud", token, id, op, body);
+  const nestCheckout = (token, body, opts) => individualCheckout("nest", token, body, opts);
+  const nestStatus = (token, id) => individualStatus("nest", token, id);
+  const nestSubscription = (token, id) => individualSubscription("nest", token, id);
+  const nestOperation = (token, id, op, body) => individualOperation("nest", token, id, op, body);
 
   // ---- enterprise (Phase 4 portal calls these) --------------------------------------------
 
@@ -348,7 +451,7 @@ export function createBilling(state) {
     return saas.createBillingProfile(token, profile, `pp-ent-profile-${id}`);
   }
 
-  async function enterpriseCheckout(token, body) {
+  async function enterpriseCheckout(token, body, { ipCountry = null } = {}) {
     strict(body, ["intent_id", "plan_code", "billing_profile_id", "org", "locale"], ["intent_id", "plan_code", "billing_profile_id", "org"]);
     const id = intentId(body.intent_id);
     const entry = plan(body.plan_code);
@@ -363,7 +466,10 @@ export function createBilling(state) {
     const request = { kind: "ent", plan_code: entry.code, billing_profile_id: body.billing_profile_id, locale: locale(body.locale), name, namespace };
     const account = await postbox.accountFor(token);
     await requireOrgs(token);
-    const intent = await reserve({ id, kind: "ent", account, plan_code: entry.code }, { ...request, account });
+    const known = await state.read((data) => data.intents[id]);
+    const decided = known?.tax ? null : (await taxDecision(token, body.billing_profile_id, ipCountry)).decision;
+    const intent = await reserve({ id, kind: "ent", account, plan_code: entry.code, billing_profile_id: body.billing_profile_id, tax: decided },
+      { ...request, account });
     let draftId = intent.draft_id;
     if (!draftId) {
       const created = await postbox.createOrgDraft({ operation_id: id, owner_account: account, name, namespace, plan_code: entry.code, seats: entry.seats });
@@ -385,7 +491,7 @@ export function createBilling(state) {
     if (!intent.subscription_id) return view(intent, null, null);
     const { sub, ent } = await syncMember(token, intent.subscription_id);
     const org = ent ? (await postbox.getOrg(draftId))?.org || null : null;
-    return { ...view(intent, sub, ent), org };
+    return { ...view(intent, sub, ent), org, receipt: await receiptFor(token, intent.subscription_id) };
   }
 
   // ---- enterprise plan management (portal Billing page) -----------------------------------
@@ -534,23 +640,25 @@ export function createBilling(state) {
     const seen = new Set();
     const report = { activated: 0, renewed: 0, expired: 0, skipped: 0, errors: 0 };
     for (const row of rows) {
-      const cloud = /^pp-cloud:(acct_[A-Za-z0-9_]{6,64})(?::[a-f0-9]{32})?$/.exec(row.external_reference);
+      const individual = /^pp-(cloud|nest):(acct_[A-Za-z0-9_]{6,64})(?::[a-f0-9]{32})?$/.exec(row.external_reference);
+      const cloud = individual && [null, individual[2]];
+      const kind = individual ? individual[1] : "ent";
       const org = /^pp-org:(org_[a-z0-9]{6,64})$/.exec(row.external_reference);
-      if (!cloud && !org) continue;
+      if (!individual && !org) continue;
       seen.add(row.subscription_id);
       const end = seconds(row.current_period_end);
       if (!(end > now() && end < now() + YEAR_SECONDS) || !["active", "trialing"].includes(row.status)) { report.skipped++; continue; }
       const edition_ = planForLocalId(row.plan_id);
       const limits = edition_ || limitsForPackage(row.package_slug);
-      if (!limits || limits.family !== (cloud ? "cloud" : "ent")) { report.skipped++; continue; }
+      if (!limits || limits.family !== kind) { report.skipped++; continue; }
       try {
         const ref = await state.update((data) => {
           const existing = data.refs[row.subscription_id];
-          if (existing && (cloud ? existing.account !== cloud[1] : existing.draft_id !== org[1])) return null;
+          if (existing && (cloud ? existing.account !== cloud[1] || existing.kind !== kind : existing.draft_id !== org[1])) return null;
           return (data.refs[row.subscription_id] ||= {
-            kind: cloud ? "cloud" : "ent", account: cloud ? cloud[1] : null, draft_id: org ? org[1] : null,
+            kind, account: cloud ? cloud[1] : null, draft_id: org ? org[1] : null,
             plan_code: edition_?.code || null, status: "pending", paid_through: null, version: 0, pushed: null,
-            ...(cloud ? { names: limits.names } : { seats: limits.seats }),
+            ...(kind === "cloud" ? { names: limits.names } : kind === "ent" ? { seats: limits.seats } : {}),
           }) && { ...data.refs[row.subscription_id] };
         });
         if (!ref) { report.skipped++; continue; }
@@ -586,5 +694,6 @@ export function createBilling(state) {
   }
 
   return { cloudCheckout, cloudStatus, cloudOverview, cloudSubscription, cloudOperation,
+    nestCheckout, nestStatus, nestOverview, nestSubscription, nestOperation,
     enterpriseBillingProfile, enterpriseCheckout, enterpriseStatus, enterpriseSubscription, enterpriseOperation, reconcile };
 }

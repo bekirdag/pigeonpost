@@ -44,7 +44,14 @@ public sealed partial class MainWindow
                         finally { completion.TrySetResult(); }
                     })) completion.TrySetResult();
                     return completion.Task;
-                }, cancellationToken: cancellation);
+                }, cancellationToken: cancellation, typed: (name, data) =>
+                {
+                    if (!DispatcherQueue.TryEnqueue(async () =>
+                    {
+                        if (!cancellation.IsCancellationRequested && ReferenceEquals(model, ViewModel)) await HandleCalendarAccountEventAsync(name, data);
+                    })) DesktopLog.Write("Calendar event dropped: window closing");
+                    return Task.CompletedTask;
+                });
             }
             catch (OperationCanceledException) { }
         }

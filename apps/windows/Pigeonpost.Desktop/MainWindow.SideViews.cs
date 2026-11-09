@@ -83,6 +83,7 @@ public sealed partial class MainWindow
         avatars.Enabled = features.Has(ServerFeatures.Avatars);
         ProfileMenuItem.Visibility = ToVisibility(features.Has(ServerFeatures.Avatars));
         ProfileNameMenuItem.Visibility = LocalNameMenuItem.Visibility = ToVisibility(features.Has(ServerFeatures.DisplayNames));
+        UpdateContactMenus();
         PrivacyMenuItem.Visibility = ToVisibility(PrivacySettings.For(features).Count > 0);
         TimerMenuItem.Visibility = ToVisibility(features.Has(ServerFeatures.Disappearing));
         // Meeting notes belong to the signed-in person (the account), not to one inbox.
@@ -112,6 +113,7 @@ public sealed partial class MainWindow
         if (sideView is not SideView.Chats and not SideView.Machine and not SideView.Rooms and not SideView.Notes) ShowSideView(SideView.Chats);
         if (sideView == SideView.Rooms) { roomStore.Synchronize(); roomStore.LoadOrganizations(roomStore.State.ContextId); }
         UpdateFilteredEntry();
+        _ = RefreshOrganizationBadgeAsync();
         await RefreshSideViewsAsync();
         if (!SideCurrent(binding)) return;
         await groupsModel.ActivateAsync(mailbox, features, binding.Inbox.Mailboxes, binding.Inbox.Contacts);
@@ -185,6 +187,8 @@ public sealed partial class MainWindow
         SideNav.Visibility = NewGroupButton.Visibility = FilteredEntry.Visibility = Visibility.Collapsed;
         ProfileMenuItem.Visibility = PrivacyMenuItem.Visibility = TimerMenuItem.Visibility = Visibility.Collapsed;
         ProfileNameMenuItem.Visibility = LocalNameMenuItem.Visibility = Visibility.Collapsed;
+        PhoneMenuItem.Visibility = FindPeopleMenuItem.Visibility = Visibility.Collapsed;
+        ResetOrganizationBadge();
     }
 
     private void SideViewsInboxUpdated()

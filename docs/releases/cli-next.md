@@ -2,6 +2,11 @@
 
 Not yet published to npm; these notes go into the release when the next CLI version is tagged.
 
+## Sign-in
+
+- **`pigeonpost login --device` works again.** The identity provider requires PKCE on this flow, and the CLI now sends it. Failures also show the provider's reason instead of a bare HTTP status.
+- **`pigeonpost login` over SSH or on a machine with no display now signs in with a code.** The browser redirect could never reach those machines. `--no-browser` keeps the redirect sign-in, for example with a forwarded port.
+
 ## Organization agents (enterprise beta)
 
 - **`pigeonpost login --device --handle /acme/agent1 [--label "Build box"] [--workspace DIR] [--onboard]`**

@@ -20,12 +20,10 @@ next person to try logging in.
 
 ## Two things that are easy to get wrong
 
-**Do not set `pkce.code.challenge.method` on this client.** Keycloak applies that mandate to every
-flow the client can use, including the device grant — which under RFC 8628 has no redirect and
-therefore no PKCE. Setting it makes Keycloak reject its own device requests with
-`Missing parameter: code_challenge_method`. The CLI always sends S256 for the authorization-code
-flow regardless (pinned against RFC 7636's published test vector), which is where the protection
-is needed. Enforcing it server-side would require giving the device flow a second client id.
+**`pkce.code.challenge.method` is S256 on this client, and that covers the device grant too.** The
+strong sign-in for SSH needs it, and Keycloak applies it to every flow the client can use. A device
+request without PKCE is refused with `Missing parameter: code_challenge_method`. CLI 0.7.19 and later
+send S256 on both flows; older CLIs can use only the browser sign-in.
 
 **Redirect URIs must wildcard the port** (`http://127.0.0.1/*`). The CLI binds `127.0.0.1:0` and
 the OS chooses the port, so it cannot be registered ahead of time.

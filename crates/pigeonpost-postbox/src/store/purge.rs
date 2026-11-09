@@ -254,6 +254,8 @@ pub(crate) const TABLES: &[(&str, Rule)] = &[
     ("org_domains", Unrelated),
     ("org_handle_holds", Unrelated),
     ("org_invite_deliveries", Unrelated),
+    // D-14 warning stages per org; ids and times only, removed with the org's lifecycle.
+    ("org_deletion_notices", Unrelated),
     ("sms_optouts", Unrelated),
     ("sqlite_sequence", Unrelated),
     ("thread_backfill_ids", Unrelated),
@@ -603,25 +605,39 @@ mod tests {
         ] {
             ev[k] = serde_json::Value::Bool(true);
         }
-        std::fs::write(&evidence, ev.to_string()).unwrap();
         let tool = concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../deploy/account-deletions.py"
         );
-        let out = std::process::Command::new("python3")
-            .args([
-                tool,
-                "--erase",
-                "del_dddddddddddddddddddddddddddddddd",
-                "--evidence",
-            ])
-            .arg(&evidence)
-            .arg("--db")
-            .arg(&db)
-            .arg("--blobs")
-            .arg(dir.join("blobs"))
-            .output()
-            .unwrap();
+        let run = |evidence_json: String| {
+            std::fs::write(&evidence, evidence_json).unwrap();
+            std::process::Command::new("python3")
+                .args([
+                    tool,
+                    "--erase",
+                    "del_dddddddddddddddddddddddddddddddd",
+                    "--evidence",
+                ])
+                .arg(&evidence)
+                .arg("--db")
+                .arg(&db)
+                .arg("--blobs")
+                .arg(dir.join("blobs"))
+                .output()
+                .unwrap()
+        };
+        // The person organizes an upcoming event that was never cancelled: against the real
+        // schema, erasure refuses until --cancel-calendar has run (audit P2-17) ...
+        let out = run(ev.to_string());
+        assert!(!out.status.success());
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("--cancel-calendar"),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        // ... or the operator records why the notices cannot be sent.
+        ev["calendar_cancellations_waived"] = serde_json::Value::Bool(true);
+        let out = run(ev.to_string());
         assert!(
             out.status.success(),
             "{}",

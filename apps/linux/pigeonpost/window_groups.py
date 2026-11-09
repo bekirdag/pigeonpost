@@ -322,7 +322,17 @@ class GroupsMixin:
         rows = [g for g in self.groups if (g.get("my") or {}).get("state") != "invited" and not g.get("deleted_at")
                 and (not search or search in str(g.get("name", "")).casefold())]
         rows.sort(key=lambda g: -(g.get("last_at") or 0))
+        # SDS §5.4: the selected org inbox's rooms sit under a Company section with Browse rooms.
+        company, org = self.company_rooms(rows)
+        split = None
+        if org is not None:
+            self.peer_list.append(self.company_header(org))
+            others = [g for g in rows if g not in company]
+            split = others[0]["id"] if company and others else None
+            rows = company + others
         for g in rows:
+            if g["id"] == split:
+                self.peer_list.append(self.section_row("Groups"))
             row = Gtk.ListBoxRow()
             row.kind, row.group_id, row.peer = "group", g["id"], None
             content = box(10, horizontal=True, margin=9)
@@ -358,6 +368,30 @@ class GroupsMixin:
             self.peer_list.append(row)
             if g["id"] == self.group_open and self.page() == "group":
                 self.peer_list.select_row(row)
+
+    def section_row(self, title):
+        row = Gtk.ListBoxRow(activatable=False, selectable=False)
+        row.kind = "section"
+        heading = label(title, "pp-overline")
+        heading.set_margin_start(9)
+        heading.set_margin_top(8)
+        row.set_child(heading)
+        return row
+
+    def company_header(self, org):
+        """"Company" with the organization's name and a Browse rooms entry."""
+        row = Gtk.ListBoxRow(activatable=False, selectable=False)
+        row.kind = "company"
+        content = box(6, horizontal=True, margin=6)
+        heading = label("Company · " + org["name"], "pp-overline")
+        heading.set_hexpand(True)
+        heading.set_margin_start(3)
+        content.append(heading)
+        browse = button("Browse rooms", lambda: self.browse_company_rooms(org), style="flat")
+        content.append(browse)
+        row.set_child(content)
+        row.update_property([Gtk.AccessibleProperty.LABEL], [f"Company, {org['name']}"])
+        return row
 
     def invitation_row(self, g):
         row = Gtk.ListBoxRow(activatable=False, selectable=False)
@@ -1454,7 +1488,7 @@ class GroupsMixin:
         listing = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
         listing.add_css_class("boxed-list")
         for member in members:
-            if member.get("state") in ("active", "keying") or (admin and member.get("state") == "invited"):
+            if member.get("state") in ("active", "keying") or (admin and member.get("state") in ("invited", "banned")):
                 listing.append(self.member_row(g, member, client))
         if not members:
             listing.append(settings_action_row(title="Loading members…"))
@@ -1571,7 +1605,8 @@ class GroupsMixin:
         key = member.get("handle") or address
         title = (display_name(member.get("handle") or self.title.get_subtitle() or address) + " (you)") if self_row else self.name_of(address)
         state = member.get("state")
-        badge = ROLE_LABEL.get(member.get("role"), "Member") if state == "active" else "Invited" if state == "invited" else "Joining"
+        badge = (ROLE_LABEL.get(member.get("role"), "Member") if state == "active" else "Invited" if state == "invited"
+                 else "Banned" if state == "banned" else "Joining")
         row = plain_row(Adw.ExpanderRow())
         row.set_title(title)
         row.set_subtitle(badge)
@@ -1585,6 +1620,8 @@ class GroupsMixin:
             actions.append(button(text, lambda: self.change_member(g, member, change)))
         if state == "invited" and admin:
             act("Revoke", {"state": "removed"})
+        if state == "banned" and admin:
+            actions.append(button("Unban", lambda: self.unban_member(g, member)))
         if state == "active" and not self_row and member.get("role") != "owner":
             if admin and member.get("role") != "admin":
                 act("Make admin", {"role": "admin"})
@@ -1689,6 +1726,19 @@ class GroupsMixin:
                          go, "Ban" if change["state"] == "banned" else "Remove")
         else:
             go()
+
+    def unban_member(self, g, member):
+        """`DELETE /v1/groups/{id}/bans/{address}`: they may join or be invited again; nothing else changes."""
+        mailbox = self.identity
+
+        def run():
+            self.api.scoped("DELETE", f"/v1/groups/{quote(g['id'])}/bans/{urllib.parse.quote(member['address'], safe='')}", mailbox)
+            return self.load_group_members(mailbox, g["id"])
+
+        def done(_):
+            self.toast(f"{self.name_of(member['address'])} can join again.")
+            self.refresh_group_info()
+        self._work(run, done, lambda error: self.toast(explain(error)))
 
     def invite_to_group(self, g, raw):
         people = [v if v.startswith("/") else "/" + v for v in raw.replace(",", " ").split() if v]

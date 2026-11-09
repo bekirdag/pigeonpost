@@ -108,6 +108,10 @@ public sealed record ServerFeatures(IReadOnlySet<string> Names)
     public const string DisplayNames = "display_names";
     // Nests (hosted agents, docs/nests/phase-b.md): Products, Nest status and management.
     public const string Nests = "nests";
+    // docs/contacts-and-phone.md: Phone number, Find people I know, and Invite by SMS.
+    public const string PhoneNumbers = "phone_numbers";
+    public const string ContactDiscovery = "contact_discovery";
+    public const string SmsInvites = "sms_invites";
 
     public static ServerFeatures None { get; } = new(new HashSet<string>(StringComparer.Ordinal));
     public bool Has(string name) => Names.Contains(name);

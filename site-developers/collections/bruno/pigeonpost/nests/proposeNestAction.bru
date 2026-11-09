@@ -1,0 +1,26 @@
+meta {
+  name: A Nest proposes one typed tool call for its owner to approve (the Nest's mailbox credential)
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/v1/nest-approvals
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "tool": "send_message",
+    "args": {}
+  }
+}
+
+docs {
+  Tools: `send_message {to, body}`. Nothing is carried out until the owner approves exactly this call. A newer proposal for the same tool and recipient replaces a pending one. Unknown tools (including anything in the never-auto set) are refused.
+}

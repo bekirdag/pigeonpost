@@ -1,0 +1,23 @@
+meta {
+  name: Resume a Nest its owner paused (a person only)
+  type: http
+  seq: 14
+}
+
+post {
+  url: {{baseUrl}}/v1/nests/:nest/resume
+  body: none
+  auth: bearer
+}
+
+params:path {
+  nest: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  A Nest paused for funding (`needs_payment`) or over its package (`over_capacity`) resumes only when that is resolved.
+}

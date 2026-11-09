@@ -4,7 +4,10 @@
 //!   bind-mounted at `/workspace`, every capability dropped, `no-new-privileges`, a read-only
 //!   root filesystem, a small `/tmp`, pid/memory/CPU limits, no network unless the owner chose
 //!   `outbound`, and never the container runtime's socket. Named after the session, so teardown
-//!   removes it even when the client process is already gone.
+//!   removes it even when the client process is already gone. `outbound` is the public internet
+//!   only: an egress policy ([`EGRESS_POLICY`]) refuses private, link-local (cloud metadata),
+//!   carrier-grade NAT and multicast destinations and the container's gateway, then drops every
+//!   privilege before the session's program starts. Rootful Podman is refused like rootful Docker.
 //! * `allowlist`: no shell at all. One exact command per request, executed directly (never through
 //!   a shell) inside the same restricted container as `container` mode; trailing paths only when the
 //!   entry allows them, and only paths that resolve — symlinks included — inside the workspace.
@@ -32,6 +35,10 @@ pub struct Launch {
 }
 
 const SAFE_PATH: &str = "/usr/local/bin:/usr/bin:/bin";
+
+/// Set in an unconfined session's environment so teardown can find every process the session
+/// started, including ones that left its process group with `setsid` (audit 2026-11-03 P3-5).
+pub const SESSION_MARKER: &str = "PIGEONPOST_SSH_SESSION";
 
 /// `TERM` from the client, or `xterm-256color` if it is anything but a plain terminal name.
 pub fn term(raw: &str) -> String {
@@ -90,8 +97,36 @@ pub fn classify_docker(info: &str) -> DockerIsolation {
     }
 }
 
-/// Refuse a rootful Docker daemon unless the owner acknowledged it. Podman is not checked here:
-/// agentd runs it as this machine's user, so it is rootless unless agentd itself runs as root.
+/// Refuse rootful Podman: agentd running as root, or a Podman connection to a rootful service. A
+/// container escape there is a root escape, and unlike Docker there is no reason to accept it —
+/// rootless Podman is the recommended runtime (audit 2026-11-03 P2-14).
+fn check_podman(rt: &Path) -> Result<(), String> {
+    let out = std::process::Command::new(rt)
+        .args(["info", "--format", "{{.Host.Security.Rootless}}"])
+        .env_clear()
+        .envs(runtime_env())
+        .output()
+        .map_err(|_| "cannot ask Podman how it isolates containers".to_string())?;
+    if !out.status.success() {
+        return Err("cannot ask Podman how it isolates containers".into());
+    }
+    podman_rootless(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// Judge `podman info --format '{{.Host.Security.Rootless}}'` output: only `true` is accepted.
+pub fn podman_rootless(info: &str) -> Result<(), String> {
+    if info.trim() == "true" {
+        Ok(())
+    } else {
+        Err(
+            "refused: this Podman runs containers as root (rootful). Run agentd as an ordinary \
+             user with rootless Podman"
+                .into(),
+        )
+    }
+}
+
+/// Refuse a rootful Docker daemon unless the owner acknowledged it.
 fn check_docker(shell: &Shell, rt: &Path) -> Result<(), String> {
     let out = std::process::Command::new(rt)
         .args([
@@ -184,6 +219,8 @@ pub fn launch(
                 ("TERM".into(), term),
                 ("LANG".into(), "C.UTF-8".into()),
                 ("SHELL".into(), sh.clone()),
+                // Teardown finds descendants that left the process group (`setsid`) by this.
+                (SESSION_MARKER.into(), sid.to_string()),
             ];
             for k in ["HOME", "USER", "LOGNAME"] {
                 if let Ok(v) = std::env::var(k) {
@@ -212,7 +249,9 @@ fn confined_launch(
     argv: &[String],
 ) -> Result<Launch, String> {
     let (rt, podman) = runtime(shell)?;
-    if !podman {
+    if podman {
+        check_podman(&rt)?;
+    } else {
         check_docker(shell, &rt)?;
     }
     Ok(confined_plan(shell, sid, term, pty, argv, rt, podman))
@@ -233,10 +272,26 @@ fn confined_plan(
         args.push("-t".into());
     }
     args.extend(container_args(shell, &name, term, podman));
-    // Override image ENTRYPOINT too: an allowlisted program is the actual executable, never a
-    // shell string or an image-provided wrapper. No host program runs on a missing runtime/image.
-    args.extend(["--entrypoint".into(), argv[0].clone(), shell.image.clone()]);
-    args.extend_from_slice(&argv[1..]);
+    if shell.outbound {
+        // The egress policy runs first, as the container's (unprivileged-on-the-host) root, then
+        // becomes this machine's user with no capabilities and execs the program directly.
+        args.extend([
+            "--entrypoint".into(),
+            "/bin/sh".into(),
+            shell.image.clone(),
+            "-c".into(),
+            EGRESS_POLICY.into(),
+            "pigeonpost-egress".into(),
+            rustix::process::getuid().as_raw().to_string(),
+            rustix::process::getgid().as_raw().to_string(),
+        ]);
+        args.extend_from_slice(argv);
+    } else {
+        // Override image ENTRYPOINT too: an allowlisted program is the actual executable, never a
+        // shell string or an image-provided wrapper. No host program runs on a missing runtime/image.
+        args.extend(["--entrypoint".into(), argv[0].clone(), shell.image.clone()]);
+        args.extend_from_slice(&argv[1..]);
+    }
     Launch {
         program: rt.clone(),
         args,
@@ -279,6 +334,81 @@ fn runtime_path() -> String {
         .unwrap_or_else(|| format!("{SAFE_PATH}:/opt/homebrew/bin"))
 }
 
+/// The `network = "outbound"` egress policy (audit 2026-11-03 P2-14), run by `/bin/sh` inside the
+/// container's own network namespace before anything else. Policy-routing rules come before every
+/// route, so they also cover the container's own subnet and its gateway (the host). DNS to the
+/// configured resolvers stays open (port 53 only). Every step must succeed or nothing runs: an
+/// image without `ip` (iproute2) or `setpriv` (util-linux), or a kernel without rule port matching,
+/// refuses outbound rather than run with open egress. `setpriv` then becomes this machine's user,
+/// clears the bounding set and inheritable capabilities and sets no-new-privileges, so the session
+/// can never undo the rules. Arguments: uid, gid, then the program and its arguments.
+pub const EGRESS_POLICY: &str = r#"set -eu
+uid=$1; gid=$2; shift 2
+if ! command -v ip >/dev/null 2>&1 || ! command -v setpriv >/dev/null 2>&1; then
+  echo 'pigeonpost: network = "outbound" needs ip (iproute2) and setpriv (util-linux) in the image to enforce its egress policy; refusing' >&2
+  exit 126
+fi
+for ns in $(sed -n 's/^nameserver[[:space:]][[:space:]]*\([0-9][0-9.]*\)[[:space:]]*$/\1/p' /etc/resolv.conf); do
+  ip rule add pref 50 to "$ns/32" ipproto udp dport 53 lookup main
+  ip rule add pref 50 to "$ns/32" ipproto tcp dport 53 lookup main
+done
+for net in 0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 169.254.0.0/16 172.16.0.0/12 192.0.0.0/24 192.168.0.0/16 198.18.0.0/15 224.0.0.0/4 240.0.0.0/4; do
+  ip rule add pref 100 prohibit to "$net"
+done
+for gw in $(ip -4 route show default | sed -n 's/^default via \([0-9][0-9.]*\).*/\1/p'); do
+  ip rule add pref 100 prohibit to "$gw/32"
+done
+if [ -e /proc/net/if_inet6 ]; then
+  for net in fc00::/7 fe80::/10 ff00::/8 64:ff9b::/96 ::ffff:0:0/96; do
+    ip -6 rule add pref 100 prohibit to "$net"
+  done
+fi
+exec setpriv --reuid="$uid" --regid="$gid" --clear-groups --inh-caps=-all --bounding-set=-all --no-new-privs -- "$@"
+"#;
+
+/// The label every session container carries, with this machine user's uid, so agentd can find
+/// containers a crash left behind ([`sweep_leftovers`]).
+pub const OWNER_LABEL: &str = "dev.pigeonpost.shell.uid";
+
+/// Remove session containers left behind by an earlier agentd run (a crash or a kill skips the
+/// teardown). Called once at start, before any session exists; only this user's containers.
+pub fn sweep_leftovers(rt: &Path) -> usize {
+    let uid = rustix::process::getuid().as_raw();
+    let out = std::process::Command::new(rt)
+        .args([
+            "ps",
+            "-aq",
+            "--filter",
+            "label=dev.pigeonpost.shell=1",
+            "--filter",
+            &format!("label={OWNER_LABEL}={uid}"),
+        ])
+        .env_clear()
+        .envs(runtime_env())
+        .output();
+    let Ok(out) = out else { return 0 };
+    if !out.status.success() {
+        return 0;
+    }
+    let ids: Vec<String> = String::from_utf8_lossy(&out.stdout)
+        .split_whitespace()
+        .filter(|id| id.len() <= 64 && id.bytes().all(|b| b.is_ascii_hexdigit()))
+        .map(str::to_string)
+        .collect();
+    if ids.is_empty() {
+        return 0;
+    }
+    let mut rm = std::process::Command::new(rt);
+    rm.args(["rm", "-f"])
+        .args(&ids)
+        .env_clear()
+        .envs(runtime_env());
+    match rm.output() {
+        Ok(o) if o.status.success() => ids.len(),
+        _ => 0,
+    }
+}
+
 /// The isolation flags, shared by docker and podman.
 pub fn container_args(shell: &Shell, name: &str, term: &str, podman: bool) -> Vec<String> {
     let mut a: Vec<String> = vec![
@@ -286,6 +416,8 @@ pub fn container_args(shell: &Shell, name: &str, term: &str, podman: bool) -> Ve
         name.into(),
         "--label".into(),
         "dev.pigeonpost.shell=1".into(),
+        "--label".into(),
+        format!("{OWNER_LABEL}={}", rustix::process::getuid().as_raw()),
         "--hostname".into(),
         "pigeonpost-shell".into(),
         "--init".into(),
@@ -321,7 +453,20 @@ pub fn container_args(shell: &Shell, name: &str, term: &str, podman: bool) -> Ve
         "--pull".into(),
         "missing".into(),
     ];
-    if podman {
+    if shell.outbound {
+        // The egress policy needs the container's root and NET_ADMIN *inside its own namespaces*
+        // for a moment; it then drops to this machine's user with nothing (EGRESS_POLICY).
+        for cap in ["NET_ADMIN", "SETUID", "SETGID", "SETPCAP"] {
+            a.push("--cap-add".into());
+            a.push(cap.into());
+        }
+        if podman {
+            a.push("--userns".into());
+            a.push("keep-id".into());
+        }
+        a.push("--user".into());
+        a.push("0:0".into());
+    } else if podman {
         // Rootless podman: the person's files stay owned by this machine's user.
         a.push("--userns".into());
         a.push("keep-id".into());
@@ -621,6 +766,143 @@ mod tests {
             container_name("ssh_abcdefghijklmnopqrstuvwxyz"),
             "pp-ssh-abcdefghijklmnopqrstuvwxyz"
         );
+    }
+
+    #[test]
+    fn outbound_runs_the_egress_policy_before_the_program() {
+        let t = tempfile::tempdir().unwrap();
+        let mut s = shell(Mode::Container, t.path());
+        s.outbound = true;
+        for podman in [false, true] {
+            let joined = container_args(&s, "n", "xterm", podman).join(" ");
+            assert!(
+                joined.contains("--cap-drop ALL --security-opt no-new-privileges")
+                    || joined.contains("--cap-drop ALL")
+            );
+            assert!(
+                joined.contains("--cap-add NET_ADMIN") && joined.contains("--user 0:0"),
+                "{joined}"
+            );
+            assert!(!joined.contains("SYS_ADMIN") && !joined.contains("--privileged"));
+            assert_eq!(joined.contains("--userns keep-id"), podman);
+        }
+        let argv = vec!["/bin/sh".to_string(), "-l".to_string()];
+        let l = confined_plan(
+            &s,
+            "ssh_x",
+            "xterm",
+            true,
+            &argv,
+            PathBuf::from("docker"),
+            false,
+        );
+        let i = l.args.iter().position(|a| a == "--entrypoint").unwrap();
+        assert_eq!(l.args[i + 1], "/bin/sh");
+        assert_eq!(l.args[i + 2], s.image);
+        assert_eq!(l.args[i + 3], "-c");
+        assert_eq!(l.args[i + 4], EGRESS_POLICY);
+        assert_eq!(
+            &l.args[l.args.len() - 2..],
+            &argv[..],
+            "the program and its arguments come last, unchanged"
+        );
+        // Without outbound nothing changes: no capability is added and the program is the entrypoint.
+        s.outbound = false;
+        let l = confined_plan(
+            &s,
+            "ssh_x",
+            "xterm",
+            true,
+            &argv,
+            PathBuf::from("docker"),
+            false,
+        );
+        assert!(!l
+            .args
+            .iter()
+            .any(|a| a == "--cap-add" || a == EGRESS_POLICY));
+    }
+
+    /// The policy script itself, with stand-in `ip` and `setpriv` that record what they were asked.
+    #[cfg(unix)]
+    #[test]
+    fn the_egress_policy_blocks_private_ranges_and_fails_closed() {
+        use std::os::unix::fs::PermissionsExt;
+        let bin = tempfile::tempdir().unwrap();
+        let log = bin.path().join("log");
+        let fake = |name: &str, body: &str| {
+            let p = bin.path().join(name);
+            std::fs::write(&p, format!("#!/bin/sh\n{body}\n")).unwrap();
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        };
+        let run = |path: &str| {
+            std::process::Command::new("/bin/sh")
+                .args([
+                    "-c",
+                    EGRESS_POLICY,
+                    "pigeonpost-egress",
+                    "1000",
+                    "1001",
+                    "/bin/true",
+                    "x",
+                ])
+                .env_clear()
+                .env("PATH", path)
+                .output()
+                .unwrap()
+        };
+        // Missing tools: refused, nothing runs.
+        let out = run(bin.path().to_str().unwrap());
+        assert_eq!(out.status.code(), Some(126));
+        assert!(String::from_utf8_lossy(&out.stderr).contains("refusing"));
+        fake(
+            "ip",
+            &format!(
+                "echo \"ip $*\" >> {l}\ncase \"$*\" in *'route show default'*) echo 'default via 172.17.0.1 dev eth0';; esac",
+                l = log.display()
+            ),
+        );
+        fake(
+            "setpriv",
+            &format!("echo \"setpriv $*\" >> {}", log.display()),
+        );
+        let out = run(&format!("{}:/usr/bin:/bin", bin.path().display()));
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let log = std::fs::read_to_string(&log).unwrap();
+        for net in [
+            "10.0.0.0/8",
+            "172.16.0.0/12",
+            "192.168.0.0/16",
+            "169.254.0.0/16",
+            "100.64.0.0/10",
+            "172.17.0.1/32",
+        ] {
+            assert!(
+                log.contains(&format!("ip rule add pref 100 prohibit to {net}")),
+                "{net}\n{log}"
+            );
+        }
+        let last = log.lines().last().unwrap();
+        assert_eq!(
+            last,
+            "setpriv --reuid=1000 --regid=1001 --clear-groups --inh-caps=-all --bounding-set=-all --no-new-privs -- /bin/true x"
+        );
+        // A failing rule stops everything: the program never starts.
+        fake("ip", "exit 1");
+        let out = run(&format!("{}:/usr/bin:/bin", bin.path().display()));
+        assert!(!out.status.success());
+    }
+
+    #[test]
+    fn rootful_podman_is_refused() {
+        assert!(podman_rootless("true\n").is_ok());
+        for bad in ["false", "", "garbage", "True"] {
+            assert!(podman_rootless(bad).is_err(), "{bad:?}");
+        }
     }
 
     #[test]

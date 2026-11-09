@@ -1,0 +1,27 @@
+meta {
+  name: Upload one file to the Nest (a person only, at most 25 MiB)
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/v1/nests/:nest/files
+  body: none
+  auth: bearer
+}
+
+params:path {
+  nest: 
+}
+
+headers {
+  Content-Type: application/octet-stream
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  Raw bytes in the body; the display name, percent-encoded UTF-8, in `x-file-name`. The Nests host quarantines the file and parses it (PDF, DOCX, TXT/MD, CSV, XLSX, ZIP) in a separate sandbox with no network. Only verified text reaches the Nest. Archive entries with unsafe paths, archive bombs and nested archives are skipped and listed in `warnings`.
+}

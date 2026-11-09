@@ -1,0 +1,33 @@
+meta {
+  name: Create an org-owned Nest on a new org agent address (ManageAgents)
+  type: http
+  seq: 18
+}
+
+post {
+  url: {{baseUrl}}/v1/orgs/:org/nests
+  body: json
+  auth: bearer
+}
+
+params:path {
+  org: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "handle": "string",
+    "label": "string",
+    "operators": [
+      "string"
+    ]
+  }
+}
+
+docs {
+  Uses one of the org's agent addresses (10 × seats) and, separately, a free slot of a Nest package the organization bought. Each listed member gets the `operate_nest` delegation.
+}
