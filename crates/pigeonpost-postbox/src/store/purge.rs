@@ -247,6 +247,8 @@ pub(crate) const TABLES: &[(&str, Rule)] = &[
     ("org_domains", Unrelated),
     ("org_handle_holds", Unrelated),
     ("org_invite_deliveries", Unrelated),
+    // D-14 warning stages per org; ids and times only, removed with the org's lifecycle.
+    ("org_deletion_notices", Unrelated),
     ("sms_optouts", Unrelated),
     ("sqlite_sequence", Unrelated),
     ("thread_backfill_ids", Unrelated),
