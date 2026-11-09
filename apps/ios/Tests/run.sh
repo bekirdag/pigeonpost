@@ -48,6 +48,10 @@ swiftc -O -parse-as-library -o "$out/organization-room-store" Tests/Organization
   Shared/Groups/GroupModels.swift Shared/Groups/GroupAPI.swift \
   Shared/Enterprise/OrganizationRoomModels.swift Shared/Enterprise/OrganizationRoomAPI.swift Shared/Enterprise/OrganizationRoomStore.swift
 "$out/organization-room-store"
+cp Tests/NativeCallProtocolTests.swift "$out/main.swift"
+swiftc -O -o "$out/native-call-protocol" "$out/main.swift" Pigeonpost/Calls/NativeCallProtocol.swift
+rm "$out/main.swift"
+"$out/native-call-protocol"
 swiftc -O -o "$out/thread-model" \
   Tests/main.swift \
   Shared/API/Models.swift \

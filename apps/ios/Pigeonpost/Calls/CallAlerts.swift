@@ -29,7 +29,9 @@
 //  couple of seconds later), so WebKit's microphone capture starts inside a session that is already
 //  live; starting capture first and having CallKit activate the session under it is the usual cause
 //  of a call with no audio on a locked phone. The `audio` background mode keeps the media running
-//  with the screen off.
+//  with the screen off. That order was not enough for the page: its media runs in WebKit's own
+//  processes, outside this session. A ring answered here now runs in `NativeCall`, in this process,
+//  and the page is used only for a room on the media server.
 //
 //  While the system screen rings, the ring's own state is polled every 2 s with the ring token: a
 //  caller who hangs up, or a ring answered on another device, ends the call screen here too. The
@@ -41,6 +43,7 @@ import AVFoundation
 import CallKit
 import PushKit
 import UIKit
+import WebRTC
 
 @MainActor
 final class CallAlerts: NSObject {
@@ -76,6 +79,11 @@ final class CallAlerts: NSObject {
     private var audioActive = false
     /// Answered, and waiting for the audio session before the page is told.
     private var answering: UUID?
+    /// The call this device answered, when it is running natively rather than on the page.
+    private var native: NativeCall?
+    /// WebRTC was told the session is active, and must hear when it stops: by then the call that
+    /// asked may already be gone.
+    private var webRTCAudioLive = false
 
     private override init() {
         provider = CXProvider(configuration: Self.configuration)
@@ -273,6 +281,10 @@ final class CallAlerts: NSObject {
         NSLog("pigeonpost: call ended room=\(call.ring.room) reason=\(why)")
         provider.reportCall(with: uuid, endedAt: Date(), reason: Self.reason(why))
         forget(uuid)
+        if let native, native.ring.room == call.ring.room {
+            self.native = nil
+            native.shutDown()
+        }
         #if DEBUG
         if Self.standIn { NSLog("pigeonpost: call screen gone (stand-in) reason=\(Self.reason(why).rawValue)") }
         #endif
@@ -320,15 +332,18 @@ final class CallAlerts: NSObject {
         call.watch = nil
         calls[uuid] = call
         prepareAudio(video: call.ring.isVideo)
+        // Before the action is fulfilled: WebRTC's audio has to be under manual control by the time
+        // CallKit activates the session.
+        startNative(call.ring)
         answering = uuid
         calls[uuid]?.giveUp = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 40_000_000_000)
             guard !Task.isCancelled, let self, let call = self.calls[uuid], !call.started else { return }
-            self.host.hangUp()
+            self.hangUpAnswered()
             self.end(uuid, .failed)
         }
         Task {
-            guard await self.prepareHost() else {
+            guard await self.prepareToAnswer() else {
                 self.end(uuid, .failed)
                 return
             }
@@ -344,8 +359,63 @@ final class CallAlerts: NSObject {
     private func deliverAnswer() {
         guard let uuid = answering, let call = calls[uuid] else { return }
         answering = nil
-        NSLog("pigeonpost: call answered room=\(call.ring.room) audio=\(audioActive)")
-        host.answer(room: call.ring.room, ringToken: call.ring.ringToken)
+        NSLog("pigeonpost: call answered room=\(call.ring.room) audio=\(audioActive) native=\(native != nil)")
+        if let native {
+            NativeCallRoom.shared.call = native
+            native.begin()
+        } else {
+            host.answer(room: call.ring.room, ringToken: call.ring.ringToken)
+        }
+    }
+
+    private func startNative(_ ring: CallRing) {
+        guard useNative, let tokens = nativeTokens() else { return }
+        let base = URL(string: "/calls/v1/", relativeTo: host.pageURL)!.absoluteURL
+        let call = NativeCall(ring: ring, title: ring.callerName(fallback: { $0 ?? "Call" }), base: base, tokens: tokens)
+        call.events = self
+        native = call
+    }
+
+    private var useNative: Bool {
+        #if DEBUG
+        if UserDefaults.standard.bool(forKey: "calls-web-answer") { return false }
+        #endif
+        return true
+    }
+
+    private func nativeTokens() -> NativeCall.Tokens? {
+        #if DEBUG
+        if let token = UserDefaults.standard.string(forKey: "calls-token") {
+            return NativeCall.Tokens(current: { token }, renew: { token })
+        }
+        #endif
+        guard let session, session.status == .signedIn else { return nil }
+        return NativeCall.Tokens(current: { try await session.token() }, renew: { try await session.renew() })
+    }
+
+    /// What has to be ready before the answer goes out. A native call needs only its tokens; the
+    /// page has to be loaded and signed in.
+    private func prepareToAnswer() async -> Bool {
+        if native != nil { return true }
+        return await prepareHost()
+    }
+
+    private func hangUpAnswered() {
+        if let native {
+            self.native = nil
+            native.hangUp()
+        } else {
+            host.hangUp()
+        }
+    }
+
+    /// The end-call button on the native screen.
+    func hangUpNativeCall() {
+        guard let native, let uuid = calls.first(where: { $0.value.ring.room == native.ring.room })?.key else { return }
+        controller.request(CXTransaction(action: CXEndCallAction(call: uuid))) { [weak self] error in
+            guard error != nil else { return }
+            Task { @MainActor in self?.endHere(uuid) }
+        }
     }
 
     /// The call page, loaded and signed in. When the app was woken by the push there is no window
@@ -470,7 +540,7 @@ final class CallAlerts: NSObject {
         NSLog("pigeonpost: call ended here room=\(call.ring.room) answered=\(call.answered)")
         forget(uuid)
         if call.answered {
-            host.hangUp()
+            hangUpAnswered()
         } else if let token = call.ring.ringToken {
             // Declined from the call screen. Kept alive in the background long enough to say so:
             // the app may be suspended the moment the call screen goes.
@@ -502,7 +572,7 @@ final class CallAlerts: NSObject {
             NSLog("pigeonpost: call muted=\(muted) from the call screen")
             call.muted = muted
             calls[uuid] = call
-            host.setMuted(muted)
+            if let native { native.setMuted(muted, tellCallKit: false) } else { host.setMuted(muted) }
         }
     }
 
@@ -622,6 +692,39 @@ extension CallAlerts: CallPageEvents {
     }
 }
 
+// ---- the native call --------------------------------------------------------------------------
+
+extension CallAlerts: NativeCallEvents {
+    private func uuid(of call: NativeCall) -> UUID { CallRing.uuid(forRoom: call.ring.room) }
+
+    func nativeCallStarted(_ call: NativeCall) {
+        calls[uuid(of: call)]?.started = true
+        calls[uuid(of: call)]?.giveUp?.cancel()
+    }
+
+    func nativeCallEnded(_ call: NativeCall, reason: NativeCall.EndReason) {
+        end(uuid(of: call), reason == .failed ? .failed : .remoteEnded)
+    }
+
+    /// The room is on the media server, which only the page can do. Nothing was accepted yet.
+    func nativeCallNeedsPage(_ call: NativeCall) {
+        native = nil
+        let uuid = uuid(of: call)
+        answering = uuid
+        Task {
+            guard await self.prepareHost() else {
+                self.end(uuid, .failed)
+                return
+            }
+            self.deliverAnswer()
+        }
+    }
+
+    func nativeCallMuted(_ muted: Bool) {
+        callPage("muted", ["muted": muted])
+    }
+}
+
 // ---- PushKit ---------------------------------------------------------------------------------
 
 extension CallAlerts: PKPushRegistryDelegate {
@@ -657,7 +760,7 @@ extension CallAlerts: PKPushRegistryDelegate {
 extension CallAlerts: CXProviderDelegate {
     nonisolated func providerDidReset(_ provider: CXProvider) {
         MainActor.assumeIsolated {
-            if calls.values.contains(where: \.answered) { host.hangUp() }
+            if calls.values.contains(where: \.answered) { hangUpAnswered() }
             for uuid in calls.keys { forget(uuid) }
             streamCall = nil
             audioActive = false
@@ -690,11 +793,21 @@ extension CallAlerts: CXProviderDelegate {
     nonisolated func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession) {
         MainActor.assumeIsolated {
             audioActive = true
+            if native != nil {
+                NativeCall.audioActivated(audioSession)
+                webRTCAudioLive = true
+            }
             deliverAnswer()
         }
     }
 
     nonisolated func provider(_ provider: CXProvider, didDeactivate audioSession: AVAudioSession) {
-        MainActor.assumeIsolated { audioActive = false }
+        MainActor.assumeIsolated {
+            audioActive = false
+            if webRTCAudioLive {
+                NativeCall.audioDeactivated(audioSession)
+                webRTCAudioLive = false
+            }
+        }
     }
 }
