@@ -37,6 +37,40 @@ pub(crate) const INVITES_PER_REQUEST: usize = 200;
 /// Payment lapse timeline (D-14): past due for 7 days, then read-only for 14, then suspended.
 pub(crate) const PAST_DUE_SECS: i64 = 7 * 86_400;
 pub(crate) const READ_ONLY_SECS: i64 = 14 * 86_400;
+/// D-14: a suspended org is deleted 30 days after it was suspended...
+pub(crate) const DELETE_AFTER_SUSPENDED_SECS: i64 = 30 * 86_400;
+/// ...and never less than a week after the first warning, so nobody is deleted without notice.
+pub(crate) const MIN_DELETION_NOTICE_SECS: i64 = 7 * 86_400;
+/// Warnings before deletion: at suspension, then a week and a day before.
+pub(crate) const DELETION_WARNINGS: [(&str, i64); 3] = [
+    ("suspended", DELETE_AFTER_SUSPENDED_SECS),
+    ("7d", 7 * 86_400),
+    ("1d", 86_400),
+];
+
+/// When a suspended org will be deleted (D-14), `None` for any other status.
+pub(crate) fn deletion_at(c: &Connection, org: &str, now: u64) -> GResult<Option<i64>> {
+    let row: Option<(String, Option<i64>, Option<i64>)> = c
+        .query_row(
+            "SELECT o.status, o.status_since,
+                    (SELECT sent_at FROM org_deletion_notices n WHERE n.org_id = o.id AND n.stage = 'suspended')
+               FROM orgs o WHERE o.id = ?1",
+            [org],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .optional()?;
+    let Some((status, since, warned)) = row else {
+        return Ok(None);
+    };
+    if status != "suspended" {
+        return Ok(None);
+    }
+    let since = since.unwrap_or(now as i64);
+    let warned = warned.unwrap_or(now as i64);
+    Ok(Some(
+        (since + DELETE_AFTER_SUSPENDED_SECS).max(warned + MIN_DELETION_NOTICE_SECS),
+    ))
+}
 
 // ---- roles and the permission matrix (SDS §6.2, §6.4) ------------------------------------------
 
@@ -200,6 +234,9 @@ pub(crate) fn may_grant(actor: &Roles, role: Role) -> bool {
     match role {
         Role::Owner => false,
         Role::Admin => permits(actor, Perm::GrantAdmin, false),
+        // Billing administration is a power a full admin does not hold itself, so only the owner
+        // hands it out ("no grant above the grantor", audit 2026-11-03 P1-5).
+        Role::BillingAdmin => actor.has(Role::Owner),
         _ => permits(actor, Perm::GrantScopedAdmin, false),
     }
 }
@@ -224,6 +261,13 @@ pub(crate) struct Settings {
     /// `None` = the server ceiling.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stream_max_viewers: Option<i64>,
+    /// Disappearing-message timer a new room starts with (SDS §17.1 "org default"). `None` = off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub room_default_ephemeral_secs: Option<i64>,
+    /// The longest any org room keeps a message (SDS §17.1 "org maximum"): the earliest of a
+    /// room's own timer and this applies, and a room with its timer off is still bound by it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub room_max_ephemeral_secs: Option<i64>,
 }
 
 fn everyone() -> String {
@@ -239,6 +283,8 @@ impl Default for Settings {
             ssh_allowed: false,
             ssh_requires_approval: false,
             stream_max_viewers: None,
+            room_default_ephemeral_secs: None,
+            room_max_ephemeral_secs: None,
         }
     }
 }
@@ -449,6 +495,10 @@ pub(crate) fn org_json(c: &Connection, o: &OrgRow, now: u64) -> GResult<Value> {
         "agent_limit": o.agent_limit,
         "agents_used": agents_used(c, &o.id)?,
         "storage_bytes": o.storage_bytes,
+        "deletion_at": deletion_at(c, &o.id, now)?,
+        "logo": crate::avatars::owned_json(
+            crate::store::owned_avatar_in(c, crate::store::OwnedKind::Org, &o.id)?.as_ref(),
+        ),
         "plan_code": o.plan_code,
         "period_end": o.period_end,
         "settings": o.settings,

@@ -96,20 +96,24 @@
     };
   };
 
-  /// One plain sentence, as the card and the audit view show it.
+  /// One plain sentence, as the card and the audit view show it. Built from translated pieces
+  /// (i18n.js), because a whole sentence is too varied to match as one template.
   R.sentence = function (rule, orgName, ns) {
+    // PPE.t comes from core.js; a cached older core.js lacks it, so fall back to plain English.
+    const T = PPE.t || ((text, vars) => String(text).replace(/\{(\d+)\}/g, (m, n) => (vars && vars[n] !== undefined ? String(vars[n]) : m)));
     const who = R.label(rule.owners, orgName, ns, { subject: true });
     const from = R.label(rule.peers, orgName, ns);
-    const parts = [];
-    if (rule.admission === "block") parts.push(`${who} block messages from ${from}`);
-    else if (rule.admission === "allow") parts.push(`${who} accept messages from ${from}`);
-    else parts.push(`For ${who.charAt(0).toLowerCase() + who.slice(1)}, ${from}`);
-    let s = parts[0];
-    if (rule.known && rule.admission !== "block") s += rule.admission ? " as a known contact" : " is a known contact";
-    if (rule.autonomy === "auto" && Array.isArray(rule.verbs) && rule.verbs.length) s += `, and may ask them to ${rule.verbs.join(", ")} without review`;
-    else if (rule.autonomy === "review") s += ", and every request waits for a person";
+    const tWho = T(who);
+    const tFrom = T(from);
+    let s;
+    if (rule.admission === "block") s = T("{1} block messages from {2}", { 1: tWho, 2: tFrom });
+    else if (rule.admission === "allow") s = T("{1} accept messages from {2}", { 1: tWho, 2: tFrom });
+    else s = T("For {1}, {2}", { 1: T(who.charAt(0).toLowerCase() + who.slice(1)), 2: tFrom });
+    if (rule.known && rule.admission !== "block") s += T(rule.admission ? " as a known contact" : " is a known contact");
+    if (rule.autonomy === "auto" && Array.isArray(rule.verbs) && rule.verbs.length) s += T(", and may ask them to {1} without review", { 1: rule.verbs.join(", ") });
+    else if (rule.autonomy === "review") s += T(", and every request waits for a person");
     s += ".";
-    if (rule.locked) s += " Locked for agents.";
+    if (rule.locked) s += " " + T("Locked for agents.");
     return s;
   };
 

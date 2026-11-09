@@ -329,6 +329,14 @@ locally (§6.2); add `phone.*` and `profile.name` event handling; update the sto
 4. **Hash:** `SHA256.HashData`, first 16 bytes, hex.
 5. Phone verification, invites, names, aliases (`ApplicationData.Current.LocalSettings`) as above.
 
+**Shipped on Windows (2026-11-04):** Account → *Phone number…* (`phone_numbers`: add, 6-digit code, discoverable off by
+default, unlink) and *Find people I know…* (`contact_discovery`: `.vcf`/`.csv` through `FileOpenPicker`, parsed by
+`Pigeonpost.Core/ContactImport.cs`, a port of `contacts.js` with the same test tables; batches of 200, stop at the daily
+allowance; *Start chat* on matches and, with `sms_invites` and a verified number on the acting inbox, a per-row *Invite by
+SMS* confirmation that shows the exact text). No `contacts` capability and no People access: the manual import is the
+only path, so the Store privacy text needs only the phone number. Aliases are encrypted with DPAPI under Local App Data
+(`LocalAliasFile`), not `LocalSettings`. Tests: `ContactImportTests` (core) and `test-contacts.ps1` (UI).
+
 ### Linux (`apps/linux`)
 
 1. **vCard import:** `Gtk.FileDialog` (GTK 4.10+; goes through the file-chooser portal under Flatpak, so no extra
@@ -338,6 +346,15 @@ locally (§6.2); add `phone.*` and `profile.name` event handling; update the sto
 3. **E.164:** the `phonenumbers` Python package (Apache-2.0), default region from `LC_TELEPHONE`/`LANG`.
 4. **Hash:** `hashlib.sha256(...).digest()[:16].hex()`.
 5. Phone verification, invites, names, aliases (`$XDG_DATA_HOME/pigeonpost/aliases.json`, mode 600) as above.
+
+**Shipped (2026-11-04, `apps/linux/pigeonpost/contacts_core.py`, `window_contacts.py`).** Settings → Display name,
+Phone number and Find people I know, each behind its flag; Invite by SMS with one confirmation per number; "Edit
+name…" in the conversation menu for a local alias (one map per signed-in account, removed on sign-out); §6.3 names in
+the conversation list and header, with the address under the name. Deviations from the list above: E.164 uses the
+web inbox's rules (`normalizeE164`) instead of the `phonenumbers` package, so no new dependency, and the file picker
+is `Gtk.FileChooserNative` (portal-backed, GTK 4.0+). Linux has no postbox event stream, so `profile.name` changes
+appear on the next side-data refresh instead of by event. Tests: `tests/test_contacts.py` (the §3.1 vectors and the
+web tables), `tests/test_ui_contacts.py`.
 
 ## 10. Account deletion
 

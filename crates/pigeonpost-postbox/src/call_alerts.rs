@@ -19,6 +19,11 @@
 //!
 //! Payloads carry what a ringing screen needs and nothing more: the room, a ring token that is good
 //! for this one ring, the caller's name and handle, and the kind of call.
+//!
+//! A ring from a group call (`group_id` set; audit 2026-11-03 P1-11) carries one ring token per
+//! rung member. The 1:1 stranger rule does not apply there: both people must be active members of
+//! that live group, and the callee's own call rules and blocks decide, exactly as the group-call
+//! admission did. The group's name is looked up here and added to the payload.
 
 use std::sync::Arc;
 
@@ -60,6 +65,10 @@ pub struct RingReq {
     pub from: Who,
     pub to: String,
     pub expires_at: u64,
+    /// Set for a ring from a group call. A `group_name` field is accepted and ignored: the name
+    /// is the postbox's to say.
+    #[serde(default)]
+    pub group_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -88,6 +97,9 @@ pub struct Ring {
     /// The called mailbox's address.
     pub identity: String,
     pub expires_at: u64,
+    /// A group call's group id and (cleaned) name.
+    pub group_id: Option<String>,
+    pub group_name: Option<String>,
 }
 
 /// A validated ring end.
@@ -183,11 +195,26 @@ pub fn clean_display(value: &str) -> Option<String> {
 }
 
 impl Ring {
-    fn title(&self) -> String {
+    fn caller_name(&self) -> String {
         self.from_display
             .clone()
             .or_else(|| self.from_handle.clone())
             .unwrap_or_else(|| short(&self.from_address))
+    }
+
+    fn title(&self) -> String {
+        match &self.group_name {
+            Some(group) => format!("{} · {group}", self.caller_name()),
+            None => self.caller_name(),
+        }
+    }
+
+    fn body(&self) -> String {
+        if self.group_id.is_some() {
+            format!("Incoming group {} call", kind_word(self.kind))
+        } else {
+            format!("Incoming {} call", kind_word(self.kind))
+        }
     }
 }
 
@@ -222,7 +249,7 @@ fn collapse_id(room: &str) -> String {
 
 /// PushKit payload. `aps` is empty: CallKit, not the notification centre, shows it.
 pub fn voip_payload(ring: &Ring) -> Value {
-    json!({
+    let mut payload = json!({
         "aps": {},
         "type": "call_ring",
         "room": ring.room,
@@ -233,7 +260,12 @@ pub fn voip_payload(ring: &Ring) -> Value {
         "to": ring.to,
         "identity": ring.identity,
         "expires_at": ring.expires_at,
-    })
+    });
+    if let Some(gid) = &ring.group_id {
+        payload["group_id"] = json!(gid);
+        payload["group_name"] = json!(ring.group_name);
+    }
+    payload
 }
 
 /// The Mac's call alert (and older iPhone builds'): Answer and Decline come from the category.
@@ -242,7 +274,7 @@ pub fn alert_payload(ring: &Ring) -> Value {
     payload["aps"] = json!({
         "alert": {
             "title": ring.title(),
-            "body": format!("Incoming {} call", kind_word(ring.kind)),
+            "body": ring.body(),
         },
         "sound": "default",
         "category": CALL_CATEGORY,
@@ -275,7 +307,7 @@ pub fn alert_end_payload(end: &RingEnd) -> Value {
 /// FCM data message: every value a string, priority high, gone when the ring is.
 pub fn fcm_ring(device: &Device, ring: &Ring, now: u64) -> Value {
     let ttl = ring.expires_at.saturating_sub(now).max(1);
-    json!({"message": {
+    let mut message = json!({"message": {
         "token": device.token,
         "android": {"priority": "high", "ttl": format!("{ttl}s"), "collapse_key": collapse_id(&ring.room)},
         "data": {
@@ -291,7 +323,13 @@ pub fn fcm_ring(device: &Device, ring: &Ring, now: u64) -> Value {
             "identity": device.mailbox,
             "expires_at": ring.expires_at.to_string(),
         }
-    }})
+    }});
+    if let Some(gid) = &ring.group_id {
+        let data = &mut message["message"]["data"];
+        data["group_id"] = json!(gid);
+        data["group_name"] = json!(ring.group_name.clone().unwrap_or_default());
+    }
+    message
 }
 
 pub fn fcm_cancel(device: &Device, end: &RingEnd) -> Value {
@@ -337,7 +375,7 @@ pub fn wns_toast(ring: &Ring) -> String {
         ),
         open = escape(&launch_args("open", ring)),
         title = escape(&ring.title()),
-        body = escape(&format!("Incoming {} call", kind_word(ring.kind))),
+        body = escape(&ring.body()),
         handle = escape(&handle),
         answer = escape(&launch_args("answer", ring)),
         decline = escape(&launch_args("decline", ring)),
@@ -433,6 +471,63 @@ async fn decide(
     }
 }
 
+/// A group call's ring: both people must be active members of the live group (looked up now),
+/// then the callee's own call rules and blocks decide, as the group-call admission did. Returns
+/// the decision and the group's display name.
+async fn decide_group(
+    state: &AppState,
+    group_id: &str,
+    callee: &crate::store::StoredIdentity,
+    caller: Option<&crate::store::StoredIdentity>,
+) -> (Decision, Option<String>) {
+    let Some(caller) = caller else {
+        return (Decision::Block, None);
+    };
+    let (gid, from, to) = (
+        group_id.to_string(),
+        caller.address.clone(),
+        callee.address.clone(),
+    );
+    let looked = state
+        .store
+        .group_read(move |c| -> crate::groups::GResult<String> {
+            let g = crate::groups::live_group(c, &gid)?;
+            if g.activation_state != "active" {
+                return Err(crate::groups::GErr::not_found());
+            }
+            crate::groups::active_member(c, &gid, &from)?;
+            crate::groups::active_member(c, &gid, &to)?;
+            Ok(g.name)
+        })
+        .await;
+    let Ok(name) = looked else {
+        return (Decision::Block, None);
+    };
+    // An explicit block on the caller's name or address always wins.
+    for subject in caller
+        .handle
+        .iter()
+        .cloned()
+        .chain(std::iter::once(caller.address.clone()))
+    {
+        match state
+            .store
+            .governing_contact(callee.address.clone(), subject)
+            .await
+        {
+            Ok(Some(c)) if c.admission == "block" => return (Decision::Block, None),
+            Ok(_) => {}
+            Err(_) => return (Decision::Block, None),
+        }
+    }
+    let decision = match crate::filtering::decide_call_with(state, caller, callee, false).await {
+        Ok((crate::store::CallRule::Ring, _)) => Decision::Ring,
+        Ok((crate::store::CallRule::Silence, _)) => Decision::Silence,
+        Ok((crate::store::CallRule::Block, _)) | Err(_) => Decision::Block,
+    };
+    (decision, clean_display(&name))
+}
+
 fn bad(code: &'static str, message: &str) -> Response {
     ApiError::bad(code, message).into_response()
 }
@@ -480,8 +575,13 @@ pub(crate) async fn ring(
         .ok()
         .flatten();
     let caller_handle = caller.as_ref().and_then(|c| c.handle.clone());
+    let mut group_name = None;
     let decision = if !push_enabled(&state.store, callee.account_id.clone()).await {
         Decision::Disabled
+    } else if let Some(gid) = &req.group_id {
+        let (decision, name) = decide_group(&state, gid, &callee, caller.as_ref()).await;
+        group_name = name;
+        decision
     } else {
         decide(&state, &callee, &req.from.address, caller.as_ref()).await
     };
@@ -500,6 +600,8 @@ pub(crate) async fn ring(
         to: req.to,
         identity: callee.address.clone(),
         expires_at,
+        group_id: req.group_id,
+        group_name,
     };
     let devices = match state
         .store
@@ -722,7 +824,37 @@ mod tests {
             to: "/bekir".into(),
             identity: "/k/callee".into(),
             expires_at: 1_000_045,
+            group_id: None,
+            group_name: None,
         }
+    }
+
+    #[test]
+    fn a_group_ring_names_the_group_and_stays_backward_compatible() {
+        let plain = ring();
+        assert!(voip_payload(&plain).get("group_id").is_none());
+        assert!(
+            fcm_ring(&device("fcm", "alert", None), &plain, 1_000_000)["message"]["data"]
+                .get("group_id")
+                .is_none()
+        );
+        let mut g = ring();
+        g.group_id = Some("grp_abc".into());
+        g.group_name = Some("Design team".into());
+        let v = voip_payload(&g);
+        assert_eq!(
+            (v["group_id"].as_str(), v["group_name"].as_str()),
+            (Some("grp_abc"), Some("Design team"))
+        );
+        let a = alert_payload(&g);
+        assert_eq!(a["aps"]["alert"]["title"], "Alp <script>& · Design team");
+        assert_eq!(a["aps"]["alert"]["body"], "Incoming group video call");
+        let f = fcm_ring(&device("fcm", "alert", None), &g, 1_000_000);
+        assert_eq!(f["message"]["data"]["group_id"], "grp_abc");
+        assert_eq!(f["message"]["data"]["group_name"], "Design team");
+        let toast = wns_toast(&g);
+        assert!(toast.contains("Alp &lt;script&gt;&amp; · Design team"));
+        assert!(toast.contains("Incoming group video call"));
     }
 
     #[test]

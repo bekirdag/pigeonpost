@@ -398,7 +398,11 @@ fn xlsx_file(data: &[u8]) -> Parsed {
         None => Vec::new(),
     };
     let mut sheets: Vec<String> = (0..z.len())
-        .filter_map(|i| z.by_index(i).ok().map(|f| f.name().to_string()))
+        .filter_map(|i| {
+            z.by_index(i)
+                .ok()
+                .and_then(|f| f.name().ok().map(|n| n.to_string()))
+        })
         .filter(|n| n.starts_with("xl/worksheets/sheet") && n.ends_with(".xml"))
         .collect();
     sheets.sort();
@@ -474,7 +478,14 @@ fn zip_file(data: &[u8], depth: usize) -> Parsed {
             out.warnings.push(format!("entry {} is damaged", i + 1));
             continue;
         };
-        let name = f.name().to_string();
+        // A name that can't be decoded can't be checked for an unsafe path, so it is not read.
+        let Ok(name) = f.name().map(|n| n.to_string()) else {
+            out.warnings.push(format!(
+                "entry {} has an unreadable name and was skipped",
+                i + 1
+            ));
+            continue;
+        };
         if f.is_dir() {
             cov.units_total -= 1;
             continue;

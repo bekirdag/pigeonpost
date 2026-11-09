@@ -466,3 +466,201 @@ mod tests {
         ));
     }
 }
+
+// ---- group pictures and org logos (SDS §16.1 "Groups and orgs", audit 2026-11-03 P2-20) ---------
+
+/// What a non-mailbox picture belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OwnedKind {
+    /// A group's picture (`groups.avatar_id`), set by its admins.
+    Group,
+    /// An organization's logo (`orgs.logo_avatar_id`), set by its owner or admins.
+    Org,
+}
+
+impl OwnedKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            OwnedKind::Group => "group",
+            OwnedKind::Org => "org",
+        }
+    }
+    fn parse(s: &str) -> Option<Self> {
+        match s {
+            "group" => Some(OwnedKind::Group),
+            "org" => Some(OwnedKind::Org),
+            _ => None,
+        }
+    }
+    /// `(table, column)` holding the live picture's id. Fixed strings, never input.
+    fn slot(self) -> (&'static str, &'static str) {
+        match self {
+            OwnedKind::Group => ("groups", "avatar_id"),
+            OwnedKind::Org => ("orgs", "logo_avatar_id"),
+        }
+    }
+}
+
+fn owned_current_in(
+    c: &Connection,
+    kind: OwnedKind,
+    owner: &str,
+) -> Result<Option<AvatarRow>, StoreError> {
+    let (table, col) = kind.slot();
+    Ok(c.query_row(
+        &format!(
+            "SELECT {COLS} FROM {table} t JOIN avatars a ON a.id = t.{col}
+              WHERE t.id = ?1 AND a.removed_at IS NULL AND a.owner_kind = ?2"
+        ),
+        params![owner, kind.as_str()],
+        read_row,
+    )
+    .optional()?)
+}
+
+/// Retire the live picture of a group or org; returns blob digests nothing uses any more.
+fn owned_retire_in(
+    c: &Connection,
+    kind: OwnedKind,
+    owner: &str,
+    reason: &str,
+    now: u64,
+) -> Result<Vec<String>, StoreError> {
+    let (table, col) = kind.slot();
+    let old = owned_current_in(c, kind, owner)?;
+    c.execute(
+        &format!("UPDATE {table} SET {col} = NULL WHERE id = ?1"),
+        params![owner],
+    )?;
+    let Some(old) = old else {
+        return Ok(Vec::new());
+    };
+    c.execute(
+        "UPDATE avatars SET removed_at = ?2, removed_reason = ?3 WHERE id = ?1",
+        params![old.id, now as i64, reason],
+    )?;
+    let mut orphaned = Vec::new();
+    for digest in old.variants.values() {
+        let still: bool = c.query_row(
+            "SELECT EXISTS (SELECT 1 FROM avatars
+                             WHERE removed_at IS NULL AND instr(variants, ?1) > 0)",
+            params![digest],
+            |r| r.get::<_, i64>(0).map(|n| n != 0),
+        )?;
+        if !still && !orphaned.contains(digest) {
+            orphaned.push(digest.clone());
+        }
+    }
+    Ok(orphaned)
+}
+
+/// The live picture of a group or org, for callers holding a connection (views).
+pub(crate) fn owned_avatar_in(
+    c: &Connection,
+    kind: OwnedKind,
+    owner: &str,
+) -> Result<Option<AvatarRow>, StoreError> {
+    owned_current_in(c, kind, owner)
+}
+
+impl Store {
+    /// Store a new picture for a group or org, replacing the current one (5 changes a day).
+    pub async fn set_owned_avatar(
+        &self,
+        kind: OwnedKind,
+        owner: String,
+        new: NewAvatar,
+        now: u64,
+    ) -> Result<SetAvatar, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<SetAvatar, StoreError> {
+            let mut c = conn.lock().expect("store lock");
+            let tx = c.transaction()?;
+            let recent: i64 = tx.query_row(
+                "SELECT COUNT(*) FROM avatars WHERE owner_kind = ?1 AND owner_id = ?2 AND created_at > ?3",
+                params![kind.as_str(), owner, now.saturating_sub(86_400) as i64],
+                |r| r.get(0),
+            )?;
+            if recent as usize >= CHANGES_PER_DAY {
+                return Ok(SetAvatar::RateLimited);
+            }
+            let mut orphaned = owned_retire_in(&tx, kind, &owner, "replaced", now)?;
+            tx.execute(
+                "INSERT INTO avatars (id, owner_kind, owner_id, sha256, variants, visibility,
+                                      version, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?7)",
+                params![
+                    new.id,
+                    kind.as_str(),
+                    owner,
+                    new.sha256.as_bytes(),
+                    serde_json::to_string(&new.variants).expect("map serializes"),
+                    new.visibility.as_str(),
+                    now as i64,
+                ],
+            )?;
+            let (table, col) = kind.slot();
+            tx.execute(
+                &format!("UPDATE {table} SET {col} = ?2 WHERE id = ?1"),
+                params![owner, new.id],
+            )?;
+            orphaned.retain(|d| !new.variants.values().any(|v| v == d));
+            let row = owned_current_in(&tx, kind, &owner)?.ok_or(StoreError::Corrupt("avatar"))?;
+            tx.commit()?;
+            Ok(SetAvatar::Stored { row, orphaned })
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// Remove a group's picture or an org's logo; returns blob digests to release.
+    pub async fn remove_owned_avatar(
+        &self,
+        kind: OwnedKind,
+        owner: String,
+        now: u64,
+    ) -> Result<Vec<String>, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<Vec<String>, StoreError> {
+            let mut c = conn.lock().expect("store lock");
+            let tx = c.transaction()?;
+            let orphaned = owned_retire_in(&tx, kind, &owner, "removed", now)?;
+            tx.commit()?;
+            Ok(orphaned)
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// A live group picture or org logo by id: `(kind, owner id, row)`.
+    pub async fn owned_avatar_by_id(
+        &self,
+        id: String,
+    ) -> Result<Option<(OwnedKind, String, AvatarRow)>, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(
+            move || -> Result<Option<(OwnedKind, String, AvatarRow)>, StoreError> {
+                let c = conn.lock().expect("store lock");
+                let found: Option<(String, String)> = c
+                    .query_row(
+                        "SELECT owner_kind, owner_id FROM avatars WHERE id = ?1 AND removed_at IS NULL",
+                        params![id],
+                        |r| Ok((r.get(0)?, r.get(1)?)),
+                    )
+                    .optional()?;
+                let Some((kind, owner)) = found else {
+                    return Ok(None);
+                };
+                let Some(kind) = OwnedKind::parse(&kind) else {
+                    return Ok(None);
+                };
+                // Only the picture the group or org shows now, never a replaced one.
+                Ok(owned_current_in(&c, kind, &owner)?
+                    .filter(|row| row.id == id)
+                    .map(|row| (kind, owner, row)))
+            },
+        )
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+}

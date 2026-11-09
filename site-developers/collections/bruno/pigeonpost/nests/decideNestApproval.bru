@@ -1,0 +1,31 @@
+meta {
+  name: Approve or reject exactly the call that was shown (a person only)
+  type: http
+  seq: 12
+}
+
+post {
+  url: {{baseUrl}}/v1/nests/:nest/approvals/:approval/:decision
+  body: json
+  auth: bearer
+}
+
+params:path {
+  nest: 
+  approval: 
+  decision: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "args_hash": "string"
+  }
+}
+
+docs {
+  The body echoes the `args_hash` the person saw. A changed call (`approval_changed`), a replaced, decided or expired card (`approval_closed`) and a recipient outside the destination policy (`recipient_not_allowed`: only the owner's own mailboxes and contacts they allowed) are refused. An approved card is carried out once by the postbox, never by the Nest.
+}

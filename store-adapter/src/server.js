@@ -15,12 +15,17 @@ import * as postbox from "./postbox.js";
 import { publicCatalog, isUuid } from "./catalog.js";
 import { State } from "./state.js";
 import { createBilling } from "./billing.js";
-import { createSales, sourceOf } from "./sales.js";
+import { createNotifier, createSales, sourceOf } from "./sales.js";
+import * as tax from "./tax.js";
 import { createLimiter } from "./limits.js";
 
 const state = new State(config.stateDir);
 const billing = createBilling(state);
-const sales = createSales(config.stateDir);
+const sales = createSales(config.stateDir, { notifier: createNotifier({
+  url: process.env.SALES_NOTIFY_URL, key: process.env.SALES_NOTIFY_KEY,
+  to: process.env.SALES_NOTIFY_TO || "info@pigeonpost.dev", from: process.env.SALES_NOTIFY_FROM || "no-reply@pigeonpost.dev",
+  delays: (process.env.SALES_NOTIFY_DELAYS_MS || "0,30000,120000,600000").split(",").map(Number).filter((n) => Number.isFinite(n) && n >= 0),
+}) });
 const publicLimiter = createLimiter({ perMinute: config.publicRequestsPerMinute });
 const MAX_BODY = 64 * 1024;
 
@@ -72,7 +77,7 @@ const server = http.createServer(async (req, res) => {
 
   try {
     if (method === "GET" && path === "/healthz") {
-      return send(res, 200, { ok: true, configured: configured(), product: config.masaasProductSlug }, origin);
+      return send(res, 200, { ok: true, configured: configured(), product: config.masaasProductSlug, sales_notify: sales.notifier?.health() }, origin);
     }
 
     // Public: the approved price list.
@@ -130,7 +135,8 @@ const server = http.createServer(async (req, res) => {
         billing.cloudOverview(token).catch(() => null),
       ]);
       return send(res, 200, { handles, billingProfiles: list(profiles), invoices: list(invoices), cloud,
-        openCurrencies: config.openCurrencies }, origin);
+        openCurrencies: config.openCurrencies,
+        tax: { euUkConsumers: config.tax.gate ? config.tax.b2cOpenRegions : ["EU", "UK"], country: tax.ipCountry(req.headers) } }, origin);
     }
 
     if (method === "GET" && path === "/v1/billing/profiles") {
@@ -157,8 +163,22 @@ const server = http.createServer(async (req, res) => {
 
     // ---- individual Cloud plans -------------------------------------------------------------
     if (method === "GET" && path === "/v1/cloud") return send(res, 200, await billing.cloudOverview(token), origin);
+    // Nest packages (Nests Phase B1): the same individual flow, behind the postbox's `nests` flag.
+    if (method === "GET" && path === "/v1/nests") return send(res, 200, await billing.nestOverview(token), origin);
+    if (method === "POST" && path === "/v1/nests/checkout") {
+      return send(res, 200, await billing.nestCheckout(token, await readJson(req), { ipCountry: tax.ipCountry(req.headers) }), origin);
+    }
+    if (method === "GET" && (match = /^\/v1\/nests\/checkout\/([a-f0-9]{32})$/.exec(path))) {
+      return send(res, 200, await billing.nestStatus(token, match[1]), origin);
+    }
+    if (method === "GET" && (match = /^\/v1\/nests\/subscriptions\/([^/]+)$/.exec(path))) {
+      return send(res, 200, await billing.nestSubscription(token, match[1]), origin);
+    }
+    if (method === "POST" && (match = /^\/v1\/nests\/subscriptions\/([^/]+)\/(cancel|retry|card-update|upgrade)$/.exec(path))) {
+      return send(res, 200, await billing.nestOperation(token, match[1], match[2], await readJson(req)), origin);
+    }
     if (method === "POST" && path === "/v1/cloud/checkout") {
-      return send(res, 200, await billing.cloudCheckout(token, await readJson(req)), origin);
+      return send(res, 200, await billing.cloudCheckout(token, await readJson(req), { ipCountry: tax.ipCountry(req.headers) }), origin);
     }
     if (method === "GET" && (match = /^\/v1\/cloud\/checkout\/([a-f0-9]{32})$/.exec(path))) {
       return send(res, 200, await billing.cloudStatus(token, match[1]), origin);
@@ -181,7 +201,7 @@ const server = http.createServer(async (req, res) => {
       return send(res, 201, await billing.enterpriseBillingProfile(token, await readJson(req)), origin);
     }
     if (method === "POST" && path === "/ent/checkout") {
-      return send(res, 200, await billing.enterpriseCheckout(token, await readJson(req)), origin);
+      return send(res, 200, await billing.enterpriseCheckout(token, await readJson(req), { ipCountry: tax.ipCountry(req.headers) }), origin);
     }
     if (method === "GET" && (match = /^\/ent\/checkout\/(org_[a-z0-9]{6,64})$/.exec(path))) {
       return send(res, 200, await billing.enterpriseStatus(token, match[1]), origin);
@@ -198,7 +218,7 @@ const server = http.createServer(async (req, res) => {
   } catch (err) {
     const status = statusFrom(err);
     if (status >= 500) console.error(`${method} ${path}: ${status} ${err.code || ""}`.trim());
-    return send(res, status, { error: err.message || "bridge error", ...(err.code ? { code: err.code } : {}) }, origin);
+    return send(res, status, { error: err.message || "bridge error", ...(err.code ? { code: err.code } : {}), ...(status < 500 && err.extra ? err.extra : {}) }, origin);
   }
 });
 

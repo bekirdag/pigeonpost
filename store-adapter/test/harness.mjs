@@ -61,5 +61,8 @@ export function json(res, status, body) {
 export async function readBody(req) {
   const chunks = [];
   for await (const chunk of req) chunks.push(chunk);
-  return chunks.length ? JSON.parse(Buffer.concat(chunks)) : undefined;
+  if (!chunks.length) return undefined;
+  const text = Buffer.concat(chunks).toString("utf8");
+  // Form-encoded bodies (the HMRC OAuth stand-in) come back as text.
+  try { return JSON.parse(text); } catch { return text; }
 }

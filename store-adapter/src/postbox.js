@@ -56,6 +56,23 @@ export async function features(token) {
   return new Set(Array.isArray(body.features) ? body.features.filter((f) => typeof f === "string") : []);
 }
 
+/// A member POST whose refusal is passed through (status and code), e.g. the postbox's Nest
+/// purchase intent, which refuses a second charge (`nest_package_active`) or a flag that is off.
+export async function memberPost(token, path, body) {
+  const r = await call(`${config.postboxUrl}${path}`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, accept: "application/json", "content-type": "application/json" },
+    body: JSON.stringify(body),
+  }, "Your account");
+  if (r.status === 401) fail(401, "session expired", "unauthorized");
+  if (!r.ok) {
+    const status = [400, 402, 403, 409, 429].includes(r.status) ? r.status : 502;
+    fail(status, String(r.body?.detail || r.body?.error || "Your account refused this").slice(0, 300), r.body?.error || "postbox_rejected");
+  }
+  if (!r.body || typeof r.body !== "object") fail(502, "Your account answered unexpectedly.", "postbox_invalid");
+  return r.body;
+}
+
 export async function claimName(token, namespace) {
   const r = await call(`${config.postboxUrl}/v1/claims/plan`, {
     method: "POST",
