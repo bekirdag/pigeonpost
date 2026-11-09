@@ -8,7 +8,8 @@ namespace Pigeonpost.Core;
 public sealed partial class PostboxClient : INestApi
 {
     private const int MaxNestReply = 1024 * 1024;
-    private const int MaxExport = 512 * 1024 * 1024;
+    // The Nests host allows 512 MiB of files; the archive adds parsed text and conversations.
+    private const int MaxExport = 1024 * 1024 * 1024;
 
     private async Task<JsonElement> NestJsonAsync(HttpMethod method, string path, string? json, CancellationToken ct)
     {

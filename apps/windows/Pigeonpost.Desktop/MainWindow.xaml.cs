@@ -479,7 +479,7 @@ public sealed partial class MainWindow : Window
         if (e.PropertyName is nameof(InboxViewModel.CanCompose) or nameof(InboxViewModel.CanReplyToMessage) or nameof(InboxViewModel.CanInspectMessages)) RefreshMessageOptions();
         if (e.PropertyName == nameof(InboxViewModel.HasConversation)) UpdateLayoutMode();
         if (e.PropertyName == nameof(InboxViewModel.IsSelectedBlocked)) BlockMenuItem.Text = ViewModel.IsSelectedBlocked ? "Unblock" : "Block…";
-        if (e.PropertyName is nameof(InboxViewModel.SelectedConversation) or nameof(InboxViewModel.HasConversation)) UpdateCallButtons();
+        if (e.PropertyName is nameof(InboxViewModel.SelectedConversation) or nameof(InboxViewModel.HasConversation)) { UpdateCallButtons(); UpdateNestHeader(); }
         if (e.PropertyName == nameof(InboxViewModel.SelectedMailbox)) { _ = ConfigureCallsAsync(); _ = MailboxChangedForSideViewsAsync(); }
         if (e.PropertyName == nameof(InboxViewModel.Find))
             foreach (var body in messageBodies.Keys) HighlightBody(body);
