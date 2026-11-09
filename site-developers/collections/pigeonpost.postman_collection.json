@@ -6024,6 +6024,93 @@
             },
             "description": "See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`."
           }
+        },
+        {
+          "name": "Set the group's picture (raw image)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "image/jpeg"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/groups/:id/picture",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "groups",
+                ":id",
+                "picture"
+              ],
+              "query": [
+                {
+                  "key": "identity",
+                  "value": "",
+                  "disabled": true,
+                  "description": "Which of the account's mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used."
+                },
+                {
+                  "key": "crop",
+                  "value": "",
+                  "disabled": true,
+                  "description": "`x,y,w,h` in pixels of the uploaded image."
+                }
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "See docs/groups.md. Group owner or admin, a person (not an agent or key). Same processing as `PUT /v1/profile/avatar`; members get `group.settings` with `changed: [picture]`.",
+            "body": {
+              "mode": "file",
+              "file": {
+                "src": ""
+              }
+            }
+          }
+        },
+        {
+          "name": "Remove it",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/groups/:id/picture",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "groups",
+                ":id",
+                "picture"
+              ],
+              "query": [
+                {
+                  "key": "identity",
+                  "value": "",
+                  "disabled": true,
+                  "description": "Which of the account's mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used."
+                }
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Remove it"
+          }
         }
       ]
     },
@@ -7319,6 +7406,79 @@
               ]
             },
             "description": "See docs/orgs.md. Requires the `orgs` feature flag. Needs a recent strong sign-in (`step_up_required` with `acr_values` and `max_age`). A person signed in (member token); automation gets `human_required`."
+          }
+        },
+        {
+          "name": "Set the organization's logo (raw image)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "image/jpeg"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/orgs/:id/logo",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "orgs",
+                ":id",
+                "logo"
+              ],
+              "query": [
+                {
+                  "key": "crop",
+                  "value": "",
+                  "disabled": true,
+                  "description": "`x,y,w,h` in pixels of the uploaded image."
+                }
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "See docs/orgs.md. Requires the `orgs` feature flag. Owner or admin. Same processing as `PUT /v1/profile/avatar`; logos are public.",
+            "body": {
+              "mode": "file",
+              "file": {
+                "src": ""
+              }
+            }
+          }
+        },
+        {
+          "name": "Remove it",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/orgs/:id/logo",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "orgs",
+                ":id",
+                "logo"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Remove it"
           }
         },
         {

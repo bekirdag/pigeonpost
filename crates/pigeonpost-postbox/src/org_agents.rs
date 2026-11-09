@@ -31,16 +31,25 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-/// Capabilities a delegation may carry (SDS §6.5). `ssh` is stored for Phase 8 and grants nothing.
-pub(crate) const CAPABILITIES: &[&str] = &[
-    "enroll",
-    "bind_handle",
-    "ssh",
-    "configure_rules",
-    "read_inbox",
-    // Nests B7: operate an org-owned Nest — chat with it, upload files, approve its actions.
-    "operate_nest",
-];
+/// Capabilities a delegation may carry (SDS §6.5), each one enforced: `enroll` (enrollment codes
+/// for the agent), `ssh` (a shell on it, SDS §11.5) and `read_inbox` (operate its mailbox in the
+/// apps), and `operate_nest` (Nests B7: chat with an org-owned Nest, upload files, approve its
+/// actions). `bind_handle` and `configure_rules` were offered but granted nothing; they are no longer
+/// accepted (audit 2026-11-03 P1-5). Old rows that carry them are listed as stored and still grant
+/// nothing.
+pub(crate) const CAPABILITIES: &[&str] = &["enroll", "ssh", "read_inbox", "operate_nest"];
+
+/// A stored capability list as shown: only the capabilities that grant something (rows written
+/// before P1-5 may still carry `bind_handle` or `configure_rules`).
+pub(crate) fn live_caps(stored: &str) -> Value {
+    let list: Vec<String> = serde_json::from_str(stored).unwrap_or_default();
+    Value::Array(
+        list.into_iter()
+            .filter(|c| CAPABILITIES.contains(&c.as_str()))
+            .map(Value::String)
+            .collect(),
+    )
+}
 /// What a device credential may do: be the agent's mailbox.
 const DEVICE_CAPS: &str = "[\"mailbox\"]";
 /// Device credentials last a year unless their authority expires first.
@@ -403,7 +412,7 @@ pub(crate) fn agent_json(c: &Connection, org_id: &str, identity: &str, now: u64)
         .query_map(params![org_id, identity, now as i64], |r| {
             let caps: String = r.get(2)?;
             Ok(json!({ "member_id": r.get::<_, String>(0)?, "handle": r.get::<_, Option<String>>(1)?,
-                       "capabilities": serde_json::from_str::<Value>(&caps).unwrap_or(Value::Null) }))
+                       "capabilities": crate::org_agents::live_caps(&caps) }))
         })?
         .collect::<Result<_, _>>()?;
     Ok(json!({
@@ -575,7 +584,7 @@ async fn create_agent(
             .group_tx(move |tx| -> GResult<Outcome> {
                 let o = load_org(tx, &id)?.ok_or_else(GErr::not_found)?;
                 let address = create_agent_in(tx, &vault, &o, &handle, label.as_deref(), &me, now)?;
-                let caps = vec!["enroll".to_string(), "bind_handle".to_string()];
+                let caps = vec!["enroll".to_string()];
                 for op in &req.operators {
                     delegate_in(tx, &id, op, &address, &caps, None, &me, now)?;
                 }
@@ -885,7 +894,7 @@ async fn delegations(
                     Ok(json!({
                         "id": r.get::<_, String>(0)?, "member_id": r.get::<_, String>(1)?,
                         "member_handle": r.get::<_, Option<String>>(2)?, "target": r.get::<_, String>(3)?,
-                        "capabilities": serde_json::from_str::<Value>(&caps).unwrap_or(Value::Null),
+                        "capabilities": crate::org_agents::live_caps(&caps),
                         "expires_at": r.get::<_, Option<i64>>(5)?, "granted_by": r.get::<_, Option<String>>(6)?,
                         "granted_at": r.get::<_, i64>(7)?,
                     }))
