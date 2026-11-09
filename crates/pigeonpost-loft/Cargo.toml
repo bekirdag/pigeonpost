@@ -52,7 +52,7 @@ rand_core = { workspace = true, optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "signal", "sync"], optional = true }
 tower = { version = "0.5", features = ["limit", "util"], optional = true }
 tower-http = { version = "0.6", features = ["limit", "timeout", "trace"], optional = true }
-rusqlite = { version = "0.32", features = ["bundled"], optional = true }
+rusqlite = { version = "0.41", features = ["bundled", "fallible_uint"], optional = true }
 serde.workspace = true
 serde_json.workspace = true
 sha2 = { workspace = true, optional = true }
