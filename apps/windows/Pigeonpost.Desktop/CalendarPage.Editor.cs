@@ -35,7 +35,7 @@ internal sealed partial class CalendarPage
         var (lobby, readLobby) = Policy("Who waits in the lobby", ["Guests", "Everyone except hosts", "No invited participants"], ["guests", "everyone_except_hosts", "none"], initial.Meeting.Waiting);
         var (admit, readAdmit) = Policy("Who can admit people", ["Organizer and cohosts", "Organizer", "Hosts and selected attendees"], ["hosts", "organizer", "delegated"], initial.Meeting.Admit);
         var admitters = Field("Other people who can admit (one handle or attendee ID per line)", string.Join("\n", initial.Meeting.Admitters ?? [])); admitters.AcceptsReturn = true;
-        var joinBefore = Field("Open the meeting minutes before (0–10)", initial.Meeting.JoinBeforeMinutes.ToString(CultureInfo.InvariantCulture));
+        var joinBefore = Field("Open the meeting minutes before (0–30)", initial.Meeting.JoinBeforeMinutes.ToString(CultureInfo.InvariantCulture));
         var knock = new CheckBox { Content = "Allow uninvited people to request entry", IsChecked = initial.Meeting.AllowKnock };
         var people = new CheckBox { Content = "Guests can see the participant list", IsChecked = initial.Meeting.GuestsSeeList };
         var policies = new StackPanel { Spacing = 10, Children = { transport, lobby, admit, admitters, joinBefore, knock, people } };
@@ -71,7 +71,7 @@ internal sealed partial class CalendarPage
                 var changedMeeting = initial.Meeting;
                 if (!initial.IsOccurrenceEdit)
                 {
-                    if (!int.TryParse(joinBefore.Text.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var minutes)) throw new ArgumentException("Choose a meeting opening time between 0 and 10 minutes.");
+                    if (!int.TryParse(joinBefore.Text.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var minutes)) throw new ArgumentException("Choose a meeting opening time between 0 and 30 minutes.");
                     changedMeeting = initial.Meeting with { Enabled = meeting.IsChecked == true, Transport = readTransport(), Waiting = readLobby(),
                         Admit = readAdmit(), Admitters = admitters.Text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries), JoinBeforeMinutes = minutes, AllowKnock = knock.IsChecked == true, GuestsSeeList = people.IsChecked == true };
                 }

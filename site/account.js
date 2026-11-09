@@ -820,6 +820,7 @@
             ${open.map((c) => `<option value="${c}"${c === currency ? " selected" : ""}>${esc(CURRENCY_NAMES[c] || c)}</option>`).join("")}
           </select></label>
           <p class="ac-note">Sold by Piyote Bilişim and billed yearly through iyzico. Cards issued in Türkiye pay in TRY.
+            Consumers in the EU and UK: buy in the Pigeonpost iOS or Android app. EU and UK businesses buy here with a VAT number (reverse charge).
             TRY prices are fixed for ${esc(cloudCfg().pricingYear || "")}. Cancel any time; your names keep working until the end of the paid year.</p>
           <div class="ac-actions ac-left">
             <button class="btn btn-primary" id="ac-plan-go">Continue to secure payment</button>
@@ -924,10 +925,20 @@
       out.innerHTML = `<p class="muted">${esc(statusText(s.provider_status))}${s.paid_through ? ` · paid through ${esc(fmtDate(s.paid_through))}` : ""}
           ${s.next_payment_at ? ` · next payment ${esc(new Date(s.next_payment_at).toLocaleDateString())}` : ""}
           ${s.pending_change ? " · a plan change is scheduled" : ""}</p>`
+        + receiptHtml(s.receipt)
         + (s.failed_orders || []).map((o) => `<div class="ac-row"><span class="muted">Payment of ${esc(money(Number(o.amount), o.currency))} failed</span>
           <button class="btn btn-small" data-retry="${esc(o.order_reference_code)}">Retry payment</button></div>`).join("");
       out.querySelectorAll("[data-retry]").forEach((b) => b.onclick = () => retryPayment(id, b.getAttribute("data-retry")));
     } catch (e) { out.innerHTML = `<p class="muted">Could not load the subscription: ${esc(e.message)}</p>`; }
+  }
+
+  // The tax wording of a web purchase (docs/billing-tax.md): customer, country, VAT number and the
+  // reverse-charge or export line, exactly as the bridge recorded it at checkout.
+  function receiptHtml(r) {
+    if (!r) return "";
+    const who = [r.customer?.name, r.customer?.country, r.customer?.vat_id ? `VAT ${r.customer.vat_id}` : ""].filter(Boolean).map(esc).join(" · ");
+    return `<div class="ac-note"><p>Seller: ${esc(r.seller)}${who ? `<br>Customer: ${who}` : ""}</p>`
+      + (r.lines || []).map((l) => `<p>${esc(l)}</p>`).join("") + `</div>`;
   }
 
   async function cancelCloud(id) {
@@ -1092,6 +1103,7 @@
           <small class="muted">Required for billing addresses in Türkiye.</small></label>
         <label class="ac-entity">Company name <input name="entity_name"></label>
         <label class="ac-entity">Tax ID / VAT (VKN in Türkiye) <input name="tax_id"></label>
+        <p class="ac-note ac-entity">EU or UK company: enter the VAT number with its country prefix, for example DE123456789 or GB123456789. We check it with VIES or HMRC and sell without VAT (reverse charge).</p>
         <label class="ac-entity">Tax office <input name="tax_office"></label>
       </div>
       <button class="btn btn-primary" type="submit">Save billing details</button>

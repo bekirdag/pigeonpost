@@ -166,6 +166,7 @@ public sealed class PreviewPostbox : HttpMessageHandler
         public List<(string Address, string? Handle)> Operated { get; } = [];
     }
     private readonly Dictionary<string, Org> orgs = new(StringComparer.Ordinal);
+    public List<string> DirectoryQueries { get; } = [];
     public void AddOrganization(string id, string name, IEnumerable<string> memberInboxes, IEnumerable<(string Address, string? Handle)>? operated = null)
     {
         lock (sync)
@@ -190,6 +191,97 @@ public sealed class PreviewPostbox : HttpMessageHandler
     }
     private Org MemberOrg(string? id, Box me) => id is not null && orgs.TryGetValue(id, out var org) && org.Members.ContainsKey(me.Address) && org.Status is "active" or "read_only"
         ? org : throw new Fail(403, "forbidden");
+    // ---- contacts and phone numbers (docs/contacts-and-phone.md §3–§5) ----------------------
+
+    private sealed record Phone(string Id, string Owner, string E164, bool Discoverable);
+    private readonly List<Phone> phones = [];
+    private readonly Dictionary<string, (string Owner, string E164)> challenges = new(StringComparer.Ordinal);
+    public List<(string Sender, string Phone)> Invites { get; } = [];
+    public List<int> DiscoveryBatches { get; } = [];
+    public int DiscoveryRemaining { get; set; } = 1000;
+    public bool RawNumberDiscovered { get; private set; }
+    // Called after every contacts or phone request, for the UI-test state file.
+    public Action? Changed { get; set; }
+    public string PeopleState() => new JsonObject
+    {
+        ["batches"] = new JsonArray(DiscoveryBatches.Select(b => (JsonNode)b).ToArray()),
+        ["invites"] = new JsonArray(Invites.Select(i => (JsonNode)i.Phone).ToArray()),
+        ["numbers"] = phones.Count, ["discoverable"] = phones.Count(p => p.Discoverable), ["raw_number_discovered"] = RawNumberDiscovered,
+    }.ToJsonString();
+    // A number another mailbox verified and made discoverable; the preview code is always 123456.
+    public void AddDiscoverableNumber(string mailbox, string e164) { lock (sync) phones.Add(new("ph_" + (++counter), mailbox, e164, true)); }
+    private static JsonObject PhoneJson(Phone p) => new()
+    {
+        ["id"] = p.Id, ["identity"] = p.Owner, ["country_code"] = p.E164[1..3], ["masked"] = p.E164[..3] + " ••• ••" + p.E164[^2..],
+        ["discoverable"] = p.Discoverable, ["verified_at"] = 1_789_113_600,
+    };
+    private object PeopleRoute(string method, string path, Box me, JsonNode? body)
+    {
+        try { return PeopleRouteInner(method, path, me, body); }
+        finally { Changed?.Invoke(); }
+    }
+    private object PeopleRouteInner(string method, string path, Box me, JsonNode? body)
+    {
+        bool On(string flag) => Features.Contains(flag);
+        if (path.StartsWith("/v1/phone", StringComparison.Ordinal) && !On("phone_numbers")) throw new Fail(404, "feature_disabled");
+        switch (method, path)
+        {
+            case ("GET", "/v1/phone"):
+                return new JsonObject { ["numbers"] = new JsonArray(phones.Where(p => p.Owner == me.Address).Select(p => (JsonNode)PhoneJson(p)).ToArray()), ["max_numbers"] = 3 };
+            case ("POST", "/v1/phone/verify"):
+            {
+                var e164 = (string?)body?["phone"] ?? "";
+                if (!ContactImport.IsE164(e164)) throw new Fail(400, "bad_request");
+                var id = "ch_" + (++counter); challenges[id] = (me.Address, e164);
+                return new JsonObject { ["challenge_id"] = id, ["expires_at"] = Now + 600, ["resend_after"] = Now + 60, ["code_length"] = 6 };
+            }
+            case ("POST", _) when path.StartsWith("/v1/phone/verify/", StringComparison.Ordinal):
+            {
+                if (!challenges.TryGetValue(path["/v1/phone/verify/".Length..], out var pending) || pending.Owner != me.Address) throw new Fail(410, "challenge_expired");
+                if ((string?)body?["code"] != "123456") throw new Fail(400, "invalid_code", new JsonObject { ["attempts_left"] = 4 });
+                challenges.Remove(path["/v1/phone/verify/".Length..]);
+                phones.RemoveAll(p => p.E164 == pending.E164);
+                var phone = new Phone("ph_" + (++counter), me.Address, pending.E164, (bool?)body?["discoverable"] == true);
+                phones.Add(phone);
+                return new JsonObject { ["number"] = PhoneJson(phone) };
+            }
+            case ("PATCH", _):
+            {
+                var index = phones.FindIndex(p => p.Id == path["/v1/phone/".Length..] && p.Owner == me.Address);
+                if (index < 0) throw new Fail(404, "not_found");
+                phones[index] = phones[index] with { Discoverable = (bool?)body?["discoverable"] ?? phones[index].Discoverable };
+                return new JsonObject { ["number"] = PhoneJson(phones[index]) };
+            }
+            case ("DELETE", _):
+                if (phones.RemoveAll(p => p.Id == path["/v1/phone/".Length..] && p.Owner == me.Address) == 0) throw new Fail(404, "not_found");
+                return new JsonObject { ["ok"] = true };
+            case ("POST", "/v1/contacts/discover"):
+            {
+                if (!On("contact_discovery")) throw new Fail(404, "feature_disabled");
+                var hashes = (body?["hashes"] as JsonArray)?.Select(h => (string?)h ?? "").ToArray() ?? [];
+                if (hashes.Length is < 1 or > 500) throw new Fail(400, "bad_request");
+                if (DiscoveryRemaining <= 0) throw new Fail(429, "rate_limited");
+                DiscoveryBatches.Add(hashes.Length);
+                RawNumberDiscovered |= body!.ToJsonString().Contains('+');
+                var matches = phones.Where(p => p.Discoverable && p.Owner != me.Address && hashes.Contains(ContactImport.Hash(p.E164)))
+                    .Select(p => (JsonNode)new JsonObject { ["hash"] = ContactImport.Hash(p.E164), ["address"] = p.Owner, ["handle"] = boxes[p.Owner].Handle, ["display_name"] = null }).ToArray();
+                DiscoveryRemaining = Math.Max(0, DiscoveryRemaining - hashes.Length);
+                return new JsonObject { ["matches"] = new JsonArray(matches), ["checked"] = hashes.Length, ["new"] = hashes.Length, ["remaining_today"] = DiscoveryRemaining };
+            }
+            case ("POST", "/v1/contacts/invites"):
+            {
+                if (!On("sms_invites")) throw new Fail(404, "feature_disabled");
+                if ((bool?)body?["confirm"] != true) throw new Fail(400, "bad_request");
+                if (!phones.Any(p => p.Owner == me.Address)) throw new Fail(403, "phone_required");
+                var e164 = (string?)body?["phone"] ?? "";
+                if (Invites.Any(i => i.Sender == me.Address && i.Phone == e164)) return new JsonObject { ["status"] = "not_sent", ["reason"] = "already_invited" };
+                Invites.Add((me.Address, e164));
+                return new JsonObject { ["status"] = "sent", ["invite_id"] = "inv_" + (++counter) };
+            }
+        }
+        throw new Fail(404, "not_found");
+    }
+
     private object? OrganizationRoute(string method, string path, Box me, JsonNode? body, System.Collections.Specialized.NameValueCollection query)
     {
         switch (method, path)
@@ -225,6 +317,17 @@ public sealed class PreviewPostbox : HttpMessageHandler
                 return new JsonObject { ["id"] = g.Id, ["name"] = g.Name, ["description"] = g.Description, ["member_count"] = g.Members.Values.Count(x => x.State is "active" or "keying"),
                     ["join_policy"] = g.JoinPolicy, ["my_state"] = state, ["can_join"] = g.JoinPolicy == "public" && state is null or "left" };
             }
+        }
+        if (method == "GET" && path.StartsWith("/v1/orgs/", StringComparison.Ordinal) && path.EndsWith("/directory", StringComparison.Ordinal))
+        {
+            var org = MemberOrg(path["/v1/orgs/".Length..^"/directory".Length], me);
+            var needle = (query["q"] ?? "").Trim().ToLowerInvariant();
+            var limit = Math.Clamp(int.TryParse(query["limit"], out var l) ? l : 50, 1, 50);
+            DirectoryQueries.Add(needle);
+            return new JsonObject { ["entries"] = new JsonArray(org.Members.Keys.Where(boxes.ContainsKey).Select(a => (a, boxes[a].Handle, "member"))
+                .Concat(org.Operated.Select(o => (o.Address, o.Handle, "agent")))
+                .Where(e => e.Item2 is { } h && h.ToLowerInvariant().Contains(needle)).OrderBy(e => e.Item2, StringComparer.Ordinal).Take(limit)
+                .Select(e => (JsonNode)new JsonObject { ["handle"] = e.Item2, ["address"] = e.Item1, ["kind"] = e.Item3, ["name"] = null }).ToArray()) };
         }
         if (method == "POST" && path.StartsWith("/v1/groups/", StringComparison.Ordinal) && path.EndsWith("/join", StringComparison.Ordinal))
         {
@@ -329,6 +432,7 @@ public sealed class PreviewPostbox : HttpMessageHandler
         if (path.StartsWith("/v1/meetings", StringComparison.Ordinal)) return MeetingRoute(method, path, body);
         var me = BoxFor(identity);
         if (path.StartsWith("/v1/streams/", StringComparison.Ordinal)) return StreamRoute(method, path, me);
+        if (path.StartsWith("/v1/phone", StringComparison.Ordinal) || path is "/v1/contacts/discover" or "/v1/contacts/invites") return PeopleRoute(method, path, me, body);
         switch (method, path)
         {
             case ("GET", "/v1/whoami"): return new JsonObject { ["address"] = me.Address, ["handle"] = me.Handle };

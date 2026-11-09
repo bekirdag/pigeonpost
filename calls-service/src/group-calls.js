@@ -26,8 +26,17 @@
 //   * the room lives while at least one person is in it;
 //   * one live room per group.
 //
+// Closed apps ring too (audit 2026-11-03 P1-11). When ring pushes are on (`CALLS_RING_PUSH`, and
+// the postbox's `call_push` flag per callee), every rung member gets their own ring token and push;
+// the postbox re-checks live membership and that member's call rules before waking anything. A
+// member who answers, declines or is removed gets their push cancelled at once; the rest are
+// cancelled when the ring ends. A device woken by a push can read, decline or answer the ring with
+// its member's token, and a session opened while the member still rings is rung like the others.
+//
 // The mesh cap (six) still applies. Meeting-link guests stay possible through the room's code,
 // but admitting a guest never grants group membership.
+
+import { newRingToken, ringTokenMatches } from "./ring-alerts.js";
 
 const GROUP_ID = /^grp_[A-Za-z0-9]{1,60}$/;
 
@@ -40,7 +49,7 @@ export function createGroupCalls(ctx) {
     cfg, internal, HttpError, KINDS, LIMITS, now, norm,
     liveSession, mailboxFor, sessionInRoom, limited, makeRoom, addParticipant,
     reportCall, sessionsByName, sessions, send, stopRinging, endRoom, roomView, admitted,
-    participantName, removeParticipant, sfuEvict,
+    participantName, removeParticipant, sfuEvict, alerts, mailboxEngaged,
   } = ctx;
   const checkMs = Number(cfg.groupCheckMs) > 0 ? Number(cfg.groupCheckMs) : 5_000;
   const blindMs = Number(cfg.groupBlindMs) > 0 ? Number(cfg.groupBlindMs) : 90_000;
@@ -112,12 +121,29 @@ export function createGroupCalls(ctx) {
   }
 
   function ring(room, caller, members, silenced) {
-    room.ring = { to: null, toName: null, group: true, from: caller.mailbox, ringing: new Set(), ringingFor: new Map(), decision: "ring" };
+    room.ring = {
+      to: null, toName: null, group: true, from: caller.mailbox, ringing: new Set(), ringingFor: new Map(), decision: "ring",
+      expiresAt: now() + cfg.ringMs, callerSession: caller.sessionId,
+      // P1-11: name -> rung member address (late sessions), members no longer rung, and the
+      // per-member ring tokens (hash only) and pushes still outstanding.
+      members: new Map(), quieted: new Set(), tokens: new Map(), pushed: new Set(),
+    };
     reportCall(room, "ring");
     if (silenced.length) reportCall(room, "filtered", { to: silenced.map((m) => m.address) });
     for (const member of members) {
       const names = [norm(member.address)];
       if (member.handle) names.push(norm(member.handle));
+      for (const name of names) room.ring.members.set(name, member.address);
+      if (alerts && alerts.configured && !names.some((n) => mailboxEngaged(n))) {
+        const minted = newRingToken();
+        const key = norm(member.address);
+        room.ring.tokens.set(key, { address: member.address, hash: minted.hash, ended: null });
+        room.ring.pushed.add(key);
+        alerts.ring({
+          room: room.id, code: room.code, kind: room.kind, from: caller.mailbox, to: member.address,
+          token: minted.token, expiresAt: room.ring.expiresAt, group_id: room.group_id, group_name: room.group_name,
+        });
+      }
       for (const name of names) {
         for (const target of sessionsByName.get(name) || []) {
           if (target.id === caller.sessionId || room.ring.ringing.has(target.id) || sessionInRoom(target)) continue;
@@ -148,12 +174,31 @@ export function createGroupCalls(ctx) {
   // their devices), except `keep`.
   function quietMember(room, address, reason, keep) {
     if (!room.ring) return;
+    const key = norm(address);
+    room.ring.quieted?.add(key);
+    const tok = room.ring.tokens?.get(key);
+    if (tok && !tok.ended) tok.ended = reason;
+    if (room.ring.pushed?.delete(key)) {
+      alerts.cancel({ room: room.id, to: address, kind: room.kind, from: room.ring.from }, reason);
+    }
     for (const [sid, addr] of [...room.ring.ringingFor]) {
       if (norm(addr) !== norm(address)) continue;
       room.ring.ringing.delete(sid);
       room.ring.ringingFor.delete(sid);
       if (sid !== keep) send(sessions.get(sid), "ring_ended", { room: room.id, reason });
     }
+  }
+
+  // Nothing rings any more: no session is rung and no member's devices are still being pushed.
+  function silent(room) {
+    return !room.ring || (!room.ring.ringing.size && !(room.ring.pushed && room.ring.pushed.size));
+  }
+
+  // The rung member a presented ring token belongs to, while that member still rings.
+  function tokenMember(room, presented) {
+    if (!room.ring || !room.ring.tokens || !presented) return null;
+    for (const t of room.ring.tokens.values()) if (!t.ended && ringTokenMatches(t.hash, presented)) return t;
+    return null;
   }
 
   function join(room, session, mailbox, e2ee) {
@@ -171,8 +216,11 @@ export function createGroupCalls(ctx) {
   async function accept(auth, room, body) {
     if (auth.guest) throw new HttpError(403, "members_only");
     const session = liveSession(auth, body.session);
-    if (!room.ring || !room.ring.ringing.has(session.id)) throw new HttpError(409, "not_ringing");
-    const mailbox = mailboxFor(auth, room.ring.ringingFor.get(session.id) || "");
+    // A session that was rung, or (P1-11) one opened after a push that presents its member's token.
+    let address = room.ring && room.ring.ringing.has(session.id) ? room.ring.ringingFor.get(session.id) : null;
+    if (!address) address = tokenMember(room, body.ring_token)?.address || null;
+    if (!address) throw new HttpError(409, "not_ringing");
+    const mailbox = mailboxFor(auth, address);
     if (!mailbox) throw new HttpError(403, "not_your_call");
     await admission(room.group_id, mailbox, room.kind, true, true);
     if (room.state === "ended") throw new HttpError(404, "no_call");
@@ -184,13 +232,38 @@ export function createGroupCalls(ctx) {
     if (!room.ring || !room.ring.ringing.has(session.id)) throw new HttpError(409, "not_ringing");
     const address = room.ring.ringingFor.get(session.id);
     const reason = body.reason === "busy" ? "busy" : "declined";
-    quietMember(room, address, reason, session.id);
+    declineMember(room, address, reason, session.id);
+    return { room: room.id, state: room.state };
+  }
+
+  // One member declines (on a session, or with their ring token from a pushed device). The call
+  // ends only when nothing rings any more and nobody else is in it.
+  function declineMember(room, address, reason, keep) {
+    quietMember(room, address, reason, keep);
     reportCall(room, reason === "busy" ? "busy" : "decline", { by: address });
-    if (!room.ring.ringing.size && room.state === "ringing" && room.participants.size < 2) {
-      stopRinging(room, reason, session.id);
+    if (silent(room) && room.state === "ringing" && room.participants.size < 2) {
+      stopRinging(room, reason, keep);
       endRoom(room, reason, null);
     }
-    return { room: room.id, state: room.state };
+  }
+
+  // P1-11: a session opened while its member is still rung (an app launched by a push) joins the
+  // ring. Returns true when it was rung.
+  function ringLate(room, session) {
+    const r = room.ring;
+    if (!r || !r.group || room.state === "ended" || session.id === r.callerSession || r.ringing.has(session.id) || sessionInRoom(session)) return false;
+    for (const name of session.names) {
+      const address = r.members.get(name);
+      if (!address || r.quieted.has(norm(address))) continue;
+      r.ringing.add(session.id);
+      r.ringingFor.set(session.id, address);
+      send(session, "incoming", {
+        room: room.id, code: room.code, kind: room.kind, from: r.from,
+        to: address, group_id: room.group_id, group_name: room.group_name,
+      });
+      return true;
+    }
+    return false;
   }
 
   async function status(auth, groupId, fromValue) {
@@ -290,5 +363,5 @@ export function createGroupCalls(ctx) {
     }
   }
 
-  return { start, accept, decline, status, join: joinRoute, recheck, revoke, sweep, active };
+  return { start, accept, decline, declineMember, ringLate, tokenMember, status, join: joinRoute, recheck, revoke, sweep, active };
 }

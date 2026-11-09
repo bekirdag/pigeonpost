@@ -8233,7 +8233,7 @@ mod tests {
         use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
 
-        let state = State::in_memory().unwrap();
+        let mut state = State::in_memory().unwrap();
         let tx = state.conn.unchecked_transaction().unwrap();
         for index in 0..16_000u64 {
             let mut pubkey = [0u8; 32];
@@ -8272,13 +8272,16 @@ mod tests {
 
         let operations = Arc::new(AtomicUsize::new(0));
         let observed = Arc::clone(&operations);
-        state.conn.progress_handler(
-            1,
-            Some(move || {
-                observed.fetch_add(1, Ordering::Relaxed);
-                false
-            }),
-        );
+        state
+            .conn
+            .progress_handler(
+                1,
+                Some(move || {
+                    observed.fetch_add(1, Ordering::Relaxed);
+                    false
+                }),
+            )
+            .unwrap();
         for key in [[0u8; 32], [0xFFu8; 32]] {
             operations.store(0, Ordering::Relaxed);
             let _: Option<String> = state
@@ -8296,7 +8299,10 @@ mod tests {
                 "indexed handle lookup exceeded its fixed VM-operation budget"
             );
         }
-        state.conn.progress_handler(0, None::<fn() -> bool>);
+        state
+            .conn
+            .progress_handler(0, None::<fn() -> bool>)
+            .unwrap();
     }
 
     #[test]

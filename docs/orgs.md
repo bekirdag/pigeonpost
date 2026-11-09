@@ -9,6 +9,12 @@ The portal additionally checks **`enterprise_portal`** in `GET /v1/capabilities`
 `/start` and `/app`. Invitation messages are sent only when **`org_invite_email`** is on; until
 then the admin copies the link that the create/resend response returns once.
 
+The portal is in English and Turkish (D-05). `site-enterprise/i18n.js` picks the language from
+`?lang=en|tr` (remembered in the viewer's browser), then the remembered choice, then the browser's
+languages, and the header has a switch. Turkish text lives in `site-enterprise/i18n-tr.js`, keyed by
+the English source text; the checkout `locale` follows the chosen language. Server `detail` text
+that the portal has no entry for is shown as sent.
+
 Base URL: `https://postbox.pigeonpost.dev`. Bearer: a member JWT (`pigeonpost-web`; invitation acceptance
 also requests the realm's standard address scope), unless a route says otherwise. CORS admits
 `https://enterprise.pigeonpost.dev` and `https://inbox.pigeonpost.dev`.
@@ -41,6 +47,15 @@ org agents, limit `10 × seats`. Over the limit: `409 seat_limit` / `409 agent_l
 new agents, org mailboxes cannot send, rooms are read-only) → `suspended` (org mailboxes do not
 receive — senders see "address not found" — and cannot be used). `pending` and
 `paid_unprovisioned` orgs have no members yet.
+
+**Deletion (D-14).** A suspended org is deleted 30 days after it was suspended, and never sooner
+than seven days after its first warning. Members get an `org.deletion_warning` event
+(`{org_id, stage, deletion_at}`) at suspension (`stage: "suspended"`), a week before (`7d`) and a
+day before (`1d`); `Org.deletion_at` carries the date while the org is suspended, and the portal
+shows it. Deletion is the owner's `DELETE /v1/orgs/{id}` done by the system (audit `org.delete`,
+`reason: suspended_30_days`): members' org mailboxes are detached (history stays with them), rooms
+are deleted, and the namespace enters its 30-day recovery window. Paying again before the date
+returns the org to `active` and clears the warnings.
 
 ### Permission matrix (§6.4)
 
@@ -76,7 +91,29 @@ actions: they are human-only (`403 human_required`).
 | GET | `/v1/orgs/{id}/billing` | | `{plan_code, seats, seats_used, agent_limit, agents_used, status, period_end, paid_through, storage_bytes}`. Owner/admin/billing admin. Payment changes go through the billing bridge. |
 
 `Org`: `{id, name, namespace (bare, e.g. `acme`), status, seats, seats_used, agent_limit, agents_used, plan_code,
-period_end, settings:{require_mfa, invite_domains_only, rooms_creation}, created_at, revision}`.
+storage_bytes, deletion_at, logo, period_end, settings:{require_mfa, invite_domains_only, rooms_creation,
+ssh_allowed, ssh_requires_approval, stream_max_viewers?, room_default_ephemeral_secs?,
+room_max_ephemeral_secs?}, created_at, revision}`. `logo` is `null` or `{id, version, hash, urls}`.
+
+**Org logo** (SDS §16.1): `PUT /v1/orgs/{id}/logo` with the raw image (as `PUT /v1/profile/avatar`,
+`?crop=x,y,w,h`; JPEG, PNG or WebP up to 10 MB, re-encoded, metadata stripped; 5 changes a day),
+`DELETE /v1/orgs/{id}/logo`. Owner or admin. Logos are public; members get `org.settings`
+`{changed: ["logo"]}`.
+
+**Room timers** (SDS §17.1): `settings.room_default_ephemeral_secs` is the timer a new org room
+starts with; `settings.room_max_ephemeral_secs` bounds every org room: a message lives for the
+shorter of the room's timer and the maximum, and a room with its timer off is still bound by it.
+Both take a disappearing-message value, or `0` to clear; the default may not exceed the maximum.
+A changed maximum applies to new messages.
+
+**Room storage** (D-06): org rooms draw on the org's pool (`storage_bytes`, 5 GB per seat), shared
+by all its live rooms (`quota_exceeded` when it is used up), instead of the per-group allowance.
+
+**Roles**: only the owner grants or removes `billing_admin` (a full admin does not hold billing
+powers itself). Suspending, reinstating or removing a full admin needs step-up, like changing the
+`admin` role. An invitation the postbox delivers itself (`org_invite_email`) never returns its link (`link: null`,
+`delivery: "queued"`); five acceptances from a different address revoke it, and the admin resends.
+Self-serve plan codes name a sold tier: 5, 10, 15, 20, 30, 50, 100, 200 or 500 seats.
 `OrgSummary`: `Org` plus `{my_roles, my_mailbox}`.
 
 ## 3. People
@@ -113,7 +150,7 @@ The token lives in the URL fragment. Pages read it, `history.replaceState` it aw
 | Method | Path | Body | Result |
 |---|---|---|---|
 | GET | `/v1/orgs/{id}/agents` | | `{agents:[Agent]}` |
-| POST | `/v1/orgs/{id}/agents` | `{handle, label?, operators?: [member_id]}` | `201 {agent}`. `operators` get an `enroll`+`bind_handle` delegation. |
+| POST | `/v1/orgs/{id}/agents` | `{handle, label?, operators?: [member_id]}` | `201 {agent}`. `operators` get an `enroll` delegation. |
 | PATCH | `/v1/orgs/{id}/agents/{address}` | `{label?, status?: active\|suspended}` | `{agent}` |
 | DELETE | `/v1/orgs/{id}/agents/{address}` | | Deleted; every device credential revoked. |
 | POST | `/v1/orgs/{id}/agents/{address}/enrollments` | `{ttl_hours?: 1..24}` | `201 {code: "enr_…", expires_at}`, shown once. Step-up. |
@@ -124,9 +161,11 @@ The token lives in the URL fragment. Pages read it, `history.replaceState` it aw
 | DELETE | `/v1/orgs/{id}/delegations/{delegation_id}` | | Revoked; device credentials it approved stop working. |
 
 `Agent`: `{address, handle, label, status, created_at, last_seen_at, devices: n, operators:
-[{member_id, handle}]}`. Capabilities: `enroll`, `bind_handle`, `configure_rules`, `read_inbox`
-(`ssh` is accepted and stored for Phase 8 but grants nothing yet). `read_inbox` lets the delegate
-open the agent's mailbox in their apps (it is listed under `operated` in `GET /v1/orgs`).
+[{member_id, handle}]}`. Capabilities, each enforced: `enroll` (enrollment codes for the agent),
+`ssh` (a shell on its workspace, `docs/agent-ssh.md`; nobody, the owner included, gets one
+implicitly) and `read_inbox` (the delegate opens the agent's mailbox in their apps; it is listed
+under `operated` in `GET /v1/orgs`). `bind_handle` and `configure_rules` granted nothing and are no
+longer accepted (`400`); delegations stored with them list only their live capabilities.
 
 ## 5. Rooms
 

@@ -542,9 +542,14 @@ class CalendarMixin:
                 text = label(f"{name} · {a['rsvp'].replace('needs_action', 'not answered')}" + (" · optional" if a["optional"] else ""), wrap=True)
                 text.set_hexpand(True)
                 row.append(text)
+                if role == "organizer" and a["kind"] == "external" and event["status"] == "confirmed":
+                    row.append(button("Copy invitation link", lambda att=a, holder=row: self.cal_copy_guest_link(event, att, holder)))
                 if event["can_edit"] and event["status"] == "confirmed":
                     row.append(button("Remove " + name, lambda att=a: self.cal_remove_guest(event, att, window), "list-remove-symbolic", "flat"))
                 content.append(row)
+            if role == "organizer" and CALENDAR_EMAIL not in self.features and any(a["kind"] == "external" for a in event["attendees"]):
+                content.append(label("Invitations to contact addresses are not sent yet. Copy each guest’s invitation link and send it "
+                                     "yourself.", "dim-label", wrap=True))
         if role is not None and event["status"] == "confirmed":
             buttons.append(button("Reminders…", lambda: self.cal_reminders_dialog(event)))
         buttons.append(button("Export .ics", lambda: self.cal_export(event)))
@@ -595,6 +600,25 @@ class CalendarMixin:
                 self.cal["rsvp_revisions"].pop(event_id, None)
             self.notice("Your answer was not saved", self.cal_error_text(error))
         self.cal_write(lambda c: c.rsvp(event_id, body), done, failed)
+
+    def cal_copy_guest_link(self, event, attendee, row):
+        """The guest's own link, shown and copied; it works for this guest only."""
+        client = self.cal_client()
+
+        def shown(url):
+            child = row.get_first_child()
+            while child is not None:
+                if getattr(child, "guest_url", False):
+                    row.remove(child)
+                    break
+                child = child.get_next_sibling()
+            field = Gtk.Entry(text=url, editable=False, hexpand=True)
+            field.guest_url = True
+            field.update_property([Gtk.AccessibleProperty.LABEL], ["Invitation link for " + (attendee["name"] or "this guest")])
+            row.append(field)
+            self.get_clipboard().set(url)
+            self.toast("Invitation link copied. It works for this guest only.")
+        self._work(lambda: client.guest_link(event["id"], attendee["attendee_id"]), shown, lambda e: self.toast(self.cal_error_text(e)))
 
     def cal_remove_guest(self, event, attendee, window):
         def remove():
@@ -826,12 +850,13 @@ class CalendarMixin:
         description.set_size_request(-1, 70)
         description.update_property([Gtk.AccessibleProperty.LABEL], ["Description"])
         content.append(self.cal_field("Description", description))
-        guests = Gtk.Entry(placeholder_text="Add guests: /handle, /k/address" + (", or name@example.org" if True else ""))
+        # Contact addresses are accepted either way; without `calendar_email` the organizer shares each link.
+        guests = Gtk.Entry(placeholder_text="Add guests: /handle, /k/address, or name@example.org")
         guests.update_property([Gtk.AccessibleProperty.LABEL], ["Guests to add, separated by commas"])
         content.append(guests)
         if CALENDAR_EMAIL not in self.features:
-            content.append(label("Guests without a Pigeonpost handle get no invitation message yet: after saving, copy their personal link "
-                                 "from the web inbox.", "dim-label", wrap=True))
+            content.append(label("Guests added by contact address get no invitation message yet: after saving, open the event and "
+                                 "copy each guest’s invitation link to send it yourself.", "dim-label", wrap=True))
         meeting = reminder = None
         if not editing:
             meeting = Gtk.Switch(active=False)

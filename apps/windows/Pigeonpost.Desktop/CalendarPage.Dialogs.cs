@@ -1,4 +1,5 @@
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Pigeonpost.Core.Calendar;
 
@@ -51,6 +52,7 @@ internal sealed partial class CalendarPage
     {
         var detail = await model.OpenEventAsync(target, key, lifetime); if (detail is null || !target.IsCurrent) return;
         var e = detail.Event; var o = detail.Occurrence;
+        TextBlock? feedbackBlock = null; void feedbackText(string message) { if (feedbackBlock is not null) feedbackBlock.Text = message; }
         var fields = new StackPanel { Spacing = 12, MinWidth = 280 };
         fields.Children.Add(Heading(o?.Title ?? e.Title ?? "Untitled event"));
         fields.Children.Add(Text(e.Status == "cancelled" || o?.Status == "cancelled" ? "Cancelled" : ""));
@@ -74,7 +76,37 @@ internal sealed partial class CalendarPage
         if (e.Attendees is { Count: > 0 })
         {
             var people = new StackPanel { Spacing = 6 };
-            foreach (var person in e.Attendees) people.Children.Add(Text((person.Name ?? person.Handle ?? person.Address ?? person.Contact ?? "Guest") + " · " + (person.Rsvp ?? "pending")));
+            var organizerView = e.My?.Role == "organizer" && e.Status == "confirmed";
+            foreach (var person in e.Attendees)
+            {
+                var shown = person.Kind == "external" && organizerView && person.Contact is { } contact
+                    ? (person.Name is { } n && n != contact ? $"{n} ({contact})" : contact) : person.Name ?? person.Handle ?? person.Address ?? person.Contact ?? "Guest";
+                people.Children.Add(Text(shown + " · " + (person.Rsvp ?? "pending")));
+                // P3-7: when invitation delivery is off (or did not arrive), the organizer can hand a guest their own link.
+                if (organizerView && person.Kind == "external" && person.AttendeeId is { Length: > 0 } attendee)
+                {
+                    var copy = Button("Copy invitation link", "Copy invitation link for " + shown);
+                    var linkBox = new TextBox { IsReadOnly = true, Visibility = Visibility.Collapsed, Header = "Invitation link (for this guest only)" };
+                    AutomationProperties.SetName(linkBox, "Invitation link for " + shown);
+                    copy.Click += async (_, _) =>
+                    {
+                        copy.IsEnabled = false;
+                        try
+                        {
+                            if (await model.GuestLinkAsync(target, key, attendee, lifetime) is { } link && target.IsCurrent && !disposed)
+                            {
+                                var package = new Windows.ApplicationModel.DataTransfer.DataPackage(); package.SetText(link.Url);
+                                Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(package);
+                                linkBox.Text = link.Url; linkBox.Visibility = Visibility.Visible;
+                                feedbackText("Invitation link copied. It works for this guest only.");
+                            }
+                            else feedbackText(model.State.Error ?? "The invitation link could not be created.");
+                        }
+                        finally { copy.IsEnabled = true; }
+                    };
+                    people.Children.Add(copy); people.Children.Add(linkBox);
+                }
+            }
             fields.Children.Add(new Expander { Header = "People", Content = people, HorizontalAlignment = HorizontalAlignment.Stretch });
         }
         var recurring = !string.IsNullOrWhiteSpace(e.Rrule) && key.OccurrenceId is not null;
@@ -83,7 +115,7 @@ internal sealed partial class CalendarPage
         CalendarEventScope? Scope() => !recurring ? CalendarEventScope.All : scope.SelectedIndex switch { 1 => CalendarEventScope.This, 2 => CalendarEventScope.Following, 3 => CalendarEventScope.All, _ => null };
         Func<Task>? after = null;
         var next = new ContentDialog { Title = "Event details", Content = new ScrollViewer { Content = fields, MaxHeight = 460 }, CloseButtonText = "Done" };
-        var feedback = Text("");
+        var feedback = Text(""); feedbackBlock = feedback;
         void Command(string label, Func<Task> run, bool needsScope = false)
         {
             var button = Button(label); button.Click += (_, _) => { if (needsScope && Scope() is null) { feedback.Text = "Choose which events this action applies to."; return; } after = run; next.Hide(); }; fields.Children.Add(button);
@@ -171,5 +203,112 @@ internal sealed partial class CalendarPage
             if (file is not null && target.IsCurrent && !disposed) await Windows.Storage.FileIO.WriteBytesAsync(file, bytes);
         }
         finally { System.Security.Cryptography.CryptographicOperations.ZeroMemory(bytes); }
+    }
+
+    // Subscription links (feeds): another calendar app can follow one calendar. The link is shown once, when made.
+    private async Task Feeds(CalendarActionTarget target)
+    {
+        var panel = new StackPanel { Spacing = 12, MinWidth = 320 };
+        var error = Text("");
+        panel.Children.Add(Text("Let another calendar app follow one of your calendars. Anyone with the link sees what it shows; copies already made in other apps can't be recalled."));
+        var rows = new StackPanel { Spacing = 14 }; panel.Children.Add(rows); panel.Children.Add(error);
+        var form = new ContentDialog { Title = "Subscription links", Content = new ScrollViewer { Content = panel, MaxHeight = 460 }, CloseButtonText = "Done" };
+        async Task RowAsync(CalendarFolder calendar, StackPanel row, string? shownUrl = null)
+        {
+            row.Children.Clear();
+            var name = calendar.Name ?? "Calendar";
+            row.Children.Add(Heading(name, 3));
+            var feed = await model.FeedAsync(target, calendar.Id, lifetime);
+            if (feed is null) { row.Children.Add(Text(model.State.Error ?? "The link state could not be read.")); return; }
+            if (shownUrl is not null)
+            {
+                var box = new TextBox { Text = shownUrl, IsReadOnly = true, Header = "Subscription link" }; AutomationProperties.SetName(box, "Subscription link for " + name);
+                row.Children.Add(box);
+                row.Children.Add(Text("This link is shown only now. Paste it into the other app. Copies in other calendar apps are not recalled when you reset or turn off the link; they just stop updating."));
+            }
+            if (feed.Enabled)
+            {
+                row.Children.Add(Text(feed.Projection == "busy" ? "On — shows only busy times." : "On — shows your own titles and locations; private events and invitations as busy."));
+                var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+                var reset = Button("Reset link", "Reset link for " + name); var off = Button("Turn off", "Turn off link for " + name);
+                reset.Click += async (_, _) => { if (await model.SetFeedAsync(target, calendar.Id, true, feed.Projection, lifetime) is { } made) await RowAsync(calendar, row, made.Url); else error.Text = model.State.Error ?? ""; };
+                off.Click += async (_, _) => { if (await model.SetFeedAsync(target, calendar.Id, false, null, lifetime) is not null) await RowAsync(calendar, row); else error.Text = model.State.Error ?? ""; };
+                buttons.Children.Add(reset); buttons.Children.Add(off); row.Children.Add(buttons);
+            }
+            else
+            {
+                var projection = Choice("What the link shows for " + name, ["Busy times only", "My titles and locations"]);
+                var on = Button("Turn on", "Turn on link for " + name);
+                on.Click += async (_, _) =>
+                {
+                    var chosen = projection.SelectedIndex == 1 ? "personal_redacted" : "busy";
+                    if (await model.SetFeedAsync(target, calendar.Id, true, chosen, lifetime) is { } made) await RowAsync(calendar, row, made.Url);
+                    else error.Text = model.State.Error ?? "";
+                };
+                row.Children.Add(projection); row.Children.Add(on);
+            }
+        }
+        foreach (var calendar in model.State.Folders)
+        {
+            var row = new StackPanel { Spacing = 6 }; rows.Children.Add(row);
+            await RowAsync(calendar, row);
+            if (!target.IsCurrent || disposed) return;
+        }
+        await Show(target, form);
+    }
+
+    // Import: the file is previewed by the postbox (nothing in it is fetched, nobody is invited) and only the ticked
+    // entries are created.
+    private async Task Import(CalendarActionTarget target)
+    {
+        byte[] bytes;
+#if UI_TESTS
+        if (Environment.GetEnvironmentVariable("PIGEONPOST_UI_CALENDAR_IMPORT_FILE") is { } fixture) bytes = await File.ReadAllBytesAsync(fixture);
+        else
+#endif
+        {
+            var picker = new Windows.Storage.Pickers.FileOpenPicker(); picker.FileTypeFilter.Add(".ics");
+            WinRT.Interop.InitializeWithWindow.Initialize(picker, window);
+            if (await picker.PickSingleFileAsync() is not { } file || !target.IsCurrent || disposed) return;
+            if ((await file.GetBasicPropertiesAsync()).Size > CalendarSharing.MaxImportBytes) { await Problem(target, "That file is larger than 512 KB."); return; }
+            var buffer = await Windows.Storage.FileIO.ReadBufferAsync(file);
+            bytes = new byte[buffer.Length]; using (var reader = Windows.Storage.Streams.DataReader.FromBuffer(buffer)) reader.ReadBytes(bytes);
+        }
+        var folders = model.State.Folders;
+        var into = Choice("Import into", folders.Count == 0 ? ["Default calendar"] : folders.Select(f => f.Name ?? "Calendar").ToArray());
+        string? CalendarId() => folders.Count == 0 ? null : folders[Math.Max(0, into.SelectedIndex)].Id;
+        var preview = await model.PreviewImportAsync(target, CalendarId(), bytes, lifetime);
+        if (!target.IsCurrent || disposed) return;
+        if (preview is null) { await Problem(target, model.State.Error ?? "This file could not be read."); return; }
+        var fields = new StackPanel { Spacing = 10, MinWidth = 320 };
+        fields.Children.Add(Text("Add events from this file. Nothing in it is fetched from the internet, and no invitations are sent."));
+        fields.Children.Add(into);
+        foreach (var warning in preview.Warnings) fields.Children.Add(Text(warning, 12));
+        var picks = new List<(CheckBox Box, CalendarImportEntry Entry)>();
+        foreach (var entry in preview.Events)
+        {
+            var box = new CheckBox { Content = entry.Label, IsChecked = entry.Importable, IsEnabled = entry.Importable };
+            AutomationProperties.SetName(box, "Import " + entry.Label); fields.Children.Add(box); picks.Add((box, entry));
+            foreach (var warning in entry.Warnings) fields.Children.Add(Text(warning, 12));
+        }
+        if (preview.Events.Count == 0) fields.Children.Add(Text("This file has no events to import."));
+        var error = Text(""); fields.Children.Add(error);
+        var form = Form("Import events", fields, preview.Events.Count == 1 ? "Import 1 event" : $"Import {preview.Events.Count} events");
+        form.IsPrimaryButtonEnabled = preview.Events.Any(e => e.Importable);
+        form.PrimaryButtonClick += async (sender, args) =>
+        {
+            args.Cancel = true; var deferred = args.GetDeferral(); form.IsPrimaryButtonEnabled = false; EnableFormFields(form, false);
+            try
+            {
+                var select = picks.Where(p => p.Box.IsChecked == true).Select(p => p.Entry.Index).ToArray();
+                if (select.Length == 0) { error.Text = "Choose at least one event."; return; }
+                var created = await model.ConfirmImportAsync(target, preview.DraftId, select, CalendarId(), lifetime);
+                if (created is { } n) { form.Hide(); scrollToHours = true; }
+                else error.Text = model.State.Error ?? "The import was not confirmed. Check your calendar before trying again.";
+            }
+            catch (OperationCanceledException) { }
+            finally { EnableFormFields(form, true); form.IsPrimaryButtonEnabled = target.IsCurrent; deferred.Complete(); }
+        };
+        await Show(target, form);
     }
 }
