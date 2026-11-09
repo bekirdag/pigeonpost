@@ -194,7 +194,7 @@ jobs:
     # Keep the current-runtime UI suite above, and verify real StoreKit transactions
     # on iOS 18 until the hosted image includes a fixed runtime.
     # https://developer.apple.com/forums/thread/826971
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 15
     defaults:
       run:
