@@ -175,7 +175,7 @@
   const chatLog = [];
   // `rawMic` is the microphone as captured (with the browser's echo cancellation); `mic` is what is
   // sent — the same track, or the same track after noise removal.
-  const local = { stream: null, rawMic: null, mic: null, cam: null, screen: null, screenStream: null, muted: false, cameraOff: false };
+  const local = { stream: null, rawMic: null, mic: null, cam: null, screen: null, screenStream: null, muted: false, cameraOff: false, cameraLater: false };
   // Captured tracks waiting for asynchronous noise processing must stop immediately on hang-up.
   const pendingCaptureTracks = new Set();
   const prefs = {
@@ -624,6 +624,7 @@
     setMembers(data.participants);
     tellHost("callState", { state: "active", room: data.room, kind: room.kind });
     stopTone();
+    startMediaWatch();
     if (PAGE === "join") Join.enter();
     for (const p of data.participants || []) {
       if (p.participant === data.you) continue;
@@ -725,6 +726,10 @@
       if (!out || !isCurrent()) { dispose(); return raw; }
       Object.assign(noise, { ctx, node, src, active: true });
       out.contentHint = "speech";
+      // A graph that stops later (WebKit suspends or interrupts it for an audio interruption — on an
+      // iPhone, a call taken through CallKit) sends silence from then on: send the microphone as it
+      // comes instead.
+      ctx.onstatechange = () => { if (noise.ctx === ctx && ctx.state !== "running") dropNoise("audio " + ctx.state); };
       return out;
     } catch (err) {
       abandoned = true;
@@ -737,8 +742,28 @@
   }
 
   function teardownNoise() {
-    try { noise.src?.disconnect(); noise.node?.disconnect(); noise.node?.destroy?.(); noise.ctx?.close(); } catch (_) { /* closed */ }
+    try { if (noise.ctx) noise.ctx.onstatechange = null; noise.src?.disconnect(); noise.node?.disconnect(); noise.node?.destroy?.(); noise.ctx?.close(); } catch (_) { /* closed */ }
     Object.assign(noise, { ctx: null, node: null, src: null, active: false });
+  }
+
+  // The noise graph stopped mid-call: send the raw microphone on every connection instead. The
+  // graph is not restarted (it would stop again the same way); the next microphone change, or the
+  // noise setting, tries it afresh.
+  function dropNoise(why) {
+    const raw = local.rawMic, sent = local.mic;
+    if (!noise.active || !raw || sent === raw || raw.readyState !== "live") return;
+    console.warn("calls: strong noise removal stopped", why);
+    teardownNoise();
+    raw.enabled = !local.muted;
+    local.mic = raw;
+    if (local.stream) {
+      if (sent) local.stream.removeTrack(sent);
+      if (!local.stream.getTracks().includes(raw)) local.stream.addTrack(raw);
+    }
+    updateSlot("audio");
+    window.PigeonpostCallsSummary?.micChanged();
+    sent?.stop();
+    noteRevived("noise");
   }
 
   // Put a (new) microphone into the call: process it, swap it in on every connection, release the
@@ -790,7 +815,10 @@
       // it — nobody can hear you.
       if (!withVideo) throw err;
       media = await capture({ audio: true, video: false });
-      toast("No camera available — joining with audio only.");
+      // A phone answering from its lock screen or from the background cannot open the camera yet;
+      // it is asked for again when the page is shown (reviveMedia).
+      if (hidden()) media.cameraLater = true;
+      else toast("No camera available — joining with audio only.");
     }
     if (!isCurrent()) { media.getTracks().forEach((track) => track.stop()); return false; }
     const captured = media.getTracks();
@@ -799,6 +827,7 @@
       local.stream = new MediaStream();
       local.muted = false;
       local.cameraOff = false;
+      local.cameraLater = Boolean(media.cameraLater);
       if (!await setMicTrack(media.getAudioTracks()[0] || null, isCurrent) || !isCurrent()) {
         captured.forEach((track) => track.stop());
         return false;
@@ -828,7 +857,137 @@
     pendingCaptureTracks.clear();
     for (const t of [local.rawMic, local.mic, local.cam, local.screen]) t?.stop();
     teardownNoise();
-    Object.assign(local, { stream: null, rawMic: null, mic: null, cam: null, screen: null, screenStream: null, muted: false, cameraOff: false });
+    Object.assign(local, { stream: null, rawMic: null, mic: null, cam: null, screen: null, screenStream: null, muted: false, cameraOff: false, cameraLater: false });
+  }
+
+  // ---- keeping media alive ----------------------------------------------------------------------
+  //
+  // A call can connect with media that has stopped on this end while the connection looks healthy.
+  // 2026-10-30 and 2026-11-04: iPhones answering from CallKit — the app woken by a VoIP push, the
+  // call page loaded and answering while the app had no window or the phone was locked — connected,
+  // yet nothing was heard either way and only the caller's picture arrived. There, WebKit's audio
+  // (its own audio session, not the app's, which CallKit holds) and camera are interrupted: the
+  // microphone track mutes or ends, voices pause, the noise graph is suspended, and the camera cannot
+  // open in the background. Nothing in the page asked for any of it again.
+  //
+  // So while a call is up, and whenever the page is shown again, each stopped part is restarted:
+  // paused voices and pictures are played, a stopped noise graph gives way to the plain microphone, a
+  // microphone that ended (or stayed muted for MIC_STUCK_MS) is captured again, and a camera that
+  // could not open in the background (or ended) is opened again. Capture is retried at most every
+  // RECAPTURE_GAP_MS.
+  const MEDIA_WATCH_MS = 3000, MIC_STUCK_MS = 4000, RECAPTURE_GAP_MS = 15_000;
+  const alive = { timer: null, busy: false, mutedSince: 0, lastMic: 0, lastCam: 0, revived: [] };
+  const hidden = () => document.visibilityState === "hidden";
+
+  function startMediaWatch() {
+    if (!alive.timer) alive.timer = setInterval(() => { reviveMedia().catch(() => {}); }, MEDIA_WATCH_MS);
+  }
+  function stopMediaWatch() {
+    clearInterval(alive.timer);
+    Object.assign(alive, { timer: null, busy: false, mutedSince: 0, lastMic: 0, lastCam: 0, revived: [] });
+  }
+  function noteRevived(what) {
+    if (alive.revived[alive.revived.length - 1] !== what) alive.revived.push(what);
+    if (alive.revived.length > 12) alive.revived.shift();
+  }
+
+  async function reviveMedia() {
+    if (!room || room.state !== "active" || hidden() || alive.busy) return;
+    const owner = room, isCurrent = () => room === owner;
+    alive.busy = true;
+    try {
+      for (const p of peers.values()) {
+        const voice = p.audioEl;
+        if (voice && voice.paused && p.remote.audio.getAudioTracks().some((t) => t.readyState === "live")) {
+          voice.play().catch(() => {});
+          noteRevived("voice");
+        }
+      }
+      for (const v of $("call-ui")?.querySelectorAll("video") || []) if (v.srcObject && v.paused) v.play().catch(() => {});
+
+      if (noise.active && noise.ctx && noise.ctx.state !== "running") dropNoise("audio " + noise.ctx.state);
+
+      const now = Date.now(), mic = local.rawMic;
+      if (mic) {
+        const ended = mic.readyState === "ended";
+        alive.mutedSince = !ended && mic.muted ? (alive.mutedSince || now) : 0;
+        if ((ended || (alive.mutedSince && now - alive.mutedSince >= MIC_STUCK_MS)) && now - alive.lastMic >= RECAPTURE_GAP_MS) {
+          alive.lastMic = now;
+          const fresh = (await capture({ audio: true, video: false })).getAudioTracks()[0] || null;
+          if (fresh && await setMicTrack(fresh, isCurrent)) { alive.mutedSince = 0; noteRevived("mic"); }
+        }
+      }
+
+      const camEnded = Boolean(local.cam && local.cam.readyState === "ended");
+      if ((local.cameraLater || camEnded) && !local.cameraOff && isCurrent() && now - alive.lastCam >= RECAPTURE_GAP_MS) {
+        alive.lastCam = now;
+        let cam = null;
+        try { cam = (await capture({ audio: false, video: true })).getVideoTracks()[0] || null; }
+        catch (err) {
+          if (local.cameraLater && isCurrent()) { local.cameraLater = false; toast("No camera available — you’re on audio only."); }
+          throw err;
+        }
+        if (!cam || !isCurrent() || !local.stream) { cam?.stop(); return; }
+        const old = local.cam;
+        if (old) local.stream.removeTrack(old);
+        local.cam = cam;
+        local.cameraLater = false;
+        local.stream.addTrack(cam);
+        updateSlot("cam");
+        old?.stop();
+        if (room.kind !== "video") room.kind = "video";
+        broadcastState();
+        showSelf();
+        renderControls();
+        renderStage();
+        noteRevived("camera");
+      }
+    } catch (err) {
+      console.warn("calls: media not revived", err && err.name);
+    } finally {
+      alive.busy = false;
+    }
+  }
+
+  // Whether media is flowing on this end, for the call service's log: a line per pair at 6 s and at
+  // 24 s after it connects, from two readings 3 s apart. Track states, yes/no flags for bytes, frames
+  // and voice energy growing, and what was restarted — no levels, devices, addresses or content.
+  const trackState = (t) => !t ? "none" : t.readyState === "ended" ? "ended" : t.muted ? "muted" : t.enabled ? "live" : "off";
+  async function mediaReading(p) {
+    const r = { sa: 0, sv: 0, ra: 0, energy: 0, frames: 0, voice: p.audioEl ? p.audioEl.currentTime : null };
+    (await p.pc.getStats()).forEach((x) => {
+      if (x.type === "outbound-rtp") { if (x.kind === "audio") r.sa += x.bytesSent || 0; else r.sv += x.bytesSent || 0; }
+      if (x.type === "inbound-rtp" && x.kind === "audio") { r.ra += x.bytesReceived || 0; r.energy += x.totalAudioEnergy || 0; }
+      if (x.type === "inbound-rtp" && x.kind === "video") r.frames += x.framesDecoded || 0;
+    });
+    return r;
+  }
+  function mediaSummary(p, a, b, at) {
+    const voice = p.audioEl;
+    return {
+      at, host: document.body?.dataset.page === "native" ? "native" : PAGE, vis: hidden() ? "hidden" : "visible",
+      mic: trackState(local.rawMic), sent: local.mic && local.mic !== local.rawMic ? "noise" : "raw",
+      cam: local.cameraLater ? "later" : trackState(local.cam),
+      out_audio: b.sa > a.sa, out_video: b.sv > a.sv, in_audio: b.ra > a.ra, in_energy: b.energy > a.energy, in_video: b.frames > a.frames,
+      voice: !voice ? "none" : voice.paused ? "paused" : b.voice > a.voice ? "playing" : "stalled",
+      revived: alive.revived.slice(-6),
+    };
+  }
+  function scheduleMediaReport(p) {
+    const owner = room;
+    for (const at of [6, 24]) {
+      setTimeout(async () => {
+        const live = () => room === owner && peers.get(p.id) === p && p.pc && session;
+        if (!live()) return;
+        try {
+          const a = await mediaReading(p);
+          await new Promise((resolve) => setTimeout(resolve, 3000));
+          if (!live()) return;
+          const b = await mediaReading(p);
+          post(`/rooms/${room.id}/report`, { session, to: p.id, state: "media", media: mediaSummary(p, a, b, at) }).catch(() => {});
+        } catch (_) { /* closed meanwhile */ }
+      }, at * 1000);
+    }
   }
 
   // Turning the camera on in a voice call makes it a video call: the track is added to every
@@ -1251,6 +1410,7 @@
         }
         verifySecurity(p).catch(() => {});
         setTimeout(() => { sampleStats().then(() => reportPair(p, "connected")).catch(() => {}); }, 2500);
+        scheduleMediaReport(p);
       }
       renderClock();
       renderStage();
@@ -2000,6 +2160,7 @@
     stopTone();
     clearInterval(ending.timer);
     clearInterval(ending.statsTimer);
+    stopMediaWatch();
     if (notify && ending.state === "waiting" && ending.knock && session) post("/knocks/withdraw", { session, knock: ending.knock }).catch(() => {}); // Phase 3B
     else if (notify && ending.id && session) post(`/rooms/${ending.id}/leave`, { session }).catch(() => {});
     Sfu.leave(ending);
@@ -3272,6 +3433,12 @@
       room: () => room, session: () => session, mic: () => local.mic, muted: () => local.muted,
       post, base: BASE, authHeader, toast, el, svg, isGuest: () => !memberToken(),
     });
+    // Shown again (the app opened from a call answered on the lock screen, a tab brought back):
+    // restart whatever stopped meanwhile at once rather than at the next watch tick.
+    const shown = () => { if (!hidden()) reviveMedia().catch(() => {}); };
+    document.addEventListener("visibilitychange", shown);
+    window.addEventListener("pageshow", shown);
+    window.addEventListener("focus", shown);
     if (PAGE === "join") { Join.init(); return; }
     // `?answer=<room>`: opened by an app that cannot hold a call itself (Linux) to answer one ring.
     try {
@@ -3321,7 +3488,8 @@
       knocks: [...knocks.keys()],
       minimized: Boolean(room && room.minimized), aec: echoCancelling(), noise: { mode: noise.mode, active: noise.active },
       pinned: room && room.pinned, layout: room && (room.layout || "auto"), fullscreen: isFullscreen(),
-      local: { mic: Boolean(local.mic), cam: Boolean(local.cam), screen: Boolean(local.screen), muted: local.muted, cameraOff: local.cameraOff, micDevice: (local.rawMic || local.mic)?.getSettings().deviceId || null, camDevice: local.cam?.getSettings().deviceId || null },
+      revived: alive.revived.slice(),
+      local: { mic: Boolean(local.mic), cam: Boolean(local.cam), screen: Boolean(local.screen), muted: local.muted, cameraOff: local.cameraOff, cameraLater: local.cameraLater, sent: local.mic && local.mic !== local.rawMic ? "noise" : local.mic ? "raw" : null, micDevice: (local.rawMic || local.mic)?.getSettings().deviceId || null, camDevice: local.cam?.getSettings().deviceId || null },
       chat: chatLog.length,
       peers: [...peers.values()].map((p) => ({ id: p.id, name: displayName(p), guest: p.guest, connected: p.connected, security: p.security, mesh: Boolean(p.pc), sfu: Boolean(p.lk), stats: p.stats && { route: p.stats.route, rtt: p.stats.rtt, sending: p.stats.sending, receiving: p.stats.receiving }, aec: p.state.aec, muted: p.state.muted, pc: p.pc && { signaling: p.pc.signalingState, ice: p.pc.iceConnectionState, gathering: p.pc.iceGatheringState, connection: p.pc.connectionState, local: Boolean(p.pc.localDescription), remote: Boolean(p.pc.remoteDescription), initiator: p.initiator, pendingIce: p.pendingIce.length }, remoteCamera: p.state.cameraOff ? 0 : p.remote.camera.getVideoTracks().filter((t) => t.readyState === "live").length, remoteScreen: p.state.screen ? p.remote.screen.getVideoTracks().filter((t) => t.readyState === "live").length : 0 })),
     }),

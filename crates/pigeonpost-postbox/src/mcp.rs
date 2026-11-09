@@ -58,7 +58,7 @@ pub(crate) fn tools_list_result() -> Value {
     // `identity` selects which of an account's inboxes to act as (API-key connections with more than
     // one). Capability-token connections control a single identity and can omit it.
     let identity_prop = json!({ "identity": { "type": "string", "description": "Which of your identities to act as (API-key accounts with more than one)." } });
-    json!({ "tools": [
+    let mut list = json!({ "tools": [
         {
             "name": "create_pigeonpost_identity",
             "description": "Create a new Pigeonpost inbox under your account — a /k/ address, or a named one if you pass a handle. Use one per repo or agent. Requires account credentials (an API key, or a signed-in session).",
@@ -293,7 +293,12 @@ pub(crate) fn tools_list_result() -> Value {
                 "additionalProperties": false
             }
         }
-    ]})
+    ]});
+    // Calendar (SDS §14B.13): the same routes and gates as `/v1/calendar/events`.
+    if let Some(tools) = list["tools"].as_array_mut() {
+        tools.extend(crate::calendar::mcp::tools());
+    }
+    list
 }
 
 async fn call_tool(state: &AppState, token: Option<String>, params: Value) -> Result<Value, Value> {
@@ -318,6 +323,15 @@ pub(crate) async fn call_tool_as(
 
     // Account-management tools need an API-key account; messaging tools act as a resolved identity.
     // Groups (SDS §4.5): metadata and ciphertext transport only; never custodial decryption.
+    if crate::calendar::mcp::is_mcp_tool(name) {
+        return Ok(
+            match crate::calendar::mcp::mcp_tool(state, principal, name, &args).await {
+                Some(Ok(v)) => tool_ok(v),
+                Some(Err(message)) => tool_error(&message),
+                None => tool_error("unknown tool"),
+            },
+        );
+    }
     if crate::groups::is_mcp_tool(name) {
         if let Some(result) = crate::groups::mcp_tool(state, principal, name, &args).await {
             return Ok(match result {

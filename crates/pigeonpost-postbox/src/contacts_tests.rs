@@ -30,12 +30,16 @@ struct Srv {
 
 async fn serve_with(runtime: contacts::Runtime) -> Srv {
     let mut state = crate::tests::test_state();
+    state.contacts = Arc::new(runtime);
+    serve_state(state).await
+}
+
+async fn serve_state(mut state: AppState) -> Srv {
     state.service_tokens = Arc::new(internal_api::tokens_for_test(&[(
         "POSTBOX_SVC_TOKEN_OPS",
         OPS,
     )]));
     state.trusted_proxy_hops = 1;
-    state.contacts = Arc::new(runtime);
     let public = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let internal = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let public_url = format!("http://{}", public.local_addr().unwrap());
@@ -1167,4 +1171,131 @@ async fn retention_sweep() {
     assert_eq!(swept.usage, 1);
     // A verified number is not a retention item.
     assert_eq!(srv.count("SELECT COUNT(*) FROM phone_numbers").await, 1);
+}
+
+// ---- audit 2026-11-03 P3-4 ---------------------------------------------------------------------
+
+#[tokio::test]
+async fn discovery_holds_five_thousand_new_numbers_in_thirty_days() {
+    let srv = serve().await;
+    let a = person(&srv, "month").await;
+    // An older account (1,000 a day), with 4,900 new numbers over the last 30 days and no capped
+    // days: 100 more fit, the 101st does not.
+    srv.sql(
+        "UPDATE accounts SET created_at = created_at - 172800 WHERE id = 'acct_c_month'",
+        vec![],
+    )
+    .await;
+    srv.sql(
+        "INSERT INTO discovery_usage (account_id, day, new_hashes, capped) VALUES
+           ('acct_c_month', CAST(strftime('%s','now') AS INTEGER) / 86400 - 2, 990, 0),
+           ('acct_c_month', CAST(strftime('%s','now') AS INTEGER) / 86400 - 6, 990, 0),
+           ('acct_c_month', CAST(strftime('%s','now') AS INTEGER) / 86400 - 11, 990, 0),
+           ('acct_c_month', CAST(strftime('%s','now') AS INTEGER) / 86400 - 17, 990, 0),
+           ('acct_c_month', CAST(strftime('%s','now') AS INTEGER) / 86400 - 29, 940, 0),
+           ('acct_c_month', CAST(strftime('%s','now') AS INTEGER) / 86400 - 31, 999, 0)",
+        vec![],
+    )
+    .await;
+    let batch = |from: u32, n: u32| -> Value {
+        json!({ "hashes": (from..from + n).map(|i| h(&format!("+1555700{i:04}"))).collect::<Vec<_>>() })
+    };
+    let (s, v) = srv
+        .post("/v1/contacts/discover", Some(&a.token), batch(0, 101))
+        .await;
+    assert_eq!((s, v["limit"].as_str()), (429, Some("monthly")), "{v}");
+    let (s, v) = srv
+        .post("/v1/contacts/discover", Some(&a.token), batch(0, 100))
+        .await;
+    assert_eq!((s, v["new"].as_i64()), (200, Some(100)), "{v}");
+    let (s, v) = srv
+        .post("/v1/contacts/discover", Some(&a.token), batch(100, 1))
+        .await;
+    assert_eq!((s, v["limit"].as_str()), (429, Some("monthly")), "{v}");
+    // Numbers already checked cost nothing, so they still answer.
+    let (s, _) = srv
+        .post("/v1/contacts/discover", Some(&a.token), batch(0, 100))
+        .await;
+    assert_eq!(s, 200);
+}
+
+#[tokio::test]
+async fn connector_and_service_tokens_are_refused_at_every_contacts_route() {
+    let srv = serve().await;
+    let a = person(&srv, "conn").await;
+    // A ChatGPT connector token never authenticates on the REST routes; a realm service account
+    // is not a person.
+    let connector = oidc::test_member_token_with(
+        ISSUER,
+        "sub-c-conn",
+        json!({ "azp": oidc::CHATGPT_CLIENT_ID, "scope": "openid pigeonpost:read pigeonpost:write" }),
+    );
+    let service =
+        oidc::test_member_token_with(ISSUER, "sub-c-conn", json!({ "client_id": "billing" }));
+    let calls: [(&str, Value); 3] = [
+        ("/v1/phone/verify", json!({ "phone": "+15555550201" })),
+        (
+            "/v1/contacts/discover",
+            json!({ "hashes": [h("+15555550201")] }),
+        ),
+        (
+            "/v1/contacts/invites",
+            json!({ "phone": "+15555550201", "confirm": true }),
+        ),
+    ];
+    for (path, body) in &calls {
+        let (s, v) = srv.post(path, Some(&connector), body.clone()).await;
+        assert_eq!(s, 401, "{path} with a connector token: {v}");
+        let (s, v) = srv.post(path, Some(&service), body.clone()).await;
+        assert_eq!(s, 403, "{path} with a service account: {v}");
+    }
+    let (s, _) = srv.get("/v1/phone", &connector).await;
+    assert_eq!(s, 401);
+    assert!(srv.state.contacts.sent().is_empty());
+    let _ = a;
+}
+
+#[tokio::test]
+async fn a_block_on_any_mailbox_hides_the_match_however_many_mailboxes() {
+    let mut state = crate::tests::test_state();
+    state.contacts = Arc::new(contacts::Runtime::for_test());
+    state.max_identities = 100;
+    let srv = serve_state(state).await;
+    let me = person(&srv, "many").await;
+    let blocker = person(&srv, "many-blocker").await;
+    verify(&srv, &blocker, "+15555550211", true).await;
+    // Sixty mailboxes; the blocker blocks the last one made.
+    let mut last = String::new();
+    for _ in 0..59 {
+        let v = do_create_identity(&srv.state, Some(me.account.clone()), None, None)
+            .await
+            .unwrap();
+        last = v["address"].as_str().unwrap().to_string();
+    }
+    let ask = json!({ "hashes": [h("+15555550211")] });
+    let (s, v) = srv
+        .post("/v1/contacts/discover", Some(&me.token), ask.clone())
+        .await;
+    assert_eq!(
+        (s, v["matches"].as_array().map(Vec::len)),
+        (200, Some(1)),
+        "{v}"
+    );
+    let (s, v) = srv
+        .call(
+            reqwest::Method::PUT,
+            "/v1/contacts",
+            Some(&blocker.api_key),
+            Some(json!({ "peer": last, "admission": "block" })),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (s, v) = srv
+        .post("/v1/contacts/discover", Some(&me.token), ask)
+        .await;
+    assert_eq!(
+        (s, v["matches"].as_array().map(Vec::len)),
+        (200, Some(0)),
+        "{v}"
+    );
 }

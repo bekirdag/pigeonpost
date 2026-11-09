@@ -384,3 +384,24 @@ after the scheduled end.
 Call history: the calls service reports scheduled rooms with `from` = the organizer's address,
 `join` events with `by` = each member who joins, `end` when the room closes, and
 `calendar_event_id` + `occurrence_id` on every event. `room_id` is unique per room.
+
+## 9. CLI and MCP (agents, SDS §14B.13)
+
+Both act as a mailbox through the `/v1/calendar/events` code above, so the `calendar` flag, the
+`CalendarUse` policy (agents and API keys yes; a connector acting for a member no), the rate limits
+and the contact-address gate apply unchanged.
+
+| CLI (`pigeonpost calendar …`, mailbox token) | MCP tool (`POST /mcp`) | Route |
+|---|---|---|
+| `list [--days 14] [--invitations]` | `list_pigeonpost_calendar {from?, to?, include_invitations?}` | `GET /v1/calendar/events` |
+| `create <title> --start … [--end …] --tz … [--invite /a/b,…] [--meeting] [--all-day] [--rrule …] [--request-key …]` | `create_pigeonpost_event {title, start, end?, tzid, attendees?, meeting?, all_day?, start_date?, end_date?, rrule?, …}` | `POST /v1/calendar/events` |
+| `rsvp <evt_…> accept\|tentative\|decline [--occurrence occ_…] [--note …]` | `rsvp_pigeonpost_event {event_id, status, occurrence_id?, note?}` | `POST /v1/calendar/events/{id}/rsvp` |
+
+- **Handles only.** Agents invite Pigeonpost handles. A contact address sends mail, which
+  needs a person signed in with a verified address: the postbox answers `403 human_required`, and the
+  CLI refuses it before sending.
+- **No admission powers.** The MCP create passes only the listed fields; a meeting gets the default
+  options (organizer and hosts admit), so a tool call cannot name admitters. Attendee links, step-up
+  and the other organizer-in-person actions stay unavailable to agents.
+- Listed titles, locations and notes come from other people and are untrusted data.
+- `--json` prints the postbox's answer unchanged.

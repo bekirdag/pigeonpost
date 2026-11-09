@@ -387,3 +387,137 @@ async fn mail_notices_skip_voip_and_windows_rows() {
         .collect();
     assert_eq!(mail, vec!["bb"]);
 }
+
+/// A live group with these active members (the first is the owner).
+async fn group(state: &AppState, id: &str, name: &str, members: &[&str]) {
+    let (id, name) = (id.to_string(), name.to_string());
+    let members: Vec<String> = members.iter().map(|m| m.to_string()).collect();
+    state
+        .store
+        .group_tx(move |tx| -> crate::groups::GResult<()> {
+            let now = now_unix() as i64;
+            tx.execute(
+                "INSERT INTO groups (id, name, created_by, created_at, last_at, activation_state)
+                 VALUES (?1, ?2, ?3, ?4, ?4, 'active')",
+                rusqlite::params![id, name, members[0], now],
+            )?;
+            for (i, m) in members.iter().enumerate() {
+                tx.execute(
+                    "INSERT INTO group_members (group_id, member, role, state, joined_at, updated_at)
+                     VALUES (?1, ?2, ?3, 'active', ?4, ?4)",
+                    rusqlite::params![id, m, if i == 0 { "owner" } else { "member" }, now],
+                )?;
+            }
+            Ok(())
+        })
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn a_group_ring_needs_live_membership_not_contact_status() {
+    let state = state();
+    let (public, internal_url) = serve(state.clone()).await;
+    let (token, callee, _) = account(&state, "acct_grp_callee").await;
+    let (_, caller, _) = account(&state, "acct_grp_caller").await;
+    let (_, outsider, _) = account(&state, "acct_grp_out").await;
+    assert_eq!(register(&public, &token, json!({"token": "06".repeat(32), "platform": "apns", "kind": "voip", "os": "ios", "identity": callee})).await.status(), 200);
+    assert_eq!(
+        register(
+            &public,
+            &token,
+            json!({"token": "fcm:grp", "platform": "fcm", "os": "android", "identity": callee})
+        )
+        .await
+        .status(),
+        200
+    );
+    flag(&internal_url, true).await;
+    // A callee who accepts no strangers: a 1:1 ring from this caller stays silent.
+    state
+        .store
+        .set_inbox_policy(callee.clone(), Some(false), None, now_unix())
+        .await
+        .unwrap();
+    let (_, v) = internal(
+        &internal_url,
+        CALLS,
+        "call-ring",
+        ring_body(&caller, &callee),
+    )
+    .await;
+    assert_eq!(v["decision"], "silence");
+
+    group(
+        &state,
+        "grp_ringtestaaaaaaaaaaaaaaaaaa",
+        "Design team",
+        &[&caller, &callee],
+    )
+    .await;
+    let mut body = ring_body(&caller, &callee);
+    body["group_id"] = json!("grp_ringtestaaaaaaaaaaaaaaaaaa");
+    body["group_name"] = json!("Forged name");
+    let (status, v) = internal(&internal_url, CALLS, "call-ring", body.clone()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        v,
+        json!({"decision": "ring", "devices": 2}),
+        "members ring each other"
+    );
+
+    // Someone outside the group cannot borrow it, and an unknown group wakes nothing.
+    let mut stranger = ring_body(&outsider, &callee);
+    stranger["group_id"] = json!("grp_ringtestaaaaaaaaaaaaaaaaaa");
+    let (_, v) = internal(&internal_url, CALLS, "call-ring", stranger).await;
+    assert_eq!(v, json!({"decision": "block", "devices": 0}));
+    let mut unknown = body.clone();
+    unknown["group_id"] = json!("grp_nosuchgroupaaaaaaaaaaaaaaa");
+    let (_, v) = internal(&internal_url, CALLS, "call-ring", unknown).await;
+    assert_eq!(v["decision"], "block");
+
+    // A callee who left no longer rings.
+    let gone = callee.clone();
+    state
+        .store
+        .group_tx(move |tx| -> crate::groups::GResult<()> {
+            tx.execute(
+                "UPDATE group_members SET state = 'left' WHERE group_id = 'grp_ringtestaaaaaaaaaaaaaaaaaa' AND member = ?1",
+                [&gone],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let (_, v) = internal(&internal_url, CALLS, "call-ring", body.clone()).await;
+    assert_eq!(v["decision"], "block");
+
+    // A block still wins inside a group.
+    let back = callee.clone();
+    state
+        .store
+        .group_tx(move |tx| -> crate::groups::GResult<()> {
+            tx.execute(
+                "UPDATE group_members SET state = 'active' WHERE group_id = 'grp_ringtestaaaaaaaaaaaaaaaaaa' AND member = ?1",
+                [&back],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    state
+        .store
+        .upsert_contact(store::ContactUpdate {
+            owner: callee.clone(),
+            peer: caller.clone(),
+            alias: None,
+            admission: Some("block".into()),
+            autonomy: None,
+            allowed_verbs: None,
+            now: now_unix(),
+        })
+        .await
+        .unwrap();
+    let (_, v) = internal(&internal_url, CALLS, "call-ring", body).await;
+    assert_eq!(v, json!({"decision": "block", "devices": 0}));
+}

@@ -799,6 +799,16 @@ class CalendarClient:
                 "remove": [self._segment(ATTENDEE_ID, a) for a in remove], "scope": "all"}
         return self._send("POST", "/v1/calendar/events/" + self._segment(EVENT_ID, event_id) + "/attendees", body)
 
+    def guest_link(self, event_id, attendee_id):
+        """A guest's personal invitation link (organizer only, contact-address guests only). Making one
+        replaces the guest's earlier link."""
+        result = self._send("POST", "/v1/calendar/events/" + self._segment(EVENT_ID, event_id) + "/attendees/"
+                            + self._segment(ATTENDEE_ID, attendee_id) + "/link", {})
+        url = result.get("url") if isinstance(result, dict) else None
+        if not isinstance(url, str) or not url.startswith("https://") or len(url) > 2048 or any(c.isspace() for c in url):
+            raise bad_response()
+        return url
+
     def rsvp(self, event_id, body):
         result = self._send("POST", "/v1/calendar/events/" + self._segment(EVENT_ID, event_id) + "/rsvp", body)
         return {"rsvp": result.get("rsvp") if result.get("rsvp") in RSVP else body["status"],

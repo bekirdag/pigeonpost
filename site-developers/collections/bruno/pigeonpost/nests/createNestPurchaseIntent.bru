@@ -1,0 +1,26 @@
+meta {
+  name: Record a purchase intent before a store sheet or web checkout (a person only)
+  type: http
+  seq: 20
+}
+
+post {
+  url: {{baseUrl}}/v1/nest-purchases/intents
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "package": "nest.ai.starter.monthly",
+    "rail": "apple"
+  }
+}
+
+docs {
+  Refuses a purchase that would fund the account twice: a live package on another rail (`nest_package_active`) or the same package on this rail (`nest_package_owned`). Upgrades on the funding rail are allowed. The intent grants nothing; only the verified purchase does.
+}

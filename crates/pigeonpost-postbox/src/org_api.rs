@@ -1511,7 +1511,7 @@ async fn agent_delegations(
                             "id": r.get::<_, String>(0)?,
                             "member_id": r.get::<_, String>(1)?,
                             "member_handle": r.get::<_, Option<String>>(2)?,
-                            "capabilities": serde_json::from_str::<Value>(&caps).unwrap_or(Value::Null),
+                            "capabilities": crate::org_agents::live_caps(&caps),
                             "expires_at": iso(r.get::<_, Option<i64>>(4)?),
                             "granted_at": iso(r.get::<_, Option<i64>>(5)?),
                         }))
@@ -2517,6 +2517,10 @@ fn msg_ref_for(key_id: &str, idem_key: &str) -> String {
 /// `POST /messages` — a direct message from the key's `send_as` org agent to a mailbox of the same
 /// org. Rooms are end-to-end encrypted and the server holds no group keys, so they are refused
 /// (`docs/org-api.md` §4).
+///
+/// Decision P2-10 (2026-11-04): this server-custodial send exists only for org-owned agent/service
+/// identities, and only to recipients inside the same org. It never sends as a member's personal
+/// identity and never reaches another org or the public network.
 async fn message_send(
     State(state): State<AppState>,
     Extension(ctx): Key,
@@ -2587,6 +2591,30 @@ async fn message_send(
             .get(send_as.clone())
             .await?
             .ok_or_else(|| GErr::conflict("send_as_unavailable", "this key's sending agent is not active"))?;
+        // The custodial path signs as the sender, so it is open only to the org's own agent/service
+        // mailboxes: minted under the org's internal account and never a person's identity, even if
+        // a row says otherwise (SDS §3.2/§18.1, audit P2-10). A person sends from their own client.
+        let human = {
+            let (o2, a) = (o.id.clone(), sender.address.clone());
+            state
+                .store
+                .group_read(move |c: &Connection| -> GResult<bool> {
+                    Ok(c.query_row(
+                        "SELECT EXISTS(SELECT 1 FROM org_members WHERE identity = ?2 AND status <> 'removed')
+                             OR NOT EXISTS(SELECT 1 FROM org_agents WHERE org_id = ?1 AND identity = ?2 AND status = 'active')",
+                        params![o2, a],
+                        |r| r.get(0),
+                    )?)
+                })
+                .await?
+        };
+        let org_owned = o.internal_account.is_some() && sender.account_id == o.internal_account;
+        if human || !org_owned {
+            return Err(GErr::conflict(
+                "send_as_unavailable",
+                "an org key sends only as one of this organization's own agent mailboxes",
+            ));
+        }
         // Resolve the recipient through the same door every send uses, then require it to be this
         // org's own live mailbox.
         let recipient = match crate::resolve_recipient(&state, &to).await? {

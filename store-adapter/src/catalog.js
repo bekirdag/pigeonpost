@@ -11,17 +11,28 @@ const source = process.env.PIGEONPOST_CATALOG_FILE
   || new URL("../catalog/pigeonpost-catalog.json", import.meta.url);
 export const catalog = JSON.parse(readFileSync(source, "utf8"));
 
-const CODE = /^(cloud-(10|[1-9])names-yearly|ent-(5|10|15|20|30|50|100|200|500)-(monthly|yearly))-(usd|eur|try)$/;
+const CODE = /^(cloud-(10|[1-9])names-yearly|ent-(5|10|15|20|30|50|100|200|500)-(monthly|yearly)|nest-(ai-starter|ai-plus|host-starter)-monthly)-(usd|eur|try)$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const AMOUNT = /^\d{1,8}\.\d{2}$/;
 
 for (const [code, plan] of Object.entries(catalog.plans)) {
   if (!CODE.test(code)) throw new Error(`catalog: bad plan code ${code}`);
   if (plan.currency !== code.slice(-3).toUpperCase()) throw new Error(`catalog: ${code} currency`);
+  if (code.startsWith("nest-") && (plan.family !== "nest" || plan.package !== nestPackage(code)
+    || !Number.isInteger(plan.slots) || !Number.isInteger(plan.rank) || plan.interval !== "month")) {
+    throw new Error(`catalog: ${code} nest fields`);
+  }
   for (const [year, edition] of Object.entries(plan.editions || {})) {
     if (!/^20\d\d$/.test(year) || !AMOUNT.test(edition.amount)) throw new Error(`catalog: ${code} ${year}`);
     if (edition.plan_id !== null && !UUID.test(edition.plan_id)) throw new Error(`catalog: ${code} plan id`);
   }
+}
+
+/// The postbox's package code for a web Nest plan code: `nest-ai-starter-monthly-usd` →
+/// `nest.ai.starter.monthly`.
+export function nestPackage(code) {
+  const m = /^nest-(ai|host)-(starter|plus)-monthly-(usd|eur|try)$/.exec(code || "");
+  return m ? `nest.${m[1]}.${m[2]}.monthly` : null;
 }
 
 export const isUuid = (value) => typeof value === "string" && UUID.test(value);
@@ -58,9 +69,9 @@ export function planForProviderReference(reference) {
 export function limitsForPackage(slug) {
   const entry = Object.values(catalog.plans).find((p) => p.package_slug === slug);
   if (!entry) return null;
-  return entry.family === "cloud"
-    ? { family: "cloud", names: entry.names, interval: entry.interval }
-    : { family: "ent", seats: entry.seats, agent_limit: entry.agent_limit, storage_gb: entry.storage_gb, interval: entry.interval };
+  if (entry.family === "cloud") return { family: "cloud", names: entry.names, interval: entry.interval };
+  if (entry.family === "nest") return { family: "nest", slots: entry.slots, rank: entry.rank, interval: entry.interval };
+  return { family: "ent", seats: entry.seats, agent_limit: entry.agent_limit, storage_gb: entry.storage_gb, interval: entry.interval };
 }
 
 /// The commercial calendar year (Europe/Istanbul), as saas_be's regional pricing uses it.
@@ -78,13 +89,26 @@ export function currentEdition(editions, now = new Date()) {
   return { year, edition: editions[String(year)], next: next ? { year: next, edition: editions[String(next)] } : null };
 }
 
-/// The public price list (for the site and the enterprise portal).
+/// The public price list (for the site and the enterprise portal). Nest packages are not public
+/// while their prices await the owner's approval: signed-in accounts with `nests` on read them
+/// from `nestPrices`.
 export function publicCatalog(now = new Date()) {
-  const plans = Object.entries(catalog.plans).map(([code, p]) => {
+  return priceList(now, (p) => p.family !== "nest");
+}
+
+/// The Nest package prices (all currencies), for the signed-in Products page.
+export function nestPrices(now = new Date()) {
+  return priceList(now, (p) => p.family === "nest");
+}
+
+function priceList(now, include) {
+  const plans = Object.entries(catalog.plans).filter(([, p]) => include(p)).map(([code, p]) => {
     const { year, edition: current, next } = currentEdition(p.editions, now);
     return {
       code, family: p.family, currency: p.currency, interval: p.interval,
-      ...(p.family === "cloud" ? { names: p.names } : { seats: p.seats, agent_limit: p.agent_limit, storage_gb: p.storage_gb }),
+      ...(p.family === "cloud" ? { names: p.names }
+        : p.family === "nest" ? { package: p.package, slots: p.slots, storage_gb: p.storage_gb }
+          : { seats: p.seats, agent_limit: p.agent_limit, storage_gb: p.storage_gb }),
       amount: current.amount, pricing_year: year,
       available: Boolean(current.plan_id),
       ...(next ? { next_amount: next.edition.amount, next_pricing_year: next.year } : {}),

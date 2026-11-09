@@ -61,6 +61,7 @@
     attach: ["M13.5 6.5l-5.9 5.9a1.8 1.8 0 002.5 2.5l6.2-6.2a3.3 3.3 0 00-4.7-4.7L4.6 10.9a4.8 4.8 0 006.8 6.8l5.3-5.3"],
     send: ["M3 10l14-6-6 14-2.2-5.8L3 10z"],
     lock: ["M5.5 9h9v7.5h-9zM7.2 9V6.8a2.8 2.8 0 015.6 0V9"],
+    search: ["M8.8 14.6a5.8 5.8 0 100-11.6 5.8 5.8 0 000 11.6zM13 13l4 4"],
     live: ["M10 11.6a1.6 1.6 0 100-3.2 1.6 1.6 0 000 3.2zM6.6 13.4a4.8 4.8 0 010-6.8M13.4 6.6a4.8 4.8 0 010 6.8M4.3 15.7a8 8 0 010-11.4M15.7 4.3a8 8 0 010 11.4"],
   };
 
@@ -394,6 +395,7 @@
     if (!$("group-info-sheet")) buildInfoSheet();
     if (!$("group-join-sheet")) buildJoinSheet();
     if (!$("group-confirm-sheet")) buildConfirmSheet();
+    if (!$("group-browse-sheet")) buildBrowseSheet();
   }
 
   // Our own small sheet manager: app.js's stack is private to it.
@@ -458,6 +460,20 @@
     return h ? h.displayName(handle || address) : (handle || address);
   }
 
+  // SDS §15.2: a blocked sender's group content is hidden here, on this device only. Neither member
+  // leaves the group and nobody is told. A block covers the mailbox's address or its handle.
+  function blockedSender(address) {
+    const h = host();
+    if (!address || address === me() || !h || !h.blocked) return false;
+    return h.blocked([address, G.handles.get(address)].filter(Boolean));
+  }
+  function blockMember(address) {
+    const h = host();
+    if (!h || !h.askBlock || !address || address === me()) return;
+    hideSheet("group-info-sheet");
+    h.askBlock(G.handles.get(address) || address, nameOf(address));
+  }
+
   function previewOf(gid) {
     const c = client();
     if (!c) return "";
@@ -465,6 +481,7 @@
     for (let i = list.length - 1; i >= 0; i--) {
       const x = list[i];
       if (x.kind !== "message" || x.replaced_by) continue;
+      if (blockedSender(x.sender)) continue;
       if (x.deleted) return "Message deleted";
       if (x.undecryptable) return "Encrypted message";
       const who = x.sender === me() ? "You" : nameOf(x.sender).split(/[ /]/).filter(Boolean)[0] || "Someone";
@@ -501,8 +518,163 @@
     }
     const rows = G.groups.filter((g) => g.my && g.my.state !== "invited" && !g.deleted_at && (!filter || String(g.name).toLowerCase().includes(filter)))
       .sort((a, b) => (b.last_at || 0) - (a.last_at || 0));
-    for (const g of rows) list.append(groupRow(g));
-    if (rows.length || invited.length) { const empty = $("threads-empty"); if (empty) empty.hidden = true; }
+    // SDS §5.4: the acting org mailbox's rooms sit under a Company heading, with Browse rooms.
+    const org = companyOrg();
+    const company = (g) => Boolean(org && g.org_id === org.id);
+    for (const g of rows) if (!company(g)) list.append(groupRow(g));
+    const rooms = rows.filter(company);
+    if (org && (rooms.length || !filter)) {
+      list.append(el("li", { class: "groups-heading", id: "company-heading" }, el("h3", { text: "Company · " + org.name })));
+      for (const g of rooms) list.append(groupRow(g));
+      if (!filter) {
+        list.append(el("li", {}, el("button", { type: "button", class: "thread-row browse-rooms-row", id: "browse-rooms-btn", onclick: () => openBrowse(org.id) },
+          el("span", { class: "avatar group-avatar", "aria-hidden": "true", dataset: { tone: "3" } }, svg(ICON.search)),
+          el("div", { class: "tr-text" }, el("div", { class: "tr-top" }, el("span", { class: "tr-name", text: "Browse rooms" })),
+            el("div", { class: "tr-bottom" }, el("span", { class: "tr-preview", text: "Find and join " + org.name + " rooms" }))))));
+      }
+    }
+    if (rows.length || invited.length || org) { const empty = $("threads-empty"); if (empty) empty.hidden = true; }
+  }
+
+  // ---- organization rooms and the room directory (SDS §5.4, §4) ---------------------------------
+  //
+  // Only with `orgs` on and the acting mailbox being the person's own org mailbox. Listed public
+  // groups (no org) use the same browser and need only `groups`.
+
+  const Orgs = () => window.PigeonpostOrgs || null;
+  function companyOrg() {
+    const o = Orgs();
+    return o && o.enabled() ? o.orgFor(me()) : null;
+  }
+
+  const B = { scope: null, gen: 0 };
+  function buildBrowseSheet() {
+    const radio = (name, value, label, checked) => el("label", {}, el("input", { type: "radio", name, value, checked }), el("span", { text: label }));
+    sheet("group-browse-sheet", "Browse rooms", [
+      el("label", { class: "field" }, el("span", { text: "Search" }),
+        el("input", { type: "search", id: "gb-q", maxlength: "80", autocomplete: "off", spellcheck: "false", oninput: () => soon("browse", loadBrowse, 250) })),
+      el("p", { class: "note", id: "gb-status", role: "status" }),
+      el("ul", { class: "gb-rooms", id: "gb-list", role: "list" }),
+      el("section", { class: "peer-section", id: "gb-create", hidden: true },
+        el("h3", { text: "Create a room" }),
+        el("label", { class: "field" }, el("span", { text: "Name" }), el("input", { type: "text", id: "gb-name", maxlength: "80", placeholder: "Design reviews" })),
+        el("label", { class: "field" }, el("span", { text: "Description (optional)" }), el("textarea", { id: "gb-desc", rows: "2", maxlength: "500" })),
+        el("fieldset", { class: "field" }, el("legend", { text: "Who can join" }),
+          el("div", { class: "segmented", role: "radiogroup" }, radio("gb-join", "public", "Anyone in the organization", true), radio("gb-join", "private", "Invite only", false))),
+        el("fieldset", { class: "field" }, el("legend", { text: "Who can post" }),
+          el("div", { class: "segmented", role: "radiogroup" }, radio("gb-post", "everyone", "Everyone", true), radio("gb-post", "admins", "Only admins", false))),
+        el("label", { class: "peer-toggle" }, el("span", { text: "List it in the room directory" }), el("input", { type: "checkbox", id: "gb-listed", role: "switch", checked: true })),
+        el("p", { class: "sheet-error", id: "gb-error", role: "alert", hidden: true }),
+        el("button", { type: "button", class: "btn-primary", id: "gb-create-btn", text: "Create room", onclick: () => submitRoom() })),
+    ], [el("button", { class: "btn-ghost", type: "button", text: "Done", onclick: () => hideSheet("group-browse-sheet") })], true);
+  }
+
+  function openBrowse(orgId) {
+    if (!G.enabled) return;
+    const o = Orgs();
+    const org = orgId ? companyOrg() : null;
+    if (orgId && (!org || org.id !== orgId)) return;
+    B.scope = orgId || null;
+    $("group-browse-sheet-title").textContent = org ? "Rooms in " + org.name : "Public groups";
+    $("gb-q").value = "";
+    $("gb-list").textContent = "";
+    $("gb-name").value = "";
+    $("gb-desc").value = "";
+    $("gb-listed").checked = true;
+    $("gb-error").hidden = true;
+    $("gb-create").hidden = !(org && o && o.mayCreate(org, me()));
+    showSheet("group-browse-sheet", "gb-q");
+    loadBrowse();
+  }
+
+  async function loadBrowse() {
+    const gen = ++B.gen;
+    const o = Orgs();
+    const list = $("gb-list"), status = $("gb-status");
+    if (!list || !o) return;
+    status.textContent = "Loading…";
+    let rooms;
+    try {
+      rooms = await o.rooms(B.scope, $("gb-q").value, me());
+    } catch (e) {
+      if (gen !== B.gen) return;
+      list.textContent = "";
+      status.textContent = o.explain(e);
+      if (B.scope && ["not_org_member", "org_inactive", "feature_disabled"].includes(e.code)) o.load();
+      return;
+    }
+    if (gen !== B.gen) return;
+    list.textContent = "";
+    const org = B.scope ? companyOrg() : null;
+    status.textContent = rooms.length ? "" : ($("gb-q").value.trim() ? "No rooms match." : B.scope ? "No rooms yet." : "No listed public groups.");
+    for (const room of rooms) list.append(browseRow(room, org));
+  }
+
+  function browseRow(room, org) {
+    const o = Orgs();
+    const action = o.roomAction(room, org);
+    const meta = [`${room.memberCount} ${room.memberCount === 1 ? "member" : "members"}`, room.joinPolicy === "public" ? (org ? "Open to the organization" : "Public") : "Invite only"];
+    const label = { open: "Open", join: "Join", accept: "Accept invitation" }[action];
+    const btn = label ? el("button", { type: "button", class: action === "open" ? "btn-ghost btn-small" : "btn-primary btn-small", text: label, "aria-label": `${label}: ${room.name}`, onclick: () => roomAct(room, action, btn) }) : null;
+    return el("li", { class: "gb-room", dataset: { room: room.id } },
+      el("div", { class: "gb-room-text" },
+        el("div", { class: "gi-name", text: room.name }),
+        room.description ? el("p", { class: "note", text: room.description }) : null,
+        el("p", { class: "note", text: meta.join(" · ") })),
+      btn || el("span", { class: "note", text: "Invite only" }));
+  }
+
+  async function roomAct(room, action, btn) {
+    if (action === "open") {
+      hideSheet("group-browse-sheet");
+      if (!groupById(room.id)) await refresh();
+      if (groupById(room.id)) openGroup(room.id);
+      return;
+    }
+    btn.disabled = true;
+    const o = Orgs();
+    try {
+      if (action === "join") await api(groupPath(room.id, "/join"), { method: "POST", body: {} });
+      else await api(groupPath(room.id, "/invitation"), { method: "POST", body: { accept: true } });
+      hideSheet("group-browse-sheet");
+      host().toast(`Joined ${room.name}. A member's device will add you to the encryption in a moment.`);
+      await refresh();
+      if (groupById(room.id)) openGroup(room.id);
+    } catch (e) {
+      $("gb-status").textContent = B.scope && o ? o.explain(e) : explain(e);
+      btn.disabled = false;
+    }
+  }
+
+  async function submitRoom() {
+    const o = Orgs();
+    const org = companyOrg();
+    if (!o || !org || org.id !== B.scope || !o.mayCreate(org, me())) return;
+    const name = $("gb-name").value.trim();
+    const desc = $("gb-desc").value.trim();
+    if (!name || name.length > 80) { showError("gb-error", "Give the room a name of up to 80 characters."); $("gb-name").focus(); return; }
+    if (desc.length > 500) { showError("gb-error", "Keep the description under 500 characters."); return; }
+    $("gb-error").hidden = true;
+    const settings = {
+      org_id: org.id, name, join_policy: document.querySelector('input[name="gb-join"]:checked').value,
+      post_policy: document.querySelector('input[name="gb-post"]:checked').value,
+      visibility: $("gb-listed").checked ? "listed" : "unlisted", invite: [],
+    };
+    if (desc) settings.description = desc;
+    const btn = $("gb-create-btn");
+    btn.disabled = true;
+    const acting = me();
+    try {
+      const res = await (await clientFor(acting)).createGroup(settings);
+      hideSheet("group-browse-sheet");
+      if (acting !== me()) return;
+      try { await refresh(); if (!groupById(res.group.id)) await refresh(); } catch { /* opened anyway */ }
+      if (acting === me()) openGroup(res.group.id);
+    } catch (e) {
+      showError("gb-error", o.explain(e) === "Something went wrong." ? explain(e) : o.explain(e));
+    } finally {
+      btn.disabled = false;
+    }
   }
 
   function invitationRow(g) {
@@ -788,6 +960,12 @@
       }
       if (x.kind !== "message" || x.replaced_by) continue;
       const mine = x.sender === me();
+      if (!mine && blockedSender(x.sender)) {
+        ol.append(el("li", { class: "blocked-msg", dataset: { seq: String(x.seq == null ? "" : x.seq) } },
+          el("div", { class: "msg-stack" }, el("div", { class: "bubble" }, el("div", { class: "text muted-text", text: "Hidden: you blocked this sender" })))));
+        lastSender = null;
+        continue;
+      }
       const li = el("li", { class: (mine ? "mine" : "") + (x.expires_at ? " ephemeral" : ""), dataset: { seq: String(x.seq == null ? "" : x.seq) } });
       const bubble = el("div", { class: "bubble" });
       if (!mine && x.sender !== lastSender) bubble.append(el("div", { class: "group-sender", text: nameOf(x.sender) }));
@@ -866,9 +1044,10 @@
 
   function groupQuote(list, seq) {
     const parent = list.find((y) => y.kind === "message" && String(y.seq) === String(seq));
-    const who = parent ? (parent.sender === me() ? "You" : nameOf(parent.sender)) : "";
+    const who = parent ? (parent.sender === me() ? "You" : blockedSender(parent.sender) ? "" : nameOf(parent.sender)) : "";
     const UI = window.PigeonpostMessageActions;
-    const line = !parent || parent.deleted ? "Original message unavailable"
+    const hidden = parent && parent.sender !== me() && blockedSender(parent.sender);
+    const line = !parent || parent.deleted ? "Original message unavailable" : hidden ? "Hidden: you blocked this sender"
       : (UI ? UI.quoteExcerpt(parent.text || "", (parent.files || []).map((f) => ({ filename: f.name }))) : parent.text || "");
     return el("button", { type: "button", class: "reply-quote", "aria-label": `Replying to ${who || "a message"}: ${line}. Show the original.`,
       onclick: () => jumpToSeq(seq) },
@@ -976,6 +1155,7 @@
       item("Copy", () => navigator.clipboard?.writeText(x.text || "").catch(() => {}));
       if (groupEditable(g, x)) item("Edit", () => startGroupCompose("edit", g.id, x));
       if (mine && x.seq != null) item("Info", () => groupMessageInfo(g, x));
+      if (!mine && x.sender && !blockedSender(x.sender)) item("Block sender", () => blockMember(x.sender));
     }
     if (canDelete(g, x, mine)) item("Delete", () => deleteMessage(g.id, x.seq));
     menu.hidden = false;
@@ -1225,6 +1405,7 @@
       el("label", { class: "field", id: "gc-timer-row" }, el("span", { text: "Disappearing messages" }), timerSelect("gc-timer", null)),
       el("p", { class: "field-note", text: "Group messages are end-to-end encrypted. People you add see messages from when they join, not before." }),
       el("p", { class: "sheet-error", id: "gc-error", role: "alert", hidden: true }),
+      el("button", { type: "button", class: "linkish", id: "gc-browse", text: "Or browse listed public groups", onclick: () => { hideSheet("group-create-sheet"); openBrowse(null); } }),
     ];
     const foot = [
       el("button", { class: "btn-ghost", type: "button", text: "Cancel", onclick: () => hideSheet("group-create-sheet") }),
@@ -1369,6 +1550,20 @@
     }
     body.append(membersSection);
 
+    // Banned mailboxes (admins only; the postbox lists them to admins). Unbanning lets them be
+    // invited or join again; it does not add them back.
+    const banned = admin ? members.filter((m) => m.state === "banned") : [];
+    if (banned.length) {
+      const list = el("ul", { class: "gi-members", id: "gi-banned", role: "list" });
+      for (const m of banned) {
+        list.append(el("li", { class: "gi-member gi-banned" },
+          el("span", { class: "gi-member-name", text: nameOf(m.address) }),
+          el("span", { class: "pill", text: "Banned" }),
+          el("span", { class: "gi-member-actions" }, el("button", { type: "button", class: "linkish", text: "Unban", "aria-label": "Unban " + nameOf(m.address), onclick: () => unban(g, m) }))));
+      }
+      body.append(section(`Banned (${banned.length})`, list, el("p", { class: "note", text: "Unbanning lets them join again or be invited. It does not add them back." })));
+    }
+
     // Invite link
     if (admin && g.join_policy === "public") {
       const out = el("div", { class: "gi-link", id: "gi-link-out" });
@@ -1465,6 +1660,10 @@
       if (admin && (m.role !== "admin" || owner)) { act("Remove", { state: "removed" }); act("Ban", { state: "banned" }); }
     }
     if (self && m.role === "admin") act("Step down as admin", { role: "member" });
+    if (!self && (m.state === "active" || m.state === "keying")) {
+      if (blockedSender(m.address)) actions.append(el("span", { class: "pill pill-blocked", text: "Blocked" }));
+      else actions.append(el("button", { type: "button", class: "linkish", text: "Block", "aria-label": "Block " + nameOf(m.address), onclick: () => blockMember(m.address) }));
+    }
     li.append(actions);
     if (m.state === "active") {
       const devs = el("details", { class: "gi-devices" }, el("summary", { text: "Devices" }));
@@ -1513,6 +1712,16 @@
     await loadMembers(g.id);
     renderInfo();
     refresh();
+  }
+
+  async function unban(g, m) {
+    if (!(await confirmAction("Unban?", `${nameOf(m.address)} can join again or be invited.`, "Unban"))) return;
+    try {
+      await api(groupPath(g.id, "/bans/" + encodeURIComponent(m.address)), { method: "DELETE" });
+      host().toast("Unbanned.");
+    } catch (e) { host().toast(explain(e)); }
+    await loadMembers(g.id);
+    renderInfo();
   }
 
   async function invite(g, raw) {
@@ -1723,8 +1932,11 @@
     if (view && G.open) $("pane-thread").dataset.open = "true";
   }
 
+  // The org catalog arrives after the groups list: redraw the Company section when it changes.
+  window.PigeonpostOrgs?.onChange(() => { if (G.enabled) renderList(); });
+
   window.PigeonpostGroups = {
-    onMailbox, onEvent, reset, close,
+    onMailbox, onEvent, reset, close, openBrowse,
     render: () => { if (G.enabled || $("groups-section")) renderAll(); else renderDirect(); },
     isOpen: () => Boolean(G.open),
     dock, undock, // Phase 6

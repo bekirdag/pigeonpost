@@ -75,6 +75,11 @@ pub(crate) enum Action {
     ManageOwnAccount,
     /// `POST /internal/v1/accounts/{id}/purge`: remove an empty account (ops only, Phase 9).
     PurgeEmptyAccount,
+    /// `POST /internal/v1/account-deletions/{request_id}/cancel-calendar`: cancel what a person
+    /// being erased organizes, so their guests are told (ops only, audit P2-17).
+    PrepareAccountErasure,
+    /// `PUT /internal/v1/namespaces`: bind a namespace to an account by hand (ops only, P3-10).
+    GrantNamespace,
     /// `/internal/v1/nests*`: create, list, run and delete hosted agents (Nests Phase A, ops).
     ManageNests,
     /// See one's own Nests, Nest allowance and the Nest package catalog (`GET /v1/nests`,
@@ -116,6 +121,10 @@ pub(crate) enum Action {
     /// Read, delete and key one's own meeting notes (`/v1/meetings…`, SDS §14.7): the account's own
     /// credential — a person's session or the account key — never a mailbox token or a connector.
     MeetingNotes,
+    /// Register a device's meeting-notes key (`PUT /v1/meetings/keys/{id}`): a person signed in
+    /// interactively, never the account API key (audit 2026-11-03 P2-2). A notes key decides who
+    /// can open every later brief, so only a person at a device may add one.
+    MeetingNotesKey,
     /// The calls service opening meetings and recording consent (`/internal/v1/meetings…`).
     MeetingsCalls,
     /// meeting-intel reading recipients' public keys and storing the encrypted brief.
@@ -261,11 +270,14 @@ impl Action {
             | Action::CallEvents
             | Action::ModerateAvatars
             | Action::PurgeEmptyAccount
+            | Action::PrepareAccountErasure
+            | Action::GrantNamespace
             | Action::ManageNests
             | Action::GroupCallAdmission => Requirement::Service,
             Action::GroupParticipate | Action::CalendarUse => Requirement::NotConnector,
             Action::MeetingAccess => Requirement::Service,
             Action::MeetingNotes => Requirement::AccountHolder,
+            Action::MeetingNotesKey => Requirement::Human,
             Action::MeetingsCalls | Action::MeetingsIntel => Requirement::Service,
             Action::GroupManage | Action::OrgAdminister => Requirement::Human,
             Action::OrgSensitive => Requirement::HumanStepUp,
@@ -1439,5 +1451,44 @@ mod tests {
             ),
             Err(DenyReason::CredentialNotAccepted)
         );
+    }
+
+    #[test]
+    fn only_a_person_registers_a_notes_key() {
+        // Audit 2026-11-03 P2-2: the account key may read its notes, never add a key to them.
+        let me = human("a1", None);
+        let account_key = Principal::Account("a1".into(), AccountCredential::ApiKey);
+        let res = Resource::Account("a1");
+        assert!(authorize(
+            &Actor::Principal(&me),
+            Action::MeetingNotesKey,
+            &res,
+            &facts()
+        )
+        .is_ok());
+        assert_eq!(
+            authorize(
+                &Actor::Principal(&account_key),
+                Action::MeetingNotesKey,
+                &res,
+                &facts()
+            ),
+            Err(DenyReason::Auth(AuthDenial::HumanRequired))
+        );
+        assert!(authorize(
+            &Actor::Principal(&account_key),
+            Action::MeetingNotes,
+            &res,
+            &facts()
+        )
+        .is_ok());
+        let mb = mailbox(Some("a1"));
+        assert!(authorize(
+            &Actor::Principal(&mb),
+            Action::MeetingNotesKey,
+            &res,
+            &facts()
+        )
+        .is_err());
     }
 }

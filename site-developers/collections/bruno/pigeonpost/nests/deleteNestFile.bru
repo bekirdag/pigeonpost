@@ -1,0 +1,20 @@
+meta {
+  name: Remove a file and everything parsed from it (a person only)
+  type: http
+  seq: 9
+}
+
+delete {
+  url: {{baseUrl}}/v1/nests/:nest/files/:file
+  body: none
+  auth: bearer
+}
+
+params:path {
+  nest: 
+  file: 
+}
+
+auth:bearer {
+  token: {{token}}
+}

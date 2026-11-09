@@ -16,8 +16,12 @@ against local fixtures for saas_be and the postbox; nothing calls a real provide
 
 `catalog/pigeonpost-catalog.json` is the approved price list. It holds:
 
-- 84 plan codes: `cloud-<n>names-yearly-<usd|eur|try>` (n = 1–10) and
-  `ent-<seats>-<monthly|yearly>-<usd|eur|try>` (5, 10, 15, 20, 30, 50, 100, 200, 500 seats);
+- 93 plan codes:
+  - `cloud-<n>names-yearly-<usd|eur|try>` (n = 1–10);
+  - `ent-<seats>-<monthly|yearly>-<usd|eur|try>` (5, 10, 15, 20, 30, 50, 100, 200, 500 seats);
+  - `nest-<ai-starter|ai-plus|host-starter>-monthly-<usd|eur|try>`. Their prices are proposals
+    pending owner approval. They are provisioned in saas_be (product `PP_NEST`, 2026-11-05) and stay
+    unsold while the postbox `nests` flag is off;
   USD and EUR are fixed prices with one edition (2026) that stays on sale every year; TRY has one
   edition per calendar year;
 - for each code, the editions provisioned in saas_be: pricing year, amount, local plan id and iyzico
@@ -54,6 +58,33 @@ listed here (a new year, a changed price) **fails closed** until someone reviews
    - `card-update` — hosted form;
    - `upgrade` — same product, currency and interval. A plan below the names already registered is
      refused.
+
+**Nest packages** (Nests Phase B1; behind the postbox's `nests` flag)
+
+The same individual flow as Cloud, under `/v1/nests/…`:
+
+- `GET /v1/nests` — the member's Nest subscriptions, the postbox's Nest view, and the Nest prices.
+  `prices` is `null` unless the postbox shows Nests to this account. Nest prices are kept off the
+  public `/v1/catalog` while the owner has not approved them.
+- `POST /v1/nests/checkout {intent_id, plan_code, billing_profile_id, locale}` with a
+  `nest-<ai|host>-<tier>-monthly-<usd|eur|try>` plan. Before any provider call it posts
+  `POST /v1/nest-purchases/intents {package, rail:"web"}` to the postbox with the member's own
+  token. The postbox refuses when:
+  - the flag is off;
+  - a package bought in the App Store or Google Play already funds the account;
+  - the account already holds that package.
+
+  The checkout then runs with `client_reference_id: pp-nest:<account>:<intent>` and returns to
+  `/account?nest_checkout=<intent>`.
+- `GET /v1/nests/checkout/<intent>` reads saas_be's authoritative state and activates the account.
+- `/v1/nests/subscriptions/<id>/{cancel|retry|card-update|upgrade}` manage the subscription:
+  - a larger package applies `NOW`;
+  - a smaller one applies `NEXT_PERIOD`. The postbox pauses Nests above a smaller package; it never
+    deletes them.
+
+The pushed entitlement has the web plan code and no names. The postbox maps it to the package's
+slots, storage and model allowance. The reconciler activates `pp-nest:` references from the access
+list, as it does for Cloud.
 
 **Enterprise** (the Phase 4 portal calls these; exercised by tests now)
 
@@ -112,6 +143,9 @@ marked expired once that passes. Nothing here ever extends a paid period.
 | `STORE_STATE_DIR` | Durable state, default `/var/lib/pigeonpost-store-adapter` (systemd `StateDirectory=`) |
 | `CHECKOUTS_PER_HOUR`, `RECONCILE_INTERVAL_MS` | 5 and 60000 |
 | `OPEN_CURRENCIES` | Currencies new checkouts may use, e.g. `TRY` or `USD,EUR,TRY`. **Unset means `TRY`.** Production is `USD,EUR,TRY` since 2026-11-04 (iyzico Multi Currency add-on active; no-charge probe passed). To open or close a currency, back up `/etc/pigeonpost-store-adapter.env`, edit it and restart `pigeonpost-store-adapter`; the one-command runbook is in saas_be `docs/ops/iyzico-subscriptions.md` ("Enable runbook"). The account page and the enterprise portal offer only listed currencies (the portal hides EUR entirely until it is listed). |
+| `SALES_NOTIFY_URL`, `SALES_NOTIFY_KEY` | saas_be base URL and the platform notification key (the postbox's `POSTBOX_NOTIFY_KEY`). With both set, each enterprise "Talk to sales" request is emailed through saas_be's `pigeonpost-notice` workflow (Novu → Postmark server "Pigeonpost", no tracking). `https://`, or `http://` to loopback only. Unset: requests are only appended to `sales-requests.jsonl`, which stays the durable record either way. Sending is in the background, up to 4 attempts (`SALES_NOTIFY_DELAYS_MS`, default `0,30000,120000,600000`); `/api/healthz` shows `sales_notify` counters. |
+| `SALES_NOTIFY_TO`, `SALES_NOTIFY_FROM` | Recipient (default `info@pigeonpost.dev`) and sender (default `no-reply@pigeonpost.dev`) of the sales notification sent through saas_be. |
+| `TAX_EU_UK_GATE`, `TAX_B2C_OPEN_REGIONS`, `TAX_IP_COUNTRY_HEADER`, `HMRC_CLIENT_ID`/`HMRC_CLIENT_SECRET` | EU/UK VAT rule for web sales (`src/tax.js`): EU/UK consumers are refused until a region is opened; EU/UK businesses need a VIES/HMRC-valid VAT number (reverse charge). Defaults: gate on, no region open, `cf-ipcountry`, no HMRC credentials (UK businesses refused). See `docs/billing-tax.md`. |
 
 `/healthz` reports `configured:true` when these are present and well formed. It checks local
 configuration only, not whether the upstreams are reachable.

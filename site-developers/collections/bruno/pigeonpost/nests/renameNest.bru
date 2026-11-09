@@ -1,0 +1,25 @@
+meta {
+  name: Rename a Nest (a person only)
+  type: http
+  seq: 5
+}
+
+patch {
+  url: {{baseUrl}}/v1/nests/:nest
+  body: json
+  auth: bearer
+}
+
+params:path {
+  nest: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "label": "string"
+  }
+}

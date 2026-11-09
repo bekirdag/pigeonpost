@@ -143,7 +143,7 @@ class ApiTests(unittest.TestCase):
             self.result, self.calls = result, []
 
         def call(self, method, path, identity=None, data=None, **kw):
-            self.calls.append((method, path, identity, data))
+            self.calls.append((method, path, identity, data, kw))
             return self.result
 
         def scoped(self, method, path, identity, data=None, **kw):
@@ -165,6 +165,45 @@ class ApiTests(unittest.TestCase):
         raw.result = {"group": {"id": "grp_new", "org_id": "org_2", "created_by": MINE, "my": {"role": "owner", "state": "keying"}}}
         with self.assertRaises(oc.OrgError):
             api.create_exact(MINE, wire)  # not the room this request created
+
+    def test_directory_route_and_rows(self):
+        raw = self.Raw({"entries": [
+            {"handle": "/acme/jane", "address": MINE, "kind": "member", "name": "Jane Doe"},
+            {"handle": "/acme/agent1", "address": AGENT, "kind": "agent", "name": None},
+            {"handle": "acme/bad", "address": MINE, "kind": "member"},
+            {"handle": "/acme/x", "address": "/acme/x", "kind": "member"},
+            {"handle": "/acme/y", "address": PERSONAL, "kind": "robot"},
+            {"handle": "/acme/z", "address": PERSONAL, "kind": "member", "name": "A\u202eB"}]})
+        api = oc.OrgsAPI(raw)
+        found = api.directory("org_1", " ja ")
+        self.assertEqual(raw.calls[-1][:2], ("GET", "/v1/orgs/org_1/directory"))
+        self.assertEqual(raw.calls[-1][4]["query"], {"q": "ja", "limit": "8"})
+        self.assertIsNone(raw.calls[-1][2], "the directory is account-scoped")
+        self.assertEqual(found, [{"handle": "/acme/jane", "address": MINE, "kind": "member", "name": "Jane Doe"},
+                                 {"handle": "/acme/agent1", "address": AGENT, "kind": "agent", "name": None},
+                                 {"handle": "/acme/z", "address": PERSONAL, "kind": "member", "name": None}])
+        before = len(raw.calls)
+        self.assertEqual(api.directory("org_1", "   "), [])
+        self.assertEqual(api.directory("org_1", "x" * 81), [])
+        self.assertEqual(len(raw.calls), before, "nothing asked for an empty or oversized search")
+        with self.assertRaises(oc.OrgError):
+            api.directory("org/1", "ja")
+
+
+class MembershipTests(unittest.TestCase):
+    def test_switcher_titles_and_role_words(self):
+        c = oc.parse_catalog(catalog(my_roles=["people_admin"]))
+        rows = [{"address": PERSONAL, "handle": "/bekir/main"}, {"address": MINE, "handle": "/acme/john"}]
+        orgs = oc.mailbox_orgs(c, rows)
+        self.assertEqual(list(orgs), [MINE])
+        self.assertEqual(oc.mailbox_title(rows[0], orgs.get(PERSONAL)), "Bekir")
+        self.assertEqual(oc.mailbox_title(rows[1], orgs[MINE]), "Acme John · Acme")
+        self.assertEqual(oc.role_word(orgs[MINE]["roles"]), "People admin")
+        self.assertEqual(oc.role_word([]), "Member")
+        self.assertEqual(oc.role_word(["admin", "owner"]), "Owner")
+        self.assertEqual(oc.mailbox_orgs(None, rows), {})
+        suspended = oc.parse_catalog(catalog(status="suspended"))
+        self.assertEqual(oc.mailbox_orgs(suspended, rows), {}, "no badge for an org that cannot be read")
 
 
 if __name__ == "__main__":
