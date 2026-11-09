@@ -193,7 +193,7 @@ jobs:
           import re
           path = "Pigeonpost.xcodeproj/project.pbxproj"
           text = open(path, encoding="utf-8").read()
-          block = re.compile(r"(isa = XCBuildConfiguration;\s*buildSettings = \{)(.*?)(\n\s*\};\s*name = Release;)", re.S)
+          block = re.compile(r"(isa = XCBuildConfiguration;\s*buildSettings = \{)((?:(?!\n\s*\};\s*name = ).)*)(\n\s*\};\s*name = Release;)", re.S)
           app = re.compile(r'PRODUCT_BUNDLE_IDENTIFIER = "?dev\.pigeonpost\.inbox"?;')
           count = 0
           def sign(match):
