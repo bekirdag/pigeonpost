@@ -99,6 +99,10 @@ mod mls;
 mod msgactions;
 #[cfg(test)]
 mod msgactions_tests;
+mod nest_catalog;
+mod nest_commerce;
+#[cfg(test)]
+mod nest_commerce_tests;
 mod nests;
 #[cfg(test)]
 mod nests_tests;
@@ -513,6 +517,7 @@ async fn serve(cfg: Config) {
     limits::start(state.clone());
     googleplay_routes::start_reconciliation(state.clone());
     appstore_routes::start_reconciliation(state.clone());
+    nest_commerce::start_reconciliation(state.clone());
     start_internal_listener(&state).await;
     // Disappearing-message expiry and group maintenance (SDS §17.2, §4.3), every 30 s.
     ephemeral::start_worker(state.clone());
@@ -1009,6 +1014,7 @@ fn build_router(state: AppState) -> Router {
         .merge(meetings::router())
         // Nests Phase A: a hosted agent redeems its one-time enrollment code.
         .merge(nests::router())
+        .merge(nest_commerce::router())
         // Phase 3B: calendar and scheduled meetings (SDS §14B.5, docs/calendar.md).
         .route(
             "/v1/calendars",

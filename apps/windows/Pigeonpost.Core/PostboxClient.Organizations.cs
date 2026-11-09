@@ -33,6 +33,10 @@ public sealed partial class PostboxClient : IOrganizationRoomApi
     private static string RoomPath(string id, string suffix = "") => OrganizationRoomInput.Identifier(id)
         ? "/v1/groups/" + id + suffix : throw new ArgumentException("Invalid room.", nameof(id));
 
+    // SDS §5.4 org directory (raw; parsed by OrganizationDirectoryClient).
+    internal Task<JsonElement> OrganizationDirectoryJsonAsync(string mailbox, string organizationId, string query, CancellationToken ct) =>
+        RoomJsonAsync(HttpMethod.Get, "/v1/orgs/" + organizationId + "/directory?limit=8&q=" + Uri.EscapeDataString(query), null, mailbox, ct);
+
     public async Task<RoomOrganizations> OrganizationsAsync(string mailbox, CancellationToken ct) =>
         RoomWire.Organizations(await RoomJsonAsync(HttpMethod.Get, "/v1/orgs", null, mailbox, ct).ConfigureAwait(false));
 

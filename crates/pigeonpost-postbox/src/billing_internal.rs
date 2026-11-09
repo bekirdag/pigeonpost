@@ -248,7 +248,37 @@ fn validate(input: &EntitlementInput) -> Result<(), Response> {
             "only a complimentary grant may have no paid_through",
         ));
     }
+    // Nest packages (build plan B1): a known package, no names or seats, and the package's own
+    // storage. An unknown `nest…` code is refused rather than stored as a plan nobody can read.
+    if crate::nest_catalog::is_nest_plan_code(&input.plan_code) {
+        let Some(package) = crate::nest_catalog::for_plan_code(&input.plan_code) else {
+            return Err(bad("invalid_plan_code", "not a Nest package plan code"));
+        };
+        if input.subject_kind != "account" {
+            return Err(bad(
+                "invalid_subject",
+                "Nest packages are bought by accounts",
+            ));
+        }
+        if input.names.is_some() || input.seats.is_some() || input.agent_limit.is_some() {
+            return Err(bad(
+                "invalid_subject",
+                "Nest package entitlements carry no names or seats",
+            ));
+        }
+        if input
+            .storage_bytes
+            .is_some_and(|b| b != package.storage_bytes)
+        {
+            return Err(bad(
+                "invalid_value",
+                "storage_bytes must match the Nest package",
+            ));
+        }
+    }
+    let nest = crate::nest_catalog::is_nest_plan_code(&input.plan_code);
     match input.subject_kind.as_str() {
+        _ if nest => {}
         "account" => {
             if input.seats.is_some() || input.agent_limit.is_some() {
                 return Err(bad(

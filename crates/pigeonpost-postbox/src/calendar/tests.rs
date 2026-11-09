@@ -1639,6 +1639,164 @@ async fn key_only_organizers_never_show_their_address_to_guests() {
     assert!(ics.contains("ORGANIZER;CN=\"Pigeonpost\":") && !ics.contains(&org.address));
 }
 
+async fn mcp_call(srv: &Srv, key: &str, name: &str, args: Value) -> Value {
+    let principal = principal_for_token(&srv.state, Some(key)).await.unwrap();
+    mcp::call_tool_as(
+        &srv.state,
+        principal,
+        json!({ "name": name, "arguments": args }),
+    )
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn mcp_calendar_tools_list_create_and_rsvp_through_the_route_gates() {
+    let srv = serve().await;
+    let alice = person(&srv, "mcpa").await;
+    let bob = person(&srv, "mcpb").await;
+    let names: Vec<String> = mcp::tools_list_result()["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|t| t["name"].as_str().map(str::to_string))
+        .collect();
+    for tool in [
+        "list_pigeonpost_calendar",
+        "create_pigeonpost_event",
+        "rsvp_pigeonpost_event",
+    ] {
+        assert!(names.iter().any(|n| n == tool), "{tool} missing");
+    }
+
+    // An API key (automation) may create a handle-only event…
+    let made = mcp_call(
+        &srv,
+        &alice.api_key,
+        "create_pigeonpost_event",
+        json!({ "identity": alice.address, "title": "Agent sync", "start": soon(60),
+                "end": soon(90), "tzid": "UTC", "attendees": [bob.handle], "meeting": true }),
+    )
+    .await;
+    assert_eq!(made["isError"], false, "{made}");
+    let id = made["structuredContent"]["event"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(made["structuredContent"]["event"]["meeting"]["code"].is_string());
+
+    // …but never one that mails a contact address.
+    let refused = mcp_call(
+        &srv,
+        &alice.api_key,
+        "create_pigeonpost_event",
+        json!({ "identity": alice.address, "title": "Mail out", "start": soon(60),
+                "tzid": "UTC", "attendees": ["guest@example.com"] }),
+    )
+    .await;
+    assert_eq!(refused["isError"], true, "{refused}");
+    assert!(refused.to_string().contains("human_required"));
+
+    // Bob's agent sees the unanswered invitation only when it asks for invitations.
+    let quiet = mcp_call(
+        &srv,
+        &bob.api_key,
+        "list_pigeonpost_calendar",
+        json!({ "identity": bob.address }),
+    )
+    .await;
+    assert!(!quiet.to_string().contains(&id), "{quiet}");
+    let listed = mcp_call(
+        &srv,
+        &bob.api_key,
+        "list_pigeonpost_calendar",
+        json!({ "identity": bob.address, "include_invitations": true }),
+    )
+    .await;
+    let occ = listed["structuredContent"]["occurrences"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|o| o["event_id"] == id.as_str())
+        .cloned()
+        .unwrap_or_else(|| panic!("{listed}"));
+    assert_eq!(occ["my_rsvp"], "needs_action");
+    assert!(listed["structuredContent"]["note"].is_string());
+
+    let answered = mcp_call(
+        &srv,
+        &bob.api_key,
+        "rsvp_pigeonpost_event",
+        json!({ "identity": bob.address, "event_id": id, "status": "accepted" }),
+    )
+    .await;
+    assert_eq!(answered["isError"], false, "{answered}");
+    assert_eq!(answered["structuredContent"]["rsvp"], "accepted");
+    let (_, detail) = srv
+        .call(
+            Method::GET,
+            &format!("/v1/calendar/events/{id}"),
+            &alice,
+            None,
+        )
+        .await;
+    let row = detail["event"]["attendees"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["handle"] == bob.handle.as_str())
+        .cloned()
+        .unwrap();
+    assert_eq!(row["rsvp"], "accepted");
+
+    // The organizer cannot answer their own event, and a bad status is refused.
+    let own = mcp_call(
+        &srv,
+        &alice.api_key,
+        "rsvp_pigeonpost_event",
+        json!({ "identity": alice.address, "event_id": id, "status": "accepted" }),
+    )
+    .await;
+    assert_eq!(own["isError"], true);
+    let bad = mcp_call(
+        &srv,
+        &bob.api_key,
+        "rsvp_pigeonpost_event",
+        json!({ "identity": bob.address, "event_id": id, "status": "maybe" }),
+    )
+    .await;
+    assert_eq!(bad["isError"], true);
+}
+
+#[tokio::test]
+async fn mcp_calendar_tools_respect_the_flag() {
+    let srv = serve().await;
+    let account = "acct_mcpoff";
+    srv.state
+        .store
+        .account_for_sub("sub-mcpoff".into(), account.into(), now_unix())
+        .await
+        .unwrap();
+    let (api_key, key) = new_api_key();
+    srv.state
+        .store
+        .add_api_key(account.into(), key, now_unix())
+        .await
+        .unwrap();
+    let v = do_create_identity(&srv.state, Some(account.into()), None, None)
+        .await
+        .unwrap();
+    let out = mcp_call(
+        &srv,
+        &api_key,
+        "list_pigeonpost_calendar",
+        json!({ "identity": v["address"] }),
+    )
+    .await;
+    assert_eq!(out["isError"], true);
+    assert!(out.to_string().contains("feature_disabled"), "{out}");
+}
+
 // ---- D-31 churn and account erasure (audit 2026-11-03 P2-17) -----------------------------------
 
 /// Pretend `n` contact-address messages of `workflow` were already queued today for `account`.

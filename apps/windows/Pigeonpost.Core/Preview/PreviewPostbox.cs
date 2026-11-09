@@ -166,6 +166,7 @@ public sealed class PreviewPostbox : HttpMessageHandler
         public List<(string Address, string? Handle)> Operated { get; } = [];
     }
     private readonly Dictionary<string, Org> orgs = new(StringComparer.Ordinal);
+    public List<string> DirectoryQueries { get; } = [];
     public void AddOrganization(string id, string name, IEnumerable<string> memberInboxes, IEnumerable<(string Address, string? Handle)>? operated = null)
     {
         lock (sync)
@@ -316,6 +317,17 @@ public sealed class PreviewPostbox : HttpMessageHandler
                 return new JsonObject { ["id"] = g.Id, ["name"] = g.Name, ["description"] = g.Description, ["member_count"] = g.Members.Values.Count(x => x.State is "active" or "keying"),
                     ["join_policy"] = g.JoinPolicy, ["my_state"] = state, ["can_join"] = g.JoinPolicy == "public" && state is null or "left" };
             }
+        }
+        if (method == "GET" && path.StartsWith("/v1/orgs/", StringComparison.Ordinal) && path.EndsWith("/directory", StringComparison.Ordinal))
+        {
+            var org = MemberOrg(path["/v1/orgs/".Length..^"/directory".Length], me);
+            var needle = (query["q"] ?? "").Trim().ToLowerInvariant();
+            var limit = Math.Clamp(int.TryParse(query["limit"], out var l) ? l : 50, 1, 50);
+            DirectoryQueries.Add(needle);
+            return new JsonObject { ["entries"] = new JsonArray(org.Members.Keys.Where(boxes.ContainsKey).Select(a => (a, boxes[a].Handle, "member"))
+                .Concat(org.Operated.Select(o => (o.Address, o.Handle, "agent")))
+                .Where(e => e.Item2 is { } h && h.ToLowerInvariant().Contains(needle)).OrderBy(e => e.Item2, StringComparer.Ordinal).Take(limit)
+                .Select(e => (JsonNode)new JsonObject { ["handle"] = e.Item2, ["address"] = e.Item1, ["kind"] = e.Item3, ["name"] = null }).ToArray()) };
         }
         if (method == "POST" && path.StartsWith("/v1/groups/", StringComparison.Ordinal) && path.EndsWith("/join", StringComparison.Ordinal))
         {

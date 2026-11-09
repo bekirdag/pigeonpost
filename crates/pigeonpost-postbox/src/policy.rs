@@ -82,6 +82,14 @@ pub(crate) enum Action {
     GrantNamespace,
     /// `/internal/v1/nests*`: create, list, run and delete hosted agents (Nests Phase A, ops).
     ManageNests,
+    /// See one's own Nests, Nest allowance and the Nest package catalog (`GET /v1/nests`,
+    /// `/v1/nest-packages`): the account's own credential, never a mailbox token or a connector.
+    NestView,
+    /// Create, pause, resume or delete one's own Nest (build plan §4 `NestOwn`): a person.
+    NestOwn,
+    /// Start or claim a Nest package purchase, restore one, retry a paid setup (build plan §4
+    /// `NestPurchase`): a person, never automation — buying is never automatic.
+    NestPurchase,
     /// Take part in a group as one's own mailbox: read, post, leave, own keys (SDS §4.4). Agents
     /// may; a connector acting for the member may not reach E2EE content at all.
     GroupParticipate,
@@ -283,6 +291,8 @@ impl Action {
             Action::SetDisplayName => Requirement::NotConnector,
             Action::ViewProfile => Requirement::AnyPrincipal,
             Action::SmsOptOut => Requirement::Anyone,
+            Action::NestView => Requirement::AccountHolder,
+            Action::NestOwn | Action::NestPurchase => Requirement::Human,
         }
     }
 }

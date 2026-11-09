@@ -93,6 +93,38 @@ internal sealed class DesktopNotifications : IDisposable
 
     internal const string ReplyInput = "reply";
 
+    // Calendar invitations and reminders (audit P2-18): Accept and Decline on a pending invitation, Open on both.
+    // Every action carries only the mailbox and event locators; App re-reads the event before acting.
+    public static bool AnnounceCalendar(Pigeonpost.Core.Calendar.CalendarAlert alert, string title, string text, bool answerable, string? mailboxName = null)
+    {
+        try
+        {
+            AppNotificationButton Action(string label, string action) => new AppNotificationButton(label)
+                .AddArgument("calendar", action).AddArgument("mailbox", alert.Mailbox).AddArgument("event", alert.EventId)
+                .AddArgument("occurrence", alert.OccurrenceId ?? "");
+            var builder = new AppNotificationBuilder()
+                .AddArgument("calendar", "open").AddArgument("mailbox", alert.Mailbox).AddArgument("event", alert.EventId)
+                .AddArgument("occurrence", alert.OccurrenceId ?? "")
+                .AddText(title).AddText(text).SetTimeStamp(DateTime.Now);
+            if (answerable) builder.AddButton(Action("Accept", "accept")).AddButton(Action("Decline", "decline"));
+            builder.AddButton(Action("Open", "open"));
+            if (alert.Kind == Pigeonpost.Core.Calendar.CalendarAlertKind.Reminder) builder.SetScenario(AppNotificationScenario.Reminder);
+            if (!string.IsNullOrEmpty(mailboxName)) builder.SetAttributionText("To " + mailboxName);
+            var notification = builder.BuildNotification();
+            notification.Tag = (alert.Kind == Pigeonpost.Core.Calendar.CalendarAlertKind.Reminder ? "r-" : "i-") + MessageAlerts.Key(alert.EventId + "\n" + alert.OccurrenceId);
+            notification.Group = Pigeonpost.Core.Calendar.CalendarAlerts.Group(alert.Mailbox, alert.EventId);
+            AppNotificationManager.Default.Show(notification);
+            return notification.Id != 0;
+        }
+        catch (Exception ex) { DesktopLog.Error("Showing a calendar alert failed", ex); return false; }
+    }
+
+    public static async Task RemoveCalendarAsync(string mailbox, string eventId)
+    {
+        try { await AppNotificationManager.Default.RemoveByGroupAsync(Pigeonpost.Core.Calendar.CalendarAlerts.Group(mailbox, eventId)); }
+        catch (Exception ex) { DesktopLog.Error("Removing calendar alerts failed", ex); }
+    }
+
     // One conversation's toasts leave the notification centre together once it has been read.
     public static async Task RemoveConversationAsync(string mailbox, string peer)
     {
