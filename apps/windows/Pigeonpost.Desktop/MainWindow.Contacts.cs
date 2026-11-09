@@ -277,7 +277,7 @@ public sealed partial class MainWindow
                 row.Children.Clear();
                 row.Children.Add(PeopleText(number.Name));
                 row.Children.Add(PeopleText($"{number.Name} will get this text message from Pigeonpost:"));
-                var text = PeopleText(ContactImport.InviteText(null)); AutomationProperties.SetName(text, "Invitation text");
+                var text = PeopleText(ContactImport.InviteText(null));
                 row.Children.Add(text);
                 var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
                 var send = ContactButton("Send invitation", $"Send invitation to {number.Name}");
