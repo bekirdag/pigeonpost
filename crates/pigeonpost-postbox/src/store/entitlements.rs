@@ -284,7 +284,7 @@ pub(super) fn upsert(
 
 /// Write a row the postbox derives from its own provider tables. The provider table is the
 /// authority, so the subject follows it; the version only moves when the content changes.
-fn derive(c: &Connection, mut i: EntitlementInput, now: u64) -> Result<(), StoreError> {
+pub(super) fn derive(c: &Connection, mut i: EntitlementInput, now: u64) -> Result<(), StoreError> {
     let previous = lookup(c, &i.source, &i.environment, &i.reference, now)?;
     if let Some(prev) = &previous {
         if same_content(prev, &i) {
@@ -556,7 +556,8 @@ pub(super) fn backfill(c: &Connection, now: u64) -> Result<(), StoreError> {
 // ---- web plan names ----------------------------------------------------------------------------
 
 /// The capacity-giving entitlements of an account (never org rows, never store rows).
-const CAPACITY: &str = "subject_kind='account' AND subject_id=?1 AND source IN ('iyzico','grant','test') AND plan_code!='legacy-namespace-grant'";
+/// Nest packages (`nest.*`, `nest-*`) are not names: they never give or keep web name capacity.
+const CAPACITY: &str = "subject_kind='account' AND subject_id=?1 AND source IN ('iyzico','grant','test') AND plan_code!='legacy-namespace-grant' AND plan_code NOT LIKE 'nest.%' AND plan_code NOT LIKE 'nest-%'";
 
 #[derive(Clone, Debug, Default, Serialize, PartialEq, Eq)]
 pub struct WebPlan {
@@ -664,6 +665,11 @@ pub(super) fn recompute_web(c: &Connection, account: &str, now: u64) -> Result<(
         )?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+pub(super) fn web_plan_for_test(c: &Connection, account: &str, now: u64) -> WebPlan {
+    web_plan(c, account, now).unwrap()
 }
 
 fn web_plan(c: &Connection, account: &str, now: u64) -> Result<WebPlan, StoreError> {

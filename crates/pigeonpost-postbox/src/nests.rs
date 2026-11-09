@@ -335,7 +335,7 @@ pub(crate) fn internal_router() -> Router<AppState> {
 
 // ---- helpers ------------------------------------------------------------------------------------
 
-type Peer = Option<Extension<ConnectInfo<std::net::SocketAddr>>>;
+pub(crate) type Peer = Option<Extension<ConnectInfo<std::net::SocketAddr>>>;
 
 fn service(state: &AppState, headers: &HeaderMap) -> Result<&'static str, Box<Response>> {
     crate::internal_api::authorize_service(
@@ -354,7 +354,7 @@ fn account_ok(id: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-fn nest_id_ok(id: &str) -> bool {
+pub(crate) fn nest_id_ok(id: &str) -> bool {
     id.starts_with("nst_") && id.len() <= 64 && id[4..].chars().all(|c| c.is_ascii_hexdigit())
 }
 
@@ -416,7 +416,7 @@ fn nest_from(r: &rusqlite::Row<'_>) -> rusqlite::Result<NestRow> {
     })
 }
 
-async fn load_nest(state: &AppState, id: String) -> GResult<Option<NestRow>> {
+pub(crate) async fn load_nest(state: &AppState, id: String) -> GResult<Option<NestRow>> {
     state
         .store
         .group_read(move |c| -> GResult<Option<NestRow>> {
@@ -434,7 +434,7 @@ fn nest_missing() -> GErr {
     GErr::new(StatusCode::NOT_FOUND, "no_nest", "no such Nest")
 }
 
-fn set_state_in(tx: &Transaction<'_>, id: &str, state: &str, now: u64) -> GResult<()> {
+pub(crate) fn set_state_in(tx: &Transaction<'_>, id: &str, state: &str, now: u64) -> GResult<()> {
     tx.execute(
         "UPDATE nests SET state = ?2, updated_at = ?3 WHERE id = ?1",
         params![id, state, now as i64],
@@ -545,10 +545,83 @@ async fn create_inner(
         }
     }
 
+    let max = state.nests.max_per_account;
+    let (nest_id, address, new_state) = provision(
+        state,
+        Provision {
+            account,
+            label,
+            senders,
+            funding: Funding::Ops { max },
+            budgets: (
+                state.nests.input_tokens as i64,
+                state.nests.output_tokens as i64,
+            ),
+            quota_gib: None,
+            audit_service: Some(service),
+        },
+        Some((headers, peer)),
+    )
+    .await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({ "nest_id": nest_id, "address": address, "state": new_state })),
+    )
+        .into_response())
+}
+
+/// How a new Nest is paid for, and therefore which limit admits it.
+pub(crate) enum Funding {
+    /// Phase A ops path: the per-account limit `POSTBOX_NESTS_MAX_PER_ACCOUNT`.
+    Ops { max: i64 },
+    /// A Nest package: a free slot in the account's allowance (Nests Phase B1), checked in the
+    /// same transaction that reserves it.
+    Package,
+}
+
+pub(crate) struct Provision {
+    pub account: String,
+    pub label: String,
+    /// Same-account mailboxes granted `answer_question` (already validated by the caller).
+    pub senders: Vec<String>,
+    pub funding: Funding,
+    /// Monthly model budget for this Nest (input, output tokens).
+    pub budgets: (i64, i64),
+    pub quota_gib: Option<u64>,
+    pub audit_service: Option<&'static str>,
+}
+
+/// Create one Nest: reserve the slot, mint its mailbox, grant the named senders, issue the one-time
+/// enrollment code and ask nestd to provision the sandbox. Shared by the ops route, the member
+/// route and the paid-setup reconciler.
+pub(crate) async fn provision(
+    state: &AppState,
+    p: Provision,
+    request: Option<(&HeaderMap, Peer)>,
+) -> GResult<(String, String, &'static str)> {
+    let Provision {
+        account,
+        label,
+        senders,
+        funding,
+        budgets,
+        quota_gib,
+        audit_service,
+    } = p;
+    if !state.nests.configured() {
+        return Err(GErr::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "nests_unavailable",
+            "no Nest worker host is configured",
+        ));
+    }
     // 1. Reserve the slot: the count and the insert are one transaction.
     let nest_id = format!("nst_{}", rand_hex(16));
-    let max = state.nests.max_per_account;
     let now = now_unix();
+    let funding_kind = match funding {
+        Funding::Ops { .. } => "ops",
+        Funding::Package => "package",
+    };
     {
         let (nest_id, account, label) = (nest_id.clone(), account.clone(), label.clone());
         state
@@ -566,17 +639,33 @@ async fn create_inner(
                         "no such account",
                     ));
                 }
-                if active_count_in(tx, &account)? >= max {
-                    return Err(GErr::conflict(
-                        "nest_limit",
-                        format!("this account already holds its limit of {max} Nest(s)"),
-                    )
-                    .with("max", max));
+                match funding {
+                    Funding::Ops { max } => {
+                        if active_count_in(tx, &account)? >= max {
+                            return Err(GErr::conflict(
+                                "nest_limit",
+                                format!("this account already holds its limit of {max} Nest(s)"),
+                            )
+                            .with("max", max));
+                        }
+                    }
+                    Funding::Package => {
+                        let allowance = store::nest_funding::allowance(tx, &account, now)
+                            .map_err(GErr::from)?;
+                        if allowance.used >= allowance.slots {
+                            return Err(GErr::conflict(
+                                "nest_slots_full",
+                                "every Nest slot of this account's package is in use",
+                            )
+                            .with("slots", allowance.slots)
+                            .with("used", allowance.used));
+                        }
+                    }
                 }
                 tx.execute(
-                    "INSERT INTO nests (id, account_id, address, label, state, created_at, updated_at)
-                     VALUES (?1, ?2, NULL, ?3, 'creating', ?4, ?4)",
-                    params![nest_id, account, label, now as i64],
+                    "INSERT INTO nests (id, account_id, address, label, state, created_at, updated_at, funding)
+                     VALUES (?1, ?2, NULL, ?3, 'creating', ?4, ?4, ?5)",
+                    params![nest_id, account, label, now as i64, funding_kind],
                 )?;
                 Ok(())
             })
@@ -639,14 +728,22 @@ async fn create_inner(
     // 4. The one-time code, stored only as a hash, and the audit record.
     let code = format!("nenr_{}", rand_hex(32));
     {
-        let row = audit_row(
-            state,
-            headers,
-            peer,
-            "nest.create",
-            &nest_id,
-            json!({ "service": service, "account": account, "address": address, "senders": senders.len() }),
-        );
+        let details = json!({ "service": audit_service, "account": account, "address": address, "senders": senders.len(), "funding": funding_kind });
+        let row = match request {
+            Some((headers, peer)) => {
+                audit_row(state, headers, peer, "nest.create", &nest_id, details)
+            }
+            None => state.auditor.row(
+                ActorKind::System,
+                Some(account.clone()),
+                "nest.create",
+                Some(format!("nest:{nest_id}")),
+                details,
+                None,
+                None,
+                now_unix(),
+            ),
+        };
         let (nest_id, address, code_hash) =
             (nest_id.clone(), address.clone(), sha256(code.as_bytes()));
         state
@@ -681,9 +778,10 @@ async fn create_inner(
         "label": label,
         "enrollment_code": code,
         "budgets": {
-            "input_tokens": state.nests.input_tokens,
-            "output_tokens": state.nests.output_tokens,
+            "input_tokens": budgets.0,
+            "output_tokens": budgets.1,
         },
+        "quota_gib": quota_gib,
     });
     let answer = state
         .nests
@@ -720,11 +818,7 @@ async fn create_inner(
         .with("nest_id", nest_id));
     }
     tracing::info!(nest = %nest_id, address = %address, "Nest created");
-    Ok((
-        StatusCode::CREATED,
-        Json(json!({ "nest_id": nest_id, "address": address, "state": new_state })),
-    )
-        .into_response())
+    Ok((nest_id, address, new_state))
 }
 
 // ---- reads --------------------------------------------------------------------------------------
@@ -873,39 +967,7 @@ async fn nest_action(
                 "Nests are not enabled for this account",
             ));
         }
-        let (status, runtime) = match state
-            .nests
-            .call(
-                reqwest::Method::POST,
-                &format!("/v1/nests/{id}/{action}"),
-                None,
-            )
-            .await
-        {
-            Ok(answer) => answer,
-            Err(NestdError::Unavailable) => {
-                return Err(GErr::new(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "nests_unavailable",
-                    "no Nest worker host is configured",
-                ))
-            }
-            Err(NestdError::Failed(_)) => {
-                return Err(GErr::new(
-                    StatusCode::BAD_GATEWAY,
-                    "nestd_failed",
-                    "the worker host did not answer",
-                ))
-            }
-        };
-        if !(200..300).contains(&status) {
-            return Err(GErr::new(
-                StatusCode::BAD_GATEWAY,
-                "nestd_failed",
-                format!("the worker host answered {status}"),
-            )
-            .with("runtime", runtime));
-        }
+        let runtime = runtime_action(&state, &id, &action).await?;
         let audit = audit_row(
             &state,
             &headers,
@@ -929,6 +991,104 @@ async fn nest_action(
     result.unwrap_or_else(|e| e.into_response())
 }
 
+/// Ask nestd to `start|stop|pause|resume` one Nest. The caller records the new state.
+pub(crate) async fn runtime_action(state: &AppState, id: &str, action: &str) -> GResult<Value> {
+    let (status, runtime) = match state
+        .nests
+        .call(
+            reqwest::Method::POST,
+            &format!("/v1/nests/{id}/{action}"),
+            None,
+        )
+        .await
+    {
+        Ok(answer) => answer,
+        Err(NestdError::Unavailable) => {
+            return Err(GErr::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "nests_unavailable",
+                "no Nest worker host is configured",
+            ))
+        }
+        Err(NestdError::Failed(_)) => {
+            return Err(GErr::new(
+                StatusCode::BAD_GATEWAY,
+                "nestd_failed",
+                "the worker host did not answer",
+            ))
+        }
+    };
+    if !(200..300).contains(&status) {
+        return Err(GErr::new(
+            StatusCode::BAD_GATEWAY,
+            "nestd_failed",
+            format!("the worker host answered {status}"),
+        )
+        .with("runtime", runtime));
+    }
+    Ok(runtime)
+}
+
+/// Tear one Nest down in nestd, then revoke its mailbox credential and open codes and mark the row
+/// deleted, with `audit` in the same transaction. Nothing is revoked if nestd did not confirm.
+pub(crate) async fn teardown(
+    state: &AppState,
+    id: &str,
+    address: Option<String>,
+    audit: store::AuditRow,
+) -> GResult<()> {
+    match state
+        .nests
+        .call(reqwest::Method::DELETE, &format!("/v1/nests/{id}"), None)
+        .await
+    {
+        Ok((status, _)) if (200..300).contains(&status) || status == 404 => {}
+        Ok((status, _)) => {
+            return Err(GErr::new(
+                StatusCode::BAD_GATEWAY,
+                "nestd_failed",
+                format!("the worker host answered {status}; nothing was revoked, retry"),
+            ))
+        }
+        Err(NestdError::Unavailable) => {
+            return Err(GErr::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "nests_unavailable",
+                "no Nest worker host is configured",
+            ))
+        }
+        Err(NestdError::Failed(_)) => {
+            return Err(GErr::new(
+                StatusCode::BAD_GATEWAY,
+                "nestd_failed",
+                "the worker host did not answer; nothing was revoked, retry",
+            ))
+        }
+    }
+    let nid = id.to_string();
+    state
+        .store
+        .group_tx(move |tx| -> GResult<()> {
+            let now = now_unix() as i64;
+            if let Some(address) = &address {
+                revoke_mailbox_in(tx, address)?;
+            }
+            tx.execute(
+                "UPDATE nest_enrollments SET revoked_at = ?2 WHERE nest_id = ?1 AND revoked_at IS NULL",
+                params![nid, now],
+            )?;
+            tx.execute(
+                "UPDATE nests SET state = 'deleted', deleted_at = COALESCE(deleted_at, ?2), updated_at = ?2 WHERE id = ?1",
+                params![nid, now],
+            )?;
+            crate::store::audit::append_in(tx, &audit)?;
+            Ok(())
+        })
+        .await?;
+    tracing::info!(nest = %id, "Nest deleted; mailbox credential revoked");
+    Ok(())
+}
+
 /// `DELETE /internal/v1/nests/{id}` — tear down the runtime, revoke the mailbox credential and
 /// any open code, and mark the row deleted. Idempotent: deleting a deleted Nest answers 200.
 async fn delete_nest(
@@ -945,37 +1105,11 @@ async fn delete_nest(
         if !nest_id_ok(&id) {
             return Err(nest_missing());
         }
-        let row = load_nest(&state, id.clone()).await?.ok_or_else(nest_missing)?;
+        let row = load_nest(&state, id.clone())
+            .await?
+            .ok_or_else(nest_missing)?;
         if row.deleted_at.is_some() && row.state == "deleted" {
             return Ok(Json(json!({ "nest_id": id, "state": "deleted" })).into_response());
-        }
-        match state
-            .nests
-            .call(reqwest::Method::DELETE, &format!("/v1/nests/{id}"), None)
-            .await
-        {
-            Ok((status, _)) if (200..300).contains(&status) || status == 404 => {}
-            Ok((status, _)) => {
-                return Err(GErr::new(
-                    StatusCode::BAD_GATEWAY,
-                    "nestd_failed",
-                    format!("the worker host answered {status}; nothing was revoked, retry"),
-                ))
-            }
-            Err(NestdError::Unavailable) => {
-                return Err(GErr::new(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "nests_unavailable",
-                    "no Nest worker host is configured",
-                ))
-            }
-            Err(NestdError::Failed(_)) => {
-                return Err(GErr::new(
-                    StatusCode::BAD_GATEWAY,
-                    "nestd_failed",
-                    "the worker host did not answer; nothing was revoked, retry",
-                ))
-            }
         }
         let audit = audit_row(
             &state,
@@ -985,27 +1119,7 @@ async fn delete_nest(
             &id,
             json!({ "service": service, "address": row.address }),
         );
-        let (nid, address) = (id.clone(), row.address.clone());
-        state
-            .store
-            .group_tx(move |tx| -> GResult<()> {
-                let now = now_unix() as i64;
-                if let Some(address) = &address {
-                    revoke_mailbox_in(tx, address)?;
-                }
-                tx.execute(
-                    "UPDATE nest_enrollments SET revoked_at = ?2 WHERE nest_id = ?1 AND revoked_at IS NULL",
-                    params![nid, now],
-                )?;
-                tx.execute(
-                    "UPDATE nests SET state = 'deleted', deleted_at = COALESCE(deleted_at, ?2), updated_at = ?2 WHERE id = ?1",
-                    params![nid, now],
-                )?;
-                crate::store::audit::append_in(tx, &audit)?;
-                Ok(())
-            })
-            .await?;
-        tracing::info!(nest = %id, "Nest deleted; mailbox credential revoked");
+        teardown(&state, &id, row.address.clone(), audit).await?;
         Ok(Json(json!({ "nest_id": id, "state": "deleted" })).into_response())
     }
     .await;

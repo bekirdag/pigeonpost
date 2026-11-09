@@ -1,0 +1,19 @@
+meta {
+  name: Retry a paid-but-unprovisioned Nest setup now (a person only)
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/v1/nest-setups/:id/retry
+  body: none
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
