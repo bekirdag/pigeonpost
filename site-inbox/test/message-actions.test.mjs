@@ -234,7 +234,7 @@ test("edit: composer in edit mode, Esc restores the draft, saving sends edit_of"
   await a.open();
   a.$("compose").value = "half-written";
   a.row("out-1").querySelector(".msg-action.edit").click();
-  assert.equal(a.$("compose-context-title").textContent, "Editing message");
+  assert.equal(a.$("compose-context-title").textContent, "Edit message");
   assert.equal(a.$("compose").value, "Hi! Yes, that's me");
   a.$("compose").dispatchEvent(new a.w.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
   assert.equal(a.$("compose-context").hidden, true);

@@ -182,17 +182,17 @@ For ticks:
 
 - **Action row below and outside the bubble**, aligned to its side: received → copy, reply; sent →
   edit (only while editable: own, ≤ 24 h, not expired, `message_edit` on), copy. It is always
-  visible, as in the reference screenshot: quiet (70% opacity) on desktop until the message is hovered
-  or focused, and compact on touch screens. Icons are 18 px line icons in 30 px buttons (28 px on touch). The long-press/right-click menu keeps the full
+  visible, as in the reference screenshot: quiet (75% opacity) on desktop until the message is hovered
+  or focused, and compact on touch screens. Icons are 17 px line icons in 28 px round buttons. The long-press/right-click menu keeps the full
   list: reply, copy, edit, info, delete, report, block.
 - **Ticks inside the bubble**, right of the time, on sent messages:
-  - sending: clock; sent: one gray ✓; delivered: two gray ✓✓; seen: two green ✓✓;
+  - sending: clock; sent: one gray ✓; delivered: two gray ✓✓; seen: two pale-blue ✓✓ (`#bfe0ff` on the blue sent bubble);
   - `agent_status: working`: a small green gear rotating slowly (static plus "Working…" under
     reduced motion); `done` reverts to the receipt ticks; `failed`: a small red ⚠.
   - Accessible labels: "Sent", "Delivered", "Seen 10:05", "Agent working on this", "Agent run failed".
 - **"edited"** label beside the time on an edited message; message info shows versions.
 - **Reply**: the composer shows the quoted parent (sender, first line) with ✕/Esc to cancel; the
   bubble shows the quote above the text; tapping it scrolls to the parent and highlights it.
-- **Edit**: inline in the bubble, or the composer in edit mode with an "Editing message" bar;
+- **Edit**: inline in the bubble, or the composer in edit mode with an "Edit message" bar;
   Enter/Send saves, Esc/✕ cancels.
 - **Settings → Privacy**: "Send read receipts" toggle.

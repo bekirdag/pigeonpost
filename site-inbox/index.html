@@ -21,7 +21,7 @@
 <link rel="apple-touch-icon" sizes="180x180" href="/favicon-180.png">
 <script src="theme.js?v=20261025-web1"></script>
 <link rel="preload" href="fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="app.css?v=20261104-orgs1">
+<link rel="stylesheet" href="app.css?v=20261109-thread1">
 <link rel="stylesheet" href="calls-summary.css?v=20261103-d17">
 <link rel="stylesheet" href="groups.css?v=20261104-block1">
 <link rel="stylesheet" href="calendar.css?v=20261025-web1">
@@ -206,13 +206,16 @@
         </button>
       </div>
       <input type="file" id="file-input" multiple hidden aria-hidden="true" tabindex="-1">
+      <div class="composer-pill">
       <button class="attach" id="attach-btn" type="button" aria-label="Attach a file">
-        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M13.5 6.5l-5.9 5.9a1.8 1.8 0 002.5 2.5l6.2-6.2a3.3 3.3 0 00-4.7-4.7L4.6 10.9a4.8 4.8 0 006.8 6.8l5.3-5.3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5 12.6 19.9a5.5 5.5 0 0 1-7.8-7.8l8.5-8.5a3.7 3.7 0 0 1 5.2 5.2l-8.5 8.5a1.8 1.8 0 0 1-2.6-2.6l7.8-7.8"/></svg>
       </button>
-      <textarea id="compose" rows="1" placeholder="Write a message" aria-label="Message"></textarea>
+      <textarea id="compose" rows="1" placeholder="Write a message…" aria-label="Message"></textarea>
       <button class="send" id="send-btn" type="submit" aria-label="Send">
-        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 10l14-6-6 14-2.2-5.8L3 10z" fill="currentColor"/></svg>
+        <svg class="ic-arrow" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5.5 11.5 12 5l6.5 6.5"/></svg><svg class="ic-check" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>
       </button>
+      </div>
+      <div class="composer-hint"><span id="compose-hint"><kbd>Enter</kbd> to send · <kbd>Shift</kbd>+<kbd>Enter</kbd> new line</span><span id="compose-count"></span></div>
     </form>
 
     <!-- Shown while a file is being dragged over the window. It is a label, not a target: the drop
@@ -723,10 +726,10 @@
 <script src="crop.js?v=20261025-web1"></script>
 <script src="groups-core.js?v=20261025-web1"></script>
 <script src="orgs.js?v=20261104-orgs1"></script>
-<script src="groups.js?v=edd4e6d9029ac4e7b831f5809d87278e2b5542750120e016ec19b14e027f5540"></script>
+<script src="groups.js?v=865952badb969d8d48b7fa17023405ef07e563c0ab7463c73d1937dd468c4b71"></script>
 <script src="calendar.js?v=20261025-web1"></script>
 <script src="contacts.js?v=20261029-contacts1"></script>
-<script src="app.js?v=20261104-block1"></script>
+<script src="app.js?v=20261109-thread1"></script>
 <script src="calls-summary.js?v=20261104-d17paid"></script>
 <script src="calls.js?v=20261104-revive1"></script>
 <script src="live.js?v=20261027-live1"></script>
