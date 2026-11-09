@@ -54,7 +54,18 @@ function Wait-Like([string]$Pattern, [string]$Detail) {
     throw $Detail
 }
 function Invoke-Control([string]$Name) { (Wait-Control $Name).GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke(); Start-Sleep -Milliseconds 250 }
-function Set-Text([string]$Name, [string]$Value) { (Wait-Control $Name).GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($Value) }
+function Set-Text([string]$Name, [string]$Value) {
+    # A dialog can share its title with its field, so only an editable control counts here.
+    $field = [System.Windows.Automation.AndCondition]::new(
+        [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, $Name),
+        [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Edit))
+    for ($n = 0; $n -lt 75; $n++) {
+        $element = Find $field
+        if ($element -and $element.Current.IsEnabled) { $element.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($Value); return }
+        Start-Sleep -Milliseconds 200
+    }
+    throw "Contacts UI field unavailable: $Name"
+}
 function State { try { if (Test-Path $stateFile) { return Get-Content $stateFile -Raw | ConvertFrom-Json } } catch { }; return $null }
 function Wait-Check([scriptblock]$Predicate, [string]$Detail) {
     for ($n = 0; $n -lt 75; $n++) { if (& $Predicate) { $checks.Add($Detail); return }; Start-Sleep -Milliseconds 200 }; throw $Detail
