@@ -63,8 +63,8 @@ when the postbox reports the `nests` feature.
 **Play catalog**
 - Subscriptions: `pigeonpost.nests.ai.starter`, `pigeonpost.nests.ai.plus` and
   `pigeonpost.nests.host.starter`, each with base plan `monthly` (`P1M`).
-- They are created by `.github/scripts/play_nest_catalog.py` once the catalog permission exists.
-  Until then Play returns no product and the cards say "Not available".
+- They exist as drafts in Play Console. Until they are activated, Play returns no product and the
+  cards say "Not available".
 - Prices come only from Play `ProductDetails`.
 
 **Purchase order**
@@ -85,6 +85,12 @@ The **server** acknowledges, only after it has recorded the purchase. The app ne
 
 **A Nest's page:** status, Chat, Pause/Resume, Export (SAF), files (SAF picker, up to 25 MB,
 `x-file-name` percent-encoded), approvals (approve/reject sends the `args_hash` shown), usage,
-rename, and delete with the name typed back.
+rename, and delete with the name typed back. A free paid slot offers "Add a Nest"
+(`POST /v1/nests`); a company's Nest admins can add one from the company context
+(`POST /v1/orgs/{org}/nests`). Exports are streamed to the chosen file, and a failed one is removed.
+
+**A Nest conversation:** the header polls `GET /v1/nests/{nest}` and its approvals every 15 s while
+the conversation is in the foreground, shows the status and how many actions wait, and links to the
+Nest's page. Everything above needs the `nests` feature.
 
 **Coverage:** `NestStoreTest` (JVM) and `NestProductsUiTest` (instrumented).

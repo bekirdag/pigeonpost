@@ -125,7 +125,7 @@ fun ConversationPane(state: InboxState, store: InboxStore, model: InboxViewModel
             if (wide && subject?.id?.isNotEmpty() == true) ActionIcon("Delete subject", Icons.Outlined.DeleteOutline) { deleteSubject = true }
         }
         Seam(Modifier.fillMaxWidth().height(1.dp))
-        if (state.has(dev.pigeonpost.core.nests.NestRules.FEATURE)) NestStatusBar(model.nests, peer)
+        if (state.has(dev.pigeonpost.core.nests.NestRules.FEATURE)) NestStatusBar(model.nests, peer, model::openNest)
         if (!wide) {
             Row(Modifier.fillMaxWidth().padding(end = 4.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()).padding(start = 12.dp, end = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp),

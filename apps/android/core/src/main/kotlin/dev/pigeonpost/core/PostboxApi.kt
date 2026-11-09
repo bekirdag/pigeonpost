@@ -234,11 +234,28 @@ class PostboxClient(
     }
     override suspend fun renameNest(id: String, label: String) { request(nestPath(id), "PATCH", json = buildJsonObject { put("label", label) }) }
     override suspend fun deleteNest(id: String, confirm: String) { request(nestPath(id), "DELETE", json = buildJsonObject { put("confirm", confirm) }) }
-    override suspend fun exportNest(id: String): ByteArray = withContext(
+    override suspend fun exportNest(id: String, out: java.io.OutputStream): Unit = withContext(
         Dispatchers.IO + (currentCoroutineContext()[AuthorizationContext] ?: AuthorizationContext(tokens.authorizationLease?.child()))
     ) {
+        val max = 512L * 1024 * 1024 + 64L * 1024 * 1024
         val request = Request.Builder().url(url(nestPath(id, "/export"))).header("Accept", "application/zip").get().build()
-        authenticated(request).use { limitedBytes(it, 512L * 1024 * 1024 + 64L * 1024 * 1024) }
+        authenticated(request).use { response ->
+            requireCurrent(response)
+            val body = response.body ?: throw ApiException(response.code, "bad_response", "The postbox returned an unreadable response.")
+            if (body.contentLength() > max) throw ApiException(response.code, "response_too_large", "The response is too large.")
+            val input = body.byteStream()
+            val buffer = ByteArray(64 * 1024)
+            var written = 0L
+            while (true) {
+                currentCoroutineContext().ensureActive()
+                val n = input.read(buffer)
+                if (n < 0) break
+                written += n
+                if (written > max) throw ApiException(response.code, "response_too_large", "The response is too large.")
+                out.write(buffer, 0, n)
+            }
+            requireCurrent(response)
+        }
     }
     override suspend fun nestOrganizations(): List<dev.pigeonpost.core.nests.OrgSummary> {
         val root = WireJson.parseToJsonElement(request("orgs").text) as? JsonObject ?: return emptyList()
@@ -247,10 +264,15 @@ class PostboxClient(
             val o = item as? JsonObject ?: return@mapNotNull null
             val org = (o["org"] as? JsonObject) ?: o
             val id = (org["id"] as? JsonPrimitive)?.contentOrNull ?: return@mapNotNull null
-            dev.pigeonpost.core.nests.OrgSummary(id, (org["name"] as? JsonPrimitive)?.contentOrNull.orEmpty())
+            val roles = (org["my_roles"] as? kotlinx.serialization.json.JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+            dev.pigeonpost.core.nests.OrgSummary(id, (org["name"] as? JsonPrimitive)?.contentOrNull.orEmpty(), roles)
         }
     }
     override suspend fun orgNests(orgId: String) = decode<dev.pigeonpost.core.nests.OrgNests>(request("orgs/${safeId(orgId)}/nests"))
+    override suspend fun createNest(label: String) = decode<dev.pigeonpost.core.nests.NestCreated>(request("nests", "POST", json = buildJsonObject { put("label", label) }))
+    override suspend fun createOrgNest(orgId: String, handle: String, label: String) = decode<dev.pigeonpost.core.nests.NestCreated>(request("orgs/${safeId(orgId)}/nests", "POST", json = buildJsonObject {
+        put("handle", handle); put("label", label)
+    }))
 
     override suspend fun whoami(identity: String) = decode<WhoAmI>(request("whoami", identity = identity))
     override suspend fun createIdentity(handle: String?) = decode<CreatedIdentity>(request("identities", "POST", json = buildJsonObject { handle?.let { put("handle", it) } })).address

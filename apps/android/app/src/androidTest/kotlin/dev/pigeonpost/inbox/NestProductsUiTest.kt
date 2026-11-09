@@ -3,6 +3,7 @@ package dev.pigeonpost.inbox
 import android.content.Context
 import android.content.Intent
 import androidx.activity.compose.setContent
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.test.*
@@ -12,6 +13,7 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.pigeonpost.core.*
 import dev.pigeonpost.core.nests.*
+import dev.pigeonpost.inbox.ui.NestStatusBar
 import dev.pigeonpost.inbox.ui.PigeonpostTheme
 import dev.pigeonpost.inbox.ui.ProductsDialog
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -47,7 +49,9 @@ class NestProductsUiTest {
         override suspend fun nestAction(id: String, action: String) {}
         override suspend fun renameNest(id: String, label: String) {}
         override suspend fun deleteNest(id: String, confirm: String) {}
-        override suspend fun exportNest(id: String) = ByteArray(0)
+        override suspend fun exportNest(id: String, out: java.io.OutputStream) {}
+        override suspend fun createNest(label: String) = NestCreated("nst_00bb", "/k/two", "running")
+        override suspend fun createOrgNest(orgId: String, handle: String, label: String) = NestCreated("nst_00cc", "/wodo/hr", "running")
         override suspend fun nestOrganizations() = emptyList<OrgSummary>()
         override suspend fun orgNests(orgId: String) = OrgNests()
     }
@@ -61,6 +65,24 @@ class NestProductsUiTest {
         override suspend fun purchases() = emptyList<PlayPurchase>()
         override fun launch(productId: String, accountId: String) { launches++ }
     }
+    @Test fun aNestConversationHeaderShowsStatusAndLeadsToItsApprovals() {
+        var opened: String? = null
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        ActivityScenario.launch<MainActivity>(Intent(context, MainActivity::class.java).putExtra("pigeonpost.fixtures", "inbox")).use { scenario ->
+            scenario.onActivity { activity -> activity.setContent {
+                val scope = rememberCoroutineScope()
+                val store = remember { NestStore(Api(), null, scope) }
+                LaunchedEffect(Unit) { store.load() }
+                PigeonpostTheme { NestStatusBar(store, "/k/nest") { opened = it } }
+            } }
+            ui.waitUntil(5_000) { ui.onAllNodesWithText("Review").fetchSemanticsNodes().isNotEmpty() }
+            ui.onNodeWithText("Nest · Working… · 1 action to approve").assertExists()
+            ui.onNodeWithText("Review").performClick()
+            ui.waitUntil(5_000) { opened != null }
+            assertEquals("nst_00aa", opened)
+        }
+    }
+
     private fun show(api: Api, billing: Billing): ActivityScenario<MainActivity> {
         val context = ApplicationProvider.getApplicationContext<Context>()
         return ActivityScenario.launch<MainActivity>(Intent(context, MainActivity::class.java).putExtra("pigeonpost.fixtures", "inbox")).also { scenario ->
@@ -97,6 +119,7 @@ class NestProductsUiTest {
             ui.onNodeWithText("plan.pdf").assertExists()
             ui.onNodeWithText("Send a message to /bob").performScrollTo().assertExists()
             ui.onNodeWithText("Meeting moved to 3pm").assertExists()
+            ui.onNodeWithText("Check code h1").performScrollTo().assertExists()
             ui.onNodeWithText("Approve").performScrollTo().performClick()
             ui.waitUntil(5_000) { api.decided != null }
             assertEquals("nap_1:true:h1", api.decided)

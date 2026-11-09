@@ -18,10 +18,11 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import dev.pigeonpost.core.nests.*
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.contentOrNull
 
 /** Header text of a Nest's status (build plan B3). */
 fun nestStatusLabel(status: String, reason: String?): String = when (status) {
@@ -51,7 +52,7 @@ fun ProductsDialog(store: NestStore, dismiss: () -> Unit, openHandles: () -> Uni
     val state by store.state.collectAsStateWithLifecycle()
     var tab by rememberSaveable { mutableIntStateOf(1) }
     val snackbar = remember { SnackbarHostState() }
-    LaunchedEffect(Unit) { store.load(); store.loadOrganizations() }
+    LaunchedEffect(Unit) { store.load() }
     LaunchedEffect(state.notice, state.error) { (state.error ?: state.notice)?.let { snackbar.showSnackbar(it); store.clearMessages() } }
     val detail = state.detail
     PageDialog(if (detail != null) detail.view.label.ifEmpty { "Nest" } else "Products", dismiss, back = if (detail != null) ({ store.close() }) else null) {
@@ -106,10 +107,15 @@ private fun NestsTab(store: NestStore, state: NestState, openLink: (String) -> U
         val org = state.orgNests
         Text("${context.name.ifEmpty { "Company" }} Nests", style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
         org?.allowance?.let { Text("${it.used} of ${it.slots} Nest slots in use", style = MaterialTheme.typography.bodySmall) }
-        if (org != null && org.nests.isEmpty()) Text("No company Nests you can use. Company Nests are bought and created by the company's admins on the web.")
+        if (org != null && org.nests.isEmpty() && !context.managesNests) Text("No company Nests you can use. An admin of the company adds them and gives people access.")
         org?.nests.orEmpty().forEach { n ->
             ListItem(headlineContent = { Text(n.label) }, supportingContent = { Text("${n.address.orEmpty()} · ${if (n.role == "owner") "Admin" else "Operator"}") },
                 trailingContent = { TextButton({ store.open(n.nestId) }) { Text("Open") } })
+        }
+        if (context.managesNests && org != null) {
+            if (org.allowance.slots == 0) Text("This company has no Nest package yet.", style = MaterialTheme.typography.bodySmall)
+            else if (org.allowance.used >= org.allowance.slots) Text("Every company Nest slot is in use.", style = MaterialTheme.typography.bodySmall)
+            else AddOrgNest(store, state)
         }
         return
     }
@@ -137,6 +143,7 @@ private fun NestsTab(store: NestStore, state: NestState, openLink: (String) -> U
             trailingContent = { TextButton({ store.open(n.nestId) }, Modifier.testTag("openNest")) { Text("Open") } },
             modifier = Modifier.semantics(mergeDescendants = true) { stateDescription = nestStatusLabel(n.status, n.statusReason) })
     }
+    if (state.funding != null && state.snapshot?.setups.orEmpty().isEmpty() && allowance != null && allowance.used < allowance.slots) AddNest(store, state)
     HorizontalDivider()
     Text("Nest packages", style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
     Text("A Nest is an AI agent with its own private workspace. Allowances are shared by all Nests in a package.", style = MaterialTheme.typography.bodySmall)
@@ -147,6 +154,28 @@ private fun NestsTab(store: NestStore, state: NestState, openLink: (String) -> U
         OutlinedButton({ store.load() }, enabled = !state.busy, modifier = Modifier.testTag("restoreNests")) { Text("Restore purchases") }
         if (state.funding?.source == "google") TextButton({ openLink(manageUrl(state)) }) { Text("Manage subscription") }
     }
+}
+
+/** A free slot of the person's own package. The first Nest of a purchase is set up by the server. */
+@Composable
+private fun AddNest(store: NestStore, state: NestState) {
+    var label by rememberSaveable { mutableStateOf("") }
+    OutlinedTextField(label, { label = it.take(64) }, Modifier.fillMaxWidth().testTag("addNestName"), label = { Text("Name for a new Nest") }, singleLine = true)
+    Button({ store.create(label); label = "" }, enabled = state.canAddNest && label.isNotBlank(), modifier = Modifier.testTag("addNest")) { Text("Add a Nest") }
+}
+
+/** A company Nest is an agent address of the organization, so it needs a handle of its own. */
+@Composable
+private fun AddOrgNest(store: NestStore, state: NestState) {
+    var handle by rememberSaveable(state.context?.id) { mutableStateOf("") }
+    var label by rememberSaveable(state.context?.id) { mutableStateOf("") }
+    HorizontalDivider()
+    Text("Add a company Nest", style = MaterialTheme.typography.titleSmall, modifier = Modifier.semantics { heading() })
+    OutlinedTextField(handle, { handle = it.take(64) }, Modifier.fillMaxWidth().testTag("addOrgNestHandle"), label = { Text("Handle") }, singleLine = true)
+    OutlinedTextField(label, { label = it.take(64) }, Modifier.fillMaxWidth().testTag("addOrgNestName"), label = { Text("Name") }, singleLine = true)
+    Text("It uses one of the company's agent addresses and one Nest slot.", style = MaterialTheme.typography.bodySmall)
+    Button({ store.createForOrganization(handle, label); handle = ""; label = "" }, enabled = state.canAddOrgNest && handle.isNotBlank() && label.isNotBlank(),
+        modifier = Modifier.testTag("addOrgNest")) { Text("Add company Nest") }
 }
 
 private fun manageUrl(state: NestState): String {
@@ -198,8 +227,17 @@ private fun NestDetailPage(store: NestStore, state: NestState, detail: NestDetai
     view.deleteAfter?.let { Text("Unpaid: it will be deleted after ${java.text.DateFormat.getDateInstance().format(java.util.Date(it * 1000))}. Export it first.", color = MaterialTheme.colorScheme.error) }
     if (manage) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         if (view.state == "paused") OutlinedButton({ store.resume() }, enabled = !state.busy && (view.pausedReason == null || view.pausedReason == "owner")) { Text("Resume") }
-        else OutlinedButton({ store.pause() }, enabled = !state.busy) { Text("Pause") }
+        else if (view.state in PAUSABLE) OutlinedButton({ store.pause() }, enabled = !state.busy) { Text("Pause") }
         OutlinedButton(exportTo, enabled = !state.busy) { Text("Export") }
+    }
+    HorizontalDivider()
+    // Approvals come first: a Nest's message in chat sends the person here.
+    Text("Approvals", style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
+    val pending = detail.approvals.filter { it.status == "pending" }
+    if (pending.isEmpty()) Text("Nothing waits for your approval.", style = MaterialTheme.typography.bodySmall)
+    pending.forEach { card -> ApprovalCard(store, state, card) }
+    detail.approvals.filter { it.status != "pending" }.take(5).forEach { card ->
+        Text("${card.to ?: card.tool} · ${NestRules.approvalOutcome(card.status, card.result)}", style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("approvalHistory"))
     }
     HorizontalDivider()
     // Files
@@ -210,21 +248,17 @@ private fun NestDetailPage(store: NestStore, state: NestState, detail: NestDetai
     detail.files?.files.orEmpty().forEach { f ->
         val coverage = f.coverage.total?.let { t -> " · text in ${f.coverage.text ?: 0} of $t" }.orEmpty()
         ListItem(headlineContent = { Text(f.name) },
-            supportingContent = { Text("${fileStatus(f.status)}$coverage${f.reason?.let { " · $it" }.orEmpty()}") },
+            supportingContent = { Text("${fileStatus(f.status)}$coverage${(f.reason ?: f.warnings.firstOrNull())?.let { " · $it" }.orEmpty()}") },
             trailingContent = { TextButton({ store.deleteFile(f.fileId) }, Modifier.semantics { contentDescription = "Delete ${f.name}" }) { Text("Delete") } })
     }
-    HorizontalDivider()
-    // Approvals
-    Text("Approvals", style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
-    val pending = detail.approvals.filter { it.status == "pending" }
-    if (pending.isEmpty()) Text("Nothing waits for your approval.", style = MaterialTheme.typography.bodySmall)
-    pending.forEach { card -> ApprovalCard(store, state, card) }
     HorizontalDivider()
     // Usage
     detail.usage?.let { u ->
         Text("This month", style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
-        Text("AI: ${u.inputTokens.used ?: 0} of ${u.inputTokens.limit ?: 0} input tokens, ${u.outputTokens.used ?: 0} of ${u.outputTokens.limit ?: 0} output tokens", style = MaterialTheme.typography.bodySmall)
-        Text("Running: ${(u.runningSecs ?: 0) / 3600} h ${((u.runningSecs ?: 0) % 3600) / 60} min · Files: ${bytesLabel(u.filesBytes)}", style = MaterialTheme.typography.bodySmall)
+        val noModel = (u.inputTokens.limit ?: 0L) == 0L && (u.outputTokens.limit ?: 0L) == 0L
+        Text(if (noModel) "AI: none connected" else "AI: ${u.inputTokens.used ?: 0} of ${u.inputTokens.limit ?: 0} input tokens, ${u.outputTokens.used ?: 0} of ${u.outputTokens.limit ?: 0} output tokens", style = MaterialTheme.typography.bodySmall)
+        val hours = u.`package`?.activeHoursPooled?.let { " of $it h shared by your package" }.orEmpty()
+        Text("Running: ${(u.runningSecs ?: 0) / 3600} h ${((u.runningSecs ?: 0) % 3600) / 60} min$hours · Files: ${bytesLabel(u.filesBytes)}", style = MaterialTheme.typography.bodySmall)
     }
     if (manage) {
         HorizontalDivider()
@@ -243,21 +277,24 @@ private fun NestDetailPage(store: NestStore, state: NestState, detail: NestDetai
 /** One approval card: exactly what will happen, shown before anything happens. */
 @Composable
 private fun ApprovalCard(store: NestStore, state: NestState, card: NestApproval) {
-    val args = card.call?.get("args") as? kotlinx.serialization.json.JsonObject
-    val to = (args?.get("to") as? JsonPrimitive)?.contentOrNull
-    val body = (args?.get("body") as? JsonPrimitive)?.contentOrNull
     Card(Modifier.fillMaxWidth().testTag("approval-${card.approvalId}")) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(if (card.tool == "send_message") "Send a message to ${to.orEmpty()}" else card.tool, fontWeight = FontWeight.Medium)
-            body?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
-            Text("Your Nest asked for this. Nothing is sent unless you approve it.", style = MaterialTheme.typography.bodySmall)
+            Text(if (card.tool == "send_message") "Send a message to ${card.to.orEmpty()}" else card.tool, fontWeight = FontWeight.Medium)
+            card.body?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
+            Text(if (card.reviewable) "Your Nest asked for this. Nothing is sent unless you approve it."
+                else "This version of the app cannot show this request in full, so it cannot be approved here.", style = MaterialTheme.typography.bodySmall)
+            val expires = if (card.expiresAt > 0) " · expires ${java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT).format(java.util.Date(card.expiresAt * 1000))}" else ""
+            Text("Check code ${card.checkCode}$expires", style = MaterialTheme.typography.labelSmall)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button({ store.decide(card, true) }, enabled = !state.busy) { Text("Approve") }
+                if (card.reviewable) Button({ store.decide(card, true) }, enabled = !state.busy) { Text("Approve") }
                 OutlinedButton({ store.decide(card, false) }, enabled = !state.busy) { Text("Reject") }
             }
         }
     }
 }
+
+/** States a person can pause. Setting-up, failed and already paused Nests offer no Pause. */
+private val PAUSABLE = setOf("ready", "running", "stopped")
 
 private fun fileStatus(status: String) = when (status) {
     "parsed" -> "Ready"
@@ -274,18 +311,28 @@ private fun bytesLabel(b: Long): String = when {
     else -> "$b B"
 }
 
-/** Above a Nest conversation: what the Nest is doing (B3 status header). */
+/** Above a Nest conversation: what the Nest is doing and what waits for the person (B3, B4). */
 @Composable
-fun NestStatusBar(store: NestStore?, peer: String) {
+fun NestStatusBar(store: NestStore?, peer: String, openNest: (String) -> Unit) {
     val nests = store ?: return
     val state by nests.state.collectAsStateWithLifecycle()
-    val nest = state.snapshot?.nests?.firstOrNull { it.address == peer } ?: return
+    val id = state.nestIdFor(peer) ?: return
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(peer, id) { lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { nests.watchChat(peer) } }
+    val chat = state.chat?.takeIf { it.peer == peer }
+    // An organization's Nest is known only by address until the first status arrives.
+    val nest = chat?.view ?: state.snapshot?.nests?.firstOrNull { it.address == peer } ?: return
     val label = nestStatusLabel(nest.status, nest.statusReason)
+    val waiting = chat?.waiting ?: 0
+    val summary = when (waiting) { 0 -> label; 1 -> "$label · 1 action to approve"; else -> "$label · $waiting actions to approve" }
     Surface(Modifier.fillMaxWidth().testTag("nestStatusBar"), color = MaterialTheme.colorScheme.secondaryContainer) {
-        Row(Modifier.padding(horizontal = 14.dp, vertical = 6.dp).semantics(mergeDescendants = true) { role = Role.Image; contentDescription = "Nest status: $label" },
-            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (nest.status == "working") CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
-            Text("Nest · $label", style = MaterialTheme.typography.labelLarge)
+        Row(Modifier.padding(start = 14.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.weight(1f).padding(vertical = 6.dp).semantics(mergeDescendants = true) { role = Role.Image; contentDescription = "Nest status: $summary" },
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (nest.status == "working") CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+                Text("Nest · $summary", style = MaterialTheme.typography.labelLarge)
+            }
+            TextButton({ openNest(id) }, Modifier.testTag("nestStatusOpen")) { Text(if (waiting > 0) "Review" else "Details") }
         }
     }
 }

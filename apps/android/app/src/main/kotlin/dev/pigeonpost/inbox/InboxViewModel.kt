@@ -157,6 +157,8 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
     private val productsPage = MutableStateFlow(false)
     val productsOpen = productsPage.asStateFlow()
     fun openProducts() { if (nests != null) productsPage.value = true }
+    /** From a Nest conversation's header: straight to that Nest's page. */
+    fun openNest(id: String) { val store = nests ?: return; productsPage.value = true; store.open(id) }
     fun closeProducts() { productsPage.value = false; nests?.close() }
     private val notesPage = MutableStateFlow(false)
     val meetingNotesOpen = notesPage.asStateFlow()
@@ -199,11 +201,12 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
         if (uri == null) return
         storeScope.launch {
             val app = getApplication<Application>()
-            val name = app.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
-                if (c.moveToFirst()) c.getString(0) else null
-            } ?: "file"
-            val bytes = withContext(Dispatchers.IO) {
-                app.contentResolver.openInputStream(uri)?.use { input ->
+            // The picked file belongs to another app: it may be gone or refused by the time we read it.
+            val (name, bytes) = try { withContext(Dispatchers.IO) {
+                val name = app.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                    if (c.moveToFirst()) c.getString(0) else null
+                } ?: "file"
+                name to app.contentResolver.openInputStream(uri)?.use { input ->
                     // One byte over the limit is enough to refuse; never read a huge file whole.
                     val limit = dev.pigeonpost.core.nests.NestRules.MAX_UPLOAD_BYTES + 1
                     val out = java.io.ByteArrayOutputStream()
@@ -215,16 +218,18 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
                     }
                     out.toByteArray()
                 }
-            } ?: return@launch
-            store.upload(name, bytes)
+            } } catch (failure: java.io.IOException) { store.report("Could not read that file."); return@launch }
+            catch (failure: SecurityException) { store.report("Could not read that file."); return@launch }
+            store.upload(name, bytes ?: return@launch)
         }
     }
     /** Where the person chose to save the open Nest's export. */
     fun nestExportTo(uri: Uri?) {
         val store = nests ?: return
         if (uri == null) return
-        val app = getApplication<Application>()
-        store.export { bytes -> withContext(Dispatchers.IO) { app.contentResolver.openOutputStream(uri)?.use { it.write(bytes) } ?: error("Could not save the export.") } }
+        val resolver = getApplication<Application>().contentResolver
+        store.export(open = { resolver.openOutputStream(uri) ?: error("Could not save the export.") },
+            discard = { android.provider.DocumentsContract.deleteDocument(resolver, uri) })
     }
     private val loadingAttachments = MutableStateFlow<Map<DraftKey, Int>>(emptyMap())
     val stagingAttachments = loadingAttachments.asStateFlow()
