@@ -31,7 +31,6 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
-      TMPDIR: ${{ runner.temp }}
       ONLY: ${{ github.event.inputs.only || 'audio,mesh' }}
       CHROME: /usr/bin/google-chrome
     steps:
@@ -40,9 +39,13 @@ jobs:
         with:
           node-version: '24'
       - name: Call on production with synthetic media
+        env:
+          TMPDIR: ${{ runner.temp }}
         run: node tests/e2e-calls/prod-smoke.mjs
       - name: Delete accounts a killed run left behind
         if: always()
+        env:
+          TMPDIR: ${{ runner.temp }}
         run: |
           shopt -s nullglob
           for f in "$RUNNER_TEMP"/call-smoke-accounts-*.json; do
