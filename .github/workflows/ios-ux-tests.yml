@@ -208,7 +208,9 @@ jobs:
           python3 - <<'PY'
           import json, os, subprocess
           devices = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'devices', 'available', '--json']))['devices']
-          phones = [d for runtime, entries in devices.items()
+          # Newest first: an app built with the iOS 18.5 SDK links libraries older runtimes lack.
+          version = lambda runtime: [int(n) for n in runtime.rsplit('.', 1)[1].split('-')[1:]]
+          phones = [d for runtime, entries in sorted(devices.items(), key=lambda item: version(item[0]) if item[0].startswith('com.apple.CoreSimulator.SimRuntime.iOS-') else [], reverse=True)
                     if runtime.startswith('com.apple.CoreSimulator.SimRuntime.iOS-18-')
                     for d in entries if 'iPhone' in d['name']]
           assert phones, 'No iOS 18 iPhone simulator available for StoreKit testing'
