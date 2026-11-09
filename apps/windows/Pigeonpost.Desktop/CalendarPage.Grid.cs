@@ -17,6 +17,8 @@ internal sealed partial class CalendarPage
     private bool scrollToHours = true;
     private double? hoursTop;
     private DispatcherTimer? nowTimer;
+    private (IReadOnlyList<CalendarDay> Days, NodaTime.DateTimeZone Zone)? nowGrid;
+    private (Border Line, TextBlock Label, int Day)? nowMarker;
     private const double HourHeight = 48;
 
     private static string RangeTitle(CalendarState state)
@@ -58,6 +60,7 @@ internal sealed partial class CalendarPage
         var days = CalendarTimeGrid.Days(calendarView, state.SelectedDay, state.WeekStart);
         var blocks = CalendarTimeGrid.Layout(state.Occurrences, days, zone);
         var now = CalendarTimeGrid.Now(NodaTime.SystemClock.Instance.GetCurrentInstant(), days, zone);
+        nowGrid = (days, zone); nowMarker = null;
         var culture = CultureInfo.CurrentCulture;
 
         // Day headers: selecting one moves the day view and the agenda's day there.
@@ -139,13 +142,14 @@ internal sealed partial class CalendarPage
             if (now is { } n && n.Day == i)
             {
                 nowLine = new Border { Height = 2, Background = new SolidColorBrush(Colors.Red), IsHitTestVisible = false };
-                Canvas.SetTop(nowLine, n.Minute / 60 * HourHeight - 1); Canvas.SetZIndex(nowLine, 10);
+                Canvas.SetZIndex(nowLine, 10);
                 canvas.Children.Add(nowLine);
                 // The line itself has no accessible peer; this label says where "now" is for Narrator and the UI test.
                 var label = new TextBlock { Text = "now", FontSize = 9, Foreground = new SolidColorBrush(Colors.Red), IsHitTestVisible = false };
-                AutomationProperties.SetName(label, "Now, " + TimeOnly.FromTimeSpan(TimeSpan.FromMinutes(Math.Floor(n.Minute))).ToString("HH:mm", CultureInfo.InvariantCulture));
-                Canvas.SetTop(label, Math.Max(0, n.Minute / 60 * HourHeight - 13)); Canvas.SetLeft(label, 2); Canvas.SetZIndex(label, 11);
+                Canvas.SetLeft(label, 2); Canvas.SetZIndex(label, 11);
                 canvas.Children.Add(label);
+                PlaceNow(nowLine, label, n.Minute);
+                nowMarker = (nowLine, label, i);
             }
             canvas.SizeChanged += (_, e) =>
             {
@@ -174,5 +178,18 @@ internal sealed partial class CalendarPage
         nowTimer.Tick -= NowTick; nowTimer.Tick += NowTick;
         if (now is not null) nowTimer.Start(); else nowTimer.Stop();
     }
-    private void NowTick(object? sender, object e) { if (disposed || calendarView == CalendarViewMode.Month) { nowTimer?.Stop(); return; } Render(); }
+    private void NowTick(object? sender, object e)
+    {
+        if (disposed || calendarView == CalendarViewMode.Month) { nowTimer?.Stop(); return; }
+        var now = nowGrid is { } grid ? CalendarTimeGrid.Now(NodaTime.SystemClock.Instance.GetCurrentInstant(), grid.Days, grid.Zone) : null;
+        // Move the line in place. Rebuilding the grid every minute would drop keyboard and Narrator focus.
+        if (now is { } n && nowMarker is { } marker && n.Day == marker.Day) { PlaceNow(marker.Line, marker.Label, n.Minute); return; }
+        Render();
+    }
+    private static void PlaceNow(Border line, TextBlock label, double minute)
+    {
+        Canvas.SetTop(line, minute / 60 * HourHeight - 1);
+        Canvas.SetTop(label, Math.Max(0, minute / 60 * HourHeight - 13));
+        AutomationProperties.SetName(label, "Now, " + TimeOnly.FromTimeSpan(TimeSpan.FromMinutes(Math.Floor(minute))).ToString("HH:mm", CultureInfo.InvariantCulture));
+    }
 }

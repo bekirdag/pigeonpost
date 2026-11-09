@@ -71,12 +71,12 @@ try {
     $today = (State).today
     Invoke-Control 'Week view'; $null = Wait-Control 'Week time grid'
     $null = Wait-Control "Open event Design review, 09:00–10:00, $today"
-    Check ($null -ne (Like 'Now, *')) 'The week grid places today''s events by time and draws the now line'
+    Wait-Check { $null -ne (Like 'Now, *') } 'The week grid places today''s events by time and draws the now line'
     Check ($null -ne (Control 'Next week') -and $null -ne (Control 'Previous week')) 'Week navigation steps by a week'
     Capture 'calendar-week.png'
     Invoke-Control 'Day view'; $null = Wait-Control 'Day time grid'
     $null = Wait-Control "Open event Design review, 09:00–10:00, $today"
-    Check ($null -ne (Like 'Now, *')) 'The day grid shows the now line on today'
+    Wait-Check { $null -ne (Like 'Now, *') } 'The day grid shows the now line on today'
     Capture 'calendar-day.png'
     Invoke-Control 'Next day'
     Wait-Check { $null -eq (Like 'Now, *') } 'Another day has no now line'
