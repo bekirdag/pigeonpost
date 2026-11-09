@@ -145,6 +145,13 @@ test("the signed-out admin gate is in Turkish", async (t) => {
   assert.match($("#ppe-account").textContent, /Giriş yap/);
 });
 
+test("the suspended banner with its deletion date is fully in Turkish", (t) => {
+  const { window } = tr(t, "app.html", { url: "https://enterprise.pigeonpost.dev/app" });
+  const out = window.PPE_I18N.t("The organization is suspended: company addresses don't receive mail. Renew in Billing to restore it. If it isn't renewed, it will be deleted on 3 Aralık 2026, with its rooms and company addresses.");
+  assert.match(out, /Yenilenmezse 3 Aralık 2026 tarihinde/);
+  assert.doesNotMatch(out, /organization is suspended|If it isn't renewed/);
+});
+
 test("every Turkish entry still matches text in the pages, with the same placeholders", () => {
   const all = sources.map((f) => readFileSync(f, "utf8")).join("\n")
     .replace(/&amp;/g, "&").replace(/\\"/g, "\"").replace(/\\n/g, "\n");

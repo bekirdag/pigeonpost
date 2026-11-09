@@ -106,8 +106,9 @@
     if (s === "suspended") {
       // D-14: a suspended organization is deleted on this date unless it is renewed first.
       const at = app.org.deletion_at ? new Date(app.org.deletion_at * 1000).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" }) : null;
-      return el("div", { class: "banner banner-danger" }, "The organization is suspended: company addresses don't receive mail. Renew in Billing to restore it." +
-        (at ? ` If it isn't renewed, it will be deleted on ${at}, with its rooms and company addresses.` : ""));
+      return el("div", { class: "banner banner-danger" }, at
+        ? `The organization is suspended: company addresses don't receive mail. Renew in Billing to restore it. If it isn't renewed, it will be deleted on ${at}, with its rooms and company addresses.`
+        : "The organization is suspended: company addresses don't receive mail. Renew in Billing to restore it.");
     }
     return null;
   }
