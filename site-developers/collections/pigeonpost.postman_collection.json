@@ -1545,6 +1545,498 @@
           }
         },
         {
+          "name": "One of this account's Nests with its status header (feature `nests`)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/nests/:nest",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "nests",
+                ":nest"
+              ],
+              "variable": [
+                {
+                  "key": "nest",
+                  "value": "",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "`status` is what a client shows above the conversation: `ready`, `working` (a run reported `working` in the last 15 minutes), `needs_you` (`status_reason: payment`), `paused` (`over_capacity` or by the owner) or `unavailable` (`setting_up`, `failed`). Another account's Nest answers 404."
+          }
+        },
+        {
+          "name": "Rename a Nest (a person only)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/nests/:nest",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "nests",
+                ":nest"
+              ],
+              "variable": [
+                {
+                  "key": "nest",
+                  "value": "",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Rename a Nest (a person only)",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"label\": \"string\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Delete a Nest (a person only; the label typed back as confirmation)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/nests/:nest",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "nests",
+                ":nest"
+              ],
+              "variable": [
+                {
+                  "key": "nest",
+                  "value": "",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Destroys the runtime and the encrypted volume, revokes the mailbox credential and closes open approvals. Export first. A package slot is free again at once.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"confirm\": \"string\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "The Nest's files, their parse status and coverage, and its storage quota",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/nests/:nest/files",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "nests",
+                ":nest",
+                "files"
+              ],
+              "variable": [
+                {
+                  "key": "nest",
+                  "value": "",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "The Nest's files, their parse status and coverage, and its storage quota"
+          }
+        },
+        {
+          "name": "Upload one file to the Nest (a person only, at most 25 MiB)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/octet-stream"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/nests/:nest/files",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "nests",
+                ":nest",
+                "files"
+              ],
+              "variable": [
+                {
+                  "key": "nest",
+                  "value": "",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Raw bytes in the body; the display name, percent-encoded UTF-8, in `x-file-name`. The Nests host quarantines the file and parses it (PDF, DOCX, TXT/MD, CSV, XLSX, ZIP) in a separate sandbox with no network. Only verified text reaches the Nest. Archive entries with unsafe paths, archive bombs and nested archives are skipped and listed in `warnings`.",
+            "body": {
+              "mode": "file",
+              "file": {
+                "src": ""
+              }
+            }
+          }
+        },
+        {
+          "name": "Remove a file and everything parsed from it (a person only)",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/nests/:nest/files/:file",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "nests",
+                ":nest",
+                "files",
+                ":file"
+              ],
+              "variable": [
+                {
+                  "key": "nest",
+                  "value": "",
+                  "description": ""
+                },
+                {
+                  "key": "file",
+                  "value": "",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Remove a file and everything parsed from it (a person only)"
+          }
+        },
+        {
+          "name": "A Nest proposes one typed tool call for its owner to approve (the Nest's mailbox credential)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/nest-approvals",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "nest-approvals"
+              ]
+            },
+            "description": "Tools: `send_message {to, body}`. Nothing is carried out until the owner approves exactly this call. A newer proposal for the same tool and recipient replaces a pending one. Unknown tools (including anything in the never-auto set) are refused.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tool\": \"send_message\",\n  \"args\": {}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "The Nest's approval cards, newest first (the last 100)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/nests/:nest/approvals",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "nests",
+                ":nest",
+                "approvals"
+              ],
+              "variable": [
+                {
+                  "key": "nest",
+                  "value": "",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "The Nest's approval cards, newest first (the last 100)"
+          }
+        },
+        {
+          "name": "Approve or reject exactly the call that was shown (a person only)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/nests/:nest/approvals/:approval/:decision",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "nests",
+                ":nest",
+                "approvals",
+                ":approval",
+                ":decision"
+              ],
+              "variable": [
+                {
+                  "key": "nest",
+                  "value": "",
+                  "description": ""
+                },
+                {
+                  "key": "approval",
+                  "value": "",
+                  "description": ""
+                },
+                {
+                  "key": "decision",
+                  "value": "",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "The body echoes the `args_hash` the person saw. A changed call (`approval_changed`), a replaced, decided or expired card (`approval_closed`) and a recipient outside the destination policy (`recipient_not_allowed`: only the owner's own mailboxes and contacts they allowed) are refused. An approved card is carried out once by the postbox, never by the Nest.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"args_hash\": \"string\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Pause a Nest (a person only); mail waits until it is resumed",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/nests/:nest/pause",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "nests",
+                ":nest",
+                "pause"
+              ],
+              "variable": [
+                {
+                  "key": "nest",
+                  "value": "",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Pause a Nest (a person only); mail waits until it is resumed"
+          }
+        },
+        {
+          "name": "Resume a Nest its owner paused (a person only)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/nests/:nest/resume",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "nests",
+                ":nest",
+                "resume"
+              ],
+              "variable": [
+                {
+                  "key": "nest",
+                  "value": "",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "A Nest paused for funding (`needs_payment`) or over its package (`over_capacity`) resumes only when that is resolved."
+          }
+        },
+        {
+          "name": "This month's model tokens, running time and storage, from the Nests ledger",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/nests/:nest/usage",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "nests",
+                ":nest",
+                "usage"
+              ],
+              "variable": [
+                {
+                  "key": "nest",
+                  "value": "",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "This month's model tokens, running time and storage, from the Nests ledger"
+          }
+        },
+        {
+          "name": "Download the Nest's files, their text and its conversations as a zip (a person only)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/nests/:nest/export",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "nests",
+                ":nest",
+                "export"
+              ],
+              "variable": [
+                {
+                  "key": "nest",
+                  "value": "",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Download the Nest's files, their text and its conversations as a zip (a person only)"
+          }
+        },
+        {
+          "name": "The organization's Nests a member may act on (feature `nests`)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/orgs/:org/nests",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "orgs",
+                ":org",
+                "nests"
+              ],
+              "variable": [
+                {
+                  "key": "org",
+                  "value": "",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Nest admins (owner, admin, agent_admin) see every org Nest; other members see the ones they hold a live `operate_nest` delegation for. Includes the org's Nest allowance."
+          }
+        },
+        {
+          "name": "Create an org-owned Nest on a new org agent address (ManageAgents)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/orgs/:org/nests",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "orgs",
+                ":org",
+                "nests"
+              ],
+              "variable": [
+                {
+                  "key": "org",
+                  "value": "",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Uses one of the org's agent addresses (10 × seats) and, separately, a free slot of a Nest package the organization bought. Each listed member gets the `operate_nest` delegation.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"handle\": \"string\",\n  \"label\": \"string\",\n  \"operators\": [\n    \"string\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
           "name": "A Nest sandbox redeems its one-time enrollment code (no credential)",
           "request": {
             "method": "POST",

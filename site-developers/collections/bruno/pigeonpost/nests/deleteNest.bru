@@ -1,0 +1,29 @@
+meta {
+  name: Delete a Nest (a person only; the label typed back as confirmation)
+  type: http
+  seq: 6
+}
+
+delete {
+  url: {{baseUrl}}/v1/nests/:nest
+  body: json
+  auth: bearer
+}
+
+params:path {
+  nest: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "confirm": "string"
+  }
+}
+
+docs {
+  Destroys the runtime and the encrypted volume, revokes the mailbox credential and closes open approvals. Export first. A package slot is free again at once.
+}
