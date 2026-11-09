@@ -163,6 +163,20 @@ const server = http.createServer(async (req, res) => {
 
     // ---- individual Cloud plans -------------------------------------------------------------
     if (method === "GET" && path === "/v1/cloud") return send(res, 200, await billing.cloudOverview(token), origin);
+    // Nest packages (Nests Phase B1): the same individual flow, behind the postbox's `nests` flag.
+    if (method === "GET" && path === "/v1/nests") return send(res, 200, await billing.nestOverview(token), origin);
+    if (method === "POST" && path === "/v1/nests/checkout") {
+      return send(res, 200, await billing.nestCheckout(token, await readJson(req), { ipCountry: tax.ipCountry(req.headers) }), origin);
+    }
+    if (method === "GET" && (match = /^\/v1\/nests\/checkout\/([a-f0-9]{32})$/.exec(path))) {
+      return send(res, 200, await billing.nestStatus(token, match[1]), origin);
+    }
+    if (method === "GET" && (match = /^\/v1\/nests\/subscriptions\/([^/]+)$/.exec(path))) {
+      return send(res, 200, await billing.nestSubscription(token, match[1]), origin);
+    }
+    if (method === "POST" && (match = /^\/v1\/nests\/subscriptions\/([^/]+)\/(cancel|retry|card-update|upgrade)$/.exec(path))) {
+      return send(res, 200, await billing.nestOperation(token, match[1], match[2], await readJson(req)), origin);
+    }
     if (method === "POST" && path === "/v1/cloud/checkout") {
       return send(res, 200, await billing.cloudCheckout(token, await readJson(req), { ipCountry: tax.ipCountry(req.headers) }), origin);
     }
