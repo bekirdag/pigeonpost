@@ -65,4 +65,13 @@
   approvals; approvals echo the shown `args_hash`. It also shows usage, pause/resume, rename,
   export (save dialog), and delete with the name typed back.
 - Company context: an organization's Nests and creation of a new organization Nest.
+- The open Nest conversation refreshes its status and approval cards every 20 seconds, shows waiting
+  cards with Approve and Reject above the composer, and has an add-file button.
+- Organization Nests are matched by mailbox address even when a conversation is keyed by handle, so
+  they show the same header.
+- Resume is hidden for a Nest paused for payment or over capacity; an unfunded Nest shows its
+  deletion date and keeps Export.
+- Approve is offered only for a call that can be shown in full; a refused approval stays on screen.
+- Exports may reach 1 GiB rather than the 25 MiB attachment limit, usage shows requests and the
+  package's pooled hours, and New Nest appears when a slot is free.
 - Tests: `tests/test_nests.py` (rules) and `tests/test_ui_nests.py` (GTK, Xvfb in CI).

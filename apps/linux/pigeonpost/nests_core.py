@@ -12,13 +12,18 @@ Two rules matter for safety:
 """
 
 import re
+import time
+import unicodedata
 import urllib.parse
 
 from .api import APIError
 
 NESTS = "nests"
-WEB_PRODUCTS = "https://pigeonpost.dev/account#nests"
+WEB_PRODUCTS = "https://pigeonpost.dev/account#products"
 MAX_UPLOAD = 25 * 1024 * 1024
+# The Nests host builds an export from at most 512 MiB of files plus their text and conversations.
+MAX_EXPORT = 1024 * 1024 * 1024
+NEST_ADMIN_ROLES = {"owner", "admin", "agent_admin"}
 NEST_ID = re.compile(r"nst_[0-9a-f]{1,60}")
 FILE_ID = re.compile(r"nfl_[0-9a-f]{24}")
 APPROVAL_ID = re.compile(r"nap_[0-9a-f]{24}")
@@ -37,6 +42,8 @@ REASON_TEXT = {
     "setting_up": "Setting up…",
     "failed": "Setup failed. Retry from Products.",
 }
+# Paused for money: only the funding sweep brings these back, never the owner's Resume.
+FUNDING_PAUSES = ("unfunded", "over_capacity")
 SERVICES = [
     ("Personal assistant", "Tasks, reminders and scheduling drafts from your own documents."),
     ("AI CRM", "Contacts, pipeline stages and follow-up drafts."),
@@ -105,6 +112,7 @@ def parse_nest(raw):
         "status_reason": _text(raw.get("status_reason"), 64),
         "role": raw.get("role") if raw.get("role") in ("owner", "operator") else "owner",
         "funding": _text(raw.get("funding"), 16),
+        "paused_reason": _text(raw.get("paused_reason"), 32),
         "delete_after": _int(raw.get("delete_after")),
     }
 
@@ -139,6 +147,50 @@ def status_line(nest):
     return text, reason
 
 
+def can_resume(nest):
+    """Resume is offered only for a pause the owner can lift; the server refuses the others."""
+    return nest["state"] == "paused" and nest.get("paused_reason") not in FUNDING_PAUSES
+
+
+def can_pause(nest):
+    return nest["state"] in ("ready", "running", "stopped")
+
+
+def deletion_notice(nest):
+    """An unfunded Nest is kept for the export window, then deleted: say when, in local time."""
+    when = nest.get("delete_after")
+    if not when:
+        return None
+    day = time.strftime("%-d %B %Y", time.localtime(when))
+    return f"It will be deleted on {day} unless its package is renewed. Export it before then to keep its files."
+
+
+def label_problem(value):
+    """Why this cannot be a Nest's name (the server's rule: 1-64 printable characters), or None."""
+    if not value or len(value) > 64 or any(unicodedata.category(ch) == "Cc" for ch in value):
+        return "Use 1 to 64 characters."
+    return None
+
+
+def can_add_nest(snapshot):
+    return bool(snapshot and snapshot["package"]) and snapshot["used"] < snapshot["slots"]
+
+
+def org_can_manage(org):
+    """A display hint for the admin-only organization actions; the server decides."""
+    return bool(NEST_ADMIN_ROLES.intersection((org or {}).get("roles") or ()))
+
+
+def peer_addresses(peer, messages):
+    """Every address this conversation may be known by: conversations are keyed by handle when
+    the peer has one, while a Nest is known by its mailbox address."""
+    found = {peer} if peer else set()
+    for message in messages or ():
+        if peer and message.get("peer_handle") == peer and message.get("peer"):
+            found.add(message["peer"])
+    return found
+
+
 def upload_header(name):
     """The display name as the `x-file-name` header: percent-encoded UTF-8, controls removed."""
     clean = "".join(ch for ch in (name or "") if ch >= " " and ch != "\x7f")[:200].strip()
@@ -147,19 +199,33 @@ def upload_header(name):
     return urllib.parse.quote(clean, safe="")
 
 
+def parse_file(f):
+    if not isinstance(f, dict) or not isinstance(f.get("file_id"), str) or not FILE_ID.fullmatch(f["file_id"]):
+        raise NestError("file")
+    cov = f.get("coverage") if isinstance(f.get("coverage"), dict) else {}
+    warnings = f.get("warnings") if isinstance(f.get("warnings"), list) else []
+    return {"file_id": f["file_id"], "name": _text(f.get("name"), 200, False), "bytes": _int(f.get("bytes")) or 0,
+            "status": _text(f.get("status"), 16) or "failed", "reason": _text(f.get("reason"), 300),
+            "units_total": _int(cov.get("units_total")), "units_text": _int(cov.get("units_text")),
+            # Warnings come from a parser reading hostile files: shortened, never a reason to fail.
+            "warnings": [_text(w[:300], 300) for w in warnings if isinstance(w, str)][:20]}
+
+
 def parse_files(raw):
     if not isinstance(raw, dict) or not isinstance(raw.get("files"), list):
         raise NestError("files")
-    files = []
-    for f in raw["files"]:
-        if not isinstance(f, dict) or not isinstance(f.get("file_id"), str) or not FILE_ID.fullmatch(f["file_id"]):
-            raise NestError("file")
-        cov = f.get("coverage") if isinstance(f.get("coverage"), dict) else {}
-        files.append({"file_id": f["file_id"], "name": _text(f.get("name"), 200, False), "bytes": _int(f.get("bytes")) or 0,
-                      "status": _text(f.get("status"), 16) or "failed", "reason": _text(f.get("reason"), 300),
-                      "units_total": _int(cov.get("units_total")), "units_text": _int(cov.get("units_text")),
-                      "warnings": [_text(w, 300) for w in (f.get("warnings") or []) if isinstance(w, str)][:20]})
+    files = [parse_file(f) for f in raw["files"]]
     return {"files": files, "used_bytes": _int(raw.get("used_bytes")) or 0, "quota_bytes": _int(raw.get("quota_bytes")) or 0}
+
+
+def upload_outcome(raw):
+    """What to tell the person after an upload: a stored file may still be unreadable."""
+    f = parse_file(raw)
+    if f["status"] == "rejected":
+        return f"{f['name']} could not be read: {f['reason'] or 'unsupported file'}"
+    if f["status"] == "partial":
+        return f"{f['name']} added. {coverage_text(f)}."
+    return f"{f['name']} added."
 
 
 def coverage_text(f):
@@ -188,19 +254,45 @@ def parse_approvals(raw):
     return cards
 
 
+def can_approve(card):
+    """Approve is offered only for a call shown in full. The `to` must also be free of invisible
+    format characters, which could make one address look like another; such a card can be rejected."""
+    return (card["tool"] == "send_message" and bool(card["to"]) and bool(card["body"])
+            and not any(unicodedata.category(ch) == "Cf" for ch in card["to"]))
+
+
+def pending_cards(cards, now=None):
+    moment = time.time() if now is None else now
+    return [c for c in cards or () if c["status"] == "pending" and (c["expires_at"] is None or c["expires_at"] > moment)]
+
+
+def expiry_text(card, now=None):
+    if card["expires_at"] is None:
+        return None
+    left = int(card["expires_at"] - (time.time() if now is None else now))
+    if left <= 0:
+        return "Expired"
+    return f"Expires in {left // 3600} h" if left >= 3600 else f"Expires in {max(1, left // 60)} min"
+
+
 def approval_body(card):
     """What a decision sends: the hash of the call the person saw, unchanged."""
     return {"args_hash": card["args_hash"]}
 
 
 def card_text(card):
-    if card["tool"] == "send_message":
+    if card["tool"] == "send_message" and card["to"] and card["body"]:
         return f"Send a message to {card['to']}:\n{card['body']}"
-    return card["tool"]
+    return f"An action this app cannot show in full ({card['tool']}). Reject it, or update Pigeonpost to review it."
 
 
 def delete_confirmed(label, typed):
     return isinstance(typed, str) and typed == label
+
+
+def _count(value):
+    """A ledger number for display: anything else counts as nothing rather than breaking the page."""
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
 
 
 def usage_lines(raw):
@@ -208,17 +300,25 @@ def usage_lines(raw):
         raise NestError("usage")
     tin = raw.get("input_tokens") if isinstance(raw.get("input_tokens"), dict) else {}
     tout = raw.get("output_tokens") if isinstance(raw.get("output_tokens"), dict) else {}
-    secs = _int(raw.get("running_secs")) or 0
-    lines = [f"AI this month: {tin.get('used') or 0:,} of {tin.get('limit') or 0:,} input tokens, "
-             f"{tout.get('used') or 0:,} of {tout.get('limit') or 0:,} output tokens",
-             f"Running time this month: {secs // 3600} h {secs % 3600 // 60} min",
-             f"Files: {(_int(raw.get('files_bytes')) or 0) / 1048576:.1f} MiB"]
-    return lines
+    secs = _count(raw.get("running_secs"))
+    package = raw.get("package") if isinstance(raw.get("package"), dict) else {}
+    hours = _count(package.get("active_hours_pooled"))
+    if _count(tin.get("limit")) or _count(tout.get("limit")):
+        ai = (f"AI this month: {_count(tin.get('used')):,} of {_count(tin.get('limit')):,} input tokens, "
+              f"{_count(tout.get('used')):,} of {_count(tout.get('limit')):,} output tokens")
+    else:
+        ai = "AI this month: no AI is connected to this Nest"
+    running = f"Running time this month: {secs // 3600} h {secs % 3600 // 60} min"
+    if hours:
+        running += f" (the package includes {hours} h, shared by its Nests)"
+    return [ai, running, f"Files: {_count(raw.get('files_bytes')) / 1048576:.1f} MiB",
+            f"AI requests this month: {_count(raw.get('requests')):,}"]
 
 
 def explain(error):
+    """Words for the person. Anything but a postbox answer is a generic line, never exception text."""
     code = getattr(error, "code", "")
-    return {
+    known = {
         "feature_disabled": "Nests are not available for this account yet.",
         "no_nest_package": "Buy a Nest package on the website first.",
         "nest_slots_full": "Every Nest in your package is in use.",
@@ -232,7 +332,23 @@ def explain(error):
         "confirm_required": "Type the Nest’s name exactly to delete it.",
         "export_too_large": "This Nest is larger than one download. Contact support.",
         "no_nest_slot": "The organization has no free Nest slot. Buy or upgrade a package on the website.",
-    }.get(code) or str(error)
+        "nest_limit": "This account already holds its limit of Nests.",
+        "bad_label": "Use 1 to 64 characters for the name.",
+        "bad_name": "This file needs a name.",
+        "empty_file": "This file is empty.",
+        "too_many_files": "This Nest holds its maximum number of files. Delete one first.",
+        "upload_failed": "The file was not stored. Try again.",
+        "no_file": "This file is gone.",
+        "no_nest": "This Nest is no longer available.",
+        "no_approval": "This approval is gone.",
+        "tool_failed": "The action could not be carried out.",
+        "nests_unavailable": "The Nests service is not available right now.",
+        "nestd_failed": "The Nests service did not answer. Try again.",
+        "response_too_large": "This Nest is larger than one download. Contact support.",
+    }
+    if code in known:
+        return known[code]
+    return str(error) if isinstance(error, APIError) else "This could not be completed. Please try again."
 
 
 class NestsAPI:
@@ -250,6 +366,10 @@ class NestsAPI:
     def nest(self, nest_id):
         return parse_nest(self.p.call("GET", "/v1/nests/" + nest_id))
 
+    def create(self, label):
+        # Provisioning runs inside the request.
+        return self.p.call("POST", "/v1/nests", data={"label": label}, timeout=180)
+
     def retry_setup(self, setup_id):
         if not SETUP_ID.fullmatch(setup_id or ""):
             raise NestError("setup")
@@ -259,7 +379,9 @@ class NestsAPI:
         return parse_files(self.p.call("GET", f"/v1/nests/{nest_id}/files"))
 
     def upload(self, nest_id, name, content):
-        if not content or len(content) > MAX_UPLOAD:
+        if not content:
+            raise APIError(0, "empty_file", "This file is empty.")
+        if len(content) > MAX_UPLOAD:
             raise APIError(0, "too_large", "Choose a file smaller than 25 MiB.")
         return self.p.call("POST", f"/v1/nests/{nest_id}/files", raw=content, timeout=180, headers={
             "Content-Type": "application/octet-stream", "x-file-name": upload_header(name)})
@@ -286,7 +408,7 @@ class NestsAPI:
         return self.p.call("PATCH", f"/v1/nests/{nest_id}", data={"label": label})
 
     def export(self, nest_id):
-        return self.p.call("GET", f"/v1/nests/{nest_id}/export", binary=True, timeout=600)
+        return self.p.call("GET", f"/v1/nests/{nest_id}/export", binary=True, timeout=600, max_bytes=MAX_EXPORT)
 
     def delete(self, nest_id, label, typed):
         if not delete_confirmed(label, typed):
@@ -295,6 +417,8 @@ class NestsAPI:
 
     def org_nests(self, org_id):
         raw = self.p.call("GET", f"/v1/orgs/{urllib.parse.quote(org_id, safe='')}/nests")
+        if not isinstance(raw, dict) or not isinstance(raw.get("nests") or [], list):
+            raise NestError("org nests")
         nests = []
         for n in raw.get("nests") or []:
             if isinstance(n, dict) and isinstance(n.get("nest_id"), str) and NEST_ID.fullmatch(n["nest_id"]):
@@ -306,4 +430,4 @@ class NestsAPI:
 
     def create_org_nest(self, org_id, handle, label):
         return self.p.call("POST", f"/v1/orgs/{urllib.parse.quote(org_id, safe='')}/nests",
-                           data={"handle": handle, "label": label})
+                           data={"handle": handle, "label": label}, timeout=180)

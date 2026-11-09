@@ -488,6 +488,9 @@ class Window(ContactsMixin, MessagesMixin, NestsMixin, NotesMixin, PairingMixin,
         self.nest_manage_button = button("Nest settings", self.open_nest_for_peer, "emblem-system-symbolic", "flat")
         self.nest_manage_button.set_visible(False)
         toolbar.append(self.nest_manage_button)
+        self.nest_file_button = button("Add a file to this Nest", self.nest_add_file_for_peer, "mail-attachment-symbolic", "flat")
+        self.nest_file_button.set_visible(False)
+        toolbar.append(self.nest_file_button)
         # Calls run in the web inbox: no Linux WebKitGTK build ships WebRTC (see README).
         self.voice_call_button = button("Voice call", lambda: self.call(False), "call-start-symbolic", "flat")
         self.video_call_button = button("Video call", lambda: self.call(True), "camera-video-symbolic", "flat")
@@ -529,6 +532,11 @@ class Window(ContactsMixin, MessagesMixin, NestsMixin, NotesMixin, PairingMixin,
         self.blocked_banner.append(button("Unblock", lambda: self.unblock_peer()))
         self.blocked_banner.set_visible(False)
         detail.append(self.blocked_banner)
+        self.nest_panel = box(8, margin=12)
+        self.nest_panel_holder = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, propagate_natural_height=True,
+                                                    max_content_height=240, child=self.nest_panel)
+        self.nest_panel_holder.set_visible(False)
+        detail.append(self.nest_panel_holder)
         self.mode_holder = box(0)
         self.mode_holder.set_visible(False)
         detail.append(self.mode_holder)
