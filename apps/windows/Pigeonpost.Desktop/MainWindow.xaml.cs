@@ -68,6 +68,7 @@ public sealed partial class MainWindow : Window
         if (approvalFixture is not null || roomsState is not null) stand_in.Features.Add(ServerFeatures.Organizations);
         if (roomsState is not null) PreviewSideData.SeedRooms(stand_in);
         if (Environment.GetEnvironmentVariable("PIGEONPOST_UI_LIVE_NOTES") is not null) PreviewSideData.SeedLiveAndNotes(stand_in);
+        if (Environment.GetEnvironmentVariable("PIGEONPOST_UI_CONTACTS_FILE") is not null) PreviewSideData.SeedContacts(stand_in);
         postbox.Dispose();
         HttpMessageHandler routed = new PreviewRouter(new AttachmentFixtureHandler(preview), stand_in);
         if (roomsState is not null) routed = roomLoss = new RoomLossHandler(routed, roomsState);
@@ -279,6 +280,7 @@ public sealed partial class MainWindow : Window
             var message = new TextBox { Header = "First message", AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 90, MaxLength = 20000 };
             var panel = new StackPanel { Spacing = 16 };
             panel.Children.Add(peer);
+            if (OrganizationSuggestions(peer, target) is { } suggestions) panel.Children.Add(suggestions);
             panel.Children.Add(message);
             panel.Children.Add(new TextBlock { Text = "Leave the message empty to open the conversation.", TextWrapping = TextWrapping.Wrap });
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(peer, "Pigeonpost address");

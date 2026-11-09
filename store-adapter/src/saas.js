@@ -8,7 +8,7 @@
 import { config } from "./config.js";
 import { isUuid } from "./catalog.js";
 
-export const fail = (status, message, code) => { throw Object.assign(new Error(message), { status, code }); };
+export const fail = (status, message, code, extra) => { throw Object.assign(new Error(message), { status, code, ...(extra ? { extra } : {}) }); };
 
 // Upstream text is shown to the member, so it is flattened and bounded; tokens never appear in it.
 function clean(message) {

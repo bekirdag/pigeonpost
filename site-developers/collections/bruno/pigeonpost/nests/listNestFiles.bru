@@ -1,0 +1,19 @@
+meta {
+  name: The Nest's files, their parse status and coverage, and its storage quota
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/v1/nests/:nest/files
+  body: none
+  auth: bearer
+}
+
+params:path {
+  nest: 
+}
+
+auth:bearer {
+  token: {{token}}
+}

@@ -1,0 +1,25 @@
+meta {
+  name: Claim or restore an App Store Nest subscription (a person only)
+  type: http
+  seq: 21
+}
+
+post {
+  url: {{baseUrl}}/v1/nest-purchases/apple
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "transaction_id": "string"
+  }
+}
+
+docs {
+  Verified with the App Store Server API. The transaction must carry this account's `appAccountToken`; a subscription is bound to the first account that claims it. The first Nest is set up right away, or kept as a paid setup and retried.
+}

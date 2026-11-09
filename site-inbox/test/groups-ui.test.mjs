@@ -90,6 +90,7 @@ async function app(t, { features = ["groups", "disappearing"], groups = [group()
         if (rest === "/notifications") { return response({ ok: true }); }
         if (rest === "/read") return response({ ok: true });
         if (rest.startsWith("/members/")) return response({ ok: true });
+        if (rest.startsWith("/bans/") && method === "DELETE") { server.members = server.members.filter((x) => x.address !== decodeURIComponent(rest.slice(6))); return response({ unbanned: true }); }
       }
       if (path.startsWith("/v1/threads/")) return response({ thread: { thread_id: decodeURIComponent(path.split("/").pop()), ephemeral_secs: body.ephemeral_secs } });
       if (path.startsWith("/calls/")) return response({ active: false });
@@ -472,4 +473,101 @@ test("a #group= link opens that group once its mailbox is on screen, and is then
   const junk = await app(t, { url: "https://inbox.pigeonpost.dev/#group=grp_aaaaaaaaaaaaaaaaaaaaaaaaaa&x=1" });
   await tick(120);
   assert.ok(!junk.$("group-view") || junk.$("group-view").hidden, "anything but an exact group id is ignored");
+});
+
+// ---- SDS §15.2: Block in groups, hidden content, and Unban -----------------------------------------
+
+const blockRow = (peer) => ({ peer, alias: null, admission: "block", autonomy: "review", allowed_verbs: [] });
+
+test("a blocked sender's group messages, preview and quotes are hidden; the member row says Blocked", async (t) => {
+  const gid = group().id;
+  const a = await app(t, {
+    histories: { [gid]: [
+      { kind: "message", seq: 3, sender: JANE, text: "secret from jane", files: [], created_at: NOW - 120 },
+      { kind: "message", seq: 4, sender: JOHN, text: "replying", files: [], created_at: NOW - 90, reply_to: 3 },
+      { kind: "message", seq: 5, sender: JANE, text: "more from jane", files: [], created_at: NOW - 60 },
+    ] },
+    // Blocked by handle: the group knows Jane by her address and learns the handle from members.
+    configure: (server) => { server.mailboxes[OWNER].contacts.push(blockRow("/jane/main")); },
+  });
+  await until(() => a.$("groups-list")?.querySelector(".group-row"));
+  a.$("groups-list").querySelector(".group-row").click();
+  await until(() => a.$("group-messages").querySelector('li[data-seq="4"]'));
+  // Members (and so Jane's handle) load with the info sheet; before that the address alone is checked.
+  a.$("group-info-btn").click();
+  await until(() => a.w.document.querySelector(".gi-member .pill-blocked"));
+  a.w.PigeonpostGroups.render();
+  await until(() => a.$("group-messages").querySelectorAll("li.blocked-msg").length === 2);
+  const text = a.$("group-messages").textContent;
+  assert.ok(!text.includes("secret from jane") && !text.includes("more from jane"), "content hidden");
+  assert.match(a.$("group-messages").querySelector('li[data-seq="3"]').textContent, /Hidden: you blocked this sender/);
+  assert.equal(a.$("group-messages").querySelector('li[data-seq="3"] .msg-actions'), null, "no actions on hidden content");
+  assert.equal(a.$("group-messages").querySelector('li[data-seq="4"] .reply-line').textContent, "Hidden: you blocked this sender", "a quote does not leak it");
+  assert.ok(a.$("group-messages").textContent.includes("replying"), "others are untouched");
+  assert.ok(!a.$("groups-list").querySelector(".group-row .tr-preview").textContent.includes("jane"), "the list preview skips it");
+  const janeRow = [...a.w.document.querySelectorAll(".gi-member")].find((li) => li.textContent.includes("Blocked"));
+  assert.ok(janeRow, "her member row shows Blocked instead of a Block button");
+});
+
+test("Block from a group message and from a member row writes a block for the handle", async (t) => {
+  const gid = group().id;
+  const a = await app(t, { histories: { [gid]: [{ kind: "message", seq: 3, sender: JANE, text: "hello", files: [], created_at: NOW - 60 }] } });
+  await until(() => a.$("groups-list")?.querySelector(".group-row"));
+  a.$("groups-list").querySelector(".group-row").click();
+  // Learn handles first, as the member list does.
+  a.$("group-info-btn").click();
+  await until(() => a.w.document.querySelectorAll(".gi-member").length >= 3);
+  const blockBtn = [...a.w.document.querySelectorAll(".gi-member button")].find((b) => b.getAttribute("aria-label") === "Block " + a.w.PigeonpostGroupsHost.displayName("/jane/main"));
+  assert.ok(blockBtn, "a Block button on another member's row");
+  assert.equal([...a.w.document.querySelectorAll(".gi-member")].find((li) => li.textContent.includes("(you)")).querySelector('button[aria-label^="Block"]'), null, "not on your own row");
+  blockBtn.click();
+  await until(() => !a.$("peer-block-sheet").hidden);
+  assert.equal(a.$("group-info-sheet").hidden, true, "the group sheet steps aside");
+  assert.match(a.$("peer-block-title").textContent, /^Block /);
+  assert.equal(a.$("peer-block-report").closest("label").hidden, true, "no spam report: the postbox cannot read group messages");
+  a.$("peer-block-confirm").click();
+  await until(() => a.server.calls.some((c) => c.path === "/v1/contacts" && c.method === "PUT"));
+  const put = a.server.calls.find((c) => c.path === "/v1/contacts" && c.method === "PUT");
+  assert.equal(put.body.peer, "/jane/main");
+  assert.equal(put.body.admission, "block");
+  await until(() => a.$("group-messages").querySelector("li.blocked-msg"));
+
+  // The message menu offers it too (for another sender).
+  const b = await app(t, { histories: { [gid]: [{ kind: "message", seq: 3, sender: JOHN, text: "hi", files: [], created_at: NOW - 60 }] } });
+  await until(() => b.$("groups-list")?.querySelector(".group-row"));
+  b.$("groups-list").querySelector(".group-row").click();
+  await until(() => b.$("group-messages").querySelector('li[data-seq="3"]'));
+  b.$("group-messages").querySelector('li[data-seq="3"] .bubble').dispatchEvent(new b.w.MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }));
+  const item = [...b.$("msg-menu").querySelectorAll("button")].find((x) => x.textContent === "Block sender");
+  assert.ok(item, "Block sender in the message menu");
+  item.click();
+  await until(() => !b.$("peer-block-sheet").hidden);
+});
+
+test("admins see banned mailboxes and can unban them; members do not", async (t) => {
+  const members = [
+    { address: OWNER, handle: "/bekir/main", role: "owner", state: "active", revision: 1 },
+    { address: JANE, handle: "/jane/main", role: "member", state: "active", revision: 1 },
+    { address: "/k/spammer", handle: null, role: "member", state: "banned", revision: 2 },
+  ];
+  const a = await app(t, { members });
+  await until(() => a.$("groups-list")?.querySelector(".group-row"));
+  a.$("groups-list").querySelector(".group-row").click();
+  a.$("group-info-btn").click();
+  await until(() => a.$("gi-banned"));
+  assert.match(a.$("gi-banned").textContent, /Banned/);
+  a.$("gi-banned").querySelector("button").click();
+  await until(() => !a.$("group-confirm-sheet").hidden);
+  a.$("gq-ok").click();
+  await until(() => a.server.gcalls.some((c) => c.method === "DELETE" && c.path.includes("/bans/")));
+  const del = a.server.gcalls.find((c) => c.method === "DELETE" && c.path.includes("/bans/"));
+  assert.equal(del.path, "/v1/groups/" + group().id + "/bans/" + encodeURIComponent("/k/spammer"));
+  await until(() => !a.$("gi-banned"));
+
+  const m = await app(t, { members, groups: [group({ my: { ...group().my, role: "member" } })] });
+  await until(() => m.$("groups-list")?.querySelector(".group-row"));
+  m.$("groups-list").querySelector(".group-row").click();
+  m.$("group-info-btn").click();
+  await until(() => m.w.document.querySelectorAll(".gi-member").length >= 2);
+  assert.equal(m.$("gi-banned"), null);
 });

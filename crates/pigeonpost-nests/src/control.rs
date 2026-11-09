@@ -1487,7 +1487,7 @@ mod tests {
         let zip_bytes = export(&c, id).await.unwrap();
         let mut z = zip::ZipArchive::new(std::io::Cursor::new(zip_bytes)).unwrap();
         let names: Vec<String> = (0..z.len())
-            .map(|i| z.by_index(i).unwrap().name().to_string())
+            .map(|i| z.by_index(i).unwrap().name().unwrap().to_string())
             .collect();
         assert!(
             names
