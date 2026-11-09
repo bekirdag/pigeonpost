@@ -1450,7 +1450,15 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     "--onboard and --workspace go with --device --handle or --enroll".into(),
                 );
             }
-            return if *device {
+            let switch_to_device = !*device && !*no_browser && login_cmd::no_local_browser();
+            if switch_to_device {
+                println!(
+                    "No browser on this machine, so signing in with a code instead. \
+                     Use --no-browser to keep the redirect sign-in."
+                );
+                println!();
+            }
+            return if *device || switch_to_device {
                 login_cmd::login_device(&home, issuer).await
             } else {
                 login_cmd::login_browser(&home, issuer, !*no_browser).await
