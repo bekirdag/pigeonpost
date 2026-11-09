@@ -4521,6 +4521,7 @@
 
     wireAttach();
     wireDrop();
+    window.PigeonpostEmoji?.attach(compose);
     $("composer").addEventListener("submit", (e) => {
       e.preventDefault();
       const text = compose.value.trim();

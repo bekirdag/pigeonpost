@@ -763,6 +763,7 @@
         markup(el("button", { class: "send", id: "group-send", type: "submit", "aria-label": "Send" }), SEND_MARKUP)),
         markup(el("div", { class: "composer-hint" }), '<span id="group-compose-hint">' + SEND_HINT + "</span>")));
     pane.append(view);
+    window.PigeonpostEmoji?.attach($("group-compose"));
   }
 
   // The composer's icons, as markup: the send arrow turns into a check while editing.

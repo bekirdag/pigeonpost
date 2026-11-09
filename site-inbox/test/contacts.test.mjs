@@ -621,6 +621,6 @@ test("profile pictures depend only on the avatars flag, never on a plan", async 
 test("index.html loads contacts.js before app.js with this round's cache key", () => {
   const html = read("index.html");
   const contacts = html.indexOf('src="contacts.js?v=20261029-contacts1"');
-  assert.ok(contacts > 0 && contacts < html.indexOf('src="app.js?v=20261109-thread1"'));
-  assert.ok(html.includes('href="app.css?v=20261109-thread1"'));
+  assert.ok(contacts > 0 && contacts < html.indexOf('src="app.js?v=20261109-thread2"'));
+  assert.ok(html.includes('href="app.css?v=20261109-thread2"'));
 });
