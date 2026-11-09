@@ -1,0 +1,89 @@
+{
+  "identifier": "c1f3d9e2-5b7a-4e0c-8a64-1d2e3f4a5b6c",
+  "nonRenewingSubscriptions": [],
+  "products": [],
+  "settings": {
+    "_applicationInternalID": "6803521541",
+    "_developerTeamID": "AH277897AV",
+    "_failTransactionsEnabled": false,
+    "_locale": "en_US",
+    "_storefront": "USA",
+    "_storeKitErrors": []
+  },
+  "subscriptionGroups": [
+    {
+      "id": "8b5a1f0e-6a2d-5c7e-9d41-2b9e7c3f5a10",
+      "localizations": [],
+      "name": "Pigeonpost Nests",
+      "subscriptions": [
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "25.00",
+          "familyShareable": false,
+          "groupNumber": 1,
+          "internalID": "101",
+          "introductoryOffer": null,
+          "localizations": [
+            {
+              "description": "3 AI agents with their own workspace.",
+              "displayName": "Pigeonpost AI Plus monthly",
+              "locale": "en_US"
+            }
+          ],
+          "productID": "dev.pigeonpost.inbox.nests.ai.plus.monthly",
+          "recurringSubscriptionPeriod": "P1M",
+          "referenceName": "Pigeonpost AI Plus monthly",
+          "subscriptionGroupID": "8b5a1f0e-6a2d-5c7e-9d41-2b9e7c3f5a10",
+          "type": "RecurringSubscription"
+        },
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "10.00",
+          "familyShareable": false,
+          "groupNumber": 2,
+          "internalID": "102",
+          "introductoryOffer": null,
+          "localizations": [
+            {
+              "description": "1 AI agent with its own workspace.",
+              "displayName": "Pigeonpost AI monthly",
+              "locale": "en_US"
+            }
+          ],
+          "productID": "dev.pigeonpost.inbox.nests.ai.starter.monthly",
+          "recurringSubscriptionPeriod": "P1M",
+          "referenceName": "Pigeonpost AI monthly",
+          "subscriptionGroupID": "8b5a1f0e-6a2d-5c7e-9d41-2b9e7c3f5a10",
+          "type": "RecurringSubscription"
+        },
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "5.00",
+          "familyShareable": false,
+          "groupNumber": 3,
+          "internalID": "103",
+          "introductoryOffer": null,
+          "localizations": [
+            {
+              "description": "1 private workspace, no AI connected.",
+              "displayName": "Empty Nest monthly",
+              "locale": "en_US"
+            }
+          ],
+          "productID": "dev.pigeonpost.inbox.nests.host.starter.monthly",
+          "recurringSubscriptionPeriod": "P1M",
+          "referenceName": "Empty Nest monthly",
+          "subscriptionGroupID": "8b5a1f0e-6a2d-5c7e-9d41-2b9e7c3f5a10",
+          "type": "RecurringSubscription"
+        }
+      ]
+    }
+  ],
+  "version": {
+    "major": 3,
+    "minor": 0
+  }
+}

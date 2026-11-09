@@ -106,6 +106,7 @@ struct MacThreadView: View {
         let scrollRequest = ScrollRequest(context: scrollContext, last: messages.last?.id, count: messages.count)
 
         VStack(spacing: 0) {
+            NestConversationHeader(peer: peer)
             ScrollViewReader { scroller in
                 ScrollView {
                     LazyVStack(spacing: 16) {

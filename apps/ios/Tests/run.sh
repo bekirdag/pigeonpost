@@ -60,6 +60,9 @@ swiftc -O -o "$out/handles" \
   Tests/HandleStoreTests.swift Shared/API/Models.swift Shared/API/APIError.swift \
   Shared/Store/HandlePurchases.swift Shared/Store/HandleStore.swift
 "$out/handles"
+swiftc -O -parse-as-library -o "$out/nests" Tests/NestStoreTests.swift Shared/API/APIError.swift \
+  Shared/Store/HandlePurchases.swift Shared/Nests/NestModels.swift Shared/Nests/NestPurchases.swift Shared/Nests/NestStore.swift
+"$out/nests"
 swiftc -O -parse-as-library -o "$out/inbox-loading" \
   Tests/InboxLoadingTests.swift Shared/Config.swift \
   Shared/Auth/AuthorizationLease.swift \
