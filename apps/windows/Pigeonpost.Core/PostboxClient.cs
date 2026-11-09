@@ -256,7 +256,8 @@ public sealed partial class PostboxClient(HttpClient http, IAccessTokenProvider 
     }
 
     private async Task<HttpResponseMessage> RequestAsync(HttpMethod method, string path, string? json, CancellationToken cancellationToken,
-        byte[]? binary = null, string? identity = null, string? filename = null, bool transfer = false, string? mediaType = null, string? device = null)
+        byte[]? binary = null, string? identity = null, string? filename = null, bool transfer = false, string? mediaType = null, string? device = null,
+        IReadOnlyDictionary<string, string>? headers = null)
     {
         var owner = new RequestAuthorization(tokens);
         owner.Check(cancellationToken);
@@ -270,6 +271,7 @@ public sealed partial class PostboxClient(HttpClient http, IAccessTokenProvider 
             request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
             if (identity is not null) request.Headers.Add("x-pigeonpost-identity", identity);
             if (device is not null) request.Headers.Add("x-pigeonpost-device", device);
+            if (headers is not null) foreach (var (name, value) in headers) request.Headers.Add(name, value);
             if (binary is not null)
             {
                 request.Content = new ByteArrayContent(binary);
