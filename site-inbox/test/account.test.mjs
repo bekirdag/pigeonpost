@@ -289,6 +289,41 @@ test("the hosted form page replays the intent and runs only nonce-tagged iyzico 
 });
 
 
+test("the hosted form page warns about a store plan and starts the form only after the person confirms", async (t) => {
+  const html = readFileSync(new URL("../../site/billing/checkout.html", import.meta.url), "utf8");
+  const script = readFileSync(new URL("../../site/billing/checkout.js", import.meta.url), "utf8");
+  const dom = new JSDOM(html.replace("__CSP_NONCE__", "nonce123"), { url: "https://pigeonpost.dev/billing/checkout", runScripts: "outside-only", virtualConsole: new VirtualConsole() });
+  t.after(() => dom.window.close());
+  const { window } = dom;
+  window.eval(config);
+  window.sessionStorage.setItem("pp_session", "member-token");
+  const pending = { kind: "cloud", intent_id: "b".repeat(32), plan_code: "cloud-2names-yearly-usd", billing_profile_id: "p", locale: "en" };
+  window.sessionStorage.setItem("pp_cloud_checkout", JSON.stringify(pending));
+  const calls = [];
+  window.fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    calls.push({ url, body });
+    if (!body.confirm_other_store) {
+      return { ok: false, status: 409, json: async () => ({ code: "store_subscription_active", store: "app_store",
+        error: "You already pay for Pigeonpost names through the App Store." }) };
+    }
+    return { ok: true, status: 200, json: async () => ({ plan_code: "cloud-2names-yearly-usd", amount: "16.00", currency: "USD",
+      checkout_form_content: '<div id="iyzipay-checkout-form" class="responsive"></div>' }) };
+  };
+  window.eval(script);
+  for (let i = 0; i < 20; i++) await tick();
+  assert.equal(calls.length, 1);
+  assert.match(window.document.querySelector("#pp-pay-summary").textContent, /App Store/);
+  assert.equal(window.document.querySelector("#iyzipay-checkout-form"), null, "no payment form before the person confirms");
+  assert.ok(window.sessionStorage.getItem("pp_cloud_checkout"), "the intent survives the warning");
+  window.document.querySelector("#pp-pay-confirm").click();
+  for (let i = 0; i < 20; i++) await tick();
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[1].body, { ...{ intent_id: pending.intent_id, plan_code: pending.plan_code, billing_profile_id: "p", locale: "en" }, confirm_other_store: true });
+  assert.ok(window.document.querySelector("#iyzipay-checkout-form"));
+  assert.match(window.document.querySelector("#pp-pay-summary").textContent, /2 names/);
+});
+
 async function account(t, { remember, rejectFresh = false, existingProfile = null }) {
   const dom = new JSDOM('<main id="account-root"></main>', {
     url: "https://pigeonpost.dev/account?code=test-code&state=test-state",

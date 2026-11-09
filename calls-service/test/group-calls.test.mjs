@@ -60,14 +60,14 @@ function fakePostbox({ members = ["/k/alice1", "/k/bob1", "/k/carol1"], decision
 }
 
 let codeSeq = 0;
-async function start(pb, { internal = true, ringMs = 400, extra = {}, sfuApi } = {}) {
+async function start(pb, { internal = true, ringMs = 400, extra = {}, sfuApi, ringAlerts } = {}) {
   const cfg = {
     postbox: "https://postbox.test", turnSecret: "", turnUrls: [], turnTtlSeconds: 3600,
     allowedOrigins: ["https://inbox.test"], ringMs, knockMs: 1500, trustProxy: true,
     postboxInternalUrl: internal ? "http://10.0.0.1:18991" : "", postboxServiceToken: internal ? TOKEN : "",
     groupCheckMs: 60_000, ...extra,
   };
-  const service = createCallsService(cfg, { fetch: pb.fetch, randomCode: () => "GRPC" + String(10 + (codeSeq++ % 80)), ...(sfuApi ? { sfuApi } : {}) });
+  const service = createCallsService(cfg, { fetch: pb.fetch, randomCode: () => "GRPC" + String(10 + (codeSeq++ % 80)), ...(sfuApi ? { sfuApi } : {}), ...(ringAlerts ? { ringAlerts } : {}) });
   const server = http.createServer((req, res) => service.handle(req, res));
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -503,5 +503,157 @@ test("after a removal the room key rotates to the remaining members only; the re
     await assert.rejects(E.openData(async (e) => (e === 1 ? bobKey1 : null), { roomId, senderId: ids["tok-alice"].pid }, forged));
     const opened = await E.openData(async (e) => (e === 2 ? await E.dataKey(erinOpens) : null), { roomId, senderId: ids["tok-alice"].pid }, sealed);
     assert.equal(opened.value.text, "after removal");
+  } finally { await t.stop(); }
+});
+
+
+// ---- P1-11: group calls ring closed apps ------------------------------------------------------
+
+function recorder() {
+  const rings = [], cancels = [];
+  return {
+    rings, cancels,
+    alerts: {
+      configured: true,
+      ring: async (r) => { rings.push(r); return { decision: "ring", devices: 1 }; },
+      cancel: async (r, reason) => { cancels.push({ ...r, reason }); return { devices: 1 }; },
+      health: () => ({ configured: true }),
+    },
+  };
+}
+
+async function ringState(t, room, token) {
+  const res = await fetch(`${t.base}/calls/v1/rings/${room}`, { headers: { "x-ring-token": token } });
+  return { status: res.status, body: await res.json() };
+}
+
+async function declineToken(t, room, token, reason) {
+  const res = await fetch(`${t.base}/calls/v1/rings/${room}/decline`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ring_token: token, ...(reason ? { reason } : {}) }),
+  });
+  return { status: res.status, body: await res.json() };
+}
+
+const tokenFor = (rec, address) => rec.rings.find((r) => r.to === address).token;
+
+test("every rung member is pushed with their own ring token; silenced members are not", async () => {
+  const pb = fakePostbox({ members: ["/k/alice1", "/k/bob1", "/k/carol1", "/k/dave1"], decisions: { "/k/dave1": "silence" } });
+  const rec = recorder();
+  const t = await start(pb, { ringMs: 3000, ringAlerts: rec.alerts });
+  try {
+    const alice = await t.stream("tok-alice");
+    const placed = await t.req("tok-alice", "POST", "/calls/v1/calls", { session: alice.id, from: "/alice", group_id: GROUP, kind: "video" });
+    assert.equal(placed.status, 200, JSON.stringify(placed.body));
+    assert.deepEqual(rec.rings.map((r) => r.to).sort(), ["/k/bob1", "/k/carol1"]);
+    for (const r of rec.rings) {
+      assert.equal(r.room, placed.body.room);
+      assert.equal(r.group_id, GROUP);
+      assert.equal(r.group_name, "Team");
+      assert.equal(r.kind, "video");
+      assert.equal(r.from.address, "/k/alice1");
+      assert.ok(r.expiresAt > Date.now());
+    }
+    assert.notEqual(rec.rings[0].token, rec.rings[1].token, "one token per member");
+    const st = await ringState(t, placed.body.room, tokenFor(rec, "/k/bob1"));
+    assert.deepEqual([st.status, st.body.state, st.body.kind], [200, "ringing", "video"]);
+  } finally { await t.stop(); }
+});
+
+test("answering cancels only that member's push; the ring's end cancels the rest", async () => {
+  const pb = fakePostbox();
+  const rec = recorder();
+  const t = await start(pb, { ringMs: 400, ringAlerts: rec.alerts });
+  try {
+    const alice = await t.stream("tok-alice");
+    const bob = await t.stream("tok-bob");
+    const placed = await t.req("tok-alice", "POST", "/calls/v1/calls", { session: alice.id, from: "/alice", group_id: GROUP, kind: "audio" });
+    await bob.until("incoming");
+    const ok = await t.req("tok-bob", "POST", `/calls/v1/rooms/${placed.body.room}/accept`, { session: bob.id });
+    assert.equal(ok.status, 200);
+    assert.deepEqual(rec.cancels.map((c) => [c.to, c.reason]), [["/k/bob1", "answered_elsewhere"]]);
+    // Carol's phone still rings until the ring times out.
+    assert.equal((await ringState(t, placed.body.room, tokenFor(rec, "/k/carol1"))).body.state, "ringing");
+    assert.equal((await ringState(t, placed.body.room, tokenFor(rec, "/k/bob1"))).body.state, "ended");
+    await settle(600);
+    assert.deepEqual(rec.cancels.map((c) => c.to), ["/k/bob1", "/k/carol1"], "each push is cancelled once");
+    assert.equal(rec.cancels[1].reason, "timeout");
+    const after = await ringState(t, placed.body.room, tokenFor(rec, "/k/carol1"));
+    assert.deepEqual(after.body, { state: "ended", reason: "timeout" });
+  } finally { await t.stop(); }
+});
+
+test("a member's ring token declines for that member only; the call ends when nobody rings", async () => {
+  const pb = fakePostbox();
+  const rec = recorder();
+  const t = await start(pb, { ringMs: 3000, ringAlerts: rec.alerts });
+  try {
+    const alice = await t.stream("tok-alice");
+    const placed = await t.req("tok-alice", "POST", "/calls/v1/calls", { session: alice.id, from: "/alice", group_id: GROUP, kind: "audio" });
+    const room = placed.body.room;
+    const d1 = await declineToken(t, room, tokenFor(rec, "/k/bob1"), "busy");
+    assert.equal(d1.status, 200);
+    assert.equal(d1.body.state, "ringing", "carol is still being rung");
+    assert.deepEqual(rec.cancels.map((c) => [c.to, c.reason]), [["/k/bob1", "busy"]]);
+    assert.deepEqual((await ringState(t, room, tokenFor(rec, "/k/bob1"))).body, { state: "ended", reason: "busy" });
+    // A spent token cannot decline again or touch anyone else.
+    assert.equal((await declineToken(t, room, tokenFor(rec, "/k/bob1"))).body.state, "ended");
+    assert.equal(rec.cancels.length, 1);
+    const d2 = await declineToken(t, room, tokenFor(rec, "/k/carol1"));
+    assert.equal(d2.status, 200);
+    assert.equal((await alice.until("ended")).data.reason, "declined");
+    assert.deepEqual(rec.cancels.map((c) => c.to), ["/k/bob1", "/k/carol1"]);
+    await t.service.internal.flush();
+    assert.deepEqual(pb.events.filter((e) => e.event === "busy" || e.event === "decline").map((e) => [e.event, e.by]),
+      [["busy", "/k/bob1"], ["decline", "/k/carol1"]]);
+  } finally { await t.stop(); }
+});
+
+test("an app woken by the push rings late, and answers with its member's token only", async () => {
+  const pb = fakePostbox();
+  const rec = recorder();
+  const t = await start(pb, { ringMs: 3000, ringAlerts: rec.alerts });
+  try {
+    const alice = await t.stream("tok-alice");
+    const placed = await t.req("tok-alice", "POST", "/calls/v1/calls", { session: alice.id, from: "/alice", group_id: GROUP, kind: "audio" });
+    const room = placed.body.room;
+    // Bob's phone opens its stream only now, and is rung like the others.
+    const bob = await t.stream("tok-bob");
+    const late = await bob.until("incoming");
+    assert.deepEqual([late.data.room, late.data.group_id, late.data.to], [room, GROUP, "/k/bob1"]);
+    // The caller's own new session is not rung.
+    const alice2 = await t.stream("tok-alice");
+    await settle();
+    assert.equal(rang(alice2), false);
+    // A session that is not itself rung (the CallKit answer path) needs Bob's own token: Carol's is
+    // not his to use, and a made-up token answers nothing.
+    const fresh = await t.stream("tok-bob");
+    const r1 = t.service.state.rooms.get(room).ring;
+    r1.ringing.delete(fresh.id); r1.ringingFor.delete(fresh.id);
+    const wrong = await t.req("tok-bob", "POST", `/calls/v1/rooms/${room}/accept`, { session: fresh.id, ring_token: tokenFor(rec, "/k/carol1") });
+    assert.equal(wrong.status, 403);
+    const forged = await t.req("tok-bob", "POST", `/calls/v1/rooms/${room}/accept`, { session: fresh.id, ring_token: "x".repeat(43) });
+    assert.equal(forged.status, 409);
+    const ok = await t.req("tok-bob", "POST", `/calls/v1/rooms/${room}/accept`, { session: fresh.id, ring_token: tokenFor(rec, "/k/bob1") });
+    assert.equal(ok.status, 200, JSON.stringify(ok.body));
+    assert.equal((await bob.until("ring_ended")).data.reason, "answered_elsewhere");
+    assert.deepEqual(rec.cancels.map((c) => [c.to, c.reason]), [["/k/bob1", "answered_elsewhere"]]);
+  } finally { await t.stop(); }
+});
+
+test("nothing is pushed when ring pushes are off, and the 1:1 behaviour is unchanged", async () => {
+  const pb = fakePostbox();
+  const rec = recorder();
+  rec.alerts.configured = false;
+  const t = await start(pb, { ringMs: 3000, ringAlerts: rec.alerts });
+  try {
+    const alice = await t.stream("tok-alice");
+    const bob = await t.stream("tok-bob");
+    const placed = await t.req("tok-alice", "POST", "/calls/v1/calls", { session: alice.id, from: "/alice", group_id: GROUP, kind: "audio" });
+    await bob.until("incoming");
+    await t.req("tok-bob", "POST", `/calls/v1/rooms/${placed.body.room}/decline`, { session: bob.id });
+    await t.req("tok-alice", "POST", `/calls/v1/rooms/${placed.body.room}/leave`, { session: alice.id });
+    await settle();
+    assert.equal(rec.rings.length, 0);
+    assert.equal(rec.cancels.length, 0);
   } finally { await t.stop(); }
 });

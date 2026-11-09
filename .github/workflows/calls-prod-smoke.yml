@@ -1,0 +1,55 @@
+# A daily synthetic call on production (audit 2026-11-03 P3-9): two throwaway proof-of-work
+# accounts call each other in headless Chrome with synthetic media, and the run fails unless audio
+# (and in the mesh case video) actually arrives. See tests/e2e-calls/prod-smoke.mjs.
+#
+# Off until the owner turns it on: set the repository variable PIGEONPOST_PROD_SMOKE to `true`.
+# A manual run (workflow_dispatch) works either way.
+#
+# Kept small on purpose, because it runs against production:
+#   - ONLY=audio,mesh: two calls between one pair of mailboxes, under the postbox's pair_rate
+#     (3 calls in 2 minutes, 10 an hour), and one new account a day against the per-IP mint limit;
+#   - the script deletes its mailboxes and revokes its key at the end, pass or fail; a run killed
+#     mid-way leaves its key in $RUNNER_TEMP, and the last step deletes those accounts.
+# A failure fails the workflow, which notifies through GitHub's usual failed-run mail.
+name: calls prod smoke
+on:
+  schedule:
+    - cron: '41 6 * * *'
+  workflow_dispatch:
+    inputs:
+      only:
+        description: Scenarios (audio, video, mesh, sfu; comma list)
+        default: audio,mesh
+permissions:
+  contents: read
+concurrency:
+  group: calls-prod-smoke
+  cancel-in-progress: false
+jobs:
+  smoke:
+    if: github.event_name == 'workflow_dispatch' || vars.PIGEONPOST_PROD_SMOKE == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      ONLY: ${{ github.event.inputs.only || 'audio,mesh' }}
+      CHROME: /usr/bin/google-chrome
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+      - name: Call on production with synthetic media
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: node tests/e2e-calls/prod-smoke.mjs
+      - name: Delete accounts a killed run left behind
+        if: always()
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          shopt -s nullglob
+          for f in "$RUNNER_TEMP"/call-smoke-accounts-*.json; do
+            echo "cleaning up $(basename "$f")"
+            ACCOUNTS="$f" ONLY=none node tests/e2e-calls/prod-smoke.mjs || true
+            rm -f "$f"
+          done

@@ -173,8 +173,6 @@ struct AppState {
     mint_limits: MintLimits,
     /// How many trusted reverse proxies sit in front of us (see [`resolve_client_ip`]).
     trusted_proxy_hops: usize,
-    /// SHA-256 of the namespace-grant shared secret, or `None` when the endpoint is closed.
-    namespace_grant_hash: Option<[u8; 32]>,
     /// SHA-256 of the metrics scrape secret, or `None` when `/metrics` is closed. How much a
     /// postbox is storing and how often it is refusing uploads is operational detail, not public
     /// API, so an unconfigured deployment answers that route the way it answers any other route it
@@ -310,10 +308,6 @@ struct Config {
     mint_window_secs: u64,
     mint_per_ip_lifetime: usize,
     trusted_proxy_hops: usize,
-    /// Shared secret the billing/entitlement service presents to grant a namespace to an account.
-    /// Absent means the grant endpoint is closed, not open — an unconfigured deployment must not
-    /// hand out namespaces.
-    namespace_grant_token: Option<String>,
     /// Shared secret a monitor presents to scrape `/metrics`. Absent closes the route.
     metrics_token: Option<String>,
 }
@@ -345,11 +339,6 @@ impl Config {
             // 0 = trust the socket peer. Behind the production Apache front this must be 1, or
             // every caller looks like the proxy and shares one budget.
             trusted_proxy_hops: env_num("TRUSTED_PROXY_HOPS", 0),
-            // Unset closes the grant endpoint. Defaulting it to anything would mean a fresh
-            // deployment hands out paid namespaces to whoever guesses the default.
-            namespace_grant_token: std::env::var("NAMESPACE_GRANT_TOKEN")
-                .ok()
-                .filter(|t| !t.trim().is_empty()),
             metrics_token: std::env::var("POSTBOX_METRICS_TOKEN")
                 .ok()
                 .filter(|t| !t.trim().is_empty()),
@@ -392,6 +381,11 @@ async fn main() {
 
     init_tracing();
     let cfg = Config::from_env();
+    if std::env::var("NAMESPACE_GRANT_TOKEN").is_ok_and(|t| !t.trim().is_empty()) {
+        // Retired with the public `PUT /v1/namespaces` (P3-10); the operator route uses the ops
+        // service token. Say so rather than silently ignoring a configured secret.
+        tracing::warn!("NAMESPACE_GRANT_TOKEN is set but no longer used; use PUT /internal/v1/namespaces with the ops token");
+    }
 
     if let Some(i) = args.iter().position(|a| a == "--rewrite-wraps") {
         std::process::exit(rewrite_wraps(&cfg, &args[i + 1..]).await);
@@ -651,10 +645,6 @@ fn build_state(cfg: &Config, master_key: [u8; 32]) -> Result<AppState, store::St
             lifetime: cfg.mint_per_ip_lifetime,
         },
         trusted_proxy_hops: cfg.trusted_proxy_hops,
-        namespace_grant_hash: cfg
-            .namespace_grant_token
-            .as_deref()
-            .map(|t| sha256(t.as_bytes())),
         metrics_hash: cfg.metrics_token.as_deref().map(|t| sha256(t.as_bytes())),
         inbox_signal: Arc::new(tokio::sync::Notify::new()),
         apns: push::Apns::from_env(),
@@ -823,7 +813,6 @@ fn build_router(state: AppState) -> Router {
         .route("/v1/capabilities", get(capabilities::capabilities))
         .route("/v1/whoami", get(whoami))
         .route("/v1/identities/handle", post(bind_identity_handle))
-        .route("/v1/namespaces", axum::routing::put(grant_namespace))
         .route("/v1/github/device", post(start_github_claim))
         .route("/v1/github/claim", post(claim_github))
         .route("/v1/workspace", get(get_workspace).put(put_workspace))
@@ -5794,7 +5783,7 @@ struct BindHandleReq {
 }
 
 #[derive(serde::Deserialize)]
-struct GrantNamespaceReq {
+pub(crate) struct GrantNamespaceReq {
     namespace: String,
     account_id: String,
     /// When the entitlement lapses. `None` means "until revoked" — a subscription should always
@@ -5812,9 +5801,6 @@ struct ClaimAppleReq {
     namespace: Option<String>,
 }
 
-/// `PUT /v1/namespaces` — bind a purchased namespace to an account.
-///
-/// Called by the billing/entitlement service, never by an end user: an account that could grant
 /// Begin proving control of a GitHub account.
 ///
 /// Returns what the person types into GitHub. Nothing is recorded yet: a device code that is never
@@ -5955,24 +5941,20 @@ async fn require_account(state: &AppState, headers: &HeaderMap) -> Result<String
     }
 }
 
-/// itself a namespace would be helping itself to paid handles. Authenticated by a shared secret
-/// that, when unset, closes the endpoint rather than opening it.
-async fn grant_namespace(
-    State(state): State<AppState>,
+/// `PUT /internal/v1/namespaces` — bind a namespace to an account by hand (operator only).
+///
+/// Purchases bind names through the entitlement routes. This is the operator's tool for the rest
+/// (a manual bind, a test harness), never an end user's: an account that could grant itself a
+/// namespace would be helping itself to paid handles. It replaces the public `PUT /v1/namespaces`
+/// and its `NAMESPACE_GRANT_TOKEN` shared secret, retired 2026-11-04 (audit 2026-11-03 P3-10):
+/// no client called it, and production never configured the secret.
+/// The caller (`internal_api::grant_namespace`) has already authorized the ops service.
+pub(crate) async fn grant_namespace(
+    state: AppState,
     headers: HeaderMap,
     client_ip: Option<Extension<ClientIp>>,
-    Json(req): Json<GrantNamespaceReq>,
+    req: GrantNamespaceReq,
 ) -> Response {
-    let Some(expected) = state.namespace_grant_hash else {
-        // Deliberately indistinguishable from "no such route" — an unconfigured deployment should
-        // not advertise that it has a namespace-granting endpoint at all.
-        return err_response(StatusCode::NOT_FOUND, "not_found", None);
-    };
-    let presented = bearer(&headers).map(|token| sha256(token.as_bytes()));
-    if presented.is_none_or(|presented| !constant_time_eq(&presented, &expected)) {
-        return ApiError::unauthorized("invalid namespace grant credential").into_response();
-    }
-
     // Canonicalise through core, so a grant for "Bekir" and a mint of "/bekir/x" agree.
     let probe = format!("/{}/probe", req.namespace.trim_start_matches('/'));
     let Ok(destination) = Destination::for_handle(&probe) else {
@@ -6005,7 +5987,7 @@ async fn grant_namespace(
                 "namespace.grant",
                 Some(format!("namespace:{namespace}")),
                 json!({
-                    "via": "namespace_grant_token",
+                    "via": "ops",
                     "account_id": req.account_id,
                     "expires_at": req.expires_at,
                 }),
@@ -7337,7 +7319,6 @@ mod tests {
             quota: Quota::for_tests(),
             mint_limits: limits,
             trusted_proxy_hops: 0,
-            namespace_grant_hash: None,
             metrics_hash: None,
             inbox_signal: Arc::new(tokio::sync::Notify::new()),
             apns: None,
@@ -8932,19 +8913,6 @@ mod tests {
     }
 
     #[test]
-    fn an_unconfigured_grant_secret_closes_the_endpoint_rather_than_opening_it() {
-        // The failure that would matter most: a deployment that forgets to set the secret must not
-        // hand out paid namespaces to anyone who asks.
-        let state = test_state();
-        assert!(
-            state.namespace_grant_hash.is_none(),
-            "no secret configured in tests"
-        );
-        // …and the handler's first act on a None hash is to answer 404, exercised via the router
-        // build plus this invariant. Kept as an assertion so removing the `else` branch trips here.
-    }
-
-    #[test]
     fn digest_comparison_does_not_short_circuit() {
         let a = [7u8; 32];
         let mut b = a;
@@ -10183,7 +10151,6 @@ mod tests {
                 lifetime: 1000,
             },
             trusted_proxy_hops: 0,
-            namespace_grant_hash: None,
             metrics_hash: None,
             inbox_signal: Arc::new(tokio::sync::Notify::new()),
             apns: None,

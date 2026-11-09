@@ -57,8 +57,11 @@ try {
     Check ($null -ne (Control "/example/agent — opening an operated agent's rooms isn't available in this app yet.")) 'Delegated agents are listed but explicitly not opened'
     Check ($null -eq (Control 'New room')) 'No creation is offered for a personal inbox'
     Capture 'rooms-personal-inbox.png'
+    Check ($null -eq (Control 'Browse rooms')) 'A personal inbox shows no organization badge'
     Invoke-Control 'Switch to /preview/team'
     $null = Wait-Control 'Room Design studio, 1 member, Join'
+    $null = Wait-Control 'Organization: Example Organization · Member'
+    Check ($null -ne (Control 'Browse rooms')) 'The org inbox shows its organization and role under the mailbox switcher, with Browse rooms'
     Check ($null -ne (Control 'Room Leadership, 1 member, Not available')) 'A private room without an invitation cannot be joined'
     Capture 'rooms-directory.png'
     Invoke-Control 'Room Design studio, 1 member, Join'
@@ -94,6 +97,14 @@ try {
     Check ($null -ne (Control 'Launch plans')) 'The created room opens as an encrypted group with its own composer'
     Wait-Check { @(Get-ChildItem $env:PIGEONPOST_UI_ROOMS_FOLDER -Recurse -File -Filter 'room.pending').Count -eq 0 } 'Confirmed creation clears protected custody'
     Capture 'rooms-created.png'
+
+    # SDS §5.4: composing from the org inbox suggests organization addresses from the directory.
+    Invoke-Control 'New conversation'
+    Set-Text 'Pigeonpost address' '/example/ow'
+    $null = Wait-Control '/example/owner'
+    Check ($null -ne (Control 'Example Organization addresses')) 'New conversation suggests organization members from the directory'
+    Capture 'rooms-directory-suggestions.png'
+    Invoke-Control 'Cancel'
     @{ passed = $true; checks = $checks } | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $directory 'rooms-ui.json')
 } catch {
     try { if ($script:root) { Capture 'rooms-failure.png' } } catch { }

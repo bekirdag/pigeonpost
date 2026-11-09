@@ -20,10 +20,12 @@
 //! readable by this service. Nothing here may be described to users as end-to-end encrypted.
 
 pub(crate) mod calendars;
+pub(crate) mod erasure;
 pub(crate) mod events;
 pub(crate) mod guest;
 pub(crate) mod ics;
 pub(crate) mod mail;
+pub(crate) mod mcp;
 pub(crate) mod meeting;
 mod receipts;
 pub(crate) use receipts::{idempotent, protect_legacy_receipts};
@@ -34,7 +36,7 @@ pub(crate) mod worker;
 mod tests;
 
 use crate::capabilities;
-use crate::filtering::{feature_on, mailbox_for};
+use crate::filtering::feature_on;
 use crate::groups::{rand_b32, GErr, GResult};
 use crate::policy::Action;
 use crate::{push, store, AppState, Principal};
@@ -54,6 +56,15 @@ pub(crate) const MAX_HANDLE_ATTENDEES: usize = 500;
 pub(crate) const MAX_EXTERNAL_ATTENDEES: usize = 50;
 /// New contact-address invitations per account per day.
 pub(crate) const EXTERNAL_INVITES_PER_DAY: i64 = 200;
+/// Contact-address updates and reminders per account per day (D-31 churn, SDS §14B.14:
+/// "do not let an edit loop bypass limits"). An edit that would go past it is refused.
+pub(crate) const EXTERNAL_CHURN_PER_DAY: i64 = 2_000;
+/// Contact-address cancellations per account per day. A cancellation itself always happens;
+/// notices past this are recorded as suppressed rather than sent (a bounded queue, not an
+/// unlimited exception).
+pub(crate) const EXTERNAL_CANCELS_PER_DAY: i64 = 500;
+/// Non-invitation messages to one contact guest per day; past it they are suppressed.
+pub(crate) const EXTERNAL_PER_RECIPIENT_PER_DAY: i64 = 20;
 /// Events created per mailbox per day.
 const EVENTS_PER_DAY: usize = 500;
 /// Calendars per mailbox.
@@ -333,7 +344,20 @@ pub(crate) async fn ctx(
     identity: Option<&str>,
 ) -> GResult<Ctx> {
     let explicit = identity.or_else(|| header_value(headers, "x-pigeonpost-identity"));
-    let (principal, me) = mailbox_for(state, headers, explicit, Action::CalendarUse).await?;
+    let principal = crate::principal_for_token(state, crate::bearer(headers)).await?;
+    ctx_for(state, principal, explicit).await
+}
+
+/// [`ctx`] for a caller the MCP transport already authenticated. The policy decides from the
+/// stored binding exactly as it does for the HTTP routes, so a connector stays refused.
+pub(crate) async fn ctx_for(
+    state: &AppState,
+    principal: Principal,
+    identity: Option<&str>,
+) -> GResult<Ctx> {
+    let (principal, me) =
+        crate::filtering::mailbox_for_principal(state, principal, identity, Action::CalendarUse)
+            .await?;
     if !feature_on(state, me.account_id.as_deref(), capabilities::CALENDAR).await {
         return Err(GErr::new(
             StatusCode::NOT_FOUND,

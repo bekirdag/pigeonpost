@@ -112,6 +112,7 @@ public sealed partial class MainWindow
         if (sideView is not SideView.Chats and not SideView.Machine and not SideView.Rooms and not SideView.Notes) ShowSideView(SideView.Chats);
         if (sideView == SideView.Rooms) { roomStore.Synchronize(); roomStore.LoadOrganizations(roomStore.State.ContextId); }
         UpdateFilteredEntry();
+        _ = RefreshOrganizationBadgeAsync();
         await RefreshSideViewsAsync();
         if (!SideCurrent(binding)) return;
         await groupsModel.ActivateAsync(mailbox, features, binding.Inbox.Mailboxes, binding.Inbox.Contacts);
@@ -185,6 +186,7 @@ public sealed partial class MainWindow
         SideNav.Visibility = NewGroupButton.Visibility = FilteredEntry.Visibility = Visibility.Collapsed;
         ProfileMenuItem.Visibility = PrivacyMenuItem.Visibility = TimerMenuItem.Visibility = Visibility.Collapsed;
         ProfileNameMenuItem.Visibility = LocalNameMenuItem.Visibility = Visibility.Collapsed;
+        ResetOrganizationBadge();
     }
 
     private void SideViewsInboxUpdated()

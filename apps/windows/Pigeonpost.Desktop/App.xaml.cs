@@ -27,6 +27,12 @@ public partial class App : Application
                 // An incoming-call alert (the app's own or a WNS push): Answer, Decline or the body.
                 if (CallLaunch.Parse(activation.Argument) is { } call) { await window.HandleCallLaunchAsync(call); return; }
                 var values = activation.Arguments;
+                if (values.TryGetValue("calendar", out var calendarAction) && values.TryGetValue("mailbox", out var calendarMailbox) && values.TryGetValue("event", out var calendarEvent))
+                {
+                    await window.HandleCalendarNotificationAsync(calendarAction, calendarMailbox, calendarEvent,
+                        values.TryGetValue("occurrence", out var occurrence) && occurrence.Length > 0 ? occurrence : null);
+                    return;
+                }
                 if (values.TryGetValue("mailbox", out var mailbox) && values.TryGetValue("peer", out var peer)
                     && values.TryGetValue("message", out var message))
                 {

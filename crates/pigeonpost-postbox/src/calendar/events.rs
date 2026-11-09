@@ -1130,28 +1130,51 @@ pub(crate) async fn list(
         Ok(c) => c,
         Err(e) => return e.into_response(),
     };
-    if q.to <= q.from {
-        return GErr::bad("bad_request", "to must be after from").into_response();
+    match list_for(
+        &state,
+        &ctx,
+        q.from,
+        q.to,
+        q.calendars.as_deref(),
+        q.include.as_deref(),
+    )
+    .await
+    {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => e.into_response(),
     }
-    if q.to - q.from > time::MAX_WINDOW_SECS {
-        return GErr::bad("window_too_large", "ask for at most 62 days at a time").into_response();
+}
+
+/// The occurrences `ctx`'s mailbox sees between `from` and `to` (shared with the MCP tool).
+pub(crate) async fn list_for(
+    state: &AppState,
+    ctx: &Ctx,
+    from: i64,
+    to: i64,
+    calendars: Option<&str>,
+    include: Option<&str>,
+) -> GResult<Value> {
+    if to <= from {
+        return Err(GErr::bad("bad_request", "to must be after from"));
+    }
+    if to - from > time::MAX_WINDOW_SECS {
+        return Err(GErr::bad(
+            "window_too_large",
+            "ask for at most 62 days at a time",
+        ));
     }
     let me = ctx.address();
     let vault = state.vault.clone();
     let inbox = state.calendar.inbox_url.clone();
-    let wanted: Option<HashSet<String>> = q.calendars.as_deref().map(|s| {
+    let wanted: Option<HashSet<String>> = calendars.map(|s| {
         s.split(',')
             .map(str::trim)
             .filter(|x| !x.is_empty())
             .map(str::to_string)
             .collect()
     });
-    let invitations = q
-        .include
-        .as_deref()
-        .is_some_and(|i| i.split(',').any(|x| x == "invitations"));
-    let (from, to) = (q.from, q.to);
-    let result = state
+    let invitations = include.is_some_and(|i| i.split(',').any(|x| x == "invitations"));
+    state
         .store
         .group_read(move |c: &Connection| -> GResult<Value> {
             list_in(
@@ -1165,11 +1188,7 @@ pub(crate) async fn list(
                 &inbox,
             )
         })
-        .await;
-    match result {
-        Ok(v) => Json(v).into_response(),
-        Err(e) => e.into_response(),
-    }
+        .await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1431,17 +1450,21 @@ pub(crate) async fn create(
     Query(q): Query<IdentityQuery>,
     body: Result<Json<Value>, JsonRejection>,
 ) -> Response {
-    let r = create_inner(&state, &headers, q.identity.as_deref(), body).await;
+    let r = async {
+        let ctx = ctx(&state, &headers, q.identity.as_deref()).await?;
+        create_with(&state, &ctx, body).await
+    }
+    .await;
     finish(&state, r)
 }
 
-async fn create_inner(
+/// Create an event as `ctx`'s mailbox (shared with the MCP tool). Contact-address attendees
+/// still need a person with a verified sign-in address (`external_gate`).
+pub(crate) async fn create_with(
     state: &AppState,
-    headers: &HeaderMap,
-    identity: Option<&str>,
+    ctx: &Ctx,
     body: Result<Json<Value>, JsonRejection>,
 ) -> GResult<(u16, Value, Effects)> {
-    let ctx = ctx(state, headers, identity).await?;
     let (input, hash): (EventIn, String) = parse(body)?;
     let key = input
         .request_key
@@ -1470,7 +1493,7 @@ async fn create_inner(
         ));
     }
     let score = crate::sender_score(state, &ctx.me).await;
-    external_gate(&ctx, score, externals)?;
+    external_gate(ctx, score, externals)?;
 
     let meeting_in = input.meeting.clone().unwrap_or_default();
     let meeting = if meeting_in.enabled {
@@ -2883,37 +2906,47 @@ pub(crate) async fn rsvp(
 ) -> Response {
     let r = async {
         let ctx = ctx(&state, &headers, q.identity.as_deref()).await?;
-        let (input, _): (RsvpIn, String) = parse(body)?;
-        let vault = state.vault.clone();
-        let me = ctx.address();
-        let now = now_unix();
-        state
-            .store
-            .group_tx(
-                move |tx: &Transaction<'_>| -> GResult<(u16, Value, Effects)> {
-                    if !valid_event_id(&id) {
-                        return Err(not_found());
-                    }
-                    let ev = load_ev(tx, &vault, &id)?.ok_or_else(not_found)?;
-                    let att = match access(tx, &ev, &me)? {
-                        Some(Access::Attendee(a)) => a,
-                        Some(Access::Organizer) => {
-                            return Err(GErr::bad(
-                                "bad_request",
-                                "the organizer does not answer their own event",
-                            ))
-                        }
-                        None => return Err(not_found()),
-                    };
-                    let mut fx = Effects::default();
-                    let v = record_rsvp(tx, &vault, &ev, &att, &input, "member", &mut fx, now)?;
-                    Ok((200, v, fx))
-                },
-            )
-            .await
+        rsvp_with(&state, &ctx, id, body).await
     }
     .await;
     finish(&state, r)
+}
+
+/// Answer an invitation as `ctx`'s mailbox (shared with the MCP tool).
+pub(crate) async fn rsvp_with(
+    state: &AppState,
+    ctx: &Ctx,
+    id: String,
+    body: Result<Json<Value>, JsonRejection>,
+) -> GResult<(u16, Value, Effects)> {
+    let (input, _): (RsvpIn, String) = parse(body)?;
+    let vault = state.vault.clone();
+    let me = ctx.address();
+    let now = now_unix();
+    state
+        .store
+        .group_tx(
+            move |tx: &Transaction<'_>| -> GResult<(u16, Value, Effects)> {
+                if !valid_event_id(&id) {
+                    return Err(not_found());
+                }
+                let ev = load_ev(tx, &vault, &id)?.ok_or_else(not_found)?;
+                let att = match access(tx, &ev, &me)? {
+                    Some(Access::Attendee(a)) => a,
+                    Some(Access::Organizer) => {
+                        return Err(GErr::bad(
+                            "bad_request",
+                            "the organizer does not answer their own event",
+                        ))
+                    }
+                    None => return Err(not_found()),
+                };
+                let mut fx = Effects::default();
+                let v = record_rsvp(tx, &vault, &ev, &att, &input, "member", &mut fx, now)?;
+                Ok((200, v, fx))
+            },
+        )
+        .await
 }
 
 #[derive(Deserialize, Default)]
