@@ -181,6 +181,7 @@ struct MacInboxView: View {
             sheet = .calendar
             NSApplication.shared.activate(ignoringOtherApps: true)
         }, visit: visit)
+        .nestPurchaseRecovery()
         .calendarMeetingLinks(canPresent: sheet == nil) { request in
             sheet = .meetingLink(request)
             NSApplication.shared.activate(ignoringOtherApps: true)

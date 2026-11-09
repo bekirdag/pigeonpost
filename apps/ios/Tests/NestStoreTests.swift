@@ -40,6 +40,7 @@ private final class Backend {
     var intentError: APIError?
     var log: [String] { purchases.log }
     var funded = false
+    var setupPending = false
     let package = NestPackage(code: "nest.ai.starter.monthly", name: "Pigeonpost AI", rank: 2, slots: 1, storageBytes: 5 << 30,
                               activeHours: 10, inputTokens: 1_000_000, outputTokens: 100_000, model: "managed", sellable: true,
                               appleProductId: "dev.pigeonpost.inbox.nests.ai.starter.monthly")
@@ -49,7 +50,8 @@ private final class Backend {
     func snapshot() -> NestSnapshot {
         NestSnapshot(allowance: NestAllowance(funding: funded ? NestFunding(entitlementId: "e", source: "apple", package: package.code, status: "active", paidThrough: nil) : nil,
                                               slots: funded ? 1 : 0, used: 0, duplicates: []),
-                     package: funded ? package : nil, nests: [], setups: [])
+                     package: funded ? package : nil, nests: [],
+                     setups: setupPending ? [NestSetup(setupId: "s", label: "n", status: "pending", attempts: 1, lastError: nil)] : [])
     }
     func store() -> NestStore {
         NestStore(services: NestServices(
@@ -69,6 +71,12 @@ private final class Backend {
                 return self.snapshot()
             },
             retry: { _ in self.snapshot() },
+            create: { label in self.purchases.log.append("create:\(label)") },
+            orgNests: {
+                self.purchases.log.append("orgs")
+                return [NestView(nestId: "org1", address: "/acme/hr", label: "HR", state: "running", funding: "package",
+                                 status: nil, statusReason: nil, pausedReason: nil, deleteAfter: nil, role: "operator", orgId: "o")]
+            },
             purchases: purchases))
     }
 }
@@ -161,6 +169,58 @@ struct NestStoreTests {
                                                    accountToken: api.token, expiresAt: nil, revoked: false)]
             await store.restore()
             expect(api.log.contains("restore") && api.log.contains("claim:r1") && api.log.contains("finish:r1"), "restore claims: \(api.log)")
+        }
+        // A claim the postbox could not judge (expired session, flag off, 404) keeps the payment.
+        for (status, code) in [(401, "unauthorized"), (403, "feature_disabled"), (404, nil as String?), (400, "invalid_request")] {
+            let api = Backend(), store = api.store()
+            await store.refresh()
+            api.claimError = APIError(status: status, code: code, detail: nil)
+            await store.buy(api.package)
+            expect(!api.log.contains("finish:t1"), "\(status): never finished unclaimed")
+            expect(store.awaitingClaim, "\(status): kept for the next attempt")
+        }
+        // The purchases a paid transaction may be finished for without a claim.
+        for code in ["purchase_account_mismatch", "invalid_purchase"] {
+            let api = Backend(), store = api.store()
+            await store.refresh()
+            api.claimError = APIError(status: 403, code: code, detail: nil)
+            await store.buy(api.package)
+            expect(api.log.last == "finish:t1", "\(code) is definite")
+        }
+        // A free slot: the package has room and no paid setup is holding it.
+        do {
+            let api = Backend(), store = api.store()
+            await store.refresh()
+            expect(!store.canCreate, "no package, nothing to create")
+            api.funded = true
+            await store.reload()
+            expect(store.canCreate, "a funded package with a free slot can create")
+            api.setupPending = true
+            await store.reload()
+            expect(!store.canCreate, "a paid setup holds the slot")
+            api.setupPending = false
+            await store.reload()
+            await store.create(label: "   ")
+            expect(!api.log.contains { $0.hasPrefix("create:") }, "a blank name is not sent")
+            await store.create(label: "  Research ")
+            expect(api.log.last == "create:Research", "the name is trimmed: \(api.log)")
+        }
+        // The Nest behind a conversation: an organization's is found, a miss is not re-fetched.
+        do {
+            let api = Backend(), store = api.store()
+            var time = Date(timeIntervalSince1970: 1000)
+            store.now = { time }
+            await store.refresh()
+            let org = await store.nest(forPeer: ["/acme/name", "/acme/hr"])
+            expect(org?.nestId == "org1", "an organization Nest is found, by the address its messages came from")
+            let asked = api.log.filter { $0 == "orgs" }.count
+            let first = await store.nest(forPeer: ["/mira"])
+            let second = await store.nest(forPeer: ["/mira"])
+            expect(first == nil && second == nil, "not a Nest")
+            expect(api.log.filter { $0 == "orgs" }.count == asked, "a miss is remembered")
+            time.addTimeInterval(301)
+            _ = await store.nest(forPeer: ["/mira"])
+            expect(api.log.filter { $0 == "orgs" }.count == asked + 1, "and asked again later")
         }
         expect(NestWords.fileName("Q3 plan/../é.pdf") == "Q3%20plan%2F..%2F%C3%A9.pdf", "file names are percent-encoded")
         expect(NestWords.fileName("a\u{7}b\nc") == "abc", "control characters are dropped")

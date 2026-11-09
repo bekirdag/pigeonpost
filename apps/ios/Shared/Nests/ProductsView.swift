@@ -28,7 +28,13 @@ struct ProductsView: View {
         _tab = State(initialValue: tab)
     }
 
-    struct OrgRef: Decodable, Identifiable, Hashable { let id: String; let name: String }
+    struct OrgRef: Decodable, Identifiable, Hashable {
+        let id: String
+        let name: String
+        var myRoles: [String]? = nil
+        /// Roles the postbox allows to create and delete an organization's Nests.
+        var managesNests: Bool { myRoles?.contains { ["owner", "admin", "agent_admin"].contains($0) } == true }
+    }
 
     var body: some View {
         List {
@@ -76,6 +82,7 @@ struct ProductsView: View {
 struct BuyNestsSection: View {
     @Bindable var store: NestStore
     @State private var managing = false
+    @State private var newName = ""
 
     var body: some View {
         Section {
@@ -85,9 +92,17 @@ struct BuyNestsSection: View {
                 LabeledContent("Your package", value: package.name)
                     .accessibilityIdentifier("nest-current-package")
             }
+            if let paid = store.funding?.paidThrough {
+                LabeledContent("Paid through", value: Date(timeIntervalSince1970: TimeInterval(paid)).formatted(date: .abbreviated, time: .omitted))
+            }
             if store.fundedElsewhere {
                 Text("Your Nests are paid for on the web or Google Play. Change your package there.")
                     .font(.footnote).foregroundStyle(.secondary)
+            }
+            if !store.duplicates.isEmpty {
+                Text("You are also paying for another Nest package, and it adds nothing. Cancel it where you bought it.")
+                    .font(.footnote).foregroundStyle(.orange)
+                    .accessibilityIdentifier("nest-duplicate-package")
             }
         } header: { Text("Nests") }
 
@@ -122,6 +137,20 @@ struct BuyNestsSection: View {
                             .accessibilityIdentifier("nest-setup-retry")
                     }
                 }
+            }
+        }
+
+        if store.canCreate {
+            Section {
+                TextField("Name", text: $newName).accessibilityIdentifier("nest-new-name")
+                Button("Create") {
+                    let label = newName
+                    Task { await store.create(label: label); if store.message == nil { newName = "" } }
+                }
+                .disabled(store.busy || NestWords.validLabel(newName) == nil)
+                .accessibilityIdentifier("nest-create")
+            } header: { Text("New Nest") } footer: {
+                Text("Your package has room for another Nest.")
             }
         }
 
@@ -249,9 +278,7 @@ struct OrgNestsSection: View {
                 LabeledContent("Nest slots", value: "\(list.allowance.used) of \(list.allowance.slots) in use")
                 ForEach(list.nests) { row in
                     NavigationLink {
-                        NestDetailView(nest: NestView(nestId: row.nestId, address: row.address, label: row.label, state: row.state,
-                                                      funding: "package", status: nil, statusReason: nil, pausedReason: nil,
-                                                      deleteAfter: nil, role: row.role, orgId: org.id))
+                        NestDetailView(nest: row.view(org: org.id))
                     } label: {
                         VStack(alignment: .leading) {
                             Text(row.label)
@@ -263,23 +290,25 @@ struct OrgNestsSection: View {
                 ProgressView()
             }
         } header: { Text("\(org.name) Nests") } footer: {
-            Text("Company Nests are bought by the organization on enterprise.pigeonpost.dev. Each uses one of its agent addresses.")
-        }
-        Section("New company Nest") {
-            TextField("Handle (for example hr)", text: $handle).autocorrectionDisabled()
-            TextField("Name", text: $label)
-            Button("Create") {
-                Task {
-                    do {
-                        try await account.client.createOrgNest(org.id, handle: handle, label: label)
-                        handle = ""; label = ""; message = nil
-                        list = try? await account.client.orgNests(org.id)
-                    } catch { message = NestWords.refusal(error) }
-                }
-            }
-            .disabled(handle.isEmpty || label.isEmpty)
-            if let message { Text(message).foregroundStyle(.red).font(.footnote) }
+            Text("Company Nests use a package held by the organization, not a personal App Store subscription. Each uses one of its agent addresses.")
         }
         .task(id: org.id) { list = try? await account.client.orgNests(org.id) }
+        if org.managesNests {
+            Section("New company Nest") {
+                TextField("Handle (for example hr)", text: $handle).autocorrectionDisabled()
+                TextField("Name", text: $label)
+                Button("Create") {
+                    Task {
+                        do {
+                            try await account.client.createOrgNest(org.id, handle: handle, label: label)
+                            handle = ""; label = ""; message = nil
+                            list = try? await account.client.orgNests(org.id)
+                        } catch { message = NestWords.refusal(error) }
+                    }
+                }
+                .disabled(handle.isEmpty || NestWords.validLabel(label) == nil)
+                if let message { Text(message).foregroundStyle(.red).font(.footnote) }
+            }
+        }
     }
 }

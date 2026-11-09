@@ -175,6 +175,7 @@ struct ConversationsView: View {
         .calendarNotices(canPresent: sheet == nil || sheet?.id == "calendar", open: { sheet = .calendar }, visit: visit)
         .calendarMeetingLinks(canPresent: sheet == nil) { sheet = .meetingLink($0) }
         .deviceApprovalLinks(canPresent: sheet == nil) { sheet = .deviceApproval($0) }
+        .nestPurchaseRecovery()
         .onChange(of: people?.state.nameLoaded, initial: true) { _, loaded in
             if loaded == true, people?.has("display_names") == true, people?.state.ownName == nil,
                people?.state.promptSeen == false, Fixtures.sheet == nil, sheet == nil, calls.mode == .hidden { sheet = .freeName }

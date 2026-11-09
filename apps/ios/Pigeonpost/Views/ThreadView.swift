@@ -103,6 +103,9 @@ struct ThreadView: View {
 
     private var conversation: Conversation? { inbox.conversation(with: peer) }
     private var subthreads: [Subthread] { inbox.subthreads(of: peer) }
+    private var peerAddresses: [String] {
+        Array(Set((conversation?.messages ?? []).filter { $0.kind == .incoming }.compactMap(\.address))).sorted()
+    }
 
     private var shown: [ThreadMessage] {
         guard let conversation else { return [] }
@@ -141,7 +144,7 @@ struct ThreadView: View {
         .safeAreaInset(edge: .top, spacing: 0) {
             VStack(spacing: 0) {
                 // A Nest's conversation says what the Nest is doing (Nests Phase B3).
-                NestConversationHeader(peer: peer)
+                NestConversationHeader(peer: peer, addresses: peerAddresses)
                 if !embedded { subjects }
             }
         }

@@ -123,6 +123,14 @@ struct NestApproval: Decodable, Equatable, Identifiable, Sendable {
     let expiresAt: Int
     let result: String?
     var id: String { approvalId }
+
+    /// Whether the app can show exactly what approving would do. Approving binds the hash of what
+    /// the person saw, so a call this app cannot display is never offered for approval.
+    var isReviewable: Bool {
+        guard tool == "send_message", let call, call.tool == tool,
+              let to = call.args.to, !to.isEmpty, let body = call.args.body, !body.isEmpty else { return false }
+        return true
+    }
 }
 
 struct NestUsage: Decodable, Equatable, Sendable {
@@ -140,6 +148,12 @@ struct OrgNestList: Decodable, Equatable, Sendable {
     struct Row: Decodable, Equatable, Identifiable, Sendable {
         let nestId: String; let address: String?; let label: String; let state: String; let role: String
         var id: String { nestId }
+
+        /// The list row has no status of its own; the Nest's page and header fetch the live one.
+        func view(org: String) -> NestView {
+            NestView(nestId: nestId, address: address, label: label, state: state, funding: "package", status: nil,
+                     statusReason: nil, pausedReason: nil, deleteAfter: nil, role: role, orgId: org)
+        }
     }
     struct Slots: Decodable, Equatable, Sendable { let slots: Int; let used: Int }
     let nests: [Row]
@@ -165,7 +179,17 @@ enum NestWords {
         case "approval_closed": return "This approval was already decided, replaced or expired."
         case "recipient_not_allowed": return "A Nest may only message you or people you have allowed."
         case "storage_full": return "This Nest's storage is full."
-        case "too_large", "export_too_large": return "That is too large."
+        case "too_large": return "A file can be at most 25 MB."
+        case "export_too_large": return "This Nest is too large for one download. Contact support."
+        case "too_many_files": return "This Nest holds its maximum number of files. Delete one first."
+        case "upload_failed": return "The file was not stored. Try again."
+        case "bad_label": return "A name is 1 to 64 printable characters."
+        case "confirm_required": return "Type the Nest's name exactly to delete it."
+        case "no_nest_slot": return "The organization has no free Nest slot."
+        case "no_nest": return "This Nest is no longer available."
+        case "no_approval": return "This approval no longer exists."
+        case "tool_failed": return "The action could not be carried out."
+        case "nests_unavailable", "nestd_failed": return "The Nest could not be reached. Try again."
         case "rate_limited", "too_many_pending": return "Too many attempts. Try again later."
         case "feature_disabled": return "Nests are not available for this account yet."
         case "billing_unavailable": return "The App Store could not be checked. Try again."
@@ -175,12 +199,63 @@ enum NestWords {
 
     static func status(_ view: NestView) -> String {
         switch view.status {
+        case nil: return "Checking…"
         case "ready": return "Ready"
         case "working": return "Working…"
         case "needs_you": return view.statusReason == "payment" ? "Needs you: renew the package" : "Needs you"
         case "paused": return view.statusReason == "over_capacity" ? "Paused: over your package" : "Paused"
         default: return view.statusReason == "setting_up" ? "Setting up…" : "Unavailable"
         }
+    }
+
+    /// Why a paused Nest is paused, and what happens next. Nil when it is not paused.
+    static func pausedExplanation(_ view: NestView) -> String? {
+        guard view.state == "paused" else { return nil }
+        switch view.pausedReason {
+        case "unfunded":
+            guard let deadline = view.deleteAfter else { return "Paused until its package is paid for." }
+            let day = Date(timeIntervalSince1970: TimeInterval(deadline)).formatted(date: .long, time: .omitted)
+            return "Paused until its package is paid for. Unless you renew, its files and conversations are deleted on \(day). Export them first."
+        case "over_capacity": return "Paused because your package now has fewer Nests than you have. Delete one or upgrade."
+        default: return "You paused this Nest. Messages wait until you resume it."
+        }
+    }
+
+    /// One decided card, in a sentence. The card's own status and the postbox's result code.
+    static func outcome(_ card: NestApproval) -> String {
+        switch card.status {
+        case "approved": return "Approved and sent"
+        case "rejected": return "Rejected"
+        case "superseded": return "Replaced by a newer request"
+        case "expired": return "Expired without a decision"
+        case "failed":
+            return card.result == "recipient_not_allowed"
+                ? "Not sent: a Nest may only message you or people you have allowed"
+                : "Approved, but it could not be sent"
+        default: return card.status
+        }
+    }
+
+    /// A new or changed Nest name: what the postbox accepts, trimmed. Nil when it would be refused.
+    static func validLabel(_ text: String) -> String? {
+        let label = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !label.isEmpty, label.count <= 64,
+              !label.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { return nil }
+        return label
+    }
+
+    /// Model tokens for the usage section. An Empty Nest has no allowance at all.
+    static func tokens(_ t: NestUsage.Tokens) -> String {
+        if t.limit == 0 { return "No AI connected" }
+        let used = (t.used ?? 0).formatted(.number.notation(.compactName))
+        guard let limit = t.limit else { return used }
+        return "\(used) of \(limit.formatted(.number.notation(.compactName)))"
+    }
+
+    /// The export's suggested file name: the label is display text and may hold anything.
+    static func exportName(_ label: String) -> String {
+        let safe = String(label.unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) || $0 == "-" || $0 == "_" }.prefix(40).map(Character.init))
+        return "nest-\(safe.isEmpty ? "export" : safe).zip"
     }
 
     /// A display name for the `x-file-name` header: control characters dropped, at most 200

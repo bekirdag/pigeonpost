@@ -10,6 +10,9 @@ import UniformTypeIdentifiers
 
 struct MacThreadView: View {
     let peer: String
+    private var peerAddresses: [String] {
+        Array(Set((inbox.conversation(with: peer)?.messages ?? []).filter { $0.kind == .incoming }.compactMap(\.address))).sorted()
+    }
     /// Which subject is being read, chosen in the sidebar. `nil` means the whole conversation.
     let subthread: String?
 
@@ -106,7 +109,7 @@ struct MacThreadView: View {
         let scrollRequest = ScrollRequest(context: scrollContext, last: messages.last?.id, count: messages.count)
 
         VStack(spacing: 0) {
-            NestConversationHeader(peer: peer)
+            NestConversationHeader(peer: peer, addresses: peerAddresses)
             ScrollViewReader { scroller in
                 ScrollView {
                     LazyVStack(spacing: 16) {
