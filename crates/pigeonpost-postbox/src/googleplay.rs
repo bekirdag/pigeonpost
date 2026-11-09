@@ -154,6 +154,18 @@ impl GooglePlay {
         purchase_token: &str,
         account: &str,
     ) -> Result<VerifiedPurchase, PlayError> {
+        self.verify_for(purchase_token, account, &products(), BASE_PLAN)
+            .await
+    }
+
+    /// [`Self::verify`] for an explicit product list and base plan (Nest packages).
+    pub async fn verify_for(
+        &self,
+        purchase_token: &str,
+        account: &str,
+        allowed: &[String],
+        base_plan: &str,
+    ) -> Result<VerifiedPurchase, PlayError> {
         if purchase_token.is_empty()
             || purchase_token.len() > 4096
             || purchase_token.chars().any(char::is_whitespace)
@@ -182,7 +194,7 @@ impl GooglePlay {
             _ => return Err(PlayError::Unavailable),
         }
         let purchase: Subscription = response.json().await.map_err(|_| PlayError::Unavailable)?;
-        purchase.validate(account, crate::now_unix())
+        purchase.validate_with(account, crate::now_unix(), allowed, base_plan)
     }
 
     pub async fn acknowledge(&self, purchase_token: &str, product: &str) -> Result<(), PlayError> {
@@ -259,7 +271,18 @@ pub struct VerifiedPurchase {
 }
 
 impl Subscription {
+    #[cfg(test)]
     fn validate(self, account: &str, now: u64) -> Result<VerifiedPurchase, PlayError> {
+        self.validate_with(account, now, &products(), BASE_PLAN)
+    }
+
+    fn validate_with(
+        self,
+        account: &str,
+        now: u64,
+        allowed: &[String],
+        base_plan: &str,
+    ) -> Result<VerifiedPurchase, PlayError> {
         if self
             .external_account_identifiers
             .and_then(|a| a.obfuscated_external_account_id)
@@ -276,8 +299,8 @@ impl Subscription {
             .into_iter()
             .next()
             .ok_or(PlayError::Invalid)?;
-        if !products().contains(&item.product_id)
-            || item.offer_details.as_ref().map(|o| o.base_plan_id.as_str()) != Some(BASE_PLAN)
+        if !allowed.contains(&item.product_id)
+            || item.offer_details.as_ref().map(|o| o.base_plan_id.as_str()) != Some(base_plan)
             || item.auto_renewing_plan.is_none()
         {
             return Err(PlayError::Invalid);
@@ -389,5 +412,39 @@ mod tests {
             .unwrap()
             .remove("externalAccountIdentifiers");
         assert!(matches!(verify(value), Err(PlayError::AccountMismatch)));
+    }
+    #[test]
+    fn nest_products_verify_only_against_the_nest_catalog_and_base_plan() {
+        let nests = crate::nest_catalog::google_products();
+        let mut value = fixture();
+        value["lineItems"][0]["productId"] = json!("pigeonpost.nests.ai.starter");
+        value["lineItems"][0]["offerDetails"]["basePlanId"] = json!("monthly");
+        let parsed =
+            |v: &serde_json::Value| serde_json::from_value::<Subscription>(v.clone()).unwrap();
+        assert!(
+            parsed(&value)
+                .validate_with("acct_a", 100, &nests, "monthly")
+                .unwrap()
+                .active
+        );
+        // A Nest purchase never verifies as a handle, nor a handle as a Nest.
+        assert!(matches!(
+            parsed(&value).validate("acct_a", 100),
+            Err(PlayError::Invalid)
+        ));
+        assert!(matches!(
+            parsed(&fixture()).validate_with("acct_a", 100, &nests, "monthly"),
+            Err(PlayError::Invalid)
+        ));
+        // The base plan is part of the product.
+        assert!(matches!(
+            parsed(&value).validate_with("acct_a", 100, &nests, "annual"),
+            Err(PlayError::Invalid)
+        ));
+        // And the account binding still holds.
+        assert!(matches!(
+            parsed(&value).validate_with("acct_b", 100, &nests, "monthly"),
+            Err(PlayError::AccountMismatch)
+        ));
     }
 }

@@ -38,7 +38,8 @@ async function health(t, overrides) {
 }
 
 test("health accepts checkout configuration without an unused runtime token", async (t) => {
-  assert.deepEqual(await health(t, {}), { ok: true, configured: true, product: "pigeonpost" });
+  assert.deepEqual(await health(t, {}), { ok: true, configured: true, product: "pigeonpost",
+    sales_notify: { configured: false, sent: 0, failed: 0, gave_up: 0 } });
 });
 
 test("activation and reconciliation credentials are required", async (t) => {

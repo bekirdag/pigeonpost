@@ -59,7 +59,7 @@ public sealed record CalendarMeetingDraft(bool Enabled = false, string Waiting =
     {
         if (!Enabled) return new() { ["enabled"] = false };
         if (validate && (Waiting is not ("guests" or "everyone_except_hosts" or "none") || Admit is not ("organizer" or "hosts" or "delegated")
-            || Transport is not ("mesh" or "sfu") || JoinBeforeMinutes is < 0 or > 10)) throw new ArgumentException("Review the meeting's lobby and admission settings.");
+            || Transport is not ("mesh" or "sfu") || JoinBeforeMinutes is < 0 or > 30)) throw new ArgumentException("Review the meeting's lobby and admission settings.");
         var result = new Dictionary<string, object?>();
         if (original.ValueKind == JsonValueKind.Object)
             foreach (var field in original.EnumerateObject())

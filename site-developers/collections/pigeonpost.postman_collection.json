@@ -1473,6 +1473,242 @@
       ]
     },
     {
+      "name": "nests",
+      "description": "Nests (hosted agents) — packages, purchases, slots and paid setups (feature `nests`, docs/nests/).",
+      "item": [
+        {
+          "name": "The Nest package catalog and this account's store binding tokens (feature `nests`)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/nest-packages",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "nest-packages"
+              ]
+            },
+            "description": "Packages, which purchase rails this server accepts, and the opaque values a native purchase must carry: StoreKit `appAccountToken` and Google Play `obfuscatedAccountId`. Prices come from the store (native) or the billing bridge (web), never from here. See docs/nests/phase-b.md."
+          }
+        },
+        {
+          "name": "This account's Nest allowance, Nests and paid setups (feature `nests`)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/nests",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "nests"
+              ]
+            },
+            "description": "The allowance comes only from verified purchases (App Store, Google Play, web) or grants: one funding package per account; any other live package is listed under `duplicates` and never adds slots. `setups` are paid purchases whose Nest is not provisioned yet."
+          }
+        },
+        {
+          "name": "Create a Nest in a free slot of the account's package (a person only)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/nests",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "nests"
+              ]
+            },
+            "description": "Create a Nest in a free slot of the account's package (a person only)",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"label\": \"string\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "A Nest sandbox redeems its one-time enrollment code (no credential)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/nests/enroll",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "nests",
+                "enroll"
+              ]
+            },
+            "description": "The sandbox signs `pigeonpost-nest-enroll-v1\\0` + code with a fresh Ed25519 device key. Redemption rotates the Nest mailbox's capability token and returns it to the sandbox alone. Every refusal is the same `enrollment_invalid`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"string\",\n  \"device_public_key\": \"string\",\n  \"signature\": \"string\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "Record a purchase intent before a store sheet or web checkout (a person only)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/nest-purchases/intents",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "nest-purchases",
+                "intents"
+              ]
+            },
+            "description": "Refuses a purchase that would fund the account twice: a live package on another rail (`nest_package_active`) or the same package on this rail (`nest_package_owned`). Upgrades on the funding rail are allowed. The intent grants nothing; only the verified purchase does.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"package\": \"nest.ai.starter.monthly\",\n  \"rail\": \"apple\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Claim or restore an App Store Nest subscription (a person only)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/nest-purchases/apple",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "nest-purchases",
+                "apple"
+              ]
+            },
+            "description": "Verified with the App Store Server API. The transaction must carry this account's `appAccountToken`; a subscription is bound to the first account that claims it. The first Nest is set up right away, or kept as a paid setup and retried.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transaction_id\": \"string\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Claim or restore a Google Play Nest subscription (a person only)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/nest-purchases/google",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "nest-purchases",
+                "google"
+              ]
+            },
+            "description": "Verified with the Play Developer API (subscriptionsv2) against this account's obfuscated account id and the `monthly` base plan. Acknowledged only after it is recorded, and never when it duplicates a live package (Google then refunds it).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"purchase_token\": \"string\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Retry a paid-but-unprovisioned Nest setup now (a person only)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/nest-setups/:id/retry",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "nest-setups",
+                ":id",
+                "retry"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Retry a paid-but-unprovisioned Nest setup now (a person only)"
+          }
+        }
+      ]
+    },
+    {
       "name": "meetings",
       "description": "Consented meeting notes, delivered as ciphertext to attending devices (Phase 7, docs/meeting-summaries.md).",
       "item": [
@@ -4249,38 +4485,6 @@
             },
             "description": "Returns 404 `not_found` when no metrics secret is configured on this postbox."
           }
-        },
-        {
-          "name": "Bind a purchased namespace to an account",
-          "request": {
-            "method": "PUT",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/v1/namespaces",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "namespaces"
-              ]
-            },
-            "description": "Called by the billing/entitlement service only. Returns 404 `not_found` when no grant secret\nis configured. Also ensures the namespace has a first mailbox (`/<namespace>/main`);\n`mailbox` is null if that best-effort step failed.\n",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"namespace\": \"string\",\n  \"account_id\": \"string\",\n  \"expires_at\": 0\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            }
-          }
         }
       ]
     },
@@ -5327,6 +5531,93 @@
               ]
             },
             "description": "See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`."
+          }
+        },
+        {
+          "name": "Set the group's picture (raw image)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "image/jpeg"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/groups/:id/picture",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "groups",
+                ":id",
+                "picture"
+              ],
+              "query": [
+                {
+                  "key": "identity",
+                  "value": "",
+                  "disabled": true,
+                  "description": "Which of the account's mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used."
+                },
+                {
+                  "key": "crop",
+                  "value": "",
+                  "disabled": true,
+                  "description": "`x,y,w,h` in pixels of the uploaded image."
+                }
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "See docs/groups.md. Group owner or admin, a person (not an agent or key). Same processing as `PUT /v1/profile/avatar`; members get `group.settings` with `changed: [picture]`.",
+            "body": {
+              "mode": "file",
+              "file": {
+                "src": ""
+              }
+            }
+          }
+        },
+        {
+          "name": "Remove it",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/groups/:id/picture",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "groups",
+                ":id",
+                "picture"
+              ],
+              "query": [
+                {
+                  "key": "identity",
+                  "value": "",
+                  "disabled": true,
+                  "description": "Which of the account's mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used."
+                }
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Remove it"
           }
         }
       ]
@@ -6623,6 +6914,79 @@
               ]
             },
             "description": "See docs/orgs.md. Requires the `orgs` feature flag. Needs a recent strong sign-in (`step_up_required` with `acr_values` and `max_age`). A person signed in (member token); automation gets `human_required`."
+          }
+        },
+        {
+          "name": "Set the organization's logo (raw image)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "image/jpeg"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/orgs/:id/logo",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "orgs",
+                ":id",
+                "logo"
+              ],
+              "query": [
+                {
+                  "key": "crop",
+                  "value": "",
+                  "disabled": true,
+                  "description": "`x,y,w,h` in pixels of the uploaded image."
+                }
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "See docs/orgs.md. Requires the `orgs` feature flag. Owner or admin. Same processing as `PUT /v1/profile/avatar`; logos are public.",
+            "body": {
+              "mode": "file",
+              "file": {
+                "src": ""
+              }
+            }
+          }
+        },
+        {
+          "name": "Remove it",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/orgs/:id/logo",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "orgs",
+                ":id",
+                "logo"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Remove it"
           }
         },
         {

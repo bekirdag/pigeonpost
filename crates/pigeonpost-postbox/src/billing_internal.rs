@@ -248,7 +248,37 @@ fn validate(input: &EntitlementInput) -> Result<(), Response> {
             "only a complimentary grant may have no paid_through",
         ));
     }
+    // Nest packages (build plan B1): a known package, no names or seats, and the package's own
+    // storage. An unknown `nest…` code is refused rather than stored as a plan nobody can read.
+    if crate::nest_catalog::is_nest_plan_code(&input.plan_code) {
+        let Some(package) = crate::nest_catalog::for_plan_code(&input.plan_code) else {
+            return Err(bad("invalid_plan_code", "not a Nest package plan code"));
+        };
+        if input.subject_kind != "account" {
+            return Err(bad(
+                "invalid_subject",
+                "Nest packages are bought by accounts",
+            ));
+        }
+        if input.names.is_some() || input.seats.is_some() || input.agent_limit.is_some() {
+            return Err(bad(
+                "invalid_subject",
+                "Nest package entitlements carry no names or seats",
+            ));
+        }
+        if input
+            .storage_bytes
+            .is_some_and(|b| b != package.storage_bytes)
+        {
+            return Err(bad(
+                "invalid_value",
+                "storage_bytes must match the Nest package",
+            ));
+        }
+    }
+    let nest = crate::nest_catalog::is_nest_plan_code(&input.plan_code);
     match input.subject_kind.as_str() {
+        _ if nest => {}
         "account" => {
             if input.seats.is_some() || input.agent_limit.is_some() {
                 return Err(bad(
@@ -573,11 +603,17 @@ pub(crate) struct DraftBody {
     seats: i64,
 }
 
-/// `ent-<seats>-<monthly|yearly>-<usd|try|eur>`, with the seat count matching `seats`.
+/// The seat tiers sold self-serve (SDS §8.3, `store-adapter` catalog). Larger organizations go
+/// through sales and are provisioned by grant, not by a plan code.
+const SEAT_TIERS: [i64; 9] = [5, 10, 15, 20, 30, 50, 100, 200, 500];
+
+/// `ent-<seats>-<monthly|yearly>-<usd|try|eur>`, with the seat count one of [`SEAT_TIERS`] and
+/// matching `seats` (audit 2026-11-03 P3-2).
 fn valid_ent_plan(code: &str, seats: i64) -> bool {
     let parts: Vec<&str> = code.split('-').collect();
     parts.len() == 4
         && parts[0] == "ent"
+        && SEAT_TIERS.contains(&seats)
         && parts[1].parse::<i64>().ok() == Some(seats)
         && !parts[1].starts_with('0')
         && ["monthly", "yearly"].contains(&parts[2])
@@ -638,7 +674,7 @@ pub(crate) async fn create_org_draft(
     if !(1..=MAX_SEATS).contains(&b.seats) || !valid_ent_plan(&b.plan_code, b.seats) {
         return bad(
             "invalid_plan_code",
-            "plan_code must be ent-<seats>-<monthly|yearly>-<usd|try|eur> matching seats",
+            "plan_code must be ent-<seats>-<monthly|yearly>-<usd|try|eur>, seats one of 5, 10, 15, 20, 30, 50, 100, 200, 500",
         );
     }
     let namespace = match crate::web_plan::canonical_namespace(&state, &b.namespace) {

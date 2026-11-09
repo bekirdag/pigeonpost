@@ -216,6 +216,24 @@ impl AppStore {
     /// environment produced it and Apple provides no way to ask. The order matters: trying sandbox
     /// first would mean a real customer's claim waits on a round trip that can only fail.
     pub async fn entitlement(&self, transaction_id: &str) -> Result<Entitlement, AppStoreError> {
+        let status = self.status_for(transaction_id, &self.product_ids).await?;
+        if status.active {
+            Ok(status.entitlement)
+        } else if status.revoked {
+            Err(AppStoreError::Revoked)
+        } else {
+            Err(AppStoreError::Expired)
+        }
+    }
+
+    /// The current status of the subscription a transaction belongs to, for any of `products`
+    /// (handle plans, or Nest packages — the caller says which). Inactive and revoked
+    /// subscriptions are returned, not refused, so the caller can record them.
+    pub async fn status_for(
+        &self,
+        transaction_id: &str,
+        products: &[String],
+    ) -> Result<SubscriptionStatus, AppStoreError> {
         // Apple puts this straight into a URL path. A caller-supplied id with a slash in it would
         // otherwise address a different endpoint entirely.
         if transaction_id.is_empty()
@@ -233,9 +251,9 @@ impl AppStore {
                         .get("productId")
                         .and_then(|v| v.as_str())
                         .unwrap_or_default();
-                    if !self.product_ids.iter().any(|id| id == product) {
+                    if !products.iter().any(|id| id == product) {
                         return Err(AppStoreError::NotOurs(
-                            "that product does not buy a handle".into(),
+                            "that product is not sold here".into(),
                         ));
                     }
                     let original = payload
@@ -247,14 +265,9 @@ impl AppStore {
                     } else {
                         "Production"
                     };
-                    let status = self.subscription_status(original, environment).await?;
-                    return if status.active {
-                        Ok(status.entitlement)
-                    } else if status.revoked {
-                        Err(AppStoreError::Revoked)
-                    } else {
-                        Err(AppStoreError::Expired)
-                    };
+                    return self
+                        .subscription_status_for(original, environment, products)
+                        .await;
                 }
                 Err(AppStoreError::NotFound) => continue,
                 Err(AppStoreError::Unauthorized) => {
@@ -282,6 +295,17 @@ impl AppStore {
         original: &str,
         environment: &str,
     ) -> Result<SubscriptionStatus, AppStoreError> {
+        self.subscription_status_for(original, environment, &self.product_ids)
+            .await
+    }
+
+    /// [`Self::subscription_status`] for an explicit product list (Nest packages).
+    pub async fn subscription_status_for(
+        &self,
+        original: &str,
+        environment: &str,
+        products: &[String],
+    ) -> Result<SubscriptionStatus, AppStoreError> {
         if original.is_empty()
             || original.len() > 64
             || !original.bytes().all(|b| b.is_ascii_alphanumeric())
@@ -301,7 +325,7 @@ impl AppStore {
             original,
             environment,
             &self.bundle_id,
-            &self.product_ids,
+            products,
             now_unix() as i64,
         )
     }
@@ -892,5 +916,27 @@ mod tests {
             decode_jws_payload("onlyonesegment"),
             Err(AppStoreError::Malformed)
         );
+    }
+    #[test]
+    fn nest_products_are_judged_against_the_nest_list_only() {
+        let nest = "dev.pigeonpost.inbox.nests.ai.starter.monthly";
+        let mut claims = good();
+        claims["productId"] = json!(nest);
+        let body = status_body(1, claims, json!({}));
+        let nests = crate::nest_catalog::apple_products();
+        let o = "2000000900000001";
+        let judged = judge_status(&body, o, "Sandbox", BUNDLE, &nests, 1).unwrap();
+        assert!(judged.active);
+        assert_eq!(judged.entitlement.product_id, nest);
+        // The handle verifier refuses it, and the Nest verifier refuses a handle.
+        assert!(matches!(
+            judge_status(&body, o, "Sandbox", BUNDLE, &[PRODUCT.into()], 1),
+            Err(AppStoreError::NotOurs(_))
+        ));
+        let handle = status_body(1, good(), json!({}));
+        assert!(matches!(
+            judge_status(&handle, o, "Sandbox", BUNDLE, &nests, 1),
+            Err(AppStoreError::NotOurs(_))
+        ));
     }
 }

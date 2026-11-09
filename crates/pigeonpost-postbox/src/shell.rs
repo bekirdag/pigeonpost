@@ -23,8 +23,8 @@
 //! 1. a **person** (`HumanStepUp`): a validated interactive sign-in with a recent strong `acr`.
 //!    Account and org API keys, connectors and mailbox credentials are refused `human_required`;
 //! 2. the person **owns** the agent (a personal mailbox on their account), or — for an org agent —
-//!    is the org **owner**, or holds a live delegation carrying `ssh` for exactly this agent. Org
-//!    admins and agent admins get no shell implicitly;
+//!    holds a live delegation carrying `ssh` for exactly this agent. Nobody in an org gets a shell
+//!    implicitly: not admins, not agent admins, not the owner (who can delegate to themselves);
 //! 3. for an org agent, the org's `ssh_allowed` setting **and** the agent admin's per-agent switch;
 //! 4. the agent machine's **local opt-in** (reported by agentd over its own credential; nothing here
 //!    can turn it on), its control stream connected, and an accepted host key;
@@ -41,7 +41,7 @@
 use crate::audit::ActorKind;
 use crate::filtering::feature_on;
 use crate::groups::{finish, parse, rate_limit, GErr, GResult, Outcome};
-use crate::org::{self, auth_denial, Perm, Role};
+use crate::org::{self, auth_denial, Perm};
 use crate::policy::{authorize, Action, Actor, DenyReason, Facts, Resource};
 use crate::{capabilities, now_unix, store, AccountCredential, AppState, ClientIp, Principal};
 use axum::extract::rejection::JsonRejection;
@@ -618,19 +618,10 @@ pub(crate) fn grant_in(
                 "an agent admin has not enabled SSH on this agent",
             ));
         }
-        let roles = org::roles_of(c, &org_id, &member.id)?;
         let requires_approval = o.settings.ssh_requires_approval;
-        if roles.has(Role::Owner) {
-            return Ok(Grant {
-                via: "org_owner",
-                org_id: Some(org_id),
-                member: Some(member.id),
-                member_rev: Some(member.authority_revision),
-                delegation: None,
-                delegation_rev: None,
-                requires_approval,
-            });
-        }
+        // Nobody holds a shell implicitly, the org owner included (audit 2026-11-03 P2-14): the
+        // owner delegates `ssh` to themselves like anyone else, which leaves a revocable, audited
+        // grant for exactly the agents they mean to reach.
         let dlg: Option<(String, i64)> = c
             .query_row(
                 "SELECT id, revision FROM org_delegations
@@ -653,7 +644,7 @@ pub(crate) fn grant_in(
             }),
             None => Err(GErr::forbidden(
                 "delegation_required",
-                "opening a shell on this agent needs an `ssh` delegation for it (org admins get none implicitly)",
+                "opening a shell on this agent needs an `ssh` delegation for it (no org role grants one implicitly, the owner's included)",
             )),
         };
     }
@@ -2009,7 +2000,9 @@ pub(crate) async fn broker_check(
         if req.sessions.len() > 1_000 {
             return Err(GErr::bad("bad_request", "at most 1000 sessions per check"));
         }
-        sweep(&state).await;
+        // Only the sessions this broker reports are re-checked here; the full sweep runs on its own
+        // timer and after revocations (audit 2026-11-03 P3-5: a sweep per heartbeat cost O(all
+        // sessions) for every broker poll). Closing is idempotent, so racing the sweep is harmless.
         let now = now_unix();
         let st = state.clone();
         let (out, ended) = state
@@ -2024,6 +2017,13 @@ pub(crate) async fn broker_check(
                     };
                     if s.state == "closed" {
                         end.push(json!({ "session_id": s.id, "reason": s.close_reason }));
+                        continue;
+                    }
+                    if let Some(reason) = due_reason(tx, &s, now)? {
+                        if close_in(tx, &st, &s, reason, None, ActorKind::System, None, now)? {
+                            ended.push((s.id.clone(), s.agent.clone(), reason.to_string()));
+                        }
+                        end.push(json!({ "session_id": s.id, "reason": reason }));
                         continue;
                     }
                     let n = now as i64;

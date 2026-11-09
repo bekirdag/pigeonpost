@@ -349,6 +349,7 @@ pub(crate) fn start_worker(state: AppState) {
                     }
                     Err(e) => tracing::error!(error = %e, "org lifecycle sweep failed"),
                 }
+                crate::org_routes::retention_sweep(&state).await;
             }
             if tick.is_multiple_of(120) {
                 crate::org_routes::recheck_domains(&state).await;

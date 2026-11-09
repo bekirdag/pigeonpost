@@ -16,7 +16,7 @@ pigeonpost-compliance-format = { path = "../pigeonpost-compliance-format", versi
 pigeonpost-loft = { path = "../pigeonpost-loft", version = "0.7.19", default-features = false, features = ["client"] }
 pigeonpost-directory = { path = "../pigeonpost-directory", version = "0.7.19", default-features = false, features = ["client"] }
 pigeonpost-registry = { path = "../pigeonpost-registry", version = "0.7.19", default-features = false, features = ["client"] }
-rusqlite = { version = "0.32", features = ["bundled", "hooks"] }
+rusqlite = { version = "0.41", features = ["bundled", "fallible_uint", "hooks"] }
 ed25519-dalek.workspace = true
 fs2 = "0.4"
 futures-util = "0.3"

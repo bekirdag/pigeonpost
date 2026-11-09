@@ -11,6 +11,13 @@ internal static class PreviewSideData
 {
     public static void SeedRooms(PreviewPostbox server) => PreviewRooms.Seed(server);
     public static void SeedLiveAndNotes(PreviewPostbox server) => PreviewLiveNotes.Seed(server);
+    // test-contacts.ps1: /preview/design has verified +44 7700 900123 and lets people find it; the preview code is 123456.
+    public static void SeedContacts(PreviewPostbox server)
+    {
+        server.Features.UnionWith([ServerFeatures.PhoneNumbers, ServerFeatures.ContactDiscovery, ServerFeatures.SmsInvites]);
+        server.AddDiscoverableNumber(server.AddMailbox(PreviewPostbox.Seed(0xC7), "/preview/design"), "+447700900123");
+        server.Changed = () => { if (Environment.GetEnvironmentVariable("PIGEONPOST_UI_CONTACTS_STATE") is { } state) File.WriteAllText(state, server.PeopleState()); };
+    }
     public static void Seed(PreviewPostbox server)
     {
         var main = server.AddMailbox(PreviewInboxService.MainSeed, "/preview/main");

@@ -316,13 +316,22 @@
     return PPE.el("div", { class: "field" }, PPE.el("label", { for: id }, label), input, hint ? PPE.el("p", { class: "hint" }, hint) : null);
   };
 
+  /// Interface text in the reader's language (i18n.js), with `{1}`… filled from `vars`. Most text
+  /// needs no call: i18n.js translates what reaches the page. This is for text assembled from
+  /// several translated pieces.
+  PPE.t = function (text, vars) {
+    if (window.PPE_I18N) return window.PPE_I18N.t(text, vars);
+    return String(text).replace(/\{(\d+)\}/g, (m, n) => (vars && vars[n] !== undefined ? String(vars[n]) : m));
+  };
+  /// The interface language's Intl locale (i18n.js), English when it is not loaded.
+  PPE.locale = () => (window.PPE_I18N && window.PPE_I18N.locale) || "en";
   PPE.money = function (amount, currency) {
-    try { return new Intl.NumberFormat("en", { style: "currency", currency, maximumFractionDigits: Number(amount) % 1 ? 2 : 0 }).format(Number(amount)); }
+    try { return new Intl.NumberFormat(PPE.locale(), { style: "currency", currency, maximumFractionDigits: Number(amount) % 1 ? 2 : 0 }).format(Number(amount)); }
     catch { return `${amount} ${currency}`; }
   };
   PPE.date = function (unix) {
     if (!unix) return "—";
-    try { return new Date(unix * 1000).toLocaleDateString("en", { year: "numeric", month: "short", day: "numeric" }); } catch { return "—"; }
+    try { return new Date(unix * 1000).toLocaleDateString(PPE.locale(), { year: "numeric", month: "short", day: "numeric" }); } catch { return "—"; }
   };
   PPE.ago = function (unix, now = Date.now() / 1000) {
     if (!unix) return "Never";
@@ -372,7 +381,7 @@
     slot.replaceChildren();
     if (PPE.signedIn()) {
       const who = PPE.whoami();
-      slot.append(PPE.el("span", { class: "who" }, who.username || "Signed in"),
+      slot.append(PPE.el("span", { class: "who", translate: "no" }, who.username || "Signed in"),
         PPE.el("button", { class: "btn btn-quiet", type: "button", onclick: () => PPE.signOut() }, "Sign out"));
     } else {
       slot.append(PPE.el("button", { class: "btn btn-quiet", type: "button", onclick: () => PPE.signIn({ returnTo: "/app" }) }, "Sign in"));

@@ -10,6 +10,19 @@ upgrade a running agentd: run `pigeonpost agentd install`, then restart the daem
 - Allowlisted commands run inside the agent's workspace container, not on the host.
 - Commands that arrive after a session is torn down are refused.
 
+## Sign-in
+
+- **`pigeonpost login --device` works again.** The identity provider requires PKCE on this flow, and the CLI now sends it. Failures also show the provider's reason instead of a bare HTTP status.
+- **`pigeonpost login` over SSH or on a machine with no display now signs in with a code.** The browser redirect could never reach those machines. `--no-browser` keeps the redirect sign-in, for example with a forwarded port.
+
+## Calendar
+
+- **`pigeonpost calendar`** works with a hosted mailbox's calendar from the terminal: list occurrences, create events that invite handles, and answer invitations. The MCP server offers the same actions to agents.
+
+## Security
+
+- The bundled SQLite is upgraded, which closes RUSTSEC-2026-0459.
+
 ## Organization agents (enterprise beta)
 
 - **`pigeonpost login --device --handle /acme/agent1 [--label "Build box"] [--workspace DIR] [--onboard]`**

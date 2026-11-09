@@ -68,6 +68,7 @@ history, keys or calls. `unread` counts application messages after `read_cursor`
 | GET | `/v1/groups` | `?state=active,invited,keying` (default all three) | `{groups:[group]}` for the acting mailbox, most recent first; deleted groups the mailbox was in appear once with `deleted_at`. |
 | GET | `/v1/groups/{id}` | | `group`. `404 not_found` when the mailbox has no relationship to it (a known id grants nothing). |
 | PATCH | `/v1/groups/{id}` | `{expected_revision, name?, description?, join_policy?, post_policy?, visibility?, members_can_invite?, members_can_change_timer?, ephemeral_secs?}` | Owner/admin; `ephemeral_secs` also by members when `members_can_change_timer`. Human only. `{group}`; notice + `group.settings`. |
+| PUT / DELETE | `/v1/groups/{id}/picture` | raw image (`?identity=&crop=x,y,w,h`; as `PUT /v1/profile/avatar`) | Owner/admins, human only. `{avatar}`; `group.settings` `{changed:["picture"]}`. The group view carries `picture` (`null` or `{id, version, hash, urls}`). Visible to members (and invitees), and for a listed public group to anyone signed in — for an org room, only to that org's members (SDS §16.1, audit P2-20). |
 | DELETE | `/v1/groups/{id}` | | Owner. Soft delete; members see `group.deleted`; content purged within 30 days. |
 | GET | `/v1/groups/{id}/members` | `?state=` | `{members:[{address, handle, role, state, invited_by, joined_at, revision}]}`. Active members see active/keying members; admins also see invitations and bans. |
 | POST | `/v1/groups/{id}/members` **K** | `{request_key, invite:[address\|handle]}` | Admins, or members when `members_can_invite`. ≤ 200 per request, ≤ 1,000 per day per group. `{results:[{address, status: invited\|already_member\|banned\|not_admitted\|unresolved\|group_full}]}`. A recipient who blocked the inviter gets no record (`not_admitted`). |
@@ -211,6 +212,8 @@ Allowed timers: `null` (off), 300, 3600, 28800, 86400, 604800, 2419200 seconds.
 * Groups: `PATCH /v1/groups/{id} {ephemeral_secs, expected_revision}`; admins, or members when
   `members_can_change_timer`. Items carry `expires_at`.
 * The clock starts at send (D-25); changing a timer affects only new messages.
+* Org rooms: the org's `room_max_ephemeral_secs` bounds every message (the shorter timer wins; Off is
+  not exempt), and a new room starts with `room_default_ephemeral_secs` (`docs/orgs.md`).
 * The postbox deletes expired rows every 30 s, releases attachments and emits `message.expired`.
   Reads never return expired content. Clients must also drop expired items locally by their own
   timer, before rendering, even when they missed the event.
@@ -241,6 +244,22 @@ token) at create, ring and join, and during the call (SDS §4.7):
   also removed from the media room, again on every check until their last ticket has expired.
 - If the postbox cannot be asked for longer than `CALLS_GROUP_BLIND_MS` (90 s by default), the
   call ends with `membership_unverifiable`.
+
+**Closed apps ring too** (audit 2026-11-03 P1-11), behind the same switches as 1:1 calls
+(`CALLS_RING_PUSH=1` and the postbox `call_push` flag, see `docs/call-alerting.md`):
+
+- Each rung member gets their own ring token and one `POST /internal/v1/call-ring` carrying
+  `group_id`. The postbox does not apply the 1:1 stranger rule there: caller and callee must both
+  be active members of that live group, an explicit block still wins, and the callee's call rules
+  decide (as in the group-call admission). The payloads add `group_id` and the group's name, looked
+  up by the postbox (`title` = "Caller · Group", body "Incoming group voice/video call").
+- When one member answers, declines or is removed, only that member's push is cancelled
+  (`call-ring-cancel`); when the ring ends (timeout, no answer, everyone declined) the rest are.
+- A member's ring token reads (`GET /calls/v1/rings/{room}`) and declines
+  (`POST …/decline`, for that member only) the ring, and answers it from a session opened after
+  the push (`POST /calls/v1/rooms/{room}/accept {session, ring_token}`). Such a session is also
+  rung as soon as its event stream opens. The call ends only when nothing rings any more and
+  nobody else is in it.
 
 Calls keep the six-person mesh cap; meeting-link guests stay separate and never gain group
 membership. Start and end appear in the group as `call_started` /
