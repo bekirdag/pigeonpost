@@ -50,6 +50,15 @@ pub(crate) fn router() -> Router<AppState> {
             "/v1/orgs/{id}",
             get(get_org).patch(patch_org).delete(delete_org),
         )
+        // Org logo (SDS §16.1, audit 2026-11-03 P2-20).
+        .route(
+            "/v1/orgs/{id}/logo",
+            axum::routing::put(crate::avatars::put_org_logo)
+                .layer(axum::extract::DefaultBodyLimit::max(
+                    crate::avatars::MAX_UPLOAD + 1,
+                ))
+                .delete(crate::avatars::delete_org_logo),
+        )
         .route("/v1/orgs/{id}/transfer", post(transfer))
         .route("/v1/orgs/{id}/me/mailbox", post(my_mailbox))
         .route("/v1/orgs/{id}/directory", get(directory))
@@ -132,55 +141,67 @@ async fn list_mine(State(state): State<AppState>, headers: HeaderMap) -> Respons
         let principal = crate::principal_for_token(&state, crate::bearer(&headers)).await?;
         let account = match &principal {
             crate::Principal::Account(a, _) => a.clone(),
-            crate::Principal::Identity(_) => return Err(GErr::forbidden("account_required", "sign in to list your organizations")),
+            crate::Principal::Identity(_) => {
+                return Err(GErr::forbidden(
+                    "account_required",
+                    "sign in to list your organizations",
+                ))
+            }
         };
-        crate::authorize_own_account(&principal).map_err(|e| GErr::forbidden(e.code, "this credential may not list organizations"))?;
+        crate::authorize_own_account(&principal)
+            .map_err(|e| GErr::forbidden(e.code, "this credential may not list organizations"))?;
         let acct = account.clone();
         let now = now_unix();
         let (orgs, operated) = state
             .store
-            .group_read(move |c: &Connection| -> GResult<(Vec<(String, Value)>, Vec<Value>)> {
-                let mut stmt = c.prepare(
+            .group_read(
+                move |c: &Connection| -> GResult<(Vec<(String, Value)>, Vec<Value>)> {
+                    let mut stmt = c.prepare(
                     "SELECT m.org_id, m.id, m.identity, m.handle, o.owner_account FROM org_members m
                        JOIN orgs o ON o.id = m.org_id
                       WHERE m.account_id = ?1 AND m.status = 'active'
                         AND o.status IN ('active','past_due','read_only','suspended')",
                 )?;
-                let rows: Vec<(String, String, Option<String>, Option<String>, String)> = stmt
-                    .query_map([&acct], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?
-                    .collect::<Result<_, _>>()?;
-                let mut out = Vec::new();
-                for (oid, mid, identity, handle, owner) in rows {
-                    let Some(o) = load_org(c, &oid)? else { continue };
-                    let mut v = org_json(c, &o, now)?;
-                    v["my_roles"] = json!(org::roles_of(c, &oid, &mid)?.names());
-                    v["my_member_id"] = json!(mid);
-                    v["my_mailbox"] = match identity {
-                        Some(a) => json!({ "address": a, "handle": handle }),
-                        None => Value::Null,
-                    };
-                    out.push((owner, v));
-                }
-                let mut stmt = c.prepare(
+                    let rows: Vec<(String, String, Option<String>, Option<String>, String)> = stmt
+                        .query_map([&acct], |r| {
+                            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+                        })?
+                        .collect::<Result<_, _>>()?;
+                    let mut out = Vec::new();
+                    for (oid, mid, identity, handle, owner) in rows {
+                        let Some(o) = load_org(c, &oid)? else {
+                            continue;
+                        };
+                        let mut v = org_json(c, &o, now)?;
+                        v["my_roles"] = json!(org::roles_of(c, &oid, &mid)?.names());
+                        v["my_member_id"] = json!(mid);
+                        v["my_mailbox"] = match identity {
+                            Some(a) => json!({ "address": a, "handle": handle }),
+                            None => Value::Null,
+                        };
+                        out.push((owner, v));
+                    }
+                    let mut stmt = c.prepare(
                     "SELECT a.identity, a.handle, d.org_id, d.capabilities FROM org_delegations d
                        JOIN org_members m ON m.org_id = d.org_id AND m.id = d.grantee_member_id
                        JOIN org_agents a ON a.org_id = d.org_id AND a.identity = d.target_identity
                       WHERE m.account_id = ?1 AND m.status = 'active' AND a.status = 'active'
                         AND d.revoked_at IS NULL AND (d.expires_at IS NULL OR d.expires_at > ?2)",
                 )?;
-                let operated: Vec<Value> = stmt
-                    .query_map(params![acct, now as i64], |r| {
-                        let caps: String = r.get(3)?;
-                        Ok(json!({
-                            "address": r.get::<_, String>(0)?,
-                            "handle": r.get::<_, String>(1)?,
-                            "org_id": r.get::<_, String>(2)?,
-                            "capabilities": serde_json::from_str::<Value>(&caps).unwrap_or(Value::Null),
-                        }))
-                    })?
-                    .collect::<Result<_, _>>()?;
-                Ok((out, operated))
-            })
+                    let operated: Vec<Value> = stmt
+                        .query_map(params![acct, now as i64], |r| {
+                            let caps: String = r.get(3)?;
+                            Ok(json!({
+                                "address": r.get::<_, String>(0)?,
+                                "handle": r.get::<_, String>(1)?,
+                                "org_id": r.get::<_, String>(2)?,
+                                "capabilities": crate::org_agents::live_caps(&caps),
+                            }))
+                        })?
+                        .collect::<Result<_, _>>()?;
+                    Ok((out, operated))
+                },
+            )
             .await?;
         let mut visible = Vec::new();
         for (owner, v) in orgs {
@@ -188,13 +209,26 @@ async fn list_mine(State(state): State<AppState>, headers: HeaderMap) -> Respons
                 visible.push(v);
             }
         }
-        let ids: Vec<String> = visible.iter().filter_map(|v| v["id"].as_str().map(str::to_string)).collect();
+        let ids: Vec<String> = visible
+            .iter()
+            .filter_map(|v| v["id"].as_str().map(str::to_string))
+            .collect();
         let operated: Vec<Value> = operated
             .into_iter()
-            .filter(|o| o["capabilities"].as_array().is_some_and(|a| a.iter().any(|c| c == "read_inbox")))
-            .filter(|o| o["org_id"].as_str().is_some_and(|id| ids.iter().any(|i| i == id)))
+            .filter(|o| {
+                o["capabilities"]
+                    .as_array()
+                    .is_some_and(|a| a.iter().any(|c| c == "read_inbox"))
+            })
+            .filter(|o| {
+                o["org_id"]
+                    .as_str()
+                    .is_some_and(|id| ids.iter().any(|i| i == id))
+            })
             .collect();
-        Ok(Outcome::ok(json!({ "orgs": visible, "operated": operated })))
+        Ok(Outcome::ok(
+            json!({ "orgs": visible, "operated": operated }),
+        ))
     }
     .await;
     finish(&state, result)
@@ -259,6 +293,12 @@ struct PatchSettings {
     /// `0` clears it back to the server ceiling.
     #[serde(default)]
     stream_max_viewers: Option<i64>,
+    /// A new room's timer, one of the §17.1 values; `0` = off.
+    #[serde(default)]
+    room_default_ephemeral_secs: Option<i64>,
+    /// The longest any room keeps a message, one of the §17.1 values; `0` = no maximum.
+    #[serde(default)]
+    room_max_ephemeral_secs: Option<i64>,
 }
 
 /// `PATCH /v1/orgs/{id}`
@@ -329,6 +369,29 @@ async fn patch_org(
                 settings.stream_max_viewers = (v > 0).then_some(v);
                 changed.push("stream_max_viewers");
             }
+            // Org default and maximum retention for rooms (SDS §17.1, audit 2026-11-03 P2-5).
+            let timer = |v: i64| -> GResult<Option<i64>> {
+                if v == 0 {
+                    Ok(None)
+                } else if crate::groups::TIMERS.contains(&(v as u64)) && v > 0 {
+                    Ok(Some(v))
+                } else {
+                    Err(GErr::bad("bad_request", "a room timer is 0 (off) or one of the disappearing-message timers"))
+                }
+            };
+            if let Some(v) = s.room_default_ephemeral_secs {
+                settings.room_default_ephemeral_secs = timer(v)?;
+                changed.push("room_default_ephemeral_secs");
+            }
+            if let Some(v) = s.room_max_ephemeral_secs {
+                settings.room_max_ephemeral_secs = timer(v)?;
+                changed.push("room_max_ephemeral_secs");
+            }
+            if let (Some(d), Some(m)) = (settings.room_default_ephemeral_secs, settings.room_max_ephemeral_secs) {
+                if d > m {
+                    return Err(GErr::bad("bad_request", "the default room timer cannot be longer than the maximum"));
+                }
+            }
         }
         if name.is_some() {
             changed.push("name");
@@ -395,9 +458,16 @@ async fn delete_org(
         let ctx = org::org_ctx(&state, &headers, &id).await?;
         ctx.require(&state, Perm::DeleteOrg)?;
         let (req, _): (DeleteOrg, String) = parse(body)?;
-        let confirm = req.confirm_namespace.trim().trim_start_matches('/').to_ascii_lowercase();
+        let confirm = req
+            .confirm_namespace
+            .trim()
+            .trim_start_matches('/')
+            .to_ascii_lowercase();
         if confirm != ctx.org.namespace {
-            return Err(GErr::bad("confirmation_mismatch", "type the organization's namespace to confirm"));
+            return Err(GErr::bad(
+                "confirmation_mismatch",
+                "type the organization's namespace to confirm",
+            ));
         }
         let auditor = state.auditor.clone();
         let account = ctx.account.clone();
@@ -406,69 +476,16 @@ async fn delete_org(
         state
             .store
             .group_tx(move |tx| -> GResult<Outcome> {
-                let o = load_org(tx, &id)?.ok_or_else(GErr::not_found)?;
-                let internal = o.internal_account.clone().unwrap_or_default();
-                let mut out = Outcome::default();
-                // Members' org mailboxes leave their accounts; history stays with the detached
-                // mailbox (D-15) and nothing is readable by anyone else.
-                let members: Vec<(String, Option<String>, Option<String>)> = {
-                    let mut stmt = tx.prepare(
-                        "SELECT id, identity, account_id FROM org_members WHERE org_id = ?1 AND status <> 'removed'",
-                    )?;
-                    let rows = stmt.query_map([&id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
-                    rows.collect::<Result<_, _>>()?
-                };
-                for (mid, identity, account) in &members {
-                    if let Some(addr) = identity {
-                        crate::org_rooms::remove_everywhere_in(tx, addr, "system", now, &mut out)?;
-                        tx.execute(
-                            "UPDATE identities SET account_id = ?2, handle = NULL WHERE address = ?1",
-                            params![addr, internal],
-                        )?;
-                    }
-                    if let Some(a) = account {
-                        org::emit_to(tx, a, "org.member", &json!({ "org_id": id, "member_id": mid, "status": "removed" }), now)?;
-                        out.wake.push(a.clone());
-                    }
-                }
-                tx.execute(
-                    "UPDATE org_members SET status = 'removed', removed_at = ?2, authority_revision = authority_revision + 1
-                      WHERE org_id = ?1 AND status <> 'removed'",
-                    params![id, now as i64],
-                )?;
-                crate::org_agents::revoke_all_devices_in(tx, &id, None, now)?;
-                tx.execute(
-                    "UPDATE org_delegations SET revoked_at = ?2 WHERE org_id = ?1 AND revoked_at IS NULL",
-                    params![id, now as i64],
-                )?;
-                tx.execute(
-                    "UPDATE org_invites SET revoked_at = ?2 WHERE org_id = ?1 AND used_at IS NULL AND revoked_at IS NULL",
-                    params![id, now as i64],
-                )?;
-                // Rooms go too.
-                let rooms: Vec<String> = {
-                    let mut stmt = tx.prepare("SELECT id FROM groups WHERE org_id = ?1 AND deleted_at IS NULL")?;
-                    let rows = stmt.query_map([&id], |r| r.get(0))?;
-                    rows.collect::<Result<_, _>>()?
-                };
-                for gid in rooms {
-                    let g = crate::groups::live_group(tx, &gid)?;
-                    out.wake.extend(crate::groups::delete_in(tx, &g, "system", now)?);
-                }
-                // The namespace enters the 30-day recovery window, then is released.
-                tx.execute(
-                    "UPDATE namespaces SET expires_at = ?2, release_at = ?3 WHERE namespace = ?1",
-                    params![o.namespace, now as i64, now as i64 + 30 * 86_400],
-                )?;
-                tx.execute(
-                    "UPDATE orgs SET status = 'deleted', deleted_at = ?2, status_since = ?2, revision = revision + 1 WHERE id = ?1",
-                    params![id, now as i64],
-                )?;
-                org::audit_in(tx, &auditor, &id, ActorKind::Human, Some(&account), "org.delete", Some(&id),
-                    json!({ "namespace": o.namespace }), ipaddr.as_deref(), now)?;
-                out.status = 200;
-                out.body = json!({ "deleted": true, "namespace_release_at": now as i64 + 30 * 86_400 });
-                Ok(out)
+                delete_org_in(
+                    tx,
+                    &auditor,
+                    &id,
+                    ActorKind::Human,
+                    Some(&account),
+                    ipaddr.as_deref(),
+                    "owner",
+                    now,
+                )
             })
             .await
     }
@@ -477,6 +494,184 @@ async fn delete_org(
     crate::shell::sweep_soon(&state);
     finish(&state, result)
 }
+
+/// Delete an org inside a transaction: the owner's request, or the D-14 retention sweep.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn delete_org_in(
+    tx: &Connection,
+    auditor: &crate::audit::Auditor,
+    id: &str,
+    actor: ActorKind,
+    account: Option<&str>,
+    ipaddr: Option<&str>,
+    reason: &str,
+    now: u64,
+) -> GResult<Outcome> {
+    let o = load_org(tx, id)?.ok_or_else(GErr::not_found)?;
+    let internal = o.internal_account.clone().unwrap_or_default();
+    let mut out = Outcome::default();
+    // Members' org mailboxes leave their accounts; history stays with the detached
+    // mailbox (D-15) and nothing is readable by anyone else.
+    let members: Vec<(String, Option<String>, Option<String>)> = {
+        let mut stmt = tx.prepare(
+                "SELECT id, identity, account_id FROM org_members WHERE org_id = ?1 AND status <> 'removed'",
+            )?;
+        let rows = stmt.query_map([id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+        rows.collect::<Result<_, _>>()?
+    };
+    for (mid, identity, account) in &members {
+        if let Some(addr) = identity {
+            crate::org_rooms::remove_everywhere_in(tx, addr, "system", now, &mut out)?;
+            tx.execute(
+                "UPDATE identities SET account_id = ?2, handle = NULL WHERE address = ?1",
+                params![addr, internal],
+            )?;
+        }
+        if let Some(a) = account {
+            org::emit_to(
+                tx,
+                a,
+                "org.member",
+                &json!({ "org_id": id, "member_id": mid, "status": "removed" }),
+                now,
+            )?;
+            out.wake.push(a.clone());
+        }
+    }
+    tx.execute(
+            "UPDATE org_members SET status = 'removed', removed_at = ?2, authority_revision = authority_revision + 1
+              WHERE org_id = ?1 AND status <> 'removed'",
+            params![id, now as i64],
+        )?;
+    crate::org_agents::revoke_all_devices_in(tx, id, None, now)?;
+    tx.execute(
+        "UPDATE org_delegations SET revoked_at = ?2 WHERE org_id = ?1 AND revoked_at IS NULL",
+        params![id, now as i64],
+    )?;
+    tx.execute(
+            "UPDATE org_invites SET revoked_at = ?2 WHERE org_id = ?1 AND used_at IS NULL AND revoked_at IS NULL",
+            params![id, now as i64],
+        )?;
+    // Rooms go too.
+    let rooms: Vec<String> = {
+        let mut stmt =
+            tx.prepare("SELECT id FROM groups WHERE org_id = ?1 AND deleted_at IS NULL")?;
+        let rows = stmt.query_map([id], |r| r.get(0))?;
+        rows.collect::<Result<_, _>>()?
+    };
+    for gid in rooms {
+        let g = crate::groups::live_group(tx, &gid)?;
+        out.wake
+            .extend(crate::groups::delete_in(tx, &g, "system", now)?);
+    }
+    // The namespace enters the 30-day recovery window, then is released.
+    tx.execute(
+        "UPDATE namespaces SET expires_at = ?2, release_at = ?3 WHERE namespace = ?1",
+        params![o.namespace, now as i64, now as i64 + 30 * 86_400],
+    )?;
+    tx.execute(
+            "UPDATE orgs SET status = 'deleted', deleted_at = ?2, status_since = ?2, revision = revision + 1 WHERE id = ?1",
+            params![id, now as i64],
+        )?;
+    org::audit_in(
+        tx,
+        auditor,
+        id,
+        actor,
+        account,
+        "org.delete",
+        Some(id),
+        json!({ "namespace": o.namespace, "reason": reason }),
+        ipaddr,
+        now,
+    )?;
+    out.status = 200;
+    out.body = json!({ "deleted": true, "namespace_release_at": now as i64 + 30 * 86_400 });
+    Ok(out)
+}
+
+/// D-14 retention: warn a suspended org's members at suspension, a week and a day before deletion,
+/// then delete it 30 days after suspension (and at least a week after the first warning). Run by the
+/// org worker every 10 minutes, after the lifecycle sweep.
+pub(crate) async fn retention_sweep(state: &AppState) {
+    let auditor = state.auditor.clone();
+    let now = now_unix();
+    let result = state
+        .store
+        .group_tx(move |tx| -> GResult<(Vec<String>, usize)> {
+            tx.execute(
+                "DELETE FROM org_deletion_notices WHERE org_id NOT IN (SELECT id FROM orgs WHERE status = 'suspended')",
+                [],
+            )?;
+            let orgs: Vec<String> = {
+                let mut stmt = tx.prepare("SELECT id FROM orgs WHERE status = 'suspended'")?;
+                let rows = stmt.query_map([], |r| r.get(0))?;
+                rows.collect::<Result<_, _>>()?
+            };
+            let mut wake = Vec::new();
+            let mut deleted = 0;
+            for id in orgs {
+                let Some(at) = org::deletion_at(tx, &id, now)? else { continue };
+                let warned: bool = tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM org_deletion_notices WHERE org_id = ?1 AND stage = 'suspended')",
+                    [&id],
+                    |r| r.get(0),
+                )?;
+                if warned && now as i64 >= at {
+                    let out = delete_org_in(tx, &auditor, &id, ActorKind::System, None, None, "suspended_30_days", now)?;
+                    tx.execute("DELETE FROM org_deletion_notices WHERE org_id = ?1", [&id])?;
+                    wake.extend(out.wake);
+                    deleted += 1;
+                    continue;
+                }
+                // The most urgent stage due now; earlier missed stages are not sent separately.
+                let due = org::DELETION_WARNINGS
+                    .iter()
+                    .filter(|(_, before)| now as i64 >= at - before)
+                    .next_back();
+                let Some((stage, _)) = due else { continue };
+                let n = tx.execute(
+                    "INSERT OR IGNORE INTO org_deletion_notices (org_id, stage, sent_at) VALUES (?1, ?2, ?3)",
+                    params![id, stage, now as i64],
+                )?;
+                if n == 0 {
+                    continue;
+                }
+                if *stage != "suspended" {
+                    // A later stage also counts as the first notice if that was missed.
+                    tx.execute(
+                        "INSERT OR IGNORE INTO org_deletion_notices (org_id, stage, sent_at) VALUES (?1, 'suspended', ?2)",
+                        params![id, now as i64],
+                    )?;
+                }
+                let at = org::deletion_at(tx, &id, now)?.unwrap_or(at);
+                org::audit_in(tx, &auditor, &id, ActorKind::System, None, "org.deletion_warning", Some(&id),
+                    json!({ "stage": stage, "deletion_at": at }), None, now)?;
+                wake.extend(org::emit_members(tx, &id, "org.deletion_warning",
+                    &json!({ "org_id": id, "stage": stage, "deletion_at": at }), now)?);
+            }
+            Ok((wake, deleted))
+        })
+        .await;
+    match result {
+        Ok((wake, deleted)) => {
+            for a in &wake {
+                state.event_hub.wake(a);
+            }
+            if deleted > 0 {
+                tracing::info!(
+                    deleted,
+                    "suspended organizations deleted after 30 days (D-14)"
+                );
+                crate::shell::sweep_soon(state);
+            }
+        }
+        Err(e) => tracing::error!(error = %e.message, "org retention sweep failed"),
+    }
+}
+
+/// Accepting with an address other than the invited one, this many times, revokes the invitation.
+const MAX_ACCEPT_MISMATCHES: i64 = 5;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -984,7 +1179,8 @@ async fn invite(
                                     ipaddr.as_deref(), now)?;
                                 results.push(json!({
                                     "status": "invited", "member_id": mid, "invite_id": inv, "handle": row.handle,
-                                    "link": link, "expires_at": now as i64 + org::INVITE_TTL_SECS as i64,
+                                    // Emailed links are never shown: only the invitee sees them (P3-3).
+                                    "link": (!deliver).then_some(link), "expires_at": now as i64 + org::INVITE_TTL_SECS as i64,
                                     "delivery": if deliver { "queued" } else { "copy_link" },
                                 }));
                             }
@@ -1069,7 +1265,7 @@ async fn resend(
                 org::audit_in(tx, &auditor, &id, ActorKind::Human, Some(&account), "member.invite_resend", Some(&mid),
                     json!({ "invite": inv, "replaces": invite_id }), ipaddr.as_deref(), now)?;
                 Ok(Outcome::ok(json!({
-                    "invite_id": inv, "link": link, "expires_at": now as i64 + org::INVITE_TTL_SECS as i64,
+                    "invite_id": inv, "link": (!deliver).then_some(link), "expires_at": now as i64 + org::INVITE_TTL_SECS as i64,
                     "delivery": if deliver { "queued" } else { "copy_link" },
                 })))
             })
@@ -1649,13 +1845,29 @@ async fn accept(
                         subtle::ConstantTimeEq::ct_eq(h.as_bytes(), f.contact_hash.as_bytes()).into()
                     });
                 if !matches {
+                    // The count must survive this refusal (audit 2026-11-03 P3-1), so the refusal is
+                    // an Ok outcome that commits. After MAX_ACCEPT_MISMATCHES the link stops working
+                    // and the admin resends it.
                     tx.execute("UPDATE org_invites SET attempts = attempts + 1 WHERE id = ?1", [&f.invite_id])?;
-                    return Err(GErr::forbidden(
-                        "invite_address_mismatch",
-                        "this invitation was sent to a different address; sign in with that address",
-                    )
-                    .with("contact_masked", f.member.contact_masked.clone().unwrap_or_default())
-                    .with("verified", verified));
+                    let attempts: i64 =
+                        tx.query_row("SELECT attempts FROM org_invites WHERE id = ?1", [&f.invite_id], |r| r.get(0))?;
+                    let mut out = Outcome::default();
+                    if attempts >= MAX_ACCEPT_MISMATCHES {
+                        tx.execute(
+                            "UPDATE org_invites SET revoked_at = ?2 WHERE id = ?1 AND revoked_at IS NULL",
+                            params![f.invite_id, now as i64],
+                        )?;
+                        org::audit_in(tx, &auditor, &f.org.id, ActorKind::System, None, "invite.locked",
+                            Some(&f.member.id), json!({ "attempts": attempts }), ipaddr.as_deref(), now)?;
+                    }
+                    let message = "this invitation was sent to a different address; sign in with that address";
+                    out.status = 403;
+                    out.body = json!({
+                        "error": "invite_address_mismatch", "message": message, "detail": message,
+                        "contact_masked": f.member.contact_masked.clone().unwrap_or_default(),
+                        "verified": verified,
+                    });
+                    return Ok(out);
                 }
                 if org::member_for_account(tx, &f.org.id, &account)?.is_some() {
                     return Err(GErr::conflict("already_member", "you are already in this organization"));

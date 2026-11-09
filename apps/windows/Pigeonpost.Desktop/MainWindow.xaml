@@ -753,6 +753,8 @@
                     <Button.Flyout><MenuFlyout Placement="TopEdgeAlignedLeft" Opening="AccountMenu_Opening">
                         <MenuFlyoutItem Text="Copy my address" Click="CopyAddress_Click" />
                         <MenuFlyoutItem x:Name="ProfileNameMenuItem" Text="Your name…" Click="ProfileName_Click" Visibility="Collapsed" />
+                        <MenuFlyoutItem x:Name="PhoneMenuItem" Text="Phone number…" Click="PhoneNumber_Click" Visibility="Collapsed" />
+                        <MenuFlyoutItem x:Name="FindPeopleMenuItem" Text="Find people I know…" Click="FindPeople_Click" Visibility="Collapsed" />
                         <MenuFlyoutItem x:Name="ProfileMenuItem" Text="Profile picture…" Click="ProfilePicture_Click" Visibility="Collapsed" />
                         <MenuFlyoutItem x:Name="PrivacyMenuItem" Text="Privacy and filtering…" Click="Privacy_Settings_Click" Visibility="Collapsed" />
                         <MenuFlyoutItem x:Name="BlockedMenuItem" Text="Blocked…" Click="Blocked_Click" />

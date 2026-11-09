@@ -1,0 +1,19 @@
+meta {
+  name: Remove it
+  type: http
+  seq: 6
+}
+
+delete {
+  url: {{baseUrl}}/v1/orgs/:id/logo
+  body: none
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
