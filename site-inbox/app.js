@@ -5361,7 +5361,7 @@
   // ---- side views: calls and filtered ---------------------------------------------------------
 
   function syncSideNav() {
-    const on = (has("call_history") || has("calendar") || has("meeting_summaries")) && Boolean(state.me); // Phase 3B: or calendar // Phase 7: or meeting notes
+    const on = (has("call_history") || has("calendar") || has("meeting_summaries") || has("nests")) && Boolean(state.me); // Phase 3B: or calendar // Phase 7: or meet // Nests: Productsing notes
     $("side-nav").hidden = !on;
     $("calls-btn").hidden = !has("call_history"); // Phase 3B
     window.PigeonpostCalendar?.syncNav(); // Phase 3B
@@ -7001,6 +7001,11 @@
     renew: () => renewSession(),
     features: () => new Set(features),
     toast,
+    openConversation: (peer) => {
+      if (!peer) return;
+      setLeftView("inbox");
+      openThread(peer);
+    },
   };
 
   async function boot() {

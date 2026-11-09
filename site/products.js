@@ -32,6 +32,8 @@
     setting_up: "Setting up — this takes a few seconds.",
     failed: "Setup failed. Retry it below or contact support.",
   };
+  // The org roles that may create and manage company Nests (nest_access.rs, Perm::ManageAgents).
+  const NEST_ADMIN_ROLES = ["owner", "admin", "agent_admin"];
   const RAIL = { apple: "the App Store", google: "Google Play", iyzico: "Pigeonpost (web)", grant: "a Pigeonpost grant", test: "a test grant" };
 
   function el(tag, attrs, ...children) {
@@ -146,7 +148,16 @@
         el("strong", { text: n.label }),
         el("span", { class: `pp-status pp-status-${n.status || "unavailable"}`, text: STATUS_TEXT[n.status] || n.state || "" }),
         n.status_reason && REASON_TEXT[n.status_reason] ? el("span", { class: "muted", text: REASON_TEXT[n.status_reason] }) : null,
+        n.status === "needs_you" && n.delete_after ? el("span", { class: "pp-warn", text: `Deleted on ${new Date(n.delete_after * 1000).toLocaleDateString()} unless it is paid for.` }) : null,
         n.address ? el("a", { href: `https://inbox.pigeonpost.dev/#peer=${encodeURIComponent(n.address)}`, text: "Open in your inbox" }) : null);
+    }
+
+    function createNestForm(a) {
+      const label = el("input", { id: "pp-nest-label", required: true, maxlength: "64", autocomplete: "off" });
+      return el("form", { class: "ac-form", id: "pp-nest-create", onsubmit: (e) => { e.preventDefault(); createNest(label.value); } },
+        el("h4", { text: `Add a Nest (${a.slots - a.used} of ${a.slots} free)` }),
+        el("label", { for: "pp-nest-label" }, "Name"), label,
+        el("button", { type: "submit", class: "btn btn-secondary" }, "Create"));
     }
 
     function personalSection(d) {
@@ -171,6 +182,7 @@
           el("button", { type: "button", class: "btn btn-small", "data-retry": s.setup_id, onclick: () => retry(s.setup_id) }, "Retry now")));
       }
       if ((d.nests.nests || []).length) box.append(el("ul", { class: "pp-nests", "aria-label": "Your Nests" }, d.nests.nests.map(nestRow)));
+      if (funding && a.used < a.slots) box.append(createNestForm(a));
       const subs = d.bridge?.subscriptions || [];
       if (subs.length) box.append(subscriptionBlock(subs[0], d));
       const buyable = !funding || funding.source === "iyzico" || funding.source === "grant" || funding.source === "test";
@@ -219,22 +231,42 @@
           : el("button", { type: "button", class: "btn btn-small", id: "pp-cancel", onclick: () => cancel(sub.id) }, "Cancel"));
     }
 
+    // The company list carries no status header, so each row asks for its own (GET /v1/nests/{nest}
+    // serves both kinds of Nest). A row that can't be read still shows its name.
+    async function orgRows(nests) {
+      return Promise.all(nests.map((n) => deps.pb(`/v1/nests/${encodeURIComponent(n.nest_id)}`).then((v) => ({ ...n, ...v })).catch(() => n)));
+    }
+
     function orgSection(orgId) {
+      const org = state.data.orgs.find((o) => o.id === orgId) || {};
       const box = el("div", { class: "pp-org", id: "pp-org" }, el("p", { class: "muted", role: "status", text: "Loading…" }));
-      deps.pb(`/v1/orgs/${encodeURIComponent(orgId)}/nests`).then((v) => {
+      const path = `/v1/orgs/${encodeURIComponent(orgId)}`;
+      (async () => {
+        const v = await deps.pb(`${path}/nests`);
+        const rows = await orgRows(v.nests || []);
+        // Only people admins may list members. Anyone else creates the Nest and adds operators later.
+        const members = org.admin ? await deps.pb(`${path}/members?status=active`).then((m) => (m.members || []).filter((x) => x.id !== org.memberId)).catch(() => []) : [];
         box.textContent = "";
         const a = v.allowance || { slots: 0, used: 0 };
         box.append(el("p", { text: v.package ? `Company package: ${a.used} of ${a.slots} Nests in use.` : "This company has no Nest package yet. Its billing admin can buy one." }));
-        if ((v.nests || []).length) box.append(el("ul", { class: "pp-nests", "aria-label": "Company Nests" }, v.nests.map(nestRow)));
+        if (rows.length) box.append(el("ul", { class: "pp-nests", "aria-label": "Company Nests" }, rows.map(nestRow)));
+        if (!org.admin) return;
         const handle = el("input", { id: "pp-org-handle", required: true, autocomplete: "off" });
         const label = el("input", { id: "pp-org-label", required: true, maxlength: "64" });
-        box.append(el("form", { class: "ac-form", id: "pp-org-create", onsubmit: (e) => { e.preventDefault(); createOrgNest(orgId, handle.value, label.value); } },
+        const picks = members.map((m) => el("input", { type: "checkbox", value: m.id, "data-operator": m.id, "aria-label": memberName(m) }));
+        box.append(el("form", { class: "ac-form", id: "pp-org-create", onsubmit: (e) => { e.preventDefault(); createOrgNest(orgId, handle.value, label.value, picks.filter((c) => c.checked).map((c) => c.value)); } },
           el("h4", { text: "Create a company Nest" }),
           el("label", { for: "pp-org-handle" }, "Address in your company namespace"), handle,
           el("label", { for: "pp-org-label" }, "Name"), label,
+          picks.length ? el("fieldset", { class: "pp-operators" }, el("legend", { text: "Who can use it (admins always can)" }),
+            picks.map((c, i) => el("label", { class: "pp-operator" }, c, ` ${memberName(members[i])}`))) : null,
           el("button", { type: "submit", class: "btn btn-secondary" }, "Create")));
-      }).catch((e) => { box.textContent = ""; box.append(el("p", { role: "status", text: e.status === 404 ? "You can't see this company's Nests." : "Couldn't load the company's Nests." })); });
+      })().catch((e) => { box.textContent = ""; box.append(el("p", { role: "status", text: e.status === 404 ? "You can't see this company's Nests." : "Couldn't load the company's Nests." })); });
       return box;
+    }
+
+    function memberName(m) {
+      return [m.first_name, m.last_name].filter(Boolean).join(" ") || m.handle || "Member";
     }
 
     // ---- actions ----------------------------------------------------------------------------
@@ -265,12 +297,24 @@
       load();
     }
 
-    async function createOrgNest(orgId, handle, label) {
+    async function createNest(label) {
       try {
-        await deps.pb(`/v1/orgs/${encodeURIComponent(orgId)}/nests`, { method: "POST", body: JSON.stringify({ handle: handle.trim(), label: label.trim() }) });
+        await deps.pb("/v1/nests", { method: "POST", body: JSON.stringify({ label: label.trim() }) });
+        deps.toast("Nest created.");
+      } catch (e) {
+        deps.toast({ nest_slots_full: "Your package has no free Nest. Delete one or upgrade.", no_nest_package: "Buy a Nest package first.", bad_label: "Names are 1 to 64 printable characters." }[e.code] || `Couldn't create it: ${e.message}`);
+      }
+      load();
+    }
+
+    async function createOrgNest(orgId, handle, label, operators) {
+      try {
+        const body = { handle: handle.trim(), label: label.trim() };
+        if (operators.length) body.operators = operators;
+        await deps.pb(`/v1/orgs/${encodeURIComponent(orgId)}/nests`, { method: "POST", body: JSON.stringify(body) });
         deps.toast("Company Nest created.");
       } catch (e) {
-        deps.toast({ no_nest_slot: "The company has no free Nest slot. Its billing admin can buy or upgrade a package.", agent_limit: "The company has used all its agent addresses.", handle_taken: "That address is taken." }[e.code] || `Couldn't create it: ${e.message}`);
+        deps.toast({ no_nest_slot: "The company has no free Nest slot. Its billing admin can buy or upgrade a package.", agent_limit: "The company has used all its agent addresses.", handle_taken: "That address is taken.", invalid_handle: "That isn't a valid address in your company namespace.", bad_label: "Names are 1 to 64 printable characters." }[e.code] || `Couldn't create it: ${e.message}`);
       }
       draw();
     }
@@ -301,7 +345,7 @@
           deps.pb("/v1/nest-packages"),
           deps.pb("/v1/nests"),
           deps.bridgeGet("/v1/nests").catch(() => null),
-          deps.pb("/v1/orgs").then((v) => (v.orgs || []).map((o) => ({ id: o.id, name: o.name }))).catch(() => []),
+          deps.pb("/v1/orgs").then((v) => (v.orgs || []).map((o) => ({ id: o.id, name: o.name, memberId: o.my_member_id, admin: (o.my_roles || []).some((r) => NEST_ADMIN_ROLES.includes(r)) }))).catch(() => []),
         ]);
         if (gen !== state.gen) return;
         state.data = { packages, nests, bridge, orgs };

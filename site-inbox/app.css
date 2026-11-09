@@ -2745,14 +2745,15 @@ audio.viewer-media { width: min(560px, 100%); background: none; }
   border-radius: 6px; color: var(--ink); font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
 
 /* Nests B3: the status header above a conversation with a Nest */
-.nest-status { display: flex; gap: .5rem; align-items: center; padding: .35rem .9rem; font-size: .9em; border-bottom: 1px solid var(--rule); }
+.nest-status { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; padding: .35rem .9rem; font-size: .9em; border-bottom: 1px solid var(--rule); }
 .nest-status-dot { width: .55rem; height: .55rem; border-radius: 50%; background: var(--faint); flex: none; }
 .nest-status[data-status="ready"] .nest-status-dot { background: var(--tick-seen); }
 .nest-status[data-status="working"] .nest-status-dot { background: var(--accent-fill); }
 .nest-status[data-status="needs_you"] .nest-status-dot { background: var(--amber); }
 .nest-status[data-status="paused"] .nest-status-dot { background: var(--faint); }
 .nest-status[data-status="unavailable"] .nest-status-dot { background: var(--muted); }
-.nest-status-note { opacity: .75; flex: 1; }
+.nest-status-note { opacity: .75; flex: 1; min-width: 12rem; }
+.nest-status [hidden] { display: none; }
 @media (prefers-reduced-motion: no-preference) { .nest-status[data-status="working"] .nest-status-dot { animation: nest-pulse 1.4s ease-in-out infinite; } }
 @keyframes nest-pulse { 50% { opacity: .35; } }
 .nest-section { margin: 1rem 0; }
@@ -2761,3 +2762,6 @@ audio.viewer-media { width: min(560px, 100%); background: none; }
 .nest-actions { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; margin: .4rem 0; }
 .nest-files { list-style: none; padding: 0; }
 .nest-files li { padding: .3rem 0; }
+#nest-dialog .muted { color: var(--muted); }
+#nest-dialog input[type="text"] { flex: 1; min-width: 10rem; min-height: 36px; padding: 0 10px; border: 1px solid var(--edge); border-radius: 8px; font: inherit; font-size: 16px; color: var(--ink); background: var(--field-deep); }
+#nest-dialog input[type="text"]:focus { border-color: var(--edge-focus); outline: none; }

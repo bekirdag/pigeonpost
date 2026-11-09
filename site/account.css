@@ -105,3 +105,5 @@
 .pp-warn { color: #b3261e; }
 .pp-setup { display: flex; gap: .6rem; align-items: center; margin: .4rem 0; }
 .pp-context { display: block; margin-bottom: .75rem; }
+.pp-operators { border: 1px solid var(--line, #ddd); border-radius: .5rem; padding: .4rem .75rem; display: grid; gap: .25rem; }
+.pp-operator { display: block; }
