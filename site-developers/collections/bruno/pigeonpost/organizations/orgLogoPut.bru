@@ -1,0 +1,27 @@
+meta {
+  name: Set the organization's logo (raw image)
+  type: http
+  seq: 5
+}
+
+put {
+  url: {{baseUrl}}/v1/orgs/:id/logo
+  body: none
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+headers {
+  Content-Type: image/jpeg
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  See docs/orgs.md. Requires the `orgs` feature flag. Owner or admin. Same processing as `PUT /v1/profile/avatar`; logos are public.
+}

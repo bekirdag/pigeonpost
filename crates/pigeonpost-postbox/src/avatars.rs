@@ -695,6 +695,64 @@ fn release(state: &AppState, digests: &[String]) {
     }
 }
 
+/// The upload checks shared by every picture: an image type, not empty, not too big.
+fn check_body(headers: &HeaderMap, body: &Bytes) -> Result<(), ApiError> {
+    let content_type = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    if !(content_type.starts_with("image/") || content_type == "application/octet-stream") {
+        return Err(AvatarError::Unsupported.into_api());
+    }
+    if body.len() > MAX_UPLOAD {
+        return Err(AvatarError::TooLarge.into_api());
+    }
+    if body.is_empty() {
+        return Err(AvatarError::Bad("the body was empty").into_api());
+    }
+    Ok(())
+}
+
+fn crop_of(raw: Option<&str>) -> Result<Option<Crop>, ApiError> {
+    match raw {
+        None | Some("") => Ok(None),
+        Some(raw) => Crop::parse(raw)
+            .map(Some)
+            .ok_or_else(|| ApiError::bad("bad_request", "crop must be x,y,w,h in pixels")),
+    }
+}
+
+/// Decode in the isolated worker, re-encode, and store the variants: `(hash, variants)`.
+async fn process_and_store(
+    state: &AppState,
+    body: Bytes,
+    crop: Option<Crop>,
+) -> Result<(String, BTreeMap<String, String>), ApiError> {
+    let blobs = storage(state)?.clone();
+    let processed = state
+        .avatar_processor
+        .run(body, crop)
+        .await
+        .map_err(AvatarError::into_api)?;
+    let mut variants = BTreeMap::new();
+    let mut hash = String::new();
+    for (size, bytes) in &processed.webp {
+        let digest = blobs.put(bytes).map_err(|e| {
+            tracing::error!(error = %e, "avatar blob write failed");
+            ApiError::server("storage_error")
+        })?;
+        if *size == SIZES[0] {
+            hash = digest.clone();
+        }
+        variants.insert(size.to_string(), digest);
+    }
+    let jpeg = blobs
+        .put(&processed.jpeg)
+        .map_err(|_| ApiError::server("storage_error"))?;
+    variants.insert("jpeg".into(), jpeg);
+    Ok((hash, variants))
+}
+
 // ---- member routes -------------------------------------------------------------------------------
 
 #[derive(serde::Deserialize)]
@@ -738,27 +796,8 @@ async fn do_upload(
     if !feature_on(state, me.account_id.as_deref(), capabilities::AVATARS).await {
         return Err(avatars_off());
     }
-    let blobs = storage(state)?.clone();
-    let content_type = headers
-        .get(header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-    if !(content_type.starts_with("image/") || content_type == "application/octet-stream") {
-        return Err(AvatarError::Unsupported.into_api());
-    }
-    if body.len() > MAX_UPLOAD {
-        return Err(AvatarError::TooLarge.into_api());
-    }
-    if body.is_empty() {
-        return Err(AvatarError::Bad("the body was empty").into_api());
-    }
-    let crop = match q.crop.as_deref() {
-        None | Some("") => None,
-        Some(raw) => Some(
-            Crop::parse(raw)
-                .ok_or_else(|| ApiError::bad("bad_request", "crop must be x,y,w,h in pixels"))?,
-        ),
-    };
+    check_body(headers, &body)?;
+    let crop = crop_of(q.crop.as_deref())?;
     let visibility = match q.visibility.as_deref() {
         None | Some("") => Visibility::Known,
         Some(v) => Visibility::parse(v).ok_or_else(|| {
@@ -789,27 +828,7 @@ async fn do_upload(
         _ => vec![me.clone()],
     };
 
-    let processed = state
-        .avatar_processor
-        .run(body, crop)
-        .await
-        .map_err(AvatarError::into_api)?;
-    let mut variants = BTreeMap::new();
-    let mut hash = String::new();
-    for (size, bytes) in &processed.webp {
-        let digest = blobs.put(bytes).map_err(|e| {
-            tracing::error!(error = %e, "avatar blob write failed");
-            ApiError::server("storage_error")
-        })?;
-        if *size == SIZES[0] {
-            hash = digest.clone();
-        }
-        variants.insert(size.to_string(), digest);
-    }
-    let jpeg = blobs
-        .put(&processed.jpeg)
-        .map_err(|_| ApiError::server("storage_error"))?;
-    variants.insert("jpeg".into(), jpeg);
+    let (hash, variants) = process_and_store(state, body, crop).await?;
 
     let now = now_unix();
     let mut stored = Vec::new();
@@ -1061,9 +1080,22 @@ pub(crate) async fn blob(
         Ok(v) => v,
         Err(e) => return e.into_response(),
     };
-    let row = match state.store.avatar_by_id(id).await {
+    let row = match state.store.avatar_by_id(id.clone()).await {
         Ok(Some(row)) if row.version == version => row,
-        Ok(_) => return not_found().into_response(),
+        Ok(Some(_)) => return not_found().into_response(),
+        // Not a mailbox's picture: a group picture or an org logo (P2-20)?
+        Ok(None) => {
+            let owned = match state.store.owned_avatar_by_id(id).await {
+                Ok(Some((kind, owner, row))) if row.version == version => (kind, owner, row),
+                Ok(_) => return not_found().into_response(),
+                Err(_) => return ApiError::server("store_error").into_response(),
+            };
+            let (kind, owner, row) = owned;
+            if !can_view_owned(&state, &viewer, kind, &owner).await {
+                return not_found().into_response();
+            }
+            return serve_variant(blobs, &row, variant, media);
+        }
         Err(_) => return ApiError::server("store_error").into_response(),
     };
     let owner = match state.store.get(row.owner.clone()).await {
@@ -1075,6 +1107,17 @@ pub(crate) async fn blob(
     {
         return not_found().into_response();
     }
+    serve_variant(blobs, &row, variant, media)
+}
+
+/// One stored variant with the headers its visibility calls for.
+fn serve_variant(
+    blobs: &Arc<crate::blobs::Blobs>,
+    row: &AvatarRow,
+    variant: &str,
+    media: &'static str,
+) -> Response {
+    let not_found = || ApiError::new(StatusCode::NOT_FOUND, "not_found", "no such picture");
     let Some(bytes) = row.variants.get(variant).and_then(|d| blobs.get(d)) else {
         return not_found().into_response();
     };
@@ -1520,4 +1563,326 @@ mod tests {
         assert!(t[0] > 150 && t[2] < 100, "top {t:?}");
         assert!(b[2] > 150 && b[0] < 100, "bottom {b:?}");
     }
+}
+
+// ---- group pictures and org logos (SDS §16.1, audit 2026-11-03 P2-20) ---------------------------
+
+/// A group picture's or org logo's public form, for views: `null` when there is none.
+pub(crate) fn owned_json(row: Option<&AvatarRow>) -> serde_json::Value {
+    row.map(public_json).unwrap_or(serde_json::Value::Null)
+}
+
+#[derive(serde::Deserialize)]
+pub(crate) struct OwnedQuery {
+    #[serde(default)]
+    identity: Option<String>,
+    #[serde(default)]
+    crop: Option<String>,
+}
+
+/// The acting member of a group who may change its picture: a person (not an agent or key) who is
+/// an active owner or admin of the live group. Returns their address.
+async fn group_admin(
+    state: &AppState,
+    headers: &HeaderMap,
+    gid: &str,
+    identity: Option<&str>,
+) -> Result<(String, Option<String>), crate::groups::GErr> {
+    let ctx = crate::groups::ctx(state, headers, identity).await?;
+    ctx.require_human()?;
+    let (gid, me) = (gid.to_string(), ctx.address());
+    let account = ctx.me.account_id.clone();
+    state
+        .store
+        .group_read(move |c| -> crate::groups::GResult<()> {
+            let g = crate::groups::live_group(c, &gid)?;
+            let m = crate::groups::load_member(c, &g.id, &me)?
+                .filter(|m| matches!(m.state.as_str(), "active" | "keying"))
+                .ok_or_else(crate::groups::GErr::not_found)?;
+            if !crate::groups::is_admin(&m) {
+                return Err(crate::groups::GErr::forbidden(
+                    "admin_only",
+                    "only the group's admins set its picture",
+                ));
+            }
+            Ok(())
+        })
+        .await?;
+    Ok((ctx.address(), account))
+}
+
+/// Tell a group's members its picture changed (`group.settings`, changed `picture`).
+async fn group_changed(state: &AppState, gid: &str) {
+    let gid = gid.to_string();
+    let now = now_unix();
+    let woke = state
+        .store
+        .group_tx(move |tx| -> crate::groups::GResult<Vec<String>> {
+            let revision = crate::groups::bump_group_revision(tx, &gid)?;
+            crate::groups::emit_members(
+                tx,
+                &gid,
+                "group.settings",
+                &json!({ "group_id": gid, "changed": ["picture"], "revision": revision }),
+                now,
+            )
+        })
+        .await
+        .unwrap_or_default();
+    for a in &woke {
+        state.event_hub.wake(a);
+    }
+}
+
+/// Tell an org's members its logo changed (`org.settings`, changed `logo`).
+async fn org_changed(state: &AppState, org: &str) {
+    let org = org.to_string();
+    let now = now_unix();
+    let woke = state
+        .store
+        .group_tx(move |tx| -> crate::groups::GResult<Vec<String>> {
+            tx.execute(
+                "UPDATE orgs SET revision = revision + 1 WHERE id = ?1",
+                [&org],
+            )?;
+            crate::org::emit_members(
+                tx,
+                &org,
+                "org.settings",
+                &json!({ "org_id": org, "changed": ["logo"] }),
+                now,
+            )
+        })
+        .await
+        .unwrap_or_default();
+    for a in &woke {
+        state.event_hub.wake(a);
+    }
+}
+
+async fn store_owned(
+    state: &AppState,
+    kind: store::OwnedKind,
+    owner: &str,
+    headers: &HeaderMap,
+    crop: Option<&str>,
+    body: Bytes,
+) -> Result<serde_json::Value, ApiError> {
+    check_body(headers, &body)?;
+    let crop = crop_of(crop)?;
+    let (hash, variants) = process_and_store(state, body, crop).await?;
+    // Org logos are the org's public branding (portal, invitations); group pictures are for the
+    // group's members and, for listed public groups, whoever can find the group.
+    let visibility = match kind {
+        store::OwnedKind::Org => Visibility::Everyone,
+        store::OwnedKind::Group => Visibility::Known,
+    };
+    let result = state
+        .store
+        .set_owned_avatar(
+            kind,
+            owner.to_string(),
+            NewAvatar {
+                id: rand_id(),
+                sha256: hash,
+                variants,
+                visibility,
+            },
+            now_unix(),
+        )
+        .await
+        .map_err(|_| ApiError::server("store_error"))?;
+    match result {
+        SetAvatar::Stored { row, orphaned } => {
+            release(state, &orphaned);
+            Ok(json!({ "avatar": public_json(&row) }))
+        }
+        SetAvatar::RateLimited => Err(ApiError::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            "avatar_rate_limited",
+            "a picture can be changed 5 times a day",
+        )
+        .with_retry_after(3_600)),
+    }
+}
+
+/// `PUT /v1/groups/{id}/picture` — a group admin sets the group's picture (raw image body).
+pub(crate) async fn put_group_picture(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(gid): Path<String>,
+    Query(q): Query<OwnedQuery>,
+    body: Bytes,
+) -> Response {
+    let (me, account) = match group_admin(&state, &headers, &gid, q.identity.as_deref()).await {
+        Ok(v) => v,
+        Err(e) => return e.into_response(),
+    };
+    if !feature_on(&state, account.as_deref(), capabilities::AVATARS).await {
+        return avatars_off().into_response();
+    }
+    match store_owned(
+        &state,
+        store::OwnedKind::Group,
+        &gid,
+        &headers,
+        q.crop.as_deref(),
+        body,
+    )
+    .await
+    {
+        Ok(v) => {
+            group_changed(&state, &gid).await;
+            crate::groups::audit(&state, &headers, "group.picture", Some(&gid)).await;
+            tracing::info!(by = %me, "group picture set");
+            Json(v).into_response()
+        }
+        Err(e) => e.into_response(),
+    }
+}
+
+/// `DELETE /v1/groups/{id}/picture`
+pub(crate) async fn delete_group_picture(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(gid): Path<String>,
+    Query(q): Query<OwnedQuery>,
+) -> Response {
+    if let Err(e) = group_admin(&state, &headers, &gid, q.identity.as_deref()).await {
+        return e.into_response();
+    }
+    match state
+        .store
+        .remove_owned_avatar(store::OwnedKind::Group, gid.clone(), now_unix())
+        .await
+    {
+        Ok(orphaned) => {
+            release(&state, &orphaned);
+            group_changed(&state, &gid).await;
+            crate::groups::audit(&state, &headers, "group.picture_removed", Some(&gid)).await;
+            Json(json!({ "removed": true })).into_response()
+        }
+        Err(_) => ApiError::server("store_error").into_response(),
+    }
+}
+
+/// The org whose logo the caller may change: owner or full admin (`Perm::Security`).
+async fn org_admin(
+    state: &AppState,
+    headers: &HeaderMap,
+    org: &str,
+) -> Result<crate::org::OrgCtx, crate::groups::GErr> {
+    let ctx = crate::org::org_ctx(state, headers, org).await?;
+    ctx.require(state, crate::org::Perm::Security)?;
+    Ok(ctx)
+}
+
+/// `PUT /v1/orgs/{id}/logo` — the owner or an admin sets the org logo (raw image body).
+pub(crate) async fn put_org_logo(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(org): Path<String>,
+    Query(q): Query<OwnedQuery>,
+    body: Bytes,
+) -> Response {
+    if let Err(e) = org_admin(&state, &headers, &org).await {
+        return e.into_response();
+    }
+    match store_owned(
+        &state,
+        store::OwnedKind::Org,
+        &org,
+        &headers,
+        q.crop.as_deref(),
+        body,
+    )
+    .await
+    {
+        Ok(v) => {
+            org_changed(&state, &org).await;
+            Json(v).into_response()
+        }
+        Err(e) => e.into_response(),
+    }
+}
+
+/// `DELETE /v1/orgs/{id}/logo`
+pub(crate) async fn delete_org_logo(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(org): Path<String>,
+) -> Response {
+    if let Err(e) = org_admin(&state, &headers, &org).await {
+        return e.into_response();
+    }
+    match state
+        .store
+        .remove_owned_avatar(store::OwnedKind::Org, org.clone(), now_unix())
+        .await
+    {
+        Ok(orphaned) => {
+            release(&state, &orphaned);
+            org_changed(&state, &org).await;
+            Json(json!({ "removed": true })).into_response()
+        }
+        Err(_) => ApiError::server("store_error").into_response(),
+    }
+}
+
+/// Whether `viewer` may see a group picture or org logo. Org logos are public. A group picture is
+/// for the group's members (active, keying or invited) and, for a listed public group, anyone
+/// signed in (the directory shows it); org rooms only ever to that org's members.
+async fn can_view_owned(
+    state: &AppState,
+    viewer: &Viewer,
+    kind: store::OwnedKind,
+    owner: &str,
+) -> bool {
+    if kind == store::OwnedKind::Org {
+        return true;
+    }
+    if viewer.principal.is_none() {
+        return false;
+    }
+    let (gid, mine) = (
+        owner.to_string(),
+        viewer
+            .mailboxes
+            .iter()
+            .map(|(a, _)| a.clone())
+            .collect::<Vec<_>>(),
+    );
+    state
+        .store
+        .group_read(move |c| -> crate::groups::GResult<bool> {
+            let Some(g) = crate::groups::load_group(c, &gid)? else {
+                return Ok(false);
+            };
+            if g.deleted_at.is_some() {
+                return Ok(false);
+            }
+            for me in &mine {
+                if crate::groups::load_member(c, &g.id, me)?
+                    .is_some_and(|m| matches!(m.state.as_str(), "active" | "keying" | "invited"))
+                {
+                    return Ok(true);
+                }
+            }
+            let listed = g.join_policy == "public" && g.visibility == "listed";
+            Ok(match &g.org_id {
+                None => listed,
+                Some(org) => {
+                    let mut member = false;
+                    for me in &mine {
+                        if crate::org_rooms::member_mailbox_in(c, org, me)? {
+                            member = true;
+                            break;
+                        }
+                    }
+                    listed && member
+                }
+            })
+        })
+        .await
+        .unwrap_or(false)
 }

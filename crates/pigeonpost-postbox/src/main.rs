@@ -75,6 +75,8 @@ mod chatgpt;
 mod contacts;
 #[cfg(test)]
 mod contacts_tests;
+#[cfg(test)]
+mod ent_launch_tests;
 mod ephemeral;
 mod fcm;
 mod filtering;
@@ -899,6 +901,15 @@ fn build_router(state: AppState) -> Router {
             get(groups::get_one)
                 .patch(groups::patch)
                 .delete(groups::delete),
+        )
+        // Group pictures (SDS §16.1, audit 2026-11-03 P2-20).
+        .route(
+            "/v1/groups/{id}/picture",
+            axum::routing::put(avatars::put_group_picture)
+                .layer(axum::extract::DefaultBodyLimit::max(
+                    avatars::MAX_UPLOAD + 1,
+                ))
+                .delete(avatars::delete_group_picture),
         )
         .route(
             "/v1/groups/{id}/members",
