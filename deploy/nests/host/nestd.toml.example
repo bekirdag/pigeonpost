@@ -45,6 +45,17 @@ broker_port = 8788
 # cpu_max_millis = 500
 # pids = 64
 # tmp_mib = 32
+# Hardening (W1): the postbox attestation public key(s), 64 hex digits each. Required for a
+# production pool; two entries while a key rotation is in progress.
+# attestation_keys = ["<64-hex Ed25519 public key>"]
+# Each buyer worker gets a LUKS2 thin volume of this size (storage.backend must be lvm-luks).
+# worker_gib = 1
+# Release images this host lacks are pulled by digest from the build plane (deploy/nests/buildd).
+# [sandbox.marketplace.artifacts]
+# url = "http://<BUILD_WG_ADDR>:8795"
+# token_file = "/etc/nests/buildd-artifact.token"
+# cache_dir = "/var/lib/nests/artifacts"
+# max_bytes = 4294967296
 
 [storage]
 backend = "lvm-luks"

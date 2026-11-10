@@ -123,6 +123,18 @@ CREATE TABLE IF NOT EXISTS mp_jobs (
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
 );
+-- Hardening (W1): listings the platform stopped (the kill switch), kept until it restores them,
+-- and which publisher each worker serves, for the per-publisher limits.
+CREATE TABLE IF NOT EXISTS mp_listing_stops (
+    listing_id TEXT PRIMARY KEY,
+    stopped_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS mp_worker_publishers (
+    nest_id      TEXT PRIMARY KEY,
+    publisher_id TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS mp_worker_publishers_by_publisher
+    ON mp_worker_publishers(publisher_id);
 ";
 
 /// How long a control instance's claim on a Nest lasts without renewal.
@@ -994,6 +1006,121 @@ impl Db {
                 params![job_id, state, result, now()],
             )
             .map(|n| n > 0)
+        })
+    }
+
+    // ---- Hardening (W1) --------------------------------------------------------------------------
+
+    pub fn mp_listing_stopped(&self, listing_id: &str) -> Result<bool, String> {
+        self.with(|c| {
+            c.query_row(
+                "SELECT EXISTS (SELECT 1 FROM mp_listing_stops WHERE listing_id = ?1)",
+                params![listing_id],
+                |r| r.get(0),
+            )
+        })
+    }
+
+    pub fn mp_set_listing_stopped(&self, listing_id: &str, stopped: bool) -> Result<(), String> {
+        self.with(|c| {
+            if stopped {
+                c.execute(
+                    "INSERT INTO mp_listing_stops (listing_id, stopped_at) VALUES (?1, ?2)
+                     ON CONFLICT(listing_id) DO NOTHING",
+                    params![listing_id, now()],
+                )
+            } else {
+                c.execute(
+                    "DELETE FROM mp_listing_stops WHERE listing_id = ?1",
+                    params![listing_id],
+                )
+            }
+            .map(|_| ())
+        })
+    }
+
+    pub fn mp_workers_of_listing(&self, listing_id: &str) -> Result<Vec<MpWorker>, String> {
+        self.with(|c| {
+            let mut stmt = c.prepare(&format!(
+                "SELECT {MP_WORKER_COLS} FROM mp_workers WHERE listing_id = ?1 ORDER BY nest_id"
+            ))?;
+            let rows = stmt.query_map(params![listing_id], row_worker)?;
+            rows.collect()
+        })
+    }
+
+    pub fn mp_set_worker_publisher(&self, nest_id: &str, publisher_id: &str) -> Result<(), String> {
+        self.with(|c| {
+            c.execute(
+                "INSERT INTO mp_worker_publishers (nest_id, publisher_id) VALUES (?1, ?2)
+                 ON CONFLICT(nest_id) DO UPDATE SET publisher_id = excluded.publisher_id",
+                params![nest_id, publisher_id],
+            )
+            .map(|_| ())
+        })
+    }
+
+    /// Broker tokens a publisher's workers spent or hold reserved in `period`.
+    pub fn mp_publisher_tokens(&self, publisher_id: &str, period: &str) -> Result<i64, String> {
+        self.with(|c| {
+            c.query_row(
+                "SELECT COALESCE(SUM(u.input_used + u.output_used + u.input_reserved
+                        + u.output_reserved), 0)
+                   FROM usage u JOIN mp_worker_publishers p ON p.nest_id = u.nest_id
+                  WHERE p.publisher_id = ?1 AND u.period = ?2",
+                params![publisher_id, period],
+                |r| r.get(0),
+            )
+        })
+    }
+
+    /// A publisher's running workers, not counting `except`.
+    pub fn mp_publisher_running(&self, publisher_id: &str, except: &str) -> Result<i64, String> {
+        self.with(|c| {
+            c.query_row(
+                "SELECT COUNT(*) FROM mp_worker_publishers p JOIN nests n ON n.id = p.nest_id
+                  WHERE p.publisher_id = ?1 AND n.state = 'running' AND n.id <> ?2",
+                params![publisher_id, except],
+                |r| r.get(0),
+            )
+        })
+    }
+
+    /// GiB promised to every live Nest volume on this host, workers included.
+    pub fn allocated_gib(&self) -> Result<i64, String> {
+        self.with(|c| {
+            c.query_row(
+                "SELECT COALESCE(SUM(quota_gib), 0) FROM nests WHERE state <> 'deleted'",
+                [],
+                |r| r.get(0),
+            )
+        })
+    }
+
+    /// A destroyed worker: its jobs and worker rows go, its ledger row stays `deleted` (the
+    /// tombstone tombstone replay and id allocation look for).
+    pub fn mp_forget_worker(&self, nest_id: &str) -> Result<(), String> {
+        self.with(|c| {
+            let tx = c.transaction()?;
+            tx.execute("DELETE FROM mp_jobs WHERE nest_id = ?1", params![nest_id])?;
+            tx.execute(
+                "DELETE FROM mp_workers WHERE nest_id = ?1",
+                params![nest_id],
+            )?;
+            tx.execute(
+                "DELETE FROM mp_worker_publishers WHERE nest_id = ?1",
+                params![nest_id],
+            )?;
+            tx.execute(
+                "DELETE FROM broker_tokens WHERE nest_id = ?1",
+                params![nest_id],
+            )?;
+            tx.execute(
+                "UPDATE nests SET state = 'deleted', desired = 'deleted', updated_at = ?2
+                  WHERE id = ?1",
+                params![nest_id, now()],
+            )?;
+            tx.commit()
         })
     }
 

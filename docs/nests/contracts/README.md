@@ -277,7 +277,7 @@ The team of a publisher: a personal publisher's own account; for an org publishe
 4. The publisher reads the contract's `NestReviewStatus` and redacted findings: their own scan findings in full, behaviour-test findings by rule only, the AI review as a count.
 5. An approval publishes nothing for a third party. The publisher creates a listing (draft; the address is the release's `listing_address`) and publishes it with step-up on an attested, live release. Visibility is public (in the catalog), unlisted (by id) or private (the team only).
 6. A person installs the listing for their account. The installation pins the release; its configuration is validated against the release's `config_schema` and its secrets are sealed. Jobs on a third-party listing need an installation (`409 installation_required`) and run the installed release; the worker receives the stored configuration with the schema's defaults, never a secret.
-7. Update moves to a newer attested release (the listing's current one or a named one), rollback goes back once to the release before the last update, uninstall deletes the configuration and secrets, cancels open jobs and asks nestd (`POST /v1/mp/workers/remove`) to delete the buyer's worker and volume.
+7. Update moves to a newer attested release (the listing's current one or a named one), rollback goes back once to the release before the last update, uninstall deletes the configuration and secrets, cancels open jobs and asks nestd (`POST /v1/mp/workers/destroy`, hardening) to destroy the buyer's worker and crypto-erase its volume.
 8. Staff can suspend or reinstate a listing and revoke a publisher (its listings are suspended, queued builds cancelled, open reviews undecidable). Release quarantine and revocation stay M1's.
 
 ### Configuration schema
@@ -294,7 +294,7 @@ Offline: no identity, no home directory, no network. It reads `nest-release.toml
 
 ### Data model additions
 
-`publisher_roles`, `publisher_certifications` (append-only), `nest_builds`, `nest_installations`, `nest_installation_secrets` (vault-sealed, bound to their row), `nest_installation_events` (append-only, ids and versions only); new columns `publisher_profiles.decision_reason`, `nest_listings.description`, `template_id`, `moderation_reason`, `published_at`, `review_cases.revision`, `build_id`. nestd: `JobIn.config` and `POST /v1/mp/workers/remove`.
+`publisher_roles`, `publisher_certifications` (append-only), `nest_builds`, `nest_installations`, `nest_installation_secrets` (vault-sealed, bound to their row), `nest_installation_events` (append-only, ids and versions only); new columns `publisher_profiles.decision_reason`, `nest_listings.description`, `template_id`, `moderation_reason`, `published_at`, `review_cases.revision`, `build_id`. nestd: `JobIn.config`; uninstall uses hardening's `POST /v1/mp/workers/destroy`.
 
 ### Exit tests
 
@@ -323,6 +323,47 @@ Offline: no identity, no home directory, no network. It reads `nest-release.toml
 ### What a hosted test environment needs
 
 A separate staging postbox (its own domain, Keycloak client or realm, database and vault key; production handles never reused, OD-9) with the `marketplace` flag on; a nestd instance with a marketplace pool for test Nests on a host other than nests-1 production workers (synthetic data only, short-lived, purged on expiry); the build and analysis commands pointed at that postbox with their own ops token; the mswarm self-hosted route for the AI review; a dependency mirror or allowlisting proxy for the fetch step; a `test-nests` route family (`/v1/publishers/{publisher}/test-nests`) with expiry (`nest.test.expiring`) and a reset/delete action on nestd's existing control API.
+### Hardening (W1, 2026-11-10): what replaced deviations 1, 2, 3, 7 and 9
+
+- **Signed attestations (3).** The statement gains `key_id`; the postbox signs
+  `"pigeonpost-nest-attestation-sig-v1\n" || statement` with Ed25519 (seed in
+  `POSTBOX_MARKETPLACE_ATTESTATION_KEY_FILE`, never in the repository or database) and stores the
+  signature in `release_attestation_signatures` (append-only). `key_id` is `ppk_` and the first 16
+  hex digits of SHA-256 over the public key. The postbox verifies it at quote and job admission;
+  nestd verifies it at admission and at every dispatch against `[sandbox.marketplace]
+  attestation_keys` and refuses everything when that list is empty. The job body's `release`
+  object carries `signature` and `key_id`. Rotation: `pigeonpost_nests::attest` module docs and
+  `deploy/nests/buildd/README.md`.
+- **Build and analysis plane (1, 2).** `pigeonpost-nest-buildd` on a separate host (a shared host for
+  now): git source intake by repository URL and full commit id on an allowlisted host, vendored
+  dependencies, two builds that must agree, the image saved as an OCI archive, the deterministic
+  scan and the advisory AI review. The postbox submits and pulls (`marketplace_source_builds`);
+  nests-1 pulls images by digest with its own read-only token. `deploy/nests/buildd/`.
+- **Worker volumes (9).** On an `lvm-luks` host every buyer worker has its own LUKS2 thin volume
+  (`nest-<id>`, key in `key_dir`, wrapped under the KEK), mounted at
+  `<volume_root>/<context>/<id>`, locked until the postbox unlocks the host, taken by
+  `nests-backup`, closed when the worker stops. A destroyed worker's id is a tombstone
+  (`marketplace_worker_tombstones`) replayed on unlock; a new worker for the same pair gets a new
+  id.
+- **Events (7).** Typed events on `/v1/events`, ids and states only, written in the same
+  transaction as the change:
+
+  | type | to | data |
+  |---|---|---|
+  | `nest.job.admitted`, `nest.job.progress`, `nest.job.result_ready`, `nest.job.reconciling` | the submitting account | `job_id`, `listing_id`, `release_id`, `execution` |
+  | `nest.review.stage_changed`, `nest.review.blocked`, `nest.review.decision`, `nest.review.completed` | the publisher's account (its org owner; the platform owner for Pigeonpost's own) | `review_id`, `release_id`, `publisher_id`, `stage`/`decision` |
+  | `nest.security.quarantined`, `nest.security.revoked` | the publisher and every account with a job on the release or listing | `release_id`, `listing_id`, `publisher_id` |
+
+  A job the worker host no longer knows (404 on poll) becomes `reconciling` and is handed over again.
+- **Abuse controls.** Per-publisher quotas (`marketplace_publisher_quotas`, defaults from
+  `POSTBOX_MARKETPLACE_*`): source builds per day (postbox), jobs per minute per buyer (postbox,
+  `429 rate_limited`), concurrent workers and monthly broker tokens (sent as `limits` with each job,
+  enforced by nestd before a worker starts or a job lands, `quota_exceeded`). The kill switch:
+  `POST /v1/staff/marketplace/{listings|publishers}/{id}/kill` with `{action: kill|restore,
+  reason}` (staff with step-up, audited) stops every queued and running job, refuses new ones
+  (`409 listing_suspended`), and tells nestd `POST /v1/mp/listings/{id}/stop`, which fences broker
+  tokens, stops the sandboxes and closes the volumes; an unacknowledged stop is resent every
+  dispatcher tick (2 s).
 
 ## Validation (2026-11-03)
 

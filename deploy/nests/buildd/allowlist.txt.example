@@ -1,0 +1,9 @@
+# /etc/pigeonpost-buildd/allowlist.txt — the only names the build plane may reach on TCP 443.
+# Git hosts must match [git].allowed_hosts in buildd.toml; the crate registry is needed by the
+# vendoring step (`cargo vendor --locked`, checked against Cargo.lock checksums).
+github.com
+codeload.github.com
+codeberg.org
+index.crates.io
+static.crates.io
+crates.io

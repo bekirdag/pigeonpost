@@ -30,6 +30,11 @@ path = "src/bin/runner.rs"
 name = "pigeonpost-nest-release"
 path = "src/bin/release.rs"
 
+# Hardening W1.3: the remote build and analysis plane (a separate host now; its own VM later).
+[[bin]]
+name = "pigeonpost-nest-buildd"
+path = "src/bin/buildd.rs"
+
 [dependencies]
 # The shared Nest package rules (manifest and configuration schema), the same code the postbox and
 # `pigeonpost nest validate` run. A workspace crate, no new third-party dependency.

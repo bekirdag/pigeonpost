@@ -1317,6 +1317,31 @@ async fn request_build(
                 )?)
             })
             .await?;
+        // With a remote build plane (hardening's `pigeonpost-nest-buildd`) the request goes to it,
+        // within the publisher's builds-per-day quota; without one the build host pulls it.
+        if crate::marketplace_hardening::buildd_enabled(&state) {
+            let source = &row["source"];
+            let queued = crate::marketplace_hardening::request_source_build_for(
+                &state,
+                &ctx.p.id,
+                source["repository"].as_str().unwrap_or_default(),
+                source["commit"].as_str().unwrap_or_default(),
+                &ctx.account,
+                Some(&id),
+            )
+            .await;
+            if let Err(e) = queued {
+                let gone = id.clone();
+                state
+                    .store
+                    .group_tx(move |tx| -> GResult<()> {
+                        tx.execute("DELETE FROM nest_builds WHERE id = ?1", [&gone])?;
+                        Ok(())
+                    })
+                    .await?;
+                return Err(e);
+            }
+        }
         Ok((StatusCode::CREATED, Json(json!({ "data": row }))))
     }
     .await;
@@ -1341,6 +1366,8 @@ async fn pending_builds(State(state): State<AppState>, headers: HeaderMap) -> Re
                        FROM nest_builds b JOIN nest_templates t ON t.id = b.template_id
                        JOIN publisher_profiles p ON p.id = b.publisher_id
                       WHERE b.status = 'queued' AND p.status = 'approved'
+                        AND NOT EXISTS (SELECT 1 FROM marketplace_source_builds s
+                                         WHERE s.nest_build_id = b.id)
                       ORDER BY b.created_at, b.id LIMIT {PAGE}"
                 ))?;
                 let rows = stmt
@@ -1387,39 +1414,66 @@ async fn build_failed(
         let now = now_unix() as i64;
         let wake_list = state
             .store
-            .group_tx(move |tx| -> GResult<Vec<String>> {
-                let row: Option<(String, String)> = tx
-                    .query_row(
-                        "SELECT publisher_id, status FROM nest_builds WHERE id = ?1",
-                        [&build],
-                        |r| Ok((r.get(0)?, r.get(1)?)),
-                    )
-                    .optional()?;
-                let Some((publisher, status)) = row else {
-                    return Err(not_found());
-                };
-                if status != "queued" {
-                    return Err(conflict_code("build_not_queued", "this build request is not queued"));
-                }
-                tx.execute(
-                    "UPDATE nest_builds SET status = 'failed', failure_code = ?2, failure_reason = ?3,
-                        updated_at = ?4 WHERE id = ?1",
-                    params![build, req.code, reason, now],
-                )?;
-                Ok(store::publisher_event_in(
-                    tx,
-                    &publisher,
-                    "nest.build.failed",
-                    &json!({ "build_id": build, "code": req.code }),
-                    now as u64,
-                )?)
-            })
+            .group_tx(move |tx| build_failed_in(tx, &build, &req.code, &reason, now))
             .await?;
         wake(&state, wake_list);
         Ok(Json(json!({ "data": { "status": "failed" } })))
     }
     .await;
     into_response(result)
+}
+
+/// Fail a queued build request and tell the publisher's team (`nest.build.failed`). Returns the
+/// accounts to wake.
+fn build_failed_in(
+    tx: &Transaction<'_>,
+    build: &str,
+    code: &str,
+    reason: &str,
+    now: i64,
+) -> GResult<Vec<String>> {
+    let row: Option<(String, String)> = tx
+        .query_row(
+            "SELECT publisher_id, status FROM nest_builds WHERE id = ?1",
+            [build],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    let Some((publisher, status)) = row else {
+        return Err(not_found());
+    };
+    if status != "queued" {
+        return Err(conflict_code(
+            "build_not_queued",
+            "this build request is not queued",
+        ));
+    }
+    tx.execute(
+        "UPDATE nest_builds SET status = 'failed', failure_code = ?2, failure_reason = ?3,
+            updated_at = ?4 WHERE id = ?1",
+        params![build, code, reason, now],
+    )?;
+    Ok(store::publisher_event_in(
+        tx,
+        &publisher,
+        "nest.build.failed",
+        &json!({ "build_id": build, "code": code }),
+        now as u64,
+    )?)
+}
+
+/// The remote build plane failed the source build answering `build` (hardening). The publisher
+/// reads a short code and the build plane's redacted reason.
+pub(crate) async fn source_build_failed(state: &AppState, build: &str, error: &str) {
+    let (build, now) = (build.to_string(), now_unix() as i64);
+    let reason: String = error.chars().take(500).collect();
+    let woke = state
+        .store
+        .group_tx(move |tx| build_failed_in(tx, &build, "build_failed", &reason, now))
+        .await;
+    if let Ok(accounts) = woke {
+        wake(state, accounts);
+    }
 }
 
 // ---- reviews, the publisher's side ---------------------------------------------------------------
@@ -3044,21 +3098,20 @@ async fn uninstall(
                 Ok(jobs.len() as i64)
             })
             .await?;
-        // The worker host deletes the buyer's worker and data. A host that cannot be reached is
-        // reported, not hidden: the installation is already gone here and takes no jobs.
-        let runtime = state
-            .nests
-            .call(
-                reqwest::Method::POST,
-                "/v1/mp/workers/remove",
-                Some(json!({ "listing_id": inst.listing_id, "buyer_context": inst.buyer_context })),
-            )
-            .await;
+        // The worker host destroys the buyer's worker and crypto-erases its volume (hardening),
+        // keeping its id as a tombstone. A host that cannot be reached is reported, not hidden:
+        // the installation is already gone here and takes no jobs.
+        let runtime = crate::marketplace_hardening::destroy_worker(
+            &state,
+            &inst.listing_id,
+            &inst.buyer_context,
+        )
+        .await;
         Ok(Json(json!({ "data": {
             "id": inst.id,
             "status": "uninstalled",
             "jobs_cancelled": cancelled,
-            "runtime_removed": matches!(runtime, Ok((200, _))),
+            "runtime_removed": runtime.is_ok(),
         }})))
     }
     .await;

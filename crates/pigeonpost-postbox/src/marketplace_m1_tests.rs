@@ -13,15 +13,15 @@ use crate::*;
 use reqwest::Method;
 use serde_json::{json, Value};
 
-const OWNER_ACCOUNT: &str = "acct_mpowner";
-const ADDRESS: &str = "/pigeonpost/hr-policy-qa";
-const OP: &str = "hr.policy.ask";
+pub(super) const OWNER_ACCOUNT: &str = "acct_mpowner";
+pub(super) const ADDRESS: &str = "/pigeonpost/hr-policy-qa";
+pub(super) const OP: &str = "hr.policy.ask";
 
-fn code(v: &Value) -> &str {
+pub(super) fn code(v: &Value) -> &str {
     v["error"]["code"].as_str().unwrap_or_default()
 }
 
-async fn setup() -> (Srv, Person) {
+pub(super) async fn setup() -> (Srv, Person) {
     let srv = serve_with(|s| {
         s.platform_owner = Some(Arc::from(OWNER_ACCOUNT));
         s.nests = Arc::new(nests::Runtime::capture());
@@ -33,7 +33,7 @@ async fn setup() -> (Srv, Person) {
 }
 
 /// One request with extra headers; the raw body is sent as given.
-async fn send(
+pub(super) async fn send(
     srv: &Srv,
     method: Method,
     path: &str,
@@ -71,11 +71,11 @@ async fn send(
     )
 }
 
-fn d(c: char) -> String {
+pub(super) fn d(c: char) -> String {
     format!("sha256:{}", c.to_string().repeat(64))
 }
 
-fn build_record(version: &str, image_char: char) -> Value {
+pub(super) fn build_record(version: &str, image_char: char) -> Value {
     let sbom =
         canonical_json(&json!({"bomFormat": "CycloneDX", "specVersion": "1.5", "version": 1}));
     let sbom_digest = digest_of(sbom.as_bytes());
@@ -113,14 +113,14 @@ fn build_record(version: &str, image_char: char) -> Value {
     })
 }
 
-struct Release {
-    release: String,
-    review: String,
-    listing: String,
-    digest: String,
+pub(super) struct Release {
+    pub(super) release: String,
+    pub(super) review: String,
+    pub(super) listing: String,
+    pub(super) digest: String,
 }
 
-async fn register(srv: &Srv, version: &str, image_char: char) -> Release {
+pub(super) async fn register(srv: &Srv, version: &str, image_char: char) -> Release {
     let record = build_record(version, image_char);
     let (s, v) = srv
         .call(
@@ -139,7 +139,7 @@ async fn register(srv: &Srv, version: &str, image_char: char) -> Release {
     }
 }
 
-fn evidence(stage: &str, decision: &str, model: Option<&str>) -> String {
+pub(super) fn evidence(stage: &str, decision: &str, model: Option<&str>) -> String {
     let mut facts = json!({ "ran": "synthetic" });
     if let Some(m) = model {
         facts["model"] = json!(m);
@@ -153,7 +153,7 @@ fn evidence(stage: &str, decision: &str, model: Option<&str>) -> String {
     }))
 }
 
-async fn stage(
+pub(super) async fn stage(
     srv: &Srv,
     review: &str,
     stage: &str,
@@ -176,7 +176,7 @@ async fn stage(
     .await
 }
 
-async fn pass_analysis(srv: &Srv, review: &str) {
+pub(super) async fn pass_analysis(srv: &Srv, review: &str) {
     for (st, dec, model) in [
         // The contract's order; M2 refuses a stage whose predecessor is missing.
         ("deterministic_scan", "passed", None),
@@ -188,7 +188,7 @@ async fn pass_analysis(srv: &Srv, review: &str) {
     }
 }
 
-async fn assign_reviewer(srv: &Srv, owner: &Person, account: &str) {
+pub(super) async fn assign_reviewer(srv: &Srv, owner: &Person, account: &str) {
     let (s, v) = srv
         .post(
             "/v1/staff/roles",
@@ -199,7 +199,7 @@ async fn assign_reviewer(srv: &Srv, owner: &Person, account: &str) {
     assert_eq!(s, 201, "{v}");
 }
 
-async fn decide(srv: &Srv, who: &str, r: &Release, decision: &str) -> (u16, Value) {
+pub(super) async fn decide(srv: &Srv, who: &str, r: &Release, decision: &str) -> (u16, Value) {
     srv.post(
         &format!("/v1/staff/reviews/{}/decisions", r.review),
         who,
@@ -209,7 +209,7 @@ async fn decide(srv: &Srv, who: &str, r: &Release, decision: &str) -> (u16, Valu
 }
 
 /// A released, attested first-party release with its published listing.
-async fn attested(srv: &Srv, owner: &Person) -> Release {
+pub(super) async fn attested(srv: &Srv, owner: &Person) -> Release {
     assign_reviewer(srv, owner, &owner.account).await;
     let r = register(srv, "1.0.0", 'a').await;
     pass_analysis(srv, &r.review).await;
@@ -218,7 +218,7 @@ async fn attested(srv: &Srv, owner: &Person) -> Release {
     r
 }
 
-fn deadline() -> String {
+pub(super) fn deadline() -> String {
     iso_secs(now_unix() + 3600)
 }
 
@@ -226,7 +226,7 @@ fn iso_secs(t: u64) -> String {
     crate::marketplace::iso(t as i64)
 }
 
-async fn quote(srv: &Srv, token: &str) -> (u16, Value) {
+pub(super) async fn quote(srv: &Srv, token: &str) -> (u16, Value) {
     srv.post(
         "/v1/nest-jobs/quote",
         token,
@@ -235,7 +235,7 @@ async fn quote(srv: &Srv, token: &str) -> (u16, Value) {
     .await
 }
 
-async fn authorization(srv: &Srv, token: &str, quote: &str, key: &str) -> (u16, Value) {
+pub(super) async fn authorization(srv: &Srv, token: &str, quote: &str, key: &str) -> (u16, Value) {
     let (s, _, v) = send(
         srv,
         Method::POST,
@@ -249,7 +249,7 @@ async fn authorization(srv: &Srv, token: &str, quote: &str, key: &str) -> (u16, 
 }
 
 /// Quote and authorize, then return a ready job body.
-async fn job_body(srv: &Srv, token: &str, key: &str, question: &str) -> Value {
+pub(super) async fn job_body(srv: &Srv, token: &str, key: &str, question: &str) -> Value {
     let (s, q) = quote(srv, token).await;
     assert_eq!(s, 201, "{q}");
     assert_eq!(q["data"]["amount_minor"], 0);
@@ -269,7 +269,7 @@ async fn job_body(srv: &Srv, token: &str, key: &str, question: &str) -> Value {
     })
 }
 
-async fn submit(
+pub(super) async fn submit(
     srv: &Srv,
     token: &str,
     key: &str,
@@ -286,7 +286,7 @@ async fn submit(
     .await
 }
 
-async fn flag_for(srv: &Srv, account: &str) {
+pub(super) async fn flag_for(srv: &Srv, account: &str) {
     let (s, v) = srv
         .call(
             Method::PUT,

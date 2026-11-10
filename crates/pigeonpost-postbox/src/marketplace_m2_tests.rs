@@ -1732,7 +1732,7 @@ async fn installations_pin_configure_update_roll_back_and_uninstall() {
         .nests
         .calls()
         .into_iter()
-        .find(|c| c.path == "/v1/mp/workers/remove")
+        .find(|c| c.path == "/v1/mp/workers/destroy")
         .unwrap();
     assert_eq!(removed.body.unwrap()["listing_id"], l.as_str());
     let (s, v) = srv
@@ -1767,4 +1767,104 @@ async fn installations_pin_configure_update_roll_back_and_uninstall() {
     assert_eq!(s, 201, "{v}");
     assert_eq!(v["data"]["release_id"], b2.release.as_str());
     assert!(v["data"]["previous_release_id"].is_null());
+}
+
+/// Hardening + M2: with a remote build plane, a publisher's build request goes to it (within its
+/// quota), leaves the pull-model list, and registers through the third-party intake; a failed
+/// build fails the request.
+#[tokio::test]
+async fn a_publisher_build_goes_to_the_remote_build_plane_when_one_is_configured() {
+    let (srv, owner) = setup().await;
+    srv.global_flag("marketplace").await;
+    let rev = reviewer(&srv, &owner, "mpbrev1").await;
+    let acme = srv.person("mpbacme1").await;
+    let p = certified(&srv, &rev, &acme).await;
+    let t = template(&srv, &acme, &p, "team-digest").await;
+
+    let h = &srv.state.nests.marketplace;
+    h.publisher_builds
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+
+    let (s, v) = request_build(&srv, &acme, &p, &t, "1.0.0").await;
+    assert_eq!(s, 201, "{v}");
+    let id = v["data"]["id"].as_str().unwrap().to_string();
+
+    let calls = h.buildd_calls();
+    let call = calls
+        .iter()
+        .find(|c| c.path == "/v1/builds")
+        .expect("build plane received it");
+    assert_eq!(
+        call.body.as_ref().unwrap()["publisher_id"]
+            .as_str()
+            .unwrap(),
+        p
+    );
+
+    let (s, v) = srv
+        .call(
+            Method::GET,
+            "/internal/v1/marketplace/build-requests",
+            Some(OPS),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert!(!v["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|e| e["id"].as_str() == Some(&id)));
+
+    let ev = evidence("deterministic_scan", "passed", json!([]));
+    h.buildd_answer(
+        200,
+        json!({
+            "state": "succeeded",
+            "record": build_record(&id, manifest("team-digest", "1.0.0", None), 'b'),
+            "stages": [{
+                "stage": "deterministic_scan",
+                "decision": "passed",
+                "reason": "synthetic",
+                "evidence": ev,
+                "evidence_digest": digest_of(ev.as_bytes())
+            }],
+            "reproducibility": {"builds": 2, "equal": true}
+        }),
+    );
+    assert_eq!(
+        crate::marketplace_hardening::source_builds_once(&srv.state).await,
+        1
+    );
+
+    let path = format!("/v1/publishers/{p}/builds/{id}");
+    let (s, v) = srv.get(&path, &acme.token).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["data"]["status"].as_str().unwrap(), "built");
+    assert!(v["data"]["review_id"].is_string());
+
+    let (s, v) = request_build(&srv, &acme, &p, &t, "1.0.1").await;
+    assert_eq!(s, 201, "{v}");
+    let id2 = v["data"]["id"].as_str().unwrap().to_string();
+
+    h.buildd_answer(
+        200,
+        json!({
+            "state": "failed",
+            "error": "vendoring failed"
+        }),
+    );
+    assert_eq!(
+        crate::marketplace_hardening::source_builds_once(&srv.state).await,
+        1
+    );
+
+    let path2 = format!("/v1/publishers/{p}/builds/{id2}");
+    let (s, v) = srv.get(&path2, &acme.token).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["data"]["status"].as_str().unwrap(), "failed");
+    assert_eq!(
+        v["data"]["failure"]["code"].as_str().unwrap(),
+        "build_failed"
+    );
 }

@@ -1,0 +1,52 @@
+# /etc/pigeonpost-buildd/buildd.toml — the remote build and analysis plane (marketplace hardening
+# W1.3). Read by `pigeonpost-nest-buildd serve`; check it with `pigeonpost-nest-buildd check`.
+# No secret is in this file: it names files that hold token hashes.
+
+# The build host's WireGuard address (wg-nestbuild) and port. Never 0.0.0.0.
+bind = "<BUILD_WG_ADDR>:8795"
+
+db = "/var/lib/pigeonpost-buildd/buildd.db"
+# One build at a time works here; both are wiped/pruned by the service.
+work_root = "/var/lib/pigeonpost-buildd/work"
+artifact_root = "/var/lib/pigeonpost-buildd/artifacts"
+
+# SHA-256 (hex) of the two bearer tokens (`pigeonpost-nest-buildd hash-token < token`). They must
+# differ: the postbox's token submits and reads builds; nests-1's token reads images only.
+submit_token_sha256_file = "/etc/pigeonpost-buildd/submit-token.sha256"
+artifact_token_sha256_file = "/etc/pigeonpost-buildd/artifact-token.sha256"
+
+# Build each release twice from scratch and require the same release digest (R-62).
+reproducible = true
+# Builds waiting at once, all publishers together. The postbox caps builds per publisher per day.
+max_queued = 20
+# Saved release images are deleted after this many days (nests-1 keeps its pulled copy).
+keep_days = 14
+
+# The advisory AI review on the self-hosted model (mswarm's self-hosted LB). Optional; when unset
+# the postbox records the AI stage some other way or the review waits for it.
+# ai_review_route = "/etc/pigeonpost-buildd/review.toml"
+
+[git]
+# An image with git, pinned by digest (for example alpine/git), loaded into the nestbuild user's
+# podman storage; nothing is pulled at build time.
+image = "<GIT_IMAGE>@sha256:<DIGEST>"
+# A rootless podman network of its own. nftables lets the nestbuild user reach only the
+# allowlisted addresses (nestbuild.nft); this name only keeps git off the default network.
+network = "nestbuild-fetch"
+# Exact git host names a publisher repository may be on. nestbuild-allowlist resolves these into
+# the nftables allowlist; a name here that is not also in allowlist.txt cannot be reached.
+allowed_hosts = ["github.com", "codeberg.org"]
+
+[build]
+# gVisor. `runsc` is mapped to the runsc-buildd wrapper in the user's containers.conf.
+runtime = "runsc"
+# The vendoring step (`cargo vendor --locked`) needs the crates.io registry; same network.
+fetch_network = "nestbuild-fetch"
+# The Rust toolchain image for vendoring, pinned by digest.
+fetch_image = "docker.io/library/rust:<VERSION>-slim-bookworm@sha256:<DIGEST>"
+# Local name the release images are tagged with.
+image_name = "localhost/pigeonpost-release"
+# Per-container limits (the nestbuild slice is the hard cap for everything together).
+memory_mib = 4096
+cpu_millis = 2000
+pids = 1024

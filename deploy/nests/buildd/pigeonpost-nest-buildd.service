@@ -1,0 +1,46 @@
+[Unit]
+Description=Pigeonpost Nests build and analysis plane (pigeonpost-nest-buildd)
+After=network-online.target wg-quick@wg-nestbuild.service
+Wants=network-online.target
+Requires=wg-quick@wg-nestbuild.service
+
+[Service]
+Type=simple
+User=nestbuild
+Group=nestbuild
+# The nestbuild user's slice: its limits (50-nestbuild-limits.conf) cover this service and its containers.
+Slice=user-2350.slice
+ExecStart=/usr/local/bin/pigeonpost-nest-buildd serve --config /etc/pigeonpost-buildd/buildd.toml
+
+# Environment
+# XDG_RUNTIME_DIR is hardcoded to uid 2350. Adjust if the nestbuild user has a different UID.
+Environment=RUST_LOG=info
+Environment=XDG_RUNTIME_DIR=/run/user/2350
+
+# Security Hardening
+# NoNewPrivileges=false: Required for rootless podman to use setuid helpers (newuidmap/newgidmap).
+NoNewPrivileges=false
+
+ProtectSystem=strict
+ReadWritePaths=/var/lib/pigeonpost-buildd /home/nestbuild /run/user/2350
+ProtectHome=false
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+# ProtectControlGroups=false: Podman needs to manage cgroups for container resource limits.
+ProtectControlGroups=false
+RestrictSUIDSGID=false
+LockPersonality=true
+ProtectClock=true
+ProtectHostname=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+UMask=0077
+
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target
+
