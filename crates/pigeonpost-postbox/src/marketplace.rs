@@ -342,26 +342,15 @@ async fn load_application(state: &AppState, id: &str) -> GResult<Option<Applicat
         .await
 }
 
-/// Whether this caller may administer a publisher owned by `kind`/`owner`: the owning account, or
-/// an org owner or admin. A failed org lookup is simply no grant.
-///
-/// `Perm::Security` is the existing owner-and-admin permission. It stands in until the
-/// `publisher_admin` org role arrives with the publisher programme (M2).
+/// Whether this caller is on the publisher's team: the owning account, an org owner or admin,
+/// or (M2) an active org member holding a live publisher role. A failed lookup is no grant.
 async fn holds_publisher(
     state: &AppState,
     headers: &HeaderMap,
     account: &str,
-    kind: &str,
-    owner: &str,
+    publisher: &str,
 ) -> bool {
-    match kind {
-        "account" => account == owner,
-        "org" => match crate::org::org_ctx(state, headers, owner).await {
-            Ok(ctx) => permits(&ctx.roles, Perm::Security, ctx.rooms_everyone()),
-            Err(_) => false,
-        },
-        _ => false,
-    }
+    crate::marketplace_m2::publisher_read(state, headers, account, publisher).await
 }
 
 #[derive(Deserialize)]
@@ -472,8 +461,7 @@ async fn read_application(
         let application = load_application(&state, &id).await?;
         let mut f = facts(&state);
         if let Some(a) = &application {
-            f.publisher_permitted =
-                holds_publisher(&state, &headers, &account, &a.owner_kind, &a.owner_id).await;
+            f.publisher_permitted = holds_publisher(&state, &headers, &account, &a.id).await;
         }
         authorize(
             &Actor::Principal(&principal),
@@ -531,19 +519,20 @@ async fn staff_read_application(
 
 struct ListingRow {
     body: Value,
-    owner_kind: String,
-    owner_id: String,
+    publisher_id: String,
     visibility: String,
     status: String,
 }
 
 /// Published and open to whoever has the link. Unlisted listings are reachable but not searchable;
-/// private, invite-only and organization listings need grants that arrive with M2.
+/// private ones only by the publisher's team (M2); invite-only and organization listings need
+/// grants that are not built yet.
 fn publicly_visible(status: &str, visibility: &str) -> bool {
     status == "published" && matches!(visibility, "public" | "unlisted")
 }
 
-/// `GET /v1/marketplace/listings/{listing}`
+/// `GET /v1/marketplace/listings/{listing}` — public metadata, what the listing's release offers
+/// (operations and configuration schema, M2) and who publishes it.
 async fn read_listing(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -568,33 +557,53 @@ async fn read_listing(
         let row = state
             .store
             .group_read(move |c| -> GResult<Option<ListingRow>> {
-                Ok(c.query_row(
-                    "SELECT l.id, l.publisher_id, l.release_id, l.title, l.summary, l.visibility,
-                            l.status, p.owner_kind, p.owner_id
-                       FROM nest_listings l JOIN publisher_profiles p ON p.id = l.publisher_id
-                      WHERE l.id = ?1",
-                    [&lid],
-                    |r| {
-                        let visibility: String = r.get(5)?;
-                        let status: String = r.get(6)?;
-                        Ok(ListingRow {
-                            body: json!({
-                                "id": r.get::<_, String>(0)?,
-                                "publisher_id": r.get::<_, String>(1)?,
-                                "release_id": r.get::<_, String>(2)?,
-                                "title": r.get::<_, String>(3)?,
-                                "summary": r.get::<_, String>(4)?,
-                                "visibility": visibility,
-                                "status": status,
-                            }),
-                            owner_kind: r.get(7)?,
-                            owner_id: r.get(8)?,
-                            visibility,
-                            status,
-                        })
-                    },
-                )
-                .optional()?)
+                let found = c
+                    .query_row(
+                        "SELECT l.id, l.publisher_id, l.release_id, l.title, l.summary, l.visibility,
+                                l.status, p.display_name, p.owner_kind, l.description, l.address,
+                                l.published_at, r.version, r.manifest
+                           FROM nest_listings l JOIN publisher_profiles p ON p.id = l.publisher_id
+                           JOIN nest_releases r ON r.id = l.release_id
+                          WHERE l.id = ?1",
+                        [&lid],
+                        |r| {
+                            let visibility: String = r.get(5)?;
+                            let status: String = r.get(6)?;
+                            let manifest: Value = r
+                                .get::<_, Option<String>>(13)?
+                                .and_then(|t| serde_json::from_str(&t).ok())
+                                .unwrap_or(Value::Null);
+                            Ok(ListingRow {
+                                body: json!({
+                                    "id": r.get::<_, String>(0)?,
+                                    "publisher_id": r.get::<_, String>(1)?,
+                                    "release_id": r.get::<_, String>(2)?,
+                                    "title": r.get::<_, String>(3)?,
+                                    "summary": r.get::<_, String>(4)?,
+                                    "visibility": visibility,
+                                    "status": status,
+                                    "publisher": {
+                                        "display_name": r.get::<_, String>(7)?,
+                                        "first_party": r.get::<_, String>(8)? == "platform",
+                                    },
+                                    "description": r.get::<_, String>(9)?,
+                                    "address": r.get::<_, Option<String>>(10)?,
+                                    "published_at": r.get::<_, Option<i64>>(11)?.map(iso),
+                                    "version": r.get::<_, String>(12)?,
+                                    "config_schema": manifest.get("config_schema").cloned()
+                                        .unwrap_or_else(pigeonpost_core::nest_package::empty_config_schema),
+                                    "operations": manifest["operations"].as_array().cloned()
+                                        .unwrap_or_default(),
+                                    "price": { "amount_minor": 0, "funding": "test_credits" },
+                                }),
+                                publisher_id: r.get(1)?,
+                                visibility,
+                                status,
+                            })
+                        },
+                    )
+                    .optional()?;
+                Ok(found)
             })
             .await?;
         let mut f = facts(&state);
@@ -602,14 +611,8 @@ async fn read_listing(
             f.listing_visible = publicly_visible(&listing.status, &listing.visibility);
             if !f.listing_visible {
                 if let Some(account) = &account {
-                    f.listing_visible = holds_publisher(
-                        &state,
-                        &headers,
-                        account,
-                        &listing.owner_kind,
-                        &listing.owner_id,
-                    )
-                    .await;
+                    f.listing_visible =
+                        holds_publisher(&state, &headers, account, &listing.publisher_id).await;
                 }
             }
         }

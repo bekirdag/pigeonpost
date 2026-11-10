@@ -143,8 +143,8 @@ After editing the YAML:
 3. validate: `python .github/scripts/openapi/check_openapi.py docs/nests/contracts/pigeonpost-nests.v1.yaml`.
 
 The CI `openapi` job validates this file along with the two production specs. A postbox test
-(`marketplace_tests::the_routes_and_the_contract_match`) fails when a route in `marketplace.rs` or
-`marketplace_m1.rs` and an operation marked implemented stop matching, or when an operation names a
+(`marketplace_tests::the_routes_and_the_contract_match`) fails when a route in `marketplace.rs`,
+`marketplace_m1.rs` or `marketplace_m2.rs` and an operation marked implemented stop matching, or when an operation names a
 policy action its handlers do not use.
 
 ## Marketplace M0: what is built and how it departs from the plan
@@ -237,6 +237,92 @@ M1 builds a first-party reference release (HR policy Q&A, `deploy/nests/referenc
 8. **Results:** the operation's output is inline in a new `result` field of NestJob; result attachments stay empty in M1.
 9. **Worker volumes:** plain directories under the marketplace pool's volume_root, not LUKS volumes, and the worker's ledger row lives in nestd's `nests` table so the broker meters it; the first-party lifecycle skips these rows.
 10. **Schema:** M0's tables are changed in place (platform owner kind, review stages, release build columns, listing address), because M0 is neither merged nor deployed.
+
+## Marketplace M2: the publisher beta (server and CLI)
+
+M2 opens the review pipeline to third-party publishers and adds listings, a catalog and installations. Everything is behind the per-account `marketplace` flag, off by default; nothing is deployed. Installations are free: every price is zero and `funding` is `test_credits`. The web publisher console and staff dashboard are a later task built on these routes.
+
+### Routes and policies
+
+| Route | Policy action | Who |
+| :--- | :--- | :--- |
+| GET /v1/publishers | PublisherManage | a person: the publishers they act for, with their role |
+| GET /v1/publishers/{publisher} | PublisherManage | the publisher's team; others get 404 |
+| GET, POST /v1/publishers/{publisher}/roles; DELETE …/roles/{role} | PublisherManage | read: the team; change: an org publisher's org owner or full admin |
+| GET, POST /v1/publishers/{publisher}/templates | PublisherManage | read: the team; create: a certified publisher's admins |
+| GET, POST /v1/publishers/{publisher}/builds; GET …/builds/{build} | PublisherManage | same |
+| GET /v1/publishers/{publisher}/reviews, …/reviews/{review}, …/reviews/{review}/findings | PublisherManage | the team; findings redacted |
+| POST /v1/publishers/{publisher}/reviews/{review}/withdraw | PublisherManage | the publisher's admins |
+| GET, POST /v1/publishers/{publisher}/listings; PATCH …/listings/{listing}; POST …/withdraw | PublisherManage | read: the team; change: a certified publisher's admins |
+| POST /v1/publishers/{publisher}/listings/{listing}/publish | NestPublish (HumanStepUp) | a certified publisher's admin with step-up |
+| GET /v1/marketplace/listings | NestDiscover | anyone; published public listings only |
+| GET, POST /v1/nest-installations | NestInstall | a person, for their own account |
+| GET, DELETE /v1/nest-installations/{installation} | NestManage | the installing account, a person; others get 404 |
+| PUT /v1/nest-installations/{installation}/configuration | NestConfigure | same |
+| POST /v1/nest-installations/{installation}/update, …/rollback | NestManage | same |
+| GET /v1/staff/publisher-applications, GET /v1/staff/reviews | NestReview | a reviewer with step-up |
+| POST /v1/staff/publisher-applications/{application}/decisions | NestReview | a reviewer with step-up and no stake |
+| POST /v1/staff/publishers/{publisher}/revocation | NestQuarantine | same |
+| POST /v1/staff/listings/{listing}/moderation | NestQuarantine | same |
+| GET /internal/v1/marketplace/build-requests; POST …/build-requests/{build}/failure | ops service token | the build plane |
+| POST /internal/v1/marketplace/builds with `build_id` (M1 route) | ops service token | the build plane, answering a publisher's build request |
+
+The team of a publisher: a personal publisher's own account; for an org publisher, the org's owner and full admins and active members holding a live `publisher_admin` (acts, publishes with step-up) or `publisher_finance` (reads only) role. `GET /v1/publishers/{publisher}/reviews/{review}` is the contract's `getNestReview`, now implemented.
+
+### How a third-party release gets to a buyer
+
+1. A person applies (M0). A reviewer with step-up and no stake certifies or rejects it; the decision is in `publisher_certifications` and on `/v1/events` as `nest.publisher.decision`.
+2. The publisher creates a template (its package name) and asks for a build of a pinned commit from an https repository. The build plane lists queued requests, builds them as in M1 and posts the build record with `build_id`. The manifest must be the request's name and version, pass the shared package rules and stay off `/pigeonpost/` addresses. The release is authored by the person who asked, so the conflict rule sees them.
+3. The analysis stages are M1's routes, now in order with no skipping (intake, deterministic_scan, ai_analysis, behavioral_test; `409 stage_out_of_order`), once each (`409 stage_already_recorded`), and idempotent: the same record again returns `200` with `replayed: true` and no new event. Each stage bumps the review's `revision` and sends `nest.review.stage_changed`; a failure also sends `nest.review.blocked`. The staff decision sends `nest.review.decision`, and `nest.review.completed` for an approval or rejection.
+4. The publisher reads the contract's `NestReviewStatus` and redacted findings: their own scan findings in full, behaviour-test findings by rule only, the AI review as a count.
+5. An approval publishes nothing for a third party. The publisher creates a listing (draft; the address is the release's `listing_address`) and publishes it with step-up on an attested, live release. Visibility is public (in the catalog), unlisted (by id) or private (the team only).
+6. A person installs the listing for their account. The installation pins the release; its configuration is validated against the release's `config_schema` and its secrets are sealed. Jobs on a third-party listing need an installation (`409 installation_required`) and run the installed release; the worker receives the stored configuration with the schema's defaults, never a secret.
+7. Update moves to a newer attested release (the listing's current one or a named one), rollback goes back once to the release before the last update, uninstall deletes the configuration and secrets, cancels open jobs and asks nestd (`POST /v1/mp/workers/remove`) to delete the buyer's worker and volume.
+8. Staff can suspend or reinstate a listing and revoke a publisher (its listings are suspended, queued builds cancelled, open reviews undecidable). Release quarantine and revocation stay M1's.
+
+### Configuration schema
+
+`config_schema` in `nest-release.toml` is a subset of JSON Schema 2020-12, implemented once in `pigeonpost_core::nest_package` and run by the postbox (build intake, install, configure, update, rollback), the build plane (`pigeonpost_nests::release::Manifest::parse`) and `pigeonpost nest validate`. One flat object with `additionalProperties: false`, at most 32 `string`, `integer`, `number` and `boolean` properties; strings need `maxLength` (at most 4096) or `enum`; `writeOnly: true` marks a secret. Every other keyword is refused by name. `examples/nest-config-fixtures.json` holds the shared fixtures; the core, CLI and postbox tests all assert the same `[path, code]` issues for them.
+
+### Local kit
+
+```text
+pigeonpost nest validate path/to/package [--config example-config.json] [--json]
+```
+
+Offline: no identity, no home directory, no network. It reads `nest-release.toml` and checks for `Containerfile`, reports errors (malformed, refused at intake) and blocked items (capabilities, syscalls, egress beyond the broker, external writes: what the deterministic scan would block), and exits non-zero on any.
+
+### Data model additions
+
+`publisher_roles`, `publisher_certifications` (append-only), `nest_builds`, `nest_installations`, `nest_installation_secrets` (vault-sealed, bound to their row), `nest_installation_events` (append-only, ids and versions only); new columns `publisher_profiles.decision_reason`, `nest_listings.description`, `template_id`, `moderation_reason`, `published_at`, `review_cases.revision`, `build_id`. nestd: `JobIn.config` and `POST /v1/mp/workers/remove`.
+
+### Exit tests
+
+| ID | What it shows | Where |
+| :--- | :--- | :--- |
+| SEC-03 | an unattested release is never published or installed; approval publishes nothing for a third party | marketplace_m2_tests.rs listings_publish_only_attested_releases_and_honour_visibility, third_party_releases_go_through_the_review_stages_in_order |
+| SEC-04 | revocation and moderation stop use; a revoked publisher creates nothing | revocation_suspends_listings_and_stops_new_work, listings_publish_only_attested_releases_and_honour_visibility |
+| SEC-06 | publishers see redacted findings only | third_party_releases_go_through_the_review_stages_in_order |
+| SEC-07 | staff conflict rule for third-party publishers and applications | staff_certify_publishers_and_only_staff_without_a_stake, third_party_releases_go_through_the_review_stages_in_order |
+| CFG-01 | the configuration subset, server and CLI on the same fixtures | the_server_agrees_with_the_shared_configuration_fixtures; core nest_package tests; CLI nest_cmd tests |
+| install lifecycle | pinning, secrets at rest, update, rollback, uninstall, reinstall | installations_pin_configure_update_roll_back_and_uninstall; nests configuration_reaches_the_worker_and_an_uninstall_removes_it |
+| roles | org publisher roles and who may publish | org_publisher_roles_decide_who_may_publish |
+| flag | every M2 route is hidden while the flag is off | every_m2_route_is_hidden_while_the_flag_is_off |
+
+### Deviations from the build plan
+
+1. **Publisher roles** live in `publisher_roles`, not as new `org_roles` values: adding values to the live `org_roles` CHECK would mean rebuilding that table. Same effect: the org's owner and full admins grant them, only to active members, and they count only while the person stays an active member.
+2. **Installations** are `/v1/nest-installations`, not `/v1/nests/{nest}/…`: a marketplace installation is not a Phase B Nest (one agent and its workspace), and those routes already exist. Account installations only; org installations are not built yet.
+3. **Visibility:** public, unlisted and private. Invite-only and organization are refused (`visibility_not_available`) until their grants exist.
+4. **Secrets** are sealed with the postbox vault (XChaCha20-Poly1305 under a purpose subkey, bound to installation and name). They are not delivered to the worker: the plan keeps customer secrets with brokers, and the tool broker that would use them is not built. OpenBao is still skipped.
+5. **Builds:** the build plane polls `GET /internal/v1/marketplace/build-requests`; there is no source-connection (GitHub App/deploy key) record yet, so the repository must be fetchable read-only by the build host.
+6. **Events** go on `/v1/events` for the publisher's team (typed events, ids and states only; clients see them with the `account_events` flag). Org webhooks are not wired.
+7. **Hosted test Nests** (R-70's staging postbox and test pool) are not built; the local kit is.
+8. **Schema:** M0/M1 tables changed in place again, since neither is merged or deployed.
+
+### What a hosted test environment needs
+
+A separate staging postbox (its own domain, Keycloak client or realm, database and vault key; production handles never reused, OD-9) with the `marketplace` flag on; a nestd instance with a marketplace pool for test Nests on a host other than nests-1 production workers (synthetic data only, short-lived, purged on expiry); the build and analysis commands pointed at that postbox with their own ops token; the mswarm self-hosted route for the AI review; a dependency mirror or allowlisting proxy for the fetch step; a `test-nests` route family (`/v1/publishers/{publisher}/test-nests`) with expiry (`nest.test.expiring`) and a reset/delete action on nestd's existing control API.
 
 ## Validation (2026-11-03)
 

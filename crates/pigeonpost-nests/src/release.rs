@@ -18,6 +18,7 @@
 //! them. Staff attest that digest; nothing else identifies a release.
 
 use crate::sandbox::Podman;
+use pigeonpost_core::nest_package;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -69,68 +70,37 @@ pub struct Manifest {
     pub operations: Vec<Operation>,
     /// Package name → the SPDX expression its own manifest declares.
     pub licences: BTreeMap<String, String>,
+    /// The installation configuration schema (marketplace M2), a JSON Schema subset checked by
+    /// `pigeonpost_core::nest_package`. Absent: the release takes no configuration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_schema: Option<Value>,
 }
 
 impl Manifest {
+    /// Parse `nest-release.toml` and hold it to the shared package rules
+    /// (`pigeonpost_core::nest_package::validate_manifest`). Only malformed manifests are refused
+    /// here; what the pool does not offer (capabilities, syscalls, egress, external writes) is the
+    /// deterministic scan's to block, with evidence.
     pub fn parse(text: &str) -> Result<Manifest, String> {
-        let m: Manifest = toml::from_str(text).map_err(|e| format!("{MANIFEST_FILE}: {e}"))?;
-        let slug_ok = |s: &str| {
-            !s.is_empty()
-                && s.len() <= 64
-                && s.bytes()
-                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-        };
-        if !slug_ok(&m.name) {
-            return Err("name: 1-64 of a-z 0-9 -".into());
+        let raw: toml::Value = toml::from_str(text).map_err(|e| format!("{MANIFEST_FILE}: {e}"))?;
+        let json = serde_json::to_value(&raw).map_err(|e| format!("{MANIFEST_FILE}: {e}"))?;
+        let errors = nest_package::errors(&nest_package::validate_manifest(&json));
+        if !errors.is_empty() {
+            let lines: Vec<String> = errors.iter().map(|i| i.to_string()).collect();
+            return Err(format!("{MANIFEST_FILE}: {}", lines.join("; ")));
         }
-        if !semver_ok(&m.version) {
-            return Err("version: major.minor.patch".into());
-        }
-        if m.operations.is_empty() {
-            return Err("a release offers at least one operation".into());
-        }
-        for op in &m.operations {
-            if !operation_name_ok(&op.name) || !operation_version_ok(&op.version) {
-                return Err(format!("operation {:?} is malformed", op.name));
-            }
-            if op.fields.is_empty() || op.fields.iter().any(|f| f.max_chars == 0) {
-                return Err(format!("operation {:?} needs bounded fields", op.name));
-            }
-        }
-        if !m.listing_address.starts_with('/') || m.listing_address.len() > 128 {
-            return Err("listing_address: an absolute address".into());
-        }
-        Ok(m)
+        toml::from_str(text).map_err(|e| format!("{MANIFEST_FILE}: {e}"))
     }
-}
-
-fn semver_ok(v: &str) -> bool {
-    let parts: Vec<&str> = v.split('.').collect();
-    parts.len() == 3
-        && parts
-            .iter()
-            .all(|p| !p.is_empty() && p.len() <= 9 && p.bytes().all(|b| b.is_ascii_digit()))
 }
 
 /// The contract's `operation` pattern: lower-case dotted words.
 pub fn operation_name_ok(name: &str) -> bool {
-    !name.is_empty()
-        && name.len() <= 80
-        && name.split('.').all(|w| {
-            w.bytes().next().is_some_and(|b| b.is_ascii_lowercase())
-                && w.bytes()
-                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
-        })
+    nest_package::operation_name_ok(name)
 }
 
 /// The contract's `operation_version` pattern: `major.minor[.patch]`.
 pub fn operation_version_ok(v: &str) -> bool {
-    let parts: Vec<&str> = v.split('.').collect();
-    (2..=3).contains(&parts.len())
-        && v.len() <= 32
-        && parts
-            .iter()
-            .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+    nest_package::operation_version_ok(v)
 }
 
 /// One regular file of a tree, by its path relative to the root (with `/` separators).

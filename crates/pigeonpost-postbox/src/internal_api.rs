@@ -262,6 +262,7 @@ pub(crate) fn router(state: AppState) -> Router {
         // Nests Phase A: hosted agents on the worker host (docs/nests/phase-a-plan.md).
         .merge(crate::nests::internal_router())
         .merge(crate::marketplace_m1::internal_router())
+        .merge(crate::marketplace_m2::internal_router())
         .route(
             "/internal/v1/entitlements/{provider}/{environment}/{reference}",
             put(billing_internal::put_entitlement),

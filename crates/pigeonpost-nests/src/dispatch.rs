@@ -56,6 +56,10 @@ pub struct JobIn {
     pub operation_version: String,
     pub payload: Value,
     pub release: Admission,
+    /// The installation's stored configuration (marketplace M2), secrets never included: an
+    /// object, or absent for a listing used without an installation.
+    #[serde(default)]
+    pub config: Value,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -239,6 +243,7 @@ impl Dispatcher {
             || !crate::release::operation_name_ok(&job.operation)
             || !crate::release::operation_version_ok(&job.operation_version)
             || !job.payload.is_object()
+            || !(job.config.is_null() || job.config.is_object())
         {
             return Err(DispatchError::new("invalid", "malformed job"));
         }
@@ -314,6 +319,7 @@ impl Dispatcher {
             "operation": job.operation,
             "operation_version": job.operation_version,
             "payload": job.payload,
+            "config": if job.config.is_null() { json!({}) } else { job.config.clone() },
         });
         let inbox = self
             .volume(&worker)
@@ -377,6 +383,40 @@ impl Dispatcher {
             .mp_finish_job(job_id, state, Some(&kept.to_string()))
             .map_err(internal)?;
         Ok(json!({ "job_id": job_id, "state": state, "result": kept }))
+    }
+
+    /// An uninstall (marketplace M2): the buyer context's worker stops, its broker token is
+    /// fenced, its running jobs stop, and its volume, with everything the release wrote for this
+    /// buyer, is deleted. Idempotent; a later install starts a fresh worker on an empty volume.
+    pub fn remove(&self, listing_id: &str, context: &str) -> Result<Value, DispatchError> {
+        if !valid_ref(listing_id) || !valid_buyer_context(context) {
+            return Err(DispatchError::new("invalid", "malformed worker reference"));
+        }
+        let _one = self.lock.lock().map_err(|_| internal("dispatch lock"))?;
+        let Some(w) = self
+            .db
+            .mp_worker_for(listing_id, context)
+            .map_err(internal)?
+        else {
+            return Ok(json!({ "removed": false }));
+        };
+        self.db.revoke_broker_token(&w.nest_id).map_err(internal)?;
+        self.pool.stop(&w.nest_id).map_err(internal)?;
+        self.db.mp_stop_jobs_of(&w.nest_id).map_err(internal)?;
+        let volume = self.volume(&w);
+        if volume.starts_with(&self.volume_root) {
+            match std::fs::remove_dir_all(&volume) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(internal(format!("volume: {e}"))),
+            }
+        }
+        self.db
+            .set_state(&w.nest_id, "deleted", "deleted", Some("uninstalled"), None)
+            .map_err(internal)?;
+        self.db
+            .event(Some(&w.nest_id), "mp_worker_removed", "uninstalled");
+        Ok(json!({ "removed": true, "worker": w.nest_id }))
     }
 
     /// Lift a quarantine: the release takes jobs again, on fresh workers. A revoked release stays
@@ -534,7 +574,26 @@ async fn http_quarantine(
     .await
 }
 
-/// `POST /v1/mp/jobs`, `GET /v1/mp/jobs/{job}`, `POST /v1/mp/releases/{release}/quarantine`.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RemoveReq {
+    listing_id: String,
+    buyer_context: String,
+}
+
+async fn http_remove(
+    State(h): State<Http>,
+    headers: HeaderMap,
+    Json(req): Json<RemoveReq>,
+) -> Reply {
+    on_blocking(&h, &headers, move |d| {
+        d.remove(&req.listing_id, &req.buyer_context)
+    })
+    .await
+}
+
+/// `POST /v1/mp/jobs`, `GET /v1/mp/jobs/{job}`, `POST /v1/mp/releases/{release}/quarantine`,
+/// `POST /v1/mp/workers/remove` (an uninstall).
 pub fn router(h: Http) -> Router {
     Router::new()
         .route("/v1/mp/jobs", post(http_submit))
@@ -543,6 +602,7 @@ pub fn router(h: Http) -> Router {
             "/v1/mp/releases/{release}/quarantine",
             post(http_quarantine),
         )
+        .route("/v1/mp/workers/remove", post(http_remove))
         .layer(axum::extract::DefaultBodyLimit::max(300 * 1024))
         .with_state(h)
 }
