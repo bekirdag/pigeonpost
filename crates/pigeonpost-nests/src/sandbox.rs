@@ -1089,6 +1089,8 @@ mod tests {
         assert_eq!(rig.runs().len(), 1);
     }
 
+    // Uses a symlink, which needs `std::os::unix`.
+    #[cfg(unix)]
     #[test]
     fn one_buyer_context_cannot_mount_another_contexts_volume() {
         let rig = rig();
