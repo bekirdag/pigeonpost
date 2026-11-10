@@ -8,9 +8,12 @@ Turkish note in §6). This file holds no secrets.
 - **Seller of record:** Piyote Bilişim ve Danışmanlık Hizmetleri Ticaret Ltd. Şti. It is a Turkish
   company with no establishment in the EU or the UK.
 - **What this covers:** web checkout on `pigeonpost.dev` and `enterprise.pigeonpost.dev`: iyzico
-  subscriptions through saas_be, in USD, EUR and TRY.
+  subscriptions through saas_be, in USD, EUR and TRY. Nest packages (hosted AI agents, monthly)
+  are sold here too, through the same bridge path.
+- **Company buyers of Nest packages** are business buyers, like an enterprise organization: rule
+  (b) in §3 applies when they give a verified VAT number.
 - **Out of scope: App Store and Google Play purchases.** Apple and Google are the sellers there and
-  account for VAT themselves.
+  account for VAT themselves. This includes Nest packages bought in the iOS or Android app.
 
 ## 2. The rules, with sources
 
@@ -47,7 +50,9 @@ revenue by the VAT included at that country's rate. Prices are not raised.
 All of it is in the Pigeonpost billing bridge (`store-adapter/`), so it applies only to the
 pigeonpost tenant. TNL shares saas_be and the iyzico merchant, and nothing in saas_be changed.
 
-**Where:** `src/tax.js`, called by `cloudCheckout` and `enterpriseCheckout` in `src/billing.js`.
+**Where:** `src/tax.js`, called by `individualCheckout` (which serves `cloudCheckout` and
+`nestCheckout`) and by `enterpriseCheckout` in `src/billing.js`. The test "Nest checkouts follow the
+EU/UK VAT rule and take no store-plan confirmation" in `test/billing.test.mjs` covers Nests.
 It runs before any intent is reserved, any org is drafted, or any provider is called.
 
 **Evidence:**
