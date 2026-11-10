@@ -888,6 +888,9 @@ async fn test_nests_run_intake_passed_releases_in_the_test_pool_until_they_expir
         serde_json::from_str(sent["release"]["statement"].as_str().unwrap()).unwrap();
     assert_eq!(statement["type"], "pigeonpost.nest.release.test.v1");
     assert_eq!(statement["decision"], "test_only");
+    // Signed like an attestation: the test pool verifies it against the staging key.
+    assert_eq!(statement["key_id"], sent["release"]["key_id"]);
+    assert_eq!(sent["release"]["signature"].as_str().unwrap().len(), 128);
     assert_eq!(sent["listing_id"], tn.as_str());
     let first_context = sent["buyer_context"].as_str().unwrap().to_string();
     let (s, v) = srv.get(&format!("{one}/jobs/{job}"), &ann.token).await;
@@ -1323,4 +1326,75 @@ async fn install_counts_reports_staff_listings_price_terms_and_roles_by_member()
         .post(&format!("/v1/publishers/{op}/roles"), &boss.token, json!({ "member_id": dev_member, "account_id": dev.account, "role": "publisher_finance" }))
         .await;
     assert_eq!((s, code(&v)), (400, "invalid_request"), "{v}");
+}
+
+/// A Node release built by the remote build plane on a staging postbox becomes a test Nest, and
+/// its synthetic jobs go to the test pool with a signed test statement (hardening + M2b).
+#[tokio::test]
+async fn a_build_plane_release_runs_as_a_test_nest_in_the_test_pool() {
+    let (srv, owner) = staging().await;
+    srv.global_flag("marketplace").await;
+    let rev = reviewer(&srv, &owner, "mbrev12").await;
+    let ann = srv.person("mbann12").await;
+    let p = certified(&srv, &rev, &ann).await;
+    let t = template(&srv, &ann, &p, "team-digest").await;
+    let h = &srv.state.nests.marketplace;
+    h.publisher_builds
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let (s, v) = srv
+        .post(
+            &format!("/v1/publishers/{p}/builds"),
+            &ann.token,
+            json!({ "template_id": t, "version": "1.0.0",
+                    "source": { "repository": "https://git.example.org/acme/team-digest.git",
+                                "commit": "a".repeat(40) } }),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let bid = v["data"]["id"].as_str().unwrap().to_string();
+    let mut record = crate::marketplace_m2_tests::build_record(
+        &bid,
+        crate::marketplace_m2_tests::manifest("team-digest", "1.0.0", None),
+        'c',
+    );
+    record["isolation"]["ecosystem"] = json!("node");
+    h.buildd_answer(
+        200,
+        json!({ "state": "succeeded", "record": record, "stages": [],
+                "reproducibility": { "builds": 2, "equal": true } }),
+    );
+    assert_eq!(
+        crate::marketplace_hardening::source_builds_once(&srv.state).await,
+        1
+    );
+    let (_, b) = srv
+        .get(&format!("/v1/publishers/{p}/builds/{bid}"), &ann.token)
+        .await;
+    assert_eq!(b["data"]["status"], "built", "{b}");
+    let tpath = format!("/v1/publishers/{p}/test-nests");
+    let (s, v) = srv
+        .post(&tpath, &ann.token, json!({ "build_id": bid }))
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let tn = v["data"]["id"].as_str().unwrap().to_string();
+    let (s, v) = srv
+        .post(&format!("{tpath}/{tn}/jobs"), &ann.token, json!({ "operation": "team.digest.ask", "operation_version": "1.0", "payload": { "question": "synthetic?" } }))
+        .await;
+    assert_eq!(s, 202, "{v}");
+    assert!(srv
+        .state
+        .nests
+        .calls()
+        .iter()
+        .all(|c| c.path != "/v1/mp/jobs"));
+    let pool = srv.state.nests.mp.test_pool.clone().unwrap();
+    let sent = pool
+        .calls()
+        .into_iter()
+        .find(|c| c.path == "/v1/mp/jobs")
+        .unwrap()
+        .body
+        .unwrap();
+    assert_eq!(sent["release"]["image"], record["image"]);
+    assert_eq!(sent["release"]["signature"].as_str().unwrap().len(), 128);
 }
