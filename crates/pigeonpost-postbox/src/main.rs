@@ -100,6 +100,9 @@ mod marketplace_m1_tests;
 mod marketplace_m2;
 #[cfg(test)]
 mod marketplace_m2_tests;
+mod marketplace_pay;
+#[cfg(test)]
+mod marketplace_pay_tests;
 #[cfg(test)]
 mod marketplace_tests;
 mod mcp;
@@ -253,6 +256,8 @@ struct AppState {
     summaries_policy: meetings::SummariesPolicy,
     /// Nests Phase A: the client for nestd on the worker host, and the per-account limits.
     nests: Arc<nests::Runtime>,
+    /// Marketplace payments: the billing bridge's internal routes (`POSTBOX_BRIDGE_URL`).
+    mp_bridge: Arc<marketplace_pay::Bridge>,
 }
 
 /// Namespaces where a name is authorised by proving control of it at an identity provider, rather
@@ -542,6 +547,8 @@ async fn serve(cfg: Config) {
     nests::start_unlocker(state.clone());
     // Marketplace M1: hand admitted jobs to nestd and collect their results.
     marketplace_m1::start_dispatcher(state.clone());
+    // Marketplace payments: retry offer mirrors, enforce licence deletion boundaries.
+    marketplace_pay::start_sweeper(state.clone());
     start_internal_listener(&state).await;
     // Disappearing-message expiry and group maintenance (SDS §17.2, §4.3), every 30 s.
     ephemeral::start_worker(state.clone());
@@ -691,6 +698,7 @@ fn build_state(cfg: &Config, master_key: [u8; 32]) -> Result<AppState, store::St
         contacts: Arc::new(contacts::Runtime::from_env()),
         summaries_policy: meetings::SummariesPolicy::from_env(),
         nests: Arc::new(nests::Runtime::from_env()),
+        mp_bridge: Arc::new(marketplace_pay::Bridge::from_env()),
     })
 }
 
@@ -1063,6 +1071,8 @@ fn build_router(state: AppState) -> Router {
         .merge(marketplace_m1::router())
         // Marketplace M2: publishers, listings and installations, behind the same flag.
         .merge(marketplace_m2::router())
+        // Marketplace payments (M3): prices, purchases and licences, behind the same flag.
+        .merge(marketplace_pay::router())
         // Phase 3B: calendar and scheduled meetings (SDS §14B.5, docs/calendar.md).
         .route(
             "/v1/calendars",
@@ -7381,6 +7391,7 @@ mod tests {
             contacts: Arc::new(contacts::Runtime::for_test()),
             summaries_policy: meetings::SummariesPolicy::All,
             nests: Arc::new(nests::Runtime::default()),
+            mp_bridge: Arc::new(marketplace_pay::Bridge::default()),
         }
     }
 
@@ -10214,6 +10225,7 @@ mod tests {
             contacts: Arc::new(contacts::Runtime::for_test()),
             summaries_policy: meetings::SummariesPolicy::All,
             nests: Arc::new(nests::Runtime::default()),
+            mp_bridge: Arc::new(marketplace_pay::Bridge::default()),
         };
         let _ = build_router(state);
     }

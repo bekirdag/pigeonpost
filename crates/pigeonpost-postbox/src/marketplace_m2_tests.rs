@@ -18,11 +18,11 @@ const OWNER_ACCOUNT: &str = "acct_mpowner";
 const FIXTURES: &str =
     include_str!("../../../docs/nests/contracts/examples/nest-config-fixtures.json");
 
-fn code(v: &Value) -> &str {
+pub(crate) fn code(v: &Value) -> &str {
     v["error"]["code"].as_str().unwrap_or_default()
 }
 
-async fn setup() -> (Srv, Person) {
+pub(crate) async fn setup() -> (Srv, Person) {
     let srv = serve_with(|s| {
         s.platform_owner = Some(Arc::from(OWNER_ACCOUNT));
         s.nests = Arc::new(nests::Runtime::capture());
@@ -155,10 +155,10 @@ async fn request_build(
     .await
 }
 
-struct Built {
-    release: String,
-    review: String,
-    digest: String,
+pub(crate) struct Built {
+    pub(crate) release: String,
+    pub(crate) review: String,
+    pub(crate) digest: String,
 }
 
 /// Request a build and answer it as the build plane would.
@@ -248,7 +248,7 @@ async fn approve(srv: &Srv, rev: &Person, b: &Built) -> (u16, Value) {
 
 /// A built, analysed and attested release.
 #[allow(clippy::too_many_arguments)]
-async fn attested(
+pub(crate) async fn attested(
     srv: &Srv,
     rev: &Person,
     who: &Person,
@@ -279,7 +279,7 @@ async fn listing(srv: &Srv, who: &Person, publisher: &str, release: &str, vis: &
     v["data"]["id"].as_str().unwrap().to_string()
 }
 
-async fn publish(
+pub(crate) async fn publish(
     srv: &Srv,
     token: &str,
     publisher: &str,
@@ -1341,7 +1341,7 @@ async fn listings_publish_only_attested_releases_and_honour_visibility() {
 // ---- installations -----------------------------------------------------------------------------------
 
 /// A published listing with the shared fixture's configuration schema.
-async fn published_with_schema(
+pub(crate) async fn published_with_schema(
     srv: &Srv,
     owner: &Person,
     tag: &str,

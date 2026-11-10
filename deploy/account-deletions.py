@@ -273,6 +273,12 @@ def erase(conn, request_id, blob_root, evidence):
             conn.execute("DELETE FROM nest_installation_secrets WHERE installation_id IN (SELECT id FROM nest_installations WHERE owner_kind='account' AND owner_id=?)", (account,))
             conn.execute("UPDATE nest_installations SET status='uninstalled', uninstalled_at=COALESCE(uninstalled_at, ?), config='{}', owner_id=?, installed_by=? WHERE owner_kind='account' AND owner_id=?", (now, "erased_" + request_id, "erased_" + request_id, account))
             conn.execute("UPDATE nest_installation_events SET actor=? WHERE actor=?", ("erased_" + request_id, account))
+        # Marketplace payments: purchases no longer name the person (invoices and the money side
+        # stay with the financial authority under its own retention); listing prices name who set them.
+        if has(conn, "nest_mp_purchases"):
+            conn.execute("UPDATE nest_mp_purchases SET account_id=?, owner_id=? WHERE account_id=?", ("erased_" + request_id, "erased_" + request_id, account))
+        if has(conn, "nest_listing_prices"):
+            conn.execute("UPDATE nest_listing_prices SET updated_by=? WHERE updated_by=?", ("erased_" + request_id, account))
         if has(conn, "operation_idempotency"):
             conn.execute("DELETE FROM operation_idempotency WHERE substr(scope, 1, length(?) + 1) = ? || '|'", (account, account))
         for table in ("apple_handle_plans", "apple_plan_names", "nest_store_purchases", "nest_setups"):

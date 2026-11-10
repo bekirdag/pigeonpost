@@ -624,6 +624,38 @@ mod dispatcher {
         assert_eq!(inbox, 1);
     }
 
+    /// Marketplace payments: a paused licence stops the buyer's worker and fences its token but
+    /// keeps its volume; the next admitted job (the licence is paid again) restarts it.
+    #[test]
+    fn a_paused_licence_stops_the_worker_and_keeps_its_data() {
+        let rig = rig();
+        let rel = admission("rel_reference1", &image('a'));
+        let j = job(1, "ctx-buyer-a", &rel);
+        rig.d.submit(&j).unwrap();
+        rig.d.submit(&job(2, "ctx-buyer-b", &rel)).unwrap();
+        std::fs::write(rig.volume("ctx-buyer-a").join("kept.txt"), b"buyer data").unwrap();
+        let out = rig.d.stop(LISTING, "ctx-buyer-a").unwrap();
+        assert_eq!(out["stopped"], true);
+        assert!(
+            rig.volume("ctx-buyer-a").join("kept.txt").exists(),
+            "data kept"
+        );
+        assert!(!rig.volume("ctx-buyer-a").join("run/broker-token").exists());
+        assert!(rig.volume("ctx-buyer-b").join("run/broker-token").exists());
+        let w = worker_id(LISTING, "ctx-buyer-a");
+        assert_eq!(rig.d.db.nest(&w).unwrap().unwrap().state, "stopped");
+        assert_eq!(rig.d.poll(&j.job_id).unwrap()["state"], "stopped_security");
+        // Idempotent; nothing to stop for an unknown buyer; path-like contexts are refused.
+        assert_eq!(rig.d.stop(LISTING, "ctx-buyer-a").unwrap()["stopped"], true);
+        assert_eq!(rig.d.stop(LISTING, "ctx-none").unwrap()["stopped"], false);
+        assert_eq!(rig.d.stop(LISTING, "../x").unwrap_err().code, "invalid");
+        // Resumed: the next job restarts the same worker on its kept volume.
+        rig.d.submit(&job(3, "ctx-buyer-a", &rel)).unwrap();
+        assert_eq!(rig.d.db.nest(&w).unwrap().unwrap().state, "running");
+        assert!(rig.volume("ctx-buyer-a").join("kept.txt").exists());
+        assert!(rig.volume("ctx-buyer-a").join("run/broker-token").exists());
+    }
+
     #[test]
     fn malformed_jobs_are_refused_before_anything_runs() {
         let rig = rig();

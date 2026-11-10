@@ -187,6 +187,22 @@ pub(crate) const TABLES: &[(&str, Rule)] = &[
         "release_security_events",
         Keep("Append-only security record of a release; the actor is staff"),
     ),
+    // Marketplace payments. A price and its offers are a publisher's catalog; a purchase is the
+    // account's own commercial record (the financial authority keeps the money side); a licence
+    // belongs to an installation, whose row blocks.
+    (
+        "nest_listing_prices",
+        Keep("Catalog record of a publisher's listing; the publisher profile blocks the purge"),
+    ),
+    (
+        "nest_listing_offers",
+        Keep("Catalog record of a publisher's listing; the publisher profile blocks the purge"),
+    ),
+    ("nest_mp_purchases", Block(A, "account_id = ?1")),
+    (
+        "nest_installation_licences",
+        Keep("Licence state of an installation; the installation row blocks the purge"),
+    ),
     ("plan_names", Block(A, "account_id = ?1")),
     ("test_handle_claims", Block(A, "account_id = ?1")),
     (

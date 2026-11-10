@@ -74,6 +74,9 @@ pub(crate) enum Endpoint {
     Nests,
     /// `/internal/v1/marketplace/*` (marketplace M1): build and analysis records (ops only).
     Marketplace,
+    /// `PUT /internal/v1/marketplace/licences/{id}` (marketplace payments): the billing bridge
+    /// projects a licence onto its installation.
+    MarketplaceLicences,
 }
 
 /// The services this postbox knows, the variable each one's token lives in, and what each may
@@ -104,7 +107,12 @@ const SERVICES: &[(&str, &str, &[Endpoint])] = &[
     (
         "billing",
         "POSTBOX_SVC_TOKEN_BILLING",
-        &[Endpoint::Health, Endpoint::Entitlements, Endpoint::Orgs],
+        &[
+            Endpoint::Health,
+            Endpoint::Entitlements,
+            Endpoint::Orgs,
+            Endpoint::MarketplaceLicences,
+        ],
     ),
     (
         "meeting_intel",
@@ -263,6 +271,7 @@ pub(crate) fn router(state: AppState) -> Router {
         .merge(crate::nests::internal_router())
         .merge(crate::marketplace_m1::internal_router())
         .merge(crate::marketplace_m2::internal_router())
+        .merge(crate::marketplace_pay::internal_router())
         .route(
             "/internal/v1/entitlements/{provider}/{environment}/{reference}",
             put(billing_internal::put_entitlement),

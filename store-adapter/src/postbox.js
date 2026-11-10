@@ -73,6 +73,24 @@ export async function memberPost(token, path, body) {
   return r.body;
 }
 
+/// A member call to a marketplace route, whose errors use the `{"error": {"code", "message"}}`
+/// envelope; a refusal keeps its status and code. Returns the `data` member.
+export async function marketplaceCall(token, method, path, body) {
+  const r = await call(`${config.postboxUrl}${path}`, {
+    method,
+    headers: { authorization: `Bearer ${token}`, accept: "application/json", ...(body ? { "content-type": "application/json" } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  }, "The marketplace");
+  if (r.status === 401) fail(401, "session expired", "unauthorized");
+  if (!r.ok) {
+    const e = r.body?.error;
+    const status = [400, 402, 403, 404, 409, 429].includes(r.status) ? r.status : 502;
+    fail(status, String(e?.message || "The marketplace refused this").slice(0, 300), typeof e?.code === "string" ? e.code : "postbox_rejected");
+  }
+  if (!r.body || typeof r.body.data !== "object" || r.body.data === null) fail(502, "The marketplace answered unexpectedly.", "postbox_invalid");
+  return r.body.data;
+}
+
 export async function claimName(token, namespace) {
   const r = await call(`${config.postboxUrl}/v1/claims/plan`, {
     method: "POST",
@@ -120,6 +138,14 @@ export async function activateOrg(id, body) {
 }
 export async function putOrgEntitlement(id, body) {
   return expect(await internal("PUT", `/internal/v1/orgs/${seg(id)}/entitlement`, body), "Organization entitlement");
+}
+/// Project one marketplace licence onto its installation (`PUT /internal/v1/marketplace/licences/{id}`).
+/// The postbox applies it idempotently and acts on it (pause, resume, removal at the deletion boundary).
+export async function putLicence(id, body) {
+  const r = await internal("PUT", `/internal/v1/marketplace/licences/${seg(id)}`, body);
+  if (!r.ok) fail(r.status === 404 ? 404 : r.status === 409 ? 409 : 502,
+    `Licence projection failed: ${String(r.body?.error?.code || r.body?.error || r.status)}`, r.body?.error?.code || "postbox_rejected");
+  return r.body?.data ?? r.body;
 }
 export async function getOrg(id) {
   return expect(await internal("GET", `/internal/v1/orgs/${seg(id)}`), "Organization read");

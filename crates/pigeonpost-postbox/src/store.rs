@@ -31,6 +31,7 @@ mod lifecycle;
 mod limits;
 mod listing;
 pub(crate) mod marketplace;
+pub(crate) mod marketplace_pay;
 pub(crate) mod meetings;
 mod msgactions;
 pub(crate) mod nest_funding;
@@ -1013,6 +1014,7 @@ impl Store {
         conn.execute_batch(crate::nest_approvals::SCHEMA)?;
         // Marketplace foundations (M0): staff roles, publishers and the catalog.
         conn.execute_batch(marketplace::SCHEMA)?;
+        conn.execute_batch(marketplace_pay::SCHEMA)?;
         for stmt in MIGRATIONS
             .iter()
             .chain(filtering::MIGRATIONS)

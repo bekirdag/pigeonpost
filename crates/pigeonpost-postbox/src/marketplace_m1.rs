@@ -465,6 +465,8 @@ struct Offer {
     attestation: Option<(String, String)>,
     /// A third-party listing and no active installation for this account (M2).
     install_required: bool,
+    /// A paid installation whose licence gives no access now (marketplace payments).
+    licence_inactive: bool,
 }
 
 /// The offer behind `address` for `account`. An account's active installation (M2) pins the
@@ -498,6 +500,7 @@ fn load_offer_in(
                     input_schema: r.get(7)?,
                     attestation: None,
                     install_required: false,
+                    licence_inactive: false,
                 })
             },
         )
@@ -518,18 +521,29 @@ fn load_offer_in(
         Option<String>,
         String,
         Option<String>,
+        String,
     )> = c
         .query_row(
-            "SELECT r.id, r.release_digest, r.image, r.security_state, r.manifest
+            "SELECT r.id, r.release_digest, r.image, r.security_state, r.manifest, i.id
                FROM nest_installations i JOIN nest_releases r ON r.id = i.release_id
               WHERE i.listing_id = ?1 AND i.owner_kind = 'account' AND i.owner_id = ?2
                 AND i.status = 'active'",
             params![offer.listing_id, account],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                ))
+            },
         )
         .optional()?;
     match pinned {
-        Some((release, digest, image, security, manifest)) => {
+        Some((release, digest, image, security, manifest, installation)) => {
+            offer.licence_inactive = crate::marketplace_pay::licence_inactive_in(c, &installation)?;
             offer.input_schema = manifest
                 .as_deref()
                 .and_then(|m| serde_json::from_str::<Value>(m).ok())
@@ -574,6 +588,13 @@ fn admit(offer: &Option<Offer>) -> GResult<&Offer> {
         return Err(conflict_code(
             "installation_required",
             "install this listing before invoking it",
+        ));
+    }
+    if o.licence_inactive {
+        return Err(GErr::new(
+            StatusCode::PAYMENT_REQUIRED,
+            "licence_inactive",
+            "this installation's licence is paused or has ended",
         ));
     }
     match o.security_state.as_str() {

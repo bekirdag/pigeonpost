@@ -525,7 +525,9 @@ fn the_routes_and_the_contract_match() {
     let m1 = include_str!("marketplace_m1.rs");
     // M2's member routes (`marketplace_m2.rs`) too.
     let m2 = include_str!("marketplace_m2.rs");
-    let source = format!("{m0}\n{m1}\n{m2}");
+    // Marketplace payments' member routes (`marketplace_pay.rs`) too.
+    let pay = include_str!("marketplace_pay.rs");
+    let source = format!("{m0}\n{m1}\n{m2}\n{pay}");
     let served: BTreeSet<(String, String)> =
         crate::foundations_tests::routes_in(m0, "pub(crate) fn router(")
             .into_iter()
@@ -535,6 +537,10 @@ fn the_routes_and_the_contract_match() {
             ))
             .chain(crate::foundations_tests::routes_in(
                 m2,
+                "pub(crate) fn router(",
+            ))
+            .chain(crate::foundations_tests::routes_in(
+                pay,
                 "pub(crate) fn router(",
             ))
             .collect();

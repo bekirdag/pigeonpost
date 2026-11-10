@@ -419,6 +419,39 @@ impl Dispatcher {
         Ok(json!({ "removed": true, "worker": w.nest_id }))
     }
 
+    /// A paused licence (marketplace payments): the buyer context's worker stops, its broker token
+    /// is fenced and its running jobs stop, but its volume is kept. The next admitted job (after the
+    /// licence is paid again) starts it on a new generation. Idempotent.
+    pub fn stop(&self, listing_id: &str, context: &str) -> Result<Value, DispatchError> {
+        if !valid_ref(listing_id) || !valid_buyer_context(context) {
+            return Err(DispatchError::new("invalid", "malformed worker reference"));
+        }
+        let _one = self.lock.lock().map_err(|_| internal("dispatch lock"))?;
+        let Some(w) = self
+            .db
+            .mp_worker_for(listing_id, context)
+            .map_err(internal)?
+        else {
+            return Ok(json!({ "stopped": false }));
+        };
+        self.db.revoke_broker_token(&w.nest_id).map_err(internal)?;
+        self.pool.stop(&w.nest_id).map_err(internal)?;
+        let _ = std::fs::remove_file(self.volume(&w).join("run/broker-token"));
+        self.db.mp_stop_jobs_of(&w.nest_id).map_err(internal)?;
+        self.db
+            .set_state(
+                &w.nest_id,
+                "stopped",
+                "stopped",
+                Some("licence_paused"),
+                None,
+            )
+            .map_err(internal)?;
+        self.db
+            .event(Some(&w.nest_id), "mp_worker_stopped", "licence_paused");
+        Ok(json!({ "stopped": true, "worker": w.nest_id }))
+    }
+
     /// Lift a quarantine: the release takes jobs again, on fresh workers. A revoked release stays
     /// revoked; one this host never saw has nothing to lift.
     pub fn lift(&self, release_id: &str) -> Result<Value, DispatchError> {
@@ -592,8 +625,15 @@ async fn http_remove(
     .await
 }
 
+async fn http_stop(State(h): State<Http>, headers: HeaderMap, Json(req): Json<RemoveReq>) -> Reply {
+    on_blocking(&h, &headers, move |d| {
+        d.stop(&req.listing_id, &req.buyer_context)
+    })
+    .await
+}
+
 /// `POST /v1/mp/jobs`, `GET /v1/mp/jobs/{job}`, `POST /v1/mp/releases/{release}/quarantine`,
-/// `POST /v1/mp/workers/remove` (an uninstall).
+/// `POST /v1/mp/workers/remove` (an uninstall), `POST /v1/mp/workers/stop` (a paused licence).
 pub fn router(h: Http) -> Router {
     Router::new()
         .route("/v1/mp/jobs", post(http_submit))
@@ -603,6 +643,7 @@ pub fn router(h: Http) -> Router {
             post(http_quarantine),
         )
         .route("/v1/mp/workers/remove", post(http_remove))
+        .route("/v1/mp/workers/stop", post(http_stop))
         .layer(axum::extract::DefaultBodyLimit::max(300 * 1024))
         .with_state(h)
 }

@@ -459,19 +459,19 @@ fn audit_row(
 
 /// A release, as the M2 routes decide on it.
 #[derive(Debug, Clone)]
-struct Rel {
-    id: String,
-    template_id: String,
-    publisher_id: String,
-    version: String,
-    status: String,
-    security_state: String,
-    release_digest: Option<String>,
-    image: Option<String>,
-    manifest: Value,
+pub(crate) struct Rel {
+    pub(crate) id: String,
+    pub(crate) template_id: String,
+    pub(crate) publisher_id: String,
+    pub(crate) version: String,
+    pub(crate) status: String,
+    pub(crate) security_state: String,
+    pub(crate) release_digest: Option<String>,
+    pub(crate) image: Option<String>,
+    pub(crate) manifest: Value,
 }
 
-fn release_in(c: &Connection, id: &str) -> rusqlite::Result<Option<Rel>> {
+pub(crate) fn release_in(c: &Connection, id: &str) -> rusqlite::Result<Option<Rel>> {
     c.query_row(
         "SELECT id, template_id, publisher_id, version, status, security_state, release_digest,
                 image, manifest FROM nest_releases WHERE id = ?1",
@@ -498,7 +498,7 @@ fn release_in(c: &Connection, id: &str) -> rusqlite::Result<Option<Rel>> {
 
 /// Approved, live, and carrying a staff attestation that still matches its digest: the only kind
 /// of release a listing may offer or an installation may run.
-fn live_attested_in(c: &Connection, r: &Rel) -> rusqlite::Result<bool> {
+pub(crate) fn live_attested_in(c: &Connection, r: &Rel) -> rusqlite::Result<bool> {
     if r.status != "approved" || r.security_state != "normal" {
         return Ok(false);
     }
@@ -519,7 +519,7 @@ fn live_attested_in(c: &Connection, r: &Rel) -> rusqlite::Result<bool> {
 }
 
 /// Why a release cannot be run, as an error.
-fn not_runnable(r: &Rel) -> GErr {
+pub(crate) fn not_runnable(r: &Rel) -> GErr {
     match r.security_state.as_str() {
         "revoked" => conflict_code("release_revoked", "this release is revoked"),
         "quarantined" => conflict_code("security_quarantined", "this release is quarantined"),
@@ -749,6 +749,20 @@ fn certified(p: &Pub) -> GResult<()> {
             "this publisher is not certified yet",
         )),
     }
+}
+
+/// For marketplace payments (`marketplace_pay`): the caller acting as an admin of a certified
+/// `publisher`, authorized for `action`. Returns the principal, the caller's account and the
+/// publisher id.
+pub(crate) async fn publisher_admin(
+    state: &AppState,
+    headers: &HeaderMap,
+    publisher: &str,
+    action: Action,
+) -> GResult<(Principal, String, String)> {
+    let ctx = gate(state, headers, publisher, action, Need::Admin).await?;
+    certified(&ctx.p)?;
+    Ok((ctx.principal, ctx.account, ctx.p.id))
 }
 
 /// `GET /v1/publishers` — the publishers the caller acts for: their own, and those of the orgs
@@ -2082,6 +2096,7 @@ async fn publish_listing(
             &headers,
         );
         let pid = ctx.p.id.clone();
+        let published = listing.clone();
         let (v, wake_list) = state
             .store
             .group_tx(move |tx| -> GResult<(Value, Vec<String>)> {
@@ -2136,6 +2151,8 @@ async fn publish_listing(
             })
             .await?;
         wake(&state, wake_list);
+        // Marketplace payments: a priced listing goes on sale on the release line it now serves.
+        crate::marketplace_pay::after_publish(&state, &published).await;
         Ok(Json(json!({ "data": v })))
     }
     .await;
@@ -2404,6 +2421,8 @@ fn inst_json_in(c: &Connection, id: &str) -> rusqlite::Result<Value> {
             }
         }
     }
+    // Marketplace payments: a paid installation is funded by its licence, shown with it.
+    let (funding, licence) = crate::marketplace_pay::funding_in(c, &row.0, &row.7)?;
     Ok(json!({
         "id": row.0,
         "listing_id": row.1,
@@ -2418,7 +2437,8 @@ fn inst_json_in(c: &Connection, id: &str) -> rusqlite::Result<Value> {
         "secrets": secrets,
         "config_revision": row.5,
         "status": row.6,
-        "funding": row.7,
+        "funding": funding,
+        "licence": licence,
         "update_available": update,
         "created_at": iso(row.8),
         "updated_at": iso(row.9),
@@ -2597,6 +2617,9 @@ struct InstallReq {
     listing_id: String,
     #[serde(default)]
     configuration: Option<Value>,
+    /// A priced listing: the paid purchase this install consumes (`marketplace_pay`).
+    #[serde(default)]
+    purchase_id: Option<String>,
 }
 
 /// `POST /v1/nest-installations` — install a listing for the caller's account, on the listing's
@@ -2648,7 +2671,29 @@ async fn install(
             return Err(not_found());
         }
         let rel = rel.ok_or_else(not_found)?;
-        let installation = new_id("ins");
+        // Marketplace payments: a priced listing installs only under a paid purchase's id.
+        let pending = match crate::marketplace_pay::admit_install(
+            &state,
+            &req.listing_id,
+            &account,
+            req.purchase_id.as_deref(),
+        )
+        .await?
+        {
+            crate::marketplace_pay::Admission::Free => None,
+            crate::marketplace_pay::Admission::Pending(p) => Some(p),
+            crate::marketplace_pay::Admission::Replay(id) => {
+                let v = state
+                    .store
+                    .group_read(move |c| -> GResult<Value> { Ok(inst_json_in(c, &id)?) })
+                    .await?;
+                return Ok((StatusCode::OK, Json(json!({ "data": v }))));
+            }
+        };
+        let installation = pending
+            .as_ref()
+            .map(|p| p.installation_id.clone())
+            .unwrap_or_else(|| new_id("ins"));
         let (iid, acct, listing) = (installation.clone(), account.clone(), req.listing_id.clone());
         let check = rel.clone();
         let (attested, pub_ok) = state
@@ -2672,6 +2717,11 @@ async fn install(
         let config = req.configuration.unwrap_or_else(|| json!({}));
         let (plain, sealed) =
             prepare_config(&state, &schema, &config, &installation, &BTreeSet::new())?;
+        // Every check passed: consume the payment for this installation (idempotent).
+        let paid = match pending {
+            Some(p) => Some(crate::marketplace_pay::consume(&state, p).await?),
+            None => None,
+        };
         let now = now_unix() as i64;
         let context = buyer_context(&listing, &account);
         let release = rel.id.clone();
@@ -2700,6 +2750,9 @@ async fn install(
                     params![iid, listing, acct, context, release, plain, now],
                 )?;
                 store_secrets_in(tx, &iid, &sealed, now)?;
+                if let Some(paid) = &paid {
+                    crate::marketplace_pay::record_in(tx, paid, now)?;
+                }
                 inst_event_in(tx, &iid, "installed", None, Some(&release), &acct, now)?;
                 Ok(inst_json_in(tx, &iid)?)
             })
