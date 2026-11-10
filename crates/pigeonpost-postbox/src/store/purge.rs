@@ -161,6 +161,26 @@ pub(crate) const TABLES: &[(&str, Rule)] = &[
         "release_security_events",
         Keep("Append-only security record of a release; the actor is staff"),
     ),
+    // Marketplace hardening (W1).
+    (
+        "release_attestation_signatures",
+        Keep("Append-only signature over an attestation; no account data"),
+    ),
+    (
+        "marketplace_publisher_quotas",
+        Keep("Platform limits of a publisher; set by staff, the publisher profile blocks"),
+    ),
+    (
+        "marketplace_kills",
+        Keep("Append-only staff kill-switch record; the actor is staff"),
+    ),
+    ("marketplace_kill_state", Unrelated),
+    ("marketplace_runtime_stops", Unrelated),
+    (
+        "marketplace_source_builds",
+        Keep("Build provenance of a publisher's releases; the publisher profile blocks"),
+    ),
+    ("marketplace_worker_tombstones", Unrelated),
     ("plan_names", Block(A, "account_id = ?1")),
     ("test_handle_claims", Block(A, "account_id = ?1")),
     (

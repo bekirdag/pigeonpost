@@ -238,6 +238,48 @@ M1 builds a first-party reference release (HR policy Q&A, `deploy/nests/referenc
 9. **Worker volumes:** plain directories under the marketplace pool's volume_root, not LUKS volumes, and the worker's ledger row lives in nestd's `nests` table so the broker meters it; the first-party lifecycle skips these rows.
 10. **Schema:** M0's tables are changed in place (platform owner kind, review stages, release build columns, listing address), because M0 is neither merged nor deployed.
 
+### Hardening (W1, 2026-11-10): what replaced deviations 1, 2, 3, 7 and 9
+
+- **Signed attestations (3).** The statement gains `key_id`; the postbox signs
+  `"pigeonpost-nest-attestation-sig-v1\n" || statement` with Ed25519 (seed in
+  `POSTBOX_MARKETPLACE_ATTESTATION_KEY_FILE`, never in the repository or database) and stores the
+  signature in `release_attestation_signatures` (append-only). `key_id` is `ppk_` and the first 16
+  hex digits of SHA-256 over the public key. The postbox verifies it at quote and job admission;
+  nestd verifies it at admission and at every dispatch against `[sandbox.marketplace]
+  attestation_keys` and refuses everything when that list is empty. The job body's `release`
+  object carries `signature` and `key_id`. Rotation: `pigeonpost_nests::attest` module docs and
+  `deploy/nests/buildd/README.md`.
+- **Build and analysis plane (1, 2).** `pigeonpost-nest-buildd` on a separate host (a shared host for
+  now): git source intake by repository URL and full commit id on an allowlisted host, vendored
+  dependencies, two builds that must agree, the image saved as an OCI archive, the deterministic
+  scan and the advisory AI review. The postbox submits and pulls (`marketplace_source_builds`);
+  nests-1 pulls images by digest with its own read-only token. `deploy/nests/buildd/`.
+- **Worker volumes (9).** On an `lvm-luks` host every buyer worker has its own LUKS2 thin volume
+  (`nest-<id>`, key in `key_dir`, wrapped under the KEK), mounted at
+  `<volume_root>/<context>/<id>`, locked until the postbox unlocks the host, taken by
+  `nests-backup`, closed when the worker stops. A destroyed worker's id is a tombstone
+  (`marketplace_worker_tombstones`) replayed on unlock; a new worker for the same pair gets a new
+  id.
+- **Events (7).** Typed events on `/v1/events`, ids and states only, written in the same
+  transaction as the change:
+
+  | type | to | data |
+  |---|---|---|
+  | `nest.job.admitted`, `nest.job.progress`, `nest.job.result_ready`, `nest.job.reconciling` | the submitting account | `job_id`, `listing_id`, `release_id`, `execution` |
+  | `nest.review.stage_changed`, `nest.review.blocked`, `nest.review.decision`, `nest.review.completed` | the publisher's account (its org owner; the platform owner for Pigeonpost's own) | `review_id`, `release_id`, `publisher_id`, `stage`/`decision` |
+  | `nest.security.quarantined`, `nest.security.revoked` | the publisher and every account with a job on the release or listing | `release_id`, `listing_id`, `publisher_id` |
+
+  A job the worker host no longer knows (404 on poll) becomes `reconciling` and is handed over again.
+- **Abuse controls.** Per-publisher quotas (`marketplace_publisher_quotas`, defaults from
+  `POSTBOX_MARKETPLACE_*`): source builds per day (postbox), jobs per minute per buyer (postbox,
+  `429 rate_limited`), concurrent workers and monthly broker tokens (sent as `limits` with each job,
+  enforced by nestd before a worker starts or a job lands, `quota_exceeded`). The kill switch:
+  `POST /v1/staff/marketplace/{listings|publishers}/{id}/kill` with `{action: kill|restore,
+  reason}` (staff with step-up, audited) stops every queued and running job, refuses new ones
+  (`409 listing_suspended`), and tells nestd `POST /v1/mp/listings/{id}/stop`, which fences broker
+  tokens, stops the sandboxes and closes the volumes; an unacknowledged stop is resent every
+  dispatcher tick (2 s).
+
 ## Validation (2026-11-03)
 
 - `check_openapi.py` with the hash-pinned validator from `.github/scripts/openapi/requirements.txt`:

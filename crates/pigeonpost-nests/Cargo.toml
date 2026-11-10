@@ -30,6 +30,11 @@ path = "src/bin/runner.rs"
 name = "pigeonpost-nest-release"
 path = "src/bin/release.rs"
 
+# Hardening W1.3: the remote build and analysis plane (a separate host now; its own VM later).
+[[bin]]
+name = "pigeonpost-nest-buildd"
+path = "src/bin/buildd.rs"
+
 [dependencies]
 axum = "0.8"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "signal", "sync", "process"] }

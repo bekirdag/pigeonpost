@@ -55,8 +55,12 @@ for lv in $(lvs --noheadings -o lv_name -S 'lv_name=~^nest-nst_' "$VG"); do
   [ -f "$KEYS/$id.key" ] || { echo "skip $id: no key" >&2; continue; }
   cp -a "$KEYS/$id.key" "$STAGE/keys/"
   # Freeze a mounted (running or open) volume for the instant of the snapshot, so the image is
-  # filesystem-consistent rather than crash-consistent.
-  if mountpoint -q "$MNT/$id"; then FROZEN="$MNT/$id"; fsfreeze -f "$FROZEN"; fi
+  # filesystem-consistent rather than crash-consistent. Marketplace worker volumes (hardening W1.2)
+  # are the same LUKS thin volumes but mounted under the pool's volume_root, so look the mount up
+  # by its mapping rather than by path.
+  target=$(findmnt -n -o TARGET --source "/dev/mapper/nestc-$id" 2>/dev/null | head -1 || true)
+  if [ -z "$target" ] && mountpoint -q "$MNT/$id"; then target="$MNT/$id"; fi
+  if [ -n "$target" ]; then FROZEN="$target"; fsfreeze -f "$FROZEN"; fi
   lvcreate -qq -s -kn -ay -n "bak-$id" "$VG/$lv" >/dev/null
   if [ -n "$FROZEN" ]; then fsfreeze -u "$FROZEN"; FROZEN=""; fi
   SNAPS+=("bak-$id")

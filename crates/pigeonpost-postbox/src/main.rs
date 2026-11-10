@@ -94,6 +94,9 @@ mod internal_api;
 mod limits;
 mod mail_layout;
 mod marketplace;
+mod marketplace_hardening;
+#[cfg(test)]
+mod marketplace_hardening_tests;
 mod marketplace_m1;
 #[cfg(test)]
 mod marketplace_m1_tests;
@@ -1058,6 +1061,8 @@ fn build_router(state: AppState) -> Router {
         .merge(marketplace::router())
         // Marketplace M1: native jobs, staff review and quarantine, behind the same flag.
         .merge(marketplace_m1::router())
+        // Marketplace hardening (W1): kill switch, publisher quotas, remote source builds.
+        .merge(marketplace_hardening::router())
         // Phase 3B: calendar and scheduled meetings (SDS §14B.5, docs/calendar.md).
         .route(
             "/v1/calendars",

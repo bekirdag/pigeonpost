@@ -1013,6 +1013,8 @@ impl Store {
         conn.execute_batch(crate::nest_approvals::SCHEMA)?;
         // Marketplace foundations (M0): staff roles, publishers and the catalog.
         conn.execute_batch(marketplace::SCHEMA)?;
+        // Marketplace hardening (W1): signatures, quotas, kills, source builds, worker tombstones.
+        conn.execute_batch(crate::marketplace_hardening::SCHEMA)?;
         for stmt in MIGRATIONS
             .iter()
             .chain(filtering::MIGRATIONS)

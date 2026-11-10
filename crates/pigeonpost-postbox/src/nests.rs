@@ -105,6 +105,8 @@ pub(crate) struct Runtime {
     /// Phase B6: the Nests host's key-encryption key, released to nestd over the private link
     /// (`POSTBOX_NESTS_KEK_FILE`, 64 hex characters). Never logged, never sent anywhere else.
     pub(crate) kek: Option<zeroize::Zeroizing<String>>,
+    /// Marketplace hardening (W1): attestation key, quotas, the remote build plane.
+    pub(crate) marketplace: crate::marketplace_hardening::Hardening,
 }
 
 impl Default for Runtime {
@@ -116,6 +118,7 @@ impl Default for Runtime {
             output_tokens: 100_000,
             woken: Mutex::new(HashMap::new()),
             kek: None,
+            marketplace: crate::marketplace_hardening::Hardening::default(),
         }
     }
 }
@@ -188,6 +191,7 @@ impl Runtime {
             output_tokens: env_num("POSTBOX_NESTS_OUTPUT_TOKENS", d.output_tokens),
             woken: Mutex::new(HashMap::new()),
             kek: read_kek(),
+            marketplace: crate::marketplace_hardening::Hardening::from_env(),
         }
     }
 
@@ -199,6 +203,7 @@ impl Runtime {
                 calls: Mutex::new(Vec::new()),
                 fail: AtomicBool::new(false),
             },
+            marketplace: crate::marketplace_hardening::Hardening::for_test(),
             ..Runtime::default()
         }
     }
@@ -244,6 +249,13 @@ impl Runtime {
                 });
                 if fail.load(Ordering::SeqCst) {
                     return Ok((500, json!({ "error": "capture_failure" })));
+                }
+                // Hardening: destroying a buyer worker names the id it retired.
+                if path == "/v1/mp/workers/destroy" {
+                    return Ok((
+                        200,
+                        json!({ "destroyed": format!("nst_{}", "d".repeat(32)) }),
+                    ));
                 }
                 // The marketplace dispatcher (M1): a polled job has finished on the worker host.
                 if method == reqwest::Method::GET && path.starts_with("/v1/mp/jobs/") {
@@ -432,7 +444,12 @@ async fn tombstones(state: &AppState) -> Vec<String> {
                 "SELECT id FROM nests WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC LIMIT 1000",
             )?;
             let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
-            Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+            let mut ids = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+            // Marketplace hardening: destroyed buyer workers are tombstones too.
+            let mut stmt = c.prepare(crate::marketplace_hardening::WORKER_TOMBSTONES_SQL)?;
+            let workers = stmt.query_map([], |r| r.get::<_, String>(0))?;
+            ids.extend(workers.collect::<rusqlite::Result<Vec<_>>>()?);
+            Ok(ids)
         })
         .await
         .unwrap_or_default()

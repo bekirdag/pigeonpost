@@ -1,0 +1,42 @@
+# WireGuard for the build plane: the build host listens; the postbox host and nests-1 connect.
+# Its own tunnel and its own addresses, separate from wg-nests (postbox <-> nests-1) and
+# wg-backup. Keys are generated on each host (wg genkey) and never leave it.
+# Addresses below are placeholders: pick a /29 that no other tunnel on these hosts uses.
+#
+# --- build host: /etc/wireguard/wg-nestbuild.conf
+[Interface]
+Address = <BUILD_WG_ADDR>/29
+ListenPort = <BUILD_WG_PORT>
+PrivateKey = <build host private key>
+
+[Peer]
+# postbox host: submits and reads builds (submit token)
+PublicKey = <postbox public key>
+AllowedIPs = <POSTBOX_WG_ADDR>/32
+
+[Peer]
+# nests-1: pulls release images (artifact token)
+PublicKey = <nests-1 public key>
+AllowedIPs = <NESTS1_WG_ADDR>/32
+
+# --- postbox host: /etc/wireguard/wg-nestbuild.conf
+[Interface]
+Address = <POSTBOX_WG_ADDR>/29
+PrivateKey = <postbox private key>
+
+[Peer]
+PublicKey = <build host public key>
+AllowedIPs = <BUILD_WG_ADDR>/32
+Endpoint = <BUILD_HOST_PUBLIC_ADDR>:<BUILD_WG_PORT>
+PersistentKeepalive = 25
+
+# --- nests-1: /etc/wireguard/wg-nestbuild.conf
+[Interface]
+Address = <NESTS1_WG_ADDR>/29
+PrivateKey = <nests-1 private key>
+
+[Peer]
+PublicKey = <build host public key>
+AllowedIPs = <BUILD_WG_ADDR>/32
+Endpoint = <BUILD_HOST_PUBLIC_ADDR>:<BUILD_WG_PORT>
+PersistentKeepalive = 25

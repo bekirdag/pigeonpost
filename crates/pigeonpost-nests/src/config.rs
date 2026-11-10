@@ -118,6 +118,62 @@ pub struct MarketplacePoolConfig {
     pub cpu_max_millis: u64,
     pub pids: u64,
     pub tmp_mib: u64,
+    /// Hardening (W1.1): the postbox attestation public keys this host trusts, 64 hex digits
+    /// each. Every admission and every dispatch must verify under one of them; more than one is
+    /// a key rotation in progress. Required outside tests.
+    #[serde(default)]
+    pub attestation_keys: Vec<String>,
+    /// Hardening (W1.2): size of each worker's encrypted volume. Workers count against
+    /// `storage.max_total_gib` like any Nest.
+    #[serde(default = "default_worker_gib")]
+    pub worker_gib: u64,
+    /// Hardening (W1.3): where release images this host does not have are pulled from (the
+    /// build plane's artifact API). Unset: images must already be on the host.
+    #[serde(default)]
+    pub artifacts: Option<ArtifactsConfig>,
+}
+
+/// `[sandbox.marketplace.artifacts]`: the build plane's read-only artifact API over WireGuard.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ArtifactsConfig {
+    /// `http://<build host WireGuard address>:<port>`: plain HTTP only to a private address.
+    pub url: String,
+    /// File holding the artifact-read token (0400 root). It can read images and nothing else.
+    pub token_file: PathBuf,
+    /// Scratch directory for downloaded archives, root-only; each is removed after loading.
+    pub cache_dir: PathBuf,
+    /// Largest image archive accepted.
+    #[serde(default = "default_artifact_bytes")]
+    pub max_bytes: u64,
+}
+
+fn default_worker_gib() -> u64 {
+    1
+}
+
+fn default_artifact_bytes() -> u64 {
+    4 * 1024 * 1024 * 1024
+}
+
+/// `https://…`, or plain `http://` only to loopback or an RFC 1918 IPv4 literal (a WireGuard
+/// address: the tunnel encrypts the hop).
+pub fn private_url_ok(url: &str) -> bool {
+    if let Some(rest) = url.strip_prefix("https://") {
+        return !rest.is_empty();
+    }
+    let Some(rest) = url.strip_prefix("http://") else {
+        return false;
+    };
+    let host = rest
+        .split('/')
+        .next()
+        .unwrap_or("")
+        .split(':')
+        .next()
+        .unwrap_or("");
+    host.parse::<std::net::Ipv4Addr>()
+        .is_ok_and(|ip| ip.is_loopback() || ip.is_private())
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -331,6 +387,32 @@ impl Config {
                 "sandbox.marketplace.cpu_max_millis must be at most the first-party limit".into(),
             );
         }
+        // Hardening: a production pool runs only signed attestations, from encrypted volumes.
+        crate::attest::TrustedKeys::from_hex(&pool.attestation_keys)
+            .map_err(|e| format!("sandbox.marketplace.attestation_keys: {e}"))?;
+        if self.sandbox.runtime != "fake" {
+            if pool.attestation_keys.is_empty() {
+                return Err("sandbox.marketplace.attestation_keys: at least one key".into());
+            }
+            if self.storage.backend != "lvm-luks" {
+                return Err("the marketplace pool needs storage.backend = \"lvm-luks\"".into());
+            }
+        }
+        if pool.worker_gib == 0 || pool.worker_gib > 64 {
+            return Err("sandbox.marketplace.worker_gib must be 1-64".into());
+        }
+        if let Some(a) = &pool.artifacts {
+            if !private_url_ok(&a.url) {
+                return Err(
+                    "sandbox.marketplace.artifacts.url: https, or http to a private address".into(),
+                );
+            }
+            if !a.cache_dir.is_absolute() || a.max_bytes == 0 {
+                return Err(
+                    "sandbox.marketplace.artifacts: absolute cache_dir, positive max_bytes".into(),
+                );
+            }
+        }
         Ok(())
     }
 }
@@ -373,6 +455,11 @@ pub(crate) fn test_marketplace_pool(dir: &std::path::Path) -> MarketplacePoolCon
         cpu_max_millis: 500,
         pids: 64,
         tmp_mib: 32,
+        attestation_keys: vec![crate::util::hex(
+            crate::attest::test_key().verifying_key().as_bytes(),
+        )],
+        worker_gib: 1,
+        artifacts: None,
     }
 }
 
@@ -458,6 +545,7 @@ mod tests {
             let mut c = test_config(&dir);
             c.sandbox.runtime = "gvisor".into();
             c.sandbox.image = "localhost/x@sha256:ab".into();
+            c.storage.backend = "lvm-luks".into();
             c.sandbox.marketplace = Some(test_marketplace_pool(&dir));
             c
         };
@@ -477,6 +565,19 @@ mod tests {
             ("cpu above first-party", |p| p.cpu_max_millis = 2000),
             ("zero memory", |p| p.memory_mib = 0),
             ("zero pids", |p| p.pids = 0),
+            ("no attestation key", |p| p.attestation_keys.clear()),
+            ("a malformed attestation key", |p| {
+                p.attestation_keys.push("not-a-key".into())
+            }),
+            ("a zero worker volume", |p| p.worker_gib = 0),
+            ("a public plain-HTTP artifact source", |p| {
+                p.artifacts = Some(ArtifactsConfig {
+                    url: "http://203.0.113.9:8795".into(),
+                    token_file: "/etc/nests/artifacts.token".into(),
+                    cache_dir: "/var/lib/nests/artifacts".into(),
+                    max_bytes: 1,
+                })
+            }),
         ];
         for (what, change) in cases {
             let mut c = ok();
@@ -493,6 +594,19 @@ mod tests {
         let mut c = ok();
         c.sandbox.oci_runtime = "crun".into();
         assert!(c.check().is_err());
+        // Worker volumes are encrypted in production: plain directories are refused.
+        let mut c = ok();
+        c.storage.backend = "dir".into();
+        assert!(c.check().is_err());
+        // A WireGuard artifact source is fine.
+        let mut c = ok();
+        c.sandbox.marketplace.as_mut().unwrap().artifacts = Some(ArtifactsConfig {
+            url: "http://10.68.0.2:8795".into(),
+            token_file: "/etc/nests/artifacts.token".into(),
+            cache_dir: "/var/lib/nests/artifacts".into(),
+            max_bytes: 1 << 30,
+        });
+        assert!(c.check().is_ok());
     }
 
     #[test]

@@ -443,6 +443,34 @@ pub struct BuildConfig {
     pub fetch_image: String,
     /// Local image name the build is tagged with; the digest comes from podman.
     pub image_name: String,
+    /// Hardening: resource limits for both steps, so a build cannot starve a shared host (the
+    /// build plane may share its host with model serving). Unset: no podman-level limit.
+    #[serde(default)]
+    pub memory_mib: Option<u64>,
+    /// Thousandths of one core.
+    #[serde(default)]
+    pub cpu_millis: Option<u64>,
+    #[serde(default)]
+    pub pids: Option<u64>,
+}
+
+impl BuildConfig {
+    /// `--memory`, CPU quota and `--pids-limit` flags for `podman run`/`podman build`.
+    pub fn limit_args(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        if let Some(m) = self.memory_mib {
+            out.push(format!("--memory={m}m"));
+            out.push(format!("--memory-swap={m}m"));
+        }
+        if let Some(c) = self.cpu_millis {
+            out.push("--cpu-period=100000".into());
+            out.push(format!("--cpu-quota={}", c.max(10) * 100));
+        }
+        if let Some(p) = self.pids {
+            out.push(format!("--pids-limit={p}"));
+        }
+        out
+    }
 }
 
 impl BuildConfig {
@@ -468,7 +496,7 @@ impl BuildConfig {
 
 /// The fetch step: `cargo vendor` from a read-only copy of the source tree into `vendor`.
 pub fn fetch_args(cfg: &BuildConfig, src: &Path, vendor: &Path) -> Vec<String> {
-    vec![
+    let mut args: Vec<String> = vec![
         "run".into(),
         "--rm".into(),
         "--pull=never".into(),
@@ -482,13 +510,17 @@ pub fn fetch_args(cfg: &BuildConfig, src: &Path, vendor: &Path) -> Vec<String> {
         format!("--volume={}:/src:ro", src.display()),
         format!("--volume={}:/vendor:rw", vendor.display()),
         "--workdir=/src".into(),
+    ];
+    args.extend(cfg.limit_args());
+    args.extend([
         cfg.fetch_image.clone(),
         "cargo".into(),
         "vendor".into(),
         "--locked".into(),
         "--versioned-dirs".into(),
         "/vendor".into(),
-    ]
+    ]);
+    args
 }
 
 /// The build step. `--network=none` is the line that must not move.
@@ -498,7 +530,7 @@ pub fn build_args(
     tag: &str,
     source_digest: &str,
 ) -> Vec<String> {
-    vec![
+    let mut args: Vec<String> = vec![
         "build".into(),
         "--pull=never".into(),
         "--network=none".into(),
@@ -506,11 +538,25 @@ pub fn build_args(
         "--no-cache".into(),
         "--cap-drop=ALL".into(),
         "--security-opt=no-new-privileges".into(),
+        // Reproducibility (R-62): a fixed creation time for the image and every file in its
+        // layers, so the same source and vendored tree give the same image digest.
+        "--timestamp=0".into(),
         format!("--label=dev.pigeonpost.release.source={source_digest}"),
         format!("--file={}", context.join(CONTAINERFILE).display()),
         format!("--tag={tag}"),
-        context.display().to_string(),
-    ]
+    ];
+    args.extend(cfg.limit_args());
+    args.push(context.display().to_string());
+    args
+}
+
+/// The local tag a build of `source_digest` gets.
+pub fn build_tag(cfg: &BuildConfig, source_digest: &str) -> String {
+    format!(
+        "{}:{}",
+        cfg.image_name,
+        &source_digest.trim_start_matches("sha256:")[..12]
+    )
 }
 
 /// The vendored-source configuration written into the build context.
@@ -581,11 +627,7 @@ impl<P: Podman> Builder<P> {
         std::fs::create_dir_all(context.join(".cargo")).map_err(|e| e.to_string())?;
         std::fs::write(context.join(".cargo/config.toml"), CARGO_VENDOR_CONFIG)
             .map_err(|e| e.to_string())?;
-        let tag = format!(
-            "{}:{}",
-            self.cfg.image_name,
-            &source_digest.trim_start_matches("sha256:")[..12]
-        );
+        let tag = build_tag(&self.cfg, &source_digest);
         let args = build_args(&self.cfg, &context, &tag, &source_digest);
         let refs: Vec<&str> = args.iter().map(String::as_str).collect();
         self.podman.run(&refs)?;
@@ -672,6 +714,9 @@ mod tests {
                 "1".repeat(64)
             ),
             image_name: "localhost/pigeonpost-release-hr-policy-qa".into(),
+            memory_mib: None,
+            cpu_millis: None,
+            pids: None,
         }
     }
 
