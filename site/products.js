@@ -34,6 +34,10 @@
   };
   // The org roles that may create and manage company Nests (nest_access.rs, Perm::ManageAgents).
   const NEST_ADMIN_ROLES = ["owner", "admin", "agent_admin"];
+  // The org roles that may buy and manage the company's package (org.rs, Perm::ManageBilling). The
+  // bridge checks this again with the postbox; this only decides what to show.
+  const BILLING_ROLES = ["owner", "billing_admin"];
+  const ORG_ID = /^org_[a-z0-9]{6,64}$/;
   const RAIL = { apple: "the App Store", google: "Google Play", iyzico: "Pigeonpost (web)", grant: "a Pigeonpost grant", test: "a test grant" };
 
   function el(tag, attrs, ...children) {
@@ -65,7 +69,9 @@
   }
 
   function mount(root, deps) {
-    const state = { tab: "nests", context: "personal", currency: null, data: null, gen: 0 };
+    // Back from a company checkout (`?nest_org=`), the page opens in that company's context.
+    const returnOrg = new URLSearchParams(deps.search || "").get("nest_org");
+    const state = { tab: "nests", context: ORG_ID.test(returnOrg || "") ? returnOrg : "personal", currency: null, data: null, gen: 0 };
     const nestsOn = () => Boolean(deps.features && deps.features.has("nests"));
 
     function tabs() {
@@ -199,7 +205,7 @@
       return { plans, currencies };
     }
 
-    function packagesBlock(d) {
+    function packagesBlock(d, orgId) {
       const { plans, currencies } = pricesFor(d);
       const box = el("div", { class: "pp-packages" });
       if (currencies.length > 1) {
@@ -213,18 +219,24 @@
           el("h4", { text: p.name }),
           el("ul", {}, packageLines(p).map((l) => el("li", { text: l }))),
           plan ? el("p", { class: "pp-price", text: `${money(plan.amount, plan.currency)} a month` }) : el("p", { class: "muted", text: "Not available to buy here yet." }),
-          plan ? el("button", { type: "button", class: "btn btn-primary", "data-buy": plan.code, "aria-label": `Buy ${p.name}`, onclick: () => buy(plan.code) }, "Buy") : null));
+          plan ? el("button", { type: "button", class: "btn btn-primary", "data-buy": plan.code, "aria-label": `Buy ${p.name}`, onclick: () => buy(plan.code, orgId) }, "Buy") : null));
       }
       box.append(cards);
       box.append(el("p", { class: "ac-note", text: "Sold by Piyote Bilişim and billed monthly through iyzico. Cancel any time; your Nests keep running until the end of the paid month, then you have 30 days to export before they are deleted." }));
       return box;
     }
 
-    function subscriptionBlock(sub, d) {
+    function subscriptionBlock(sub, d, orgId) {
       const { plans } = pricesFor(d);
       const others = plans.filter((pl) => pl.currency === sub.currency && pl.code !== sub.plan_code);
+      const title = `${orgId ? "Company" : "Your"} web Nest package · ${sub.currency}${sub.recurring_price ? " · " + money(sub.recurring_price.amount, sub.recurring_price.currency) + " a month" : ""}`;
+      // saas_be lets only the buyer change a subscription; another billing admin sees it, read-only.
+      if (orgId && sub.buyer === false) {
+        return el("div", { class: "pp-sub", "data-sub": sub.id }, el("p", { text: title }),
+          el("p", { class: "muted", id: "pp-not-buyer", text: "Another billing admin bought this package. Only they can change or cancel it." }));
+      }
       return el("div", { class: "pp-sub", "data-sub": sub.id },
-        el("p", { text: `Your web Nest package · ${sub.currency}${sub.recurring_price ? " · " + money(sub.recurring_price.amount, sub.recurring_price.currency) + " a month" : ""}` }),
+        el("p", { text: title }),
         others.length ? el("label", {}, "Change to ", el("select", { id: "pp-change" }, others.map((pl) => el("option", { value: pl.code, text: d.packages.packages.find((p) => p.code === pl.package)?.name || pl.code })))) : null,
         others.length ? el("button", { type: "button", class: "btn btn-small", id: "pp-change-go", onclick: () => change(sub.id, root.querySelector("#pp-change").value) }, "Change package") : null,
         sub.provider_status === "CANCELED" ? el("span", { class: "muted", text: " Canceled — no renewal." })
@@ -246,10 +258,20 @@
         const rows = await orgRows(v.nests || []);
         // Only people admins may list members. Anyone else creates the Nest and adds operators later.
         const members = org.admin ? await deps.pb(`${path}/members?status=active`).then((m) => (m.members || []).filter((x) => x.id !== org.memberId)).catch(() => []) : [];
+        // The owner and billing admins see the company's web package and prices from the bridge.
+        const bridge = org.billing ? await deps.bridgeGet(`/v1/nests?org_id=${encodeURIComponent(orgId)}`).catch(() => null) : null;
         box.textContent = "";
         const a = v.allowance || { slots: 0, used: 0 };
-        box.append(el("p", { text: v.package ? `Company package: ${a.used} of ${a.slots} Nests in use.` : "This company has no Nest package yet. Its billing admin can buy one." }));
+        box.append(el("p", { text: v.package ? `Company package: ${a.used} of ${a.slots} Nests in use.`
+          : bridge ? "This company has no Nest package yet. Buy one below." : "This company has no Nest package yet. Its billing admin can buy one." }));
         if (rows.length) box.append(el("ul", { class: "pp-nests", "aria-label": "Company Nests" }, rows.map(nestRow)));
+        if (bridge) {
+          const d = { packages: state.data.packages, bridge };
+          const subs = bridge.subscriptions || [];
+          // A package funded another way (a grant, another rail) is not offered a second time.
+          if (subs.length) box.append(subscriptionBlock(subs[0], d, orgId));
+          else if (!v.package) box.append(packagesBlock(d, orgId));
+        }
         if (!org.admin) return;
         const handle = el("input", { id: "pp-org-handle", required: true, autocomplete: "off" });
         const label = el("input", { id: "pp-org-label", required: true, maxlength: "64" });
@@ -271,10 +293,11 @@
 
     // ---- actions ----------------------------------------------------------------------------
 
-    async function buy(planCode) {
+    async function buy(planCode, orgId) {
       const profile = await deps.billingProfileId();
       if (!profile) { deps.toast("Add your billing details first, then buy a Nest package."); deps.goBilling && deps.goBilling(); return; }
-      deps.startCheckout({ kind: "nest", intent_id: deps.randomHex32(), plan_code: planCode, billing_profile_id: profile, locale: deps.locale || "en" });
+      deps.startCheckout({ kind: "nest", intent_id: deps.randomHex32(), plan_code: planCode, billing_profile_id: profile, locale: deps.locale || "en",
+        ...(orgId ? { org_id: orgId } : {}) });
     }
 
     async function retry(setupId) {
@@ -323,13 +346,18 @@
     async function confirmReturn() {
       const params = new URLSearchParams(deps.search || "");
       const intent = params.get("nest_checkout");
+      const company = ORG_ID.test(params.get("nest_org") || "");
+      if (params.has("nest_org")) deps.clearReturn && deps.clearReturn("nest_org");
       if (!intent || !/^[a-f0-9]{32}$/.test(intent)) return;
       deps.clearReturn && deps.clearReturn("nest_checkout");
       deps.toast("Confirming your payment…");
       for (let i = 0; i < (deps.confirmAttempts || 20); i++) {
         try {
           const r = await deps.bridgeGet(`/v1/nests/checkout/${intent}`);
-          if (["active", "canceled"].includes(r.status)) { deps.toast("Your Nest package is active. Your first Nest is being set up."); load(); return; }
+          if (["active", "canceled"].includes(r.status)) {
+            deps.toast(company ? "The company's Nest package is active. Its admins can create company Nests now." : "Your Nest package is active. Your first Nest is being set up.");
+            load(); return;
+          }
           if (r.status === "failed") { deps.toast("The payment did not go through. Nothing was charged."); return; }
         } catch (e) { if (e.status === 401) return; }
         await new Promise((r) => setTimeout(r, deps.confirmDelayMs ?? 3000));
@@ -345,7 +373,7 @@
           deps.pb("/v1/nest-packages"),
           deps.pb("/v1/nests"),
           deps.bridgeGet("/v1/nests").catch(() => null),
-          deps.pb("/v1/orgs").then((v) => (v.orgs || []).map((o) => ({ id: o.id, name: o.name, memberId: o.my_member_id, admin: (o.my_roles || []).some((r) => NEST_ADMIN_ROLES.includes(r)) }))).catch(() => []),
+          deps.pb("/v1/orgs").then((v) => (v.orgs || []).map((o) => ({ id: o.id, name: o.name, memberId: o.my_member_id, admin: (o.my_roles || []).some((r) => NEST_ADMIN_ROLES.includes(r)), billing: (o.my_roles || []).some((r) => BILLING_ROLES.includes(r)) }))).catch(() => []),
         ]);
         if (gen !== state.gen) return;
         state.data = { packages, nests, bridge, orgs };

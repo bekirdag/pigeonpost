@@ -29,6 +29,7 @@ function fixture() {
     vat: { valid: { DE123456789: "BEISPIEL GMBH", FR12345678901: "EXEMPLE SAS", "GB123456789": "EXAMPLE LTD" }, viesDown: false },
     vatCalls: [],
     orgBilling: { plan_code: "ent-30-yearly-usd", seats: 30, seats_used: 4, agent_limit: 300, agents_used: 2, status: "active", can_manage: true },
+    orgNests: { nests: [], allowance: { slots: 0, used: 0 }, package: null },
   };
   const edition = (code) => catalog.plans[code].editions["2026"];
   const planByPackage = (slug, currency) => Object.entries(catalog.plans).find(([, p]) => p.package_slug === slug && p.currency === currency);
@@ -71,6 +72,10 @@ function fixture() {
         : json(res, 200, { intent_id: "npi_fixture", package: body.package, rail: body.rail });
     }
     if (p === "/v1/nests" && req.method === "GET") return auth === MEMBER ? json(res, 200, { allowance: { slots: 1, used: 0 } }) : json(res, 401, {});
+    if ((m = /^\/v1\/orgs\/([^/]+)\/nests$/.exec(p)) && req.method === "GET") {
+      if (auth !== MEMBER) return json(res, 401, {});
+      return json(res, 200, s.orgNests);
+    }
     if ((m = /^\/v1\/orgs\/([^/]+)\/billing$/.exec(p))) {
       if (auth !== MEMBER) return json(res, 401, {});
       if (!s.features.includes("orgs")) return json(res, 404, { error: "feature_disabled" });
@@ -752,6 +757,149 @@ test("the reconciler activates closed-tab Nest purchases from pp-nest references
   assert.equal(put.body.names, null);
   await new Promise((r) => setTimeout(r, 400));
   assert.ok(!s.puts.some((p) => p.reference === uuid(941)), "family and reference must agree");
+});
+
+// ---- company Nest packages ----------------------------------------------------------------------
+
+const ORG = "org_acme0123";
+const listed = (s, id, status = "ACTIVE") => ({ subscription_id: id, provider: "iyzico", provider_status: status,
+  pricing_plan_reference: s.subs.get(id).pricing_plan_reference });
+
+test("a billing admin buys a company Nest package: org reference, org subject, company return", async (t) => {
+  const { s, call } = await setup(t);
+  s.features.push("nests");
+  const id = intent(950);
+  const r = await nestCheckout(call, id, "nest-ai-starter-monthly-usd", { org_id: ORG });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.org_id, ORG);
+  assert.equal(s.nestIntents, undefined, "the personal purchase check is not asked for a company");
+  const start = s.calls.find((c) => c.method === "POST" && c.path === "/v1/integrations/iyzico/subscriptions");
+  assert.equal(start.body.client_reference_id, `pp-nest-org:${ORG}:${id}`);
+  assert.equal(start.body.return_url, `https://pigeonpost.dev/account?nest_checkout=${id}&nest_org=${ORG}`);
+  // A replay is checked again and starts nothing new.
+  assert.equal((await nestCheckout(call, id, "nest-ai-starter-monthly-usd", { org_id: ORG })).status, 200);
+  assert.equal((await nestCheckout(call, id, "nest-ai-starter-monthly-usd")).status, 409, "the same intent without the org is another request");
+  s.activate(r.body.subscription_id, { days: 30 });
+  const status = await call("GET", `/v1/nests/checkout/${id}`);
+  assert.equal(status.status, 200, JSON.stringify(status.body));
+  assert.equal(status.body.status, "active");
+  assert.equal(status.body.org_id, ORG);
+  const put = s.puts.find((p) => p.reference === r.body.subscription_id);
+  assert.deepEqual(put.body.subject, { kind: "org", id: ORG });
+  assert.equal(put.body.subject_check, undefined);
+  assert.equal(put.body.names, null);
+  // The company sees it; the buyer's personal view does not, and it does not block a personal package.
+  s.list = [listed(s, r.body.subscription_id)];
+  const org = await call("GET", `/v1/nests?org_id=${ORG}`);
+  assert.equal(org.status, 200, JSON.stringify(org.body));
+  assert.equal(org.body.org_id, ORG);
+  assert.deepEqual(org.body.subscriptions.map((x) => [x.id, x.plan_code, x.buyer]), [[r.body.subscription_id, "nest-ai-starter-monthly-usd", true]]);
+  assert.ok(org.body.prices.plans.length > 0);
+  const mine = await call("GET", "/v1/nests");
+  assert.deepEqual(mine.body.subscriptions, []);
+  const personal = await nestCheckout(call, intent(951));
+  assert.equal(personal.status, 200, JSON.stringify(personal.body));
+  // The personal routes reach the company package only through org billing rights.
+  const one = await call("GET", `/v1/nests/subscriptions/${r.body.subscription_id}`);
+  assert.equal(one.status, 200, JSON.stringify(one.body));
+  assert.equal(one.body.org_id, ORG);
+  assert.equal(one.body.buyer, true);
+  const cancel = await call("POST", `/v1/nests/subscriptions/${r.body.subscription_id}/cancel`, { intent_id: intent(952) });
+  assert.equal(cancel.status, 200, JSON.stringify(cancel.body));
+  const last = s.puts.filter((p) => p.reference === r.body.subscription_id).at(-1);
+  assert.deepEqual(last.body.subject, { kind: "org", id: ORG });
+  assert.equal(last.body.status, "canceled");
+});
+
+test("one company Nest package per org, on any rail", async (t) => {
+  const { s, call } = await setup(t);
+  s.features.push("nests");
+  const first = await nestCheckout(call, intent(960), "nest-ai-starter-monthly-usd", { org_id: ORG });
+  assert.equal(first.status, 200, JSON.stringify(first.body));
+  s.activate(first.body.subscription_id, { days: 30 });
+  assert.equal((await call("GET", `/v1/nests/checkout/${intent(960)}`)).body.status, "active");
+  const starts = () => s.calls.filter((c) => c.method === "POST" && c.path === "/v1/integrations/iyzico/subscriptions").length;
+  const before = starts();
+  const dup = await nestCheckout(call, intent(961), "nest-host-starter-monthly-usd", { org_id: ORG });
+  assert.equal(dup.status, 409);
+  assert.equal(dup.body.code, "already_subscribed");
+  // Bought elsewhere (another rail or a grant): the postbox's company view says so.
+  const other = "org_other0123";
+  s.orgNests = { nests: [], allowance: { slots: 1, used: 0 }, package: { code: "nest.ai.starter.monthly", slots: 1 } };
+  const funded = await nestCheckout(call, intent(962), "nest-ai-starter-monthly-usd", { org_id: other });
+  assert.equal(funded.status, 409);
+  assert.equal(funded.body.code, "nest_package_active");
+  assert.equal(starts(), before, "no provider call after a refusal");
+});
+
+test("only the company's owner or billing admin buys, sees or changes its Nest package", async (t) => {
+  const { s, call } = await setup(t);
+  s.features.push("nests");
+  const r = await nestCheckout(call, intent(970), "nest-ai-starter-monthly-usd", { org_id: ORG });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  s.activate(r.body.subscription_id, { days: 30 });
+  const sub = r.body.subscription_id;
+  assert.equal((await call("GET", `/v1/nests/checkout/${intent(970)}`)).body.status, "active");
+  for (const bad of ["org_", "acct_abc123", "org_UPPER123", 7]) {
+    assert.equal((await nestCheckout(call, intent(971), "nest-ai-starter-monthly-usd", { org_id: bad })).status, 400, String(bad));
+  }
+  assert.equal((await call("GET", "/v1/nests?org_id=nope")).status, 400);
+  // A member who sees billing but cannot manage it.
+  s.orgBilling = { ...s.orgBilling, can_manage: false };
+  const member = await nestCheckout(call, intent(972), "nest-ai-starter-monthly-usd", { org_id: "org_fresh0123" });
+  assert.equal(member.status, 403);
+  assert.equal((await call("GET", `/v1/nests?org_id=${ORG}`)).status, 403);
+  assert.equal((await call("GET", `/v1/nests/subscriptions/${sub}`)).status, 404);
+  assert.equal((await call("POST", `/v1/nests/subscriptions/${sub}/cancel`, { intent_id: intent(973) })).status, 404);
+  assert.equal((await call("POST", `/v1/nests/subscriptions/${sub}/upgrade`, { intent_id: intent(974), plan_code: "nest-ai-plus-monthly-usd" })).status, 404);
+  // Not in the org at all.
+  s.orgBilling = null;
+  assert.equal((await nestCheckout(call, intent(975), "nest-ai-starter-monthly-usd", { org_id: "org_fresh0123" })).status, 404);
+  assert.equal((await call("GET", `/v1/nests/subscriptions/${sub}`)).status, 404);
+  // A billing admin without the `nests` flag.
+  s.orgBilling = { can_manage: true };
+  s.features = ["orgs"];
+  const off = await nestCheckout(call, intent(976), "nest-ai-starter-monthly-usd", { org_id: "org_fresh0123" });
+  assert.equal(off.status, 403);
+  assert.equal(off.body.code, "feature_disabled");
+  // Another billing admin (saas_be answers the buyer only): sees what is known, cannot change it.
+  s.features = ["orgs", "nests"];
+  s.notBuyer = true;
+  const seen = await call("GET", `/v1/nests/subscriptions/${sub}`);
+  assert.equal(seen.status, 200, JSON.stringify(seen.body));
+  assert.equal(seen.body.buyer, false);
+  assert.equal(seen.body.status, "active");
+  const refused = await call("POST", `/v1/nests/subscriptions/${sub}/cancel`, { intent_id: intent(977) });
+  assert.equal(refused.status, 403);
+  assert.equal(refused.body.code, "not_buyer");
+  const overview = await call("GET", `/v1/nests?org_id=${ORG}`);
+  assert.deepEqual(overview.body.subscriptions.map((x) => [x.id, x.buyer]), [[sub, false]]);
+  // A company package is never reachable as a Cloud subscription.
+  s.notBuyer = false;
+  assert.equal((await call("GET", `/v1/cloud/subscriptions/${sub}`)).status, 404);
+});
+
+test("the reconciler activates a closed-tab company Nest purchase for the org", async (t) => {
+  const { s } = await setup(t);
+  const plan = s.edition("nest-ai-starter-monthly-usd");
+  const closedTab = uuid(980);
+  s.access = [{ subscription_id: closedTab, tenant_id: "pigeonpost", user_id: uuid(8), keycloak_id: OIDC_SUB, status: "active",
+    plan_id: plan.plan_id, package_slug: "pp-nest-ai-starter", product_slug: "pigeonpost",
+    external_reference: `pp-nest-org:${ORG}:${"7".repeat(32)}`, current_period_start: new Date().toISOString(), current_period_end: future(30) }];
+  const dir = mkdtempSync(join(tmpdir(), "pp-nest-org-rec-"));
+  await spawnBridge(t, {
+    STORE_STATE_DIR: dir,
+    MASAAS_SAAS_API_URL: `http://127.0.0.1:${s.server.address().port}`, PIGEONPOST_POSTBOX_URL: `http://127.0.0.1:${s.server.address().port}`,
+    POSTBOX_INTERNAL_URL: `http://127.0.0.1:${s.server.address().port}`, POSTBOX_SERVICE_TOKEN: SVC.slice(7),
+    SAAS_INTERNAL_TOKEN: SAAS_INTERNAL.slice(7), PIGEONPOST_CATALOG_FILE: s.file, RECONCILE_INTERVAL_MS: "150",
+  });
+  const deadline = Date.now() + 6000;
+  while (!s.puts.some((p) => p.reference === closedTab) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100));
+  const put = s.puts.find((p) => p.reference === closedTab);
+  assert.ok(put, "closed-tab company purchase activated");
+  assert.deepEqual(put.body.subject, { kind: "org", id: ORG });
+  assert.equal(put.body.subject_check, undefined, "subject_check applies to accounts only");
+  assert.equal(put.body.plan_code, "nest-ai-starter-monthly-usd");
 });
 
 test("Nest prices are not public; a signed-in account with Nests sees them", async (t) => {

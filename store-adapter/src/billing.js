@@ -21,6 +21,7 @@ const { fail } = saas;
 const INTENT = /^[a-f0-9]{32}$/;
 const ORDER = /^[a-zA-Z0-9_-]{1,128}$/;
 const NAMESPACE = /^[a-z0-9][a-z0-9._-]{0,31}$/;
+const ORG_ID = /^org_[a-z0-9]{6,64}$/;
 const YEAR_SECONDS = 400 * 86400;
 const now = () => Math.floor(Date.now() / 1000);
 const catalog_ = () => catalog_data;
@@ -33,6 +34,8 @@ export const storageBytes = (limits, seats) =>
   Number.isInteger(limits?.storage_gb) && limits.storage_gb > 0 ? limits.storage_gb * GIB
     : Number.isInteger(seats) && seats > 0 ? seats * 5 * GIB : null;
 const seconds = (value) => (value ? Math.floor(Date.parse(value) / 1000) : null);
+/// A Nest package bought for an organization (its ref carries the org; the postbox subject is the org).
+const orgNest = (ref) => Boolean(ref && ref.kind === "nest" && ref.org_id);
 
 function strict(body, allowed, required = allowed) {
   if (!body || typeof body !== "object" || Array.isArray(body)) fail(400, "A JSON object is required.", "invalid_request");
@@ -132,13 +135,13 @@ export function createBilling(state) {
     await state.update((data) => {
       data.refs[result.subscription_id] ||= { kind: intent.kind, account: intent.account, draft_id: intent.draft_id || null,
         plan_code: intent.plan_code, intent: intent.id, status: "pending", paid_through: null, version: 0, pushed: null,
-        tax: intent.tax || null };
+        tax: intent.tax || null, ...(intent.org_id ? { org_id: intent.org_id } : {}) };
     });
     return {
       intent_id: intent.id, subscription_id: result.subscription_id, plan_code: intent.plan_code,
       amount: selection.amount, currency: entry.currency, interval: entry.interval,
       checkout_form_content: result.checkout_form_content, expires_at: result.expires_at,
-      ...(intent.draft_id ? { org_id: intent.draft_id } : {}),
+      ...(intent.draft_id || intent.org_id ? { org_id: intent.draft_id || intent.org_id } : {}),
     };
   }
 
@@ -189,7 +192,9 @@ export function createBilling(state) {
     let result;
     if (ref.kind === "cloud" || ref.kind === "nest") {
       result = await postbox.putEntitlement("iyzico", environment(), id, {
-        subject: { kind: "account", id: ref.account }, ...(subjectCheck ? { subject_check: subjectCheck } : {}),
+        // A company Nest package belongs to the organization; everything else to the buyer's account.
+        subject: orgNest(ref) ? { kind: "org", id: ref.org_id } : { kind: "account", id: ref.account },
+        ...(subjectCheck && !orgNest(ref) ? { subject_check: subjectCheck } : {}),
         ...body, reconciliation_version: version, operation_id: `sync-${id}-${version}`,
       });
     } else {
@@ -226,7 +231,7 @@ export function createBilling(state) {
     const status = ent ? ent.status : sub?.provider_status === "FAILED" || intent.status === "failed" ? "failed" : "pending";
     return { intent_id: intent.id, subscription_id: intent.subscription_id || null, plan_code: intent.plan_code,
       status, provider_status: sub?.provider_status || null, paid_through: ent?.paid_through || null,
-      next_payment_at: sub?.next_payment_at || null, ...(intent.draft_id ? { org_id: intent.draft_id } : {}) };
+      next_payment_at: sub?.next_payment_at || null, ...(intent.draft_id || intent.org_id ? { org_id: intent.draft_id || intent.org_id } : {}) };
   }
 
   async function ownedIntent(token, id, kind) {
@@ -247,22 +252,55 @@ export function createBilling(state) {
     nest: { label: "Nest package", ref: "pp-nest", returnParam: "nest_checkout" },
   };
 
+  /// Refs of the company Nest packages bought for `orgId`, keyed by subscription id.
+  const orgNestRefs = (orgId) => state.read((data) => Object.fromEntries(Object.entries(data.refs)
+    .filter(([, r]) => r.kind === "nest" && r.org_id === orgId).map(([id, r]) => [id, { ...r }])));
+  /// Subscription ids this bridge knows to be company Nest packages (never shown or counted as personal).
+  const orgNestIds = () => state.read((data) => new Set(Object.entries(data.refs).filter(([, r]) => orgNest(r)).map(([id]) => id)));
+  const LIVE = ["ACTIVE", "PENDING", "UNPAID"];
+  const paidNow = (r) => Boolean(r.paid_through && r.paid_through > now() && r.status !== "expired");
+
+  /// A company Nest package may be bought or seen only by the org's owner or billing admin (the
+  /// postbox decides, `orgs` on), and only while the caller sees Nests (`nests` flag).
+  async function orgNestManager(token, orgId) {
+    if (!ORG_ID.test(orgId || "")) fail(400, "org_id is invalid.", "invalid_request");
+    const billing_ = await postbox.orgBilling(token, orgId);
+    if (billing_.can_manage !== true) fail(403, "Only the owner or a billing admin can buy the company's Nest package.", "forbidden");
+    if (!(await postbox.features(token)).has("nests")) fail(403, "Nests are not open for this account yet.", "feature_disabled");
+    return billing_;
+  }
+
   async function individualCheckout(family, token, body, { ipCountry = null } = {}) {
-    strict(body, ["intent_id", "plan_code", "billing_profile_id", "locale", ...(family === "cloud" ? ["confirm_other_store"] : [])], ["intent_id", "plan_code", "billing_profile_id"]);
+    strict(body, ["intent_id", "plan_code", "billing_profile_id", "locale", ...(family === "cloud" ? ["confirm_other_store"] : ["org_id"])], ["intent_id", "plan_code", "billing_profile_id"]);
     if (body.confirm_other_store !== undefined && typeof body.confirm_other_store !== "boolean") fail(400, "confirm_other_store must be true or false.", "invalid_request");
+    const orgId = body.org_id === undefined ? null : typeof body.org_id === "string" && ORG_ID.test(body.org_id) ? body.org_id
+      : fail(400, "org_id is invalid.", "invalid_request");
     const id = intentId(body.intent_id);
     const entry = plan(body.plan_code);
     if (!entry || entry.family !== family) fail(400, `Choose a ${FAMILY[family].label} plan.`, "invalid_plan");
     if (!config.openCurrencies.includes(entry.currency)) fail(503, `Payments in ${entry.currency} are not open yet.`, "currency_unavailable");
     if (!isUuid(body.billing_profile_id)) fail(400, "Save your billing details first.", "billing_profile_required");
-    const request = { kind: family, plan_code: entry.code, billing_profile_id: body.billing_profile_id, locale: locale(body.locale) };
+    const request = { kind: family, plan_code: entry.code, billing_profile_id: body.billing_profile_id, locale: locale(body.locale),
+      ...(orgId ? { org_id: orgId } : {}) };
     const account = await postbox.accountFor(token);
+    // Checked on every call, replays included: billing rights can be taken away mid-checkout.
+    if (orgId) await orgNestManager(token, orgId);
     const known = await state.read((data) => data.intents[id]);
-    if (!known) {
+    if (!known && orgId) {
+      // One company Nest package per organization, whoever bought it and on whichever rail.
+      const refs = await orgNestRefs(orgId);
+      const mine = (await saas.listSubscriptions(token)).some((s) => refs[s.subscription_id] && LIVE.includes(s.provider_status));
+      if (mine || Object.values(refs).some(paidNow)) {
+        fail(409, "This company already has a Nest package. Change its plan instead.", "already_subscribed");
+      }
+      const view_ = await postbox.memberGet(token, `/v1/orgs/${encodeURIComponent(orgId)}/nests`);
+      if (view_.package) fail(409, "This company already has a Nest package. Change its plan instead.", "nest_package_active");
+    } else if (!known) {
       // One active subscription per family and account: more capacity comes from changing plan,
-      // never from a second, overlapping charge.
-      const active = (await saas.listSubscriptions(token)).find((s) =>
-        ["ACTIVE", "PENDING", "UNPAID"].includes(s.provider_status) && planForProviderReference(s.pricing_plan_reference)?.family === family);
+      // never from a second, overlapping charge. Company packages the person bought do not count.
+      const companies = family === "nest" ? await orgNestIds() : new Set();
+      const active = (await saas.listSubscriptions(token)).find((s) => !companies.has(s.subscription_id) &&
+        LIVE.includes(s.provider_status) && planForProviderReference(s.pricing_plan_reference)?.family === family);
       if (active) {
         fail(409, family === "cloud" ? "You already have a Pigeonpost Cloud subscription. Change its plan instead."
           : "You already have a Nest package. Change its plan instead.", "already_subscribed");
@@ -282,10 +320,12 @@ export function createBilling(state) {
     const decided = known?.tax ? null : (await taxDecision(token, body.billing_profile_id, ipCountry)).decision;
     const intent = await reserve({
       id, kind: family, account, plan_code: entry.code, billing_profile_id: body.billing_profile_id, tax: decided,
-      // `pp-<family>:<account>` identifies the buyer; the intent suffix lets a member retry after an
-      // abandoned hosted form, which saas_be keeps reserved under its client reference.
-      client_reference: `${FAMILY[family].ref}:${account}:${id}`,
-      return_url: `${config.allowedOrigins[0]}/account?${FAMILY[family].returnParam}=${id}`,
+      // `pp-<family>:<account>` identifies the buyer (`pp-nest-org:<org>` the company a Nest
+      // package is for); the intent suffix lets a member retry after an abandoned hosted form,
+      // which saas_be keeps reserved under its client reference.
+      client_reference: orgId ? `pp-nest-org:${orgId}:${id}` : `${FAMILY[family].ref}:${account}:${id}`,
+      return_url: `${config.allowedOrigins[0]}/account?${FAMILY[family].returnParam}=${id}${orgId ? `&nest_org=${orgId}` : ""}`,
+      ...(orgId ? { org_id: orgId } : {}),
     }, { ...request, account });
     return start(token, intent, entry, request);
   }
@@ -326,31 +366,83 @@ export function createBilling(state) {
 
   /// The member's Nest package subscriptions, and the postbox's Nest view (null while `nests` is
   /// off for the account).
-  async function nestOverview(token) {
-    const [subs, nests] = await Promise.all([saas.listSubscriptions(token), postbox.memberGet(token, "/v1/nests").catch(() => null)]);
+  async function nestOverview(token, { orgId = null } = {}) {
+    if (orgId !== null) return orgNestOverview(token, orgId);
+    const [subs, nests, companies] = await Promise.all([saas.listSubscriptions(token),
+      postbox.memberGet(token, "/v1/nests").catch(() => null), orgNestIds()]);
     // Prices are shown only to accounts the postbox lets see Nests (the flag).
-    return { subscriptions: subscriptionsOf("nest", subs), nests, prices: nests ? nestPrices() : null };
+    return { subscriptions: subscriptionsOf("nest", subs.filter((s) => !companies.has(s.subscription_id))), nests,
+      prices: nests ? nestPrices() : null };
   }
 
+  /// A company's web Nest packages, for its owner and billing admins. One the caller bought comes
+  /// with saas_be's live state; one another billing admin bought shows what this bridge knows, and
+  /// only its buyer can change it (saas_be answers its buyer only).
+  async function orgNestOverview(token, orgId) {
+    await postbox.accountFor(token);
+    await orgNestManager(token, orgId);
+    const [refs, subs, nests] = await Promise.all([orgNestRefs(orgId), saas.listSubscriptions(token),
+      postbox.memberGet(token, `/v1/orgs/${encodeURIComponent(orgId)}/nests`).catch(() => null)]);
+    const own = subscriptionsOf("nest", subs.filter((s) => refs[s.subscription_id]))
+      .filter((s) => LIVE.includes(s.provider_status) || paidNow(refs[s.id]))
+      .map((s) => ({ ...s, buyer: true }));
+    const others = Object.entries(refs).filter(([id, r]) => !own.some((s) => s.id === id) && paidNow(r)).map(([id, r]) => {
+      const entry = plan(r.plan_code);
+      return entry && { id, plan_code: entry.code, currency: entry.currency, package: entry.package, slots: entry.slots,
+        provider_status: r.cancel_requested_at ? "CANCELED" : null, recurring_price: null, pending_change: false,
+        reconciliation_required: false, buyer: false };
+    }).filter(Boolean);
+    return { org_id: orgId, subscriptions: [...own, ...others], nests, prices: nests ? nestPrices() : null };
+  }
+
+  const notFound = () => fail(404, "Subscription not found", "not_found");
+
+  /// The caller's own subscription, or a company Nest package of an org whose billing the caller
+  /// manages. Anyone else gets the same 404 as an unknown id. `buyer` says whether saas_be can be
+  /// asked (it answers the buyer only); for another billing admin `sub` is null.
   async function ownedIndividual(family, token, id) {
-    if (!isUuid(id)) fail(404, "Subscription not found", "not_found");
+    if (!isUuid(id)) notFound();
     const account = await postbox.accountFor(token);
+    const known = await state.read((data) => data.refs[id] && { ...data.refs[id] });
+    if (orgNest(known)) {
+      if (family !== "nest") notFound();
+      const can = await postbox.orgBilling(token, known.org_id).then((b) => b.can_manage === true, (error) => {
+        if ([403, 404].includes(error.status)) return false;
+        throw error;
+      });
+      if (!can) notFound();
+      let sub = null;
+      try {
+        sub = saas.validSubscription(await saas.getSubscription(token, id), id);
+      } catch (error) {
+        if (![403, 404].includes(error.status)) throw error;
+      }
+      const resolved = sub ? planForProviderReference(sub.pricing_plan_reference) : plan(known.plan_code);
+      if (!resolved || resolved.family !== "nest") notFound();
+      return { sub, resolved, ref: known, buyer: Boolean(sub) };
+    }
     const sub = saas.validSubscription(await saas.getSubscription(token, id), id);
     const resolved = planForProviderReference(sub.pricing_plan_reference);
-    if (!resolved || resolved.family !== family) fail(404, "Subscription not found", "not_found");
+    if (!resolved || resolved.family !== family) notFound();
+    // A company package whose ref is missing here is never adopted as a personal one.
+    if (/^pp-nest-org:/.test(String(sub.client_reference_id || sub.external_reference || ""))) notFound();
     await state.update((data) => {
       data.refs[id] ||= { kind: family, account, plan_code: resolved.code, status: "pending", paid_through: null, version: 0, pushed: null };
     });
     const ref = await state.read((data) => ({ ...data.refs[id] }));
-    if (ref.account !== account || ref.kind !== family) fail(404, "Subscription not found", "not_found");
-    return { sub, resolved, ref };
+    if (ref.account !== account || ref.kind !== family || orgNest(ref)) notFound();
+    return { sub, resolved, ref, buyer: true };
   }
 
   async function individualSubscription(family, token, id) {
-    const { sub, ref } = await ownedIndividual(family, token, id);
+    const { sub, ref, buyer } = await ownedIndividual(family, token, id);
+    if (!buyer) {
+      return { id, org_id: ref.org_id, plan_code: ref.plan_code, status: ref.status, provider_status: null,
+        paid_through: ref.paid_through || null, cancel_requested_at: ref.cancel_requested_at || null, buyer: false };
+    }
     const ent = fromSubscription(sub, ref);
     if (ent) await push(id, ref, ent);
-    return { id, plan_code: ent?.plan_code || ref.plan_code, status: ent?.status || "pending",
+    return { id, ...(orgNest(ref) ? { org_id: ref.org_id, buyer: true } : {}), plan_code: ent?.plan_code || ref.plan_code, status: ent?.status || "pending",
       provider_status: sub.provider_status, paid_through: ent?.paid_through || null,
       current_period_end: sub.current_period_end, next_payment_at: sub.next_payment_at || null,
       recurring_price: sub.recurring_price || null, pending_change: sub.pending_change || null,
@@ -360,7 +452,9 @@ export function createBilling(state) {
   }
 
   async function individualOperation(family, token, id, operation, body) {
-    const { sub, resolved, ref } = await ownedIndividual(family, token, id);
+    const { sub, resolved, ref, buyer } = await ownedIndividual(family, token, id);
+    // saas_be lets only the buyer change a subscription; another billing admin is told so.
+    if (!buyer) fail(403, "Only the person who bought this package can change it. Ask them, or contact support@pigeonpost.dev.", "not_buyer");
     let payload, key;
     if (operation === "cancel") {
       strict(body, ["intent_id"]);
@@ -642,9 +736,11 @@ export function createBilling(state) {
     for (const row of rows) {
       const individual = /^pp-(cloud|nest):(acct_[A-Za-z0-9_]{6,64})(?::[a-f0-9]{32})?$/.exec(row.external_reference);
       const cloud = individual && [null, individual[2]];
-      const kind = individual ? individual[1] : "ent";
+      // A company Nest package: the org is the subject, whoever bought it.
+      const company = /^pp-nest-org:(org_[a-z0-9]{6,64}):[a-f0-9]{32}$/.exec(row.external_reference);
+      const kind = individual ? individual[1] : company ? "nest" : "ent";
       const org = /^pp-org:(org_[a-z0-9]{6,64})$/.exec(row.external_reference);
-      if (!individual && !org) continue;
+      if (!individual && !org && !company) continue;
       seen.add(row.subscription_id);
       const end = seconds(row.current_period_end);
       if (!(end > now() && end < now() + YEAR_SECONDS) || !["active", "trialing"].includes(row.status)) { report.skipped++; continue; }
@@ -654,9 +750,10 @@ export function createBilling(state) {
       try {
         const ref = await state.update((data) => {
           const existing = data.refs[row.subscription_id];
-          if (existing && (cloud ? existing.account !== cloud[1] || existing.kind !== kind : existing.draft_id !== org[1])) return null;
+          if (existing && (company ? existing.kind !== "nest" || existing.org_id !== company[1]
+            : cloud ? existing.account !== cloud[1] || existing.kind !== kind || orgNest(existing) : existing.draft_id !== org[1])) return null;
           return (data.refs[row.subscription_id] ||= {
-            kind, account: cloud ? cloud[1] : null, draft_id: org ? org[1] : null,
+            kind, account: cloud ? cloud[1] : null, draft_id: org ? org[1] : null, ...(company ? { org_id: company[1] } : {}),
             plan_code: edition_?.code || null, status: "pending", paid_through: null, version: 0, pushed: null,
             ...(kind === "cloud" ? { names: limits.names } : kind === "ent" ? { seats: limits.seats } : {}),
           }) && { ...data.refs[row.subscription_id] };
