@@ -95,6 +95,57 @@ pub(crate) enum Action {
     NestToolRequest,
     /// Approve or reject a Nest's proposed call: a person, never automation.
     NestApprove,
+    /// Marketplace foundations (build plan §4, M0). Each variant exists so the requirement is
+    /// expressed here before the route that needs it lands; the ones with a route today are
+    /// `NestDiscover`, `PublisherApply`, `PublisherManage`, `NestReview` and `StaffRolesManage`.
+    ///
+    /// Use a Nest one operates: chat, files. Approvals stay `NestApprove`.
+    #[cfg_attr(not(test), allow(dead_code))]
+    NestOperate,
+    /// See a marketplace listing. Discovery grants nothing beyond the listing's public metadata.
+    NestDiscover,
+    /// Install a release as a Nest for a buyer account or org.
+    #[cfg_attr(not(test), allow(dead_code))]
+    NestInstall,
+    /// Change an installation's configuration.
+    #[cfg_attr(not(test), allow(dead_code))]
+    NestConfigure,
+    /// Administer an installation: update, roll back, remove.
+    #[cfg_attr(not(test), allow(dead_code))]
+    NestManage,
+    /// Submit a job to a Nest operation (`/v1/nest-jobs`): needs admission and, when the offer is
+    /// paid, a valid payment for this job.
+    #[cfg_attr(not(test), allow(dead_code))]
+    NestInvoke,
+    /// Pay for one marketplace purchase. There is no wallet and no stored balance (owner decision
+    /// 2026-11-09), so this replaces the plan's top-up and spend-mandate actions and is never
+    /// automatic: no mandate exists for automation to consume.
+    #[cfg_attr(not(test), allow(dead_code))]
+    NestMarketplacePurchase,
+    /// Apply to the publisher programme as an account or an org.
+    PublisherApply,
+    /// Read or change one's own publisher profile.
+    PublisherManage,
+    /// Publish a release or listing: a person with step-up.
+    #[cfg_attr(not(test), allow(dead_code))]
+    NestPublish,
+    /// Record a review decision on a release; also what a reviewer reads to get there.
+    NestReview,
+    /// Sign the attestation of an approved release.
+    #[cfg_attr(not(test), allow(dead_code))]
+    NestAttest,
+    /// Quarantine or revoke a live release.
+    #[cfg_attr(not(test), allow(dead_code))]
+    NestQuarantine,
+    /// Prepare a publisher payout batch. The separate preparer/approver rule is design only and is
+    /// not implemented in M0.
+    #[cfg_attr(not(test), allow(dead_code))]
+    PayoutPrepare,
+    /// Approve a publisher payout batch (see `PayoutPrepare`).
+    #[cfg_attr(not(test), allow(dead_code))]
+    PayoutApprove,
+    /// Assign, list or revoke staff roles: the platform owner only.
+    StaffRolesManage,
     /// Take part in a group as one's own mailbox: read, post, leave, own keys (SDS §4.4). Agents
     /// may; a connector acting for the member may not reach E2EE content at all.
     GroupParticipate,
@@ -224,6 +275,48 @@ pub(crate) enum Resource<'a> {
         /// The owner counts at least one of the viewer's mailboxes as known (SDS §13.1).
         viewer_known: bool,
     },
+    /// A marketplace listing, by id. Whether this caller may see it is resolved into
+    /// [`Facts::listing_visible`].
+    NestListing(&'a str),
+    /// An operation offered by a listing, by listing id. Admission is [`Facts::job_admitted`].
+    #[cfg_attr(not(test), allow(dead_code))]
+    NestOperation(&'a str),
+    /// One installed Nest, by id. The owner, org role or live delegation is
+    /// [`Facts::nest_permitted`].
+    #[cfg_attr(not(test), allow(dead_code))]
+    InstalledNest(&'a str),
+    /// A publisher profile, by id. The profile's owner or org role is
+    /// [`Facts::publisher_permitted`].
+    Publisher(&'a str),
+    /// What a staff action is taken on: a release, a publisher's application or a payout batch.
+    /// Only actions whose requirement is `Staff` reach it.
+    StaffSubject(&'a str),
+    /// The platform's staff role table.
+    StaffRoles,
+}
+
+/// A role in `staff_roles`. Which actions each role covers is decided here, not in the routes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StaffRole {
+    Reviewer,
+    Finance,
+}
+
+impl StaffRole {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            StaffRole::Reviewer => "reviewer",
+            StaffRole::Finance => "finance",
+        }
+    }
+
+    pub(crate) fn parse(text: &str) -> Option<Self> {
+        match text {
+            "reviewer" => Some(StaffRole::Reviewer),
+            "finance" => Some(StaffRole::Finance),
+            _ => None,
+        }
+    }
 }
 
 /// The kind of credential an action accepts.
@@ -249,6 +342,9 @@ enum Requirement {
     /// One mailbox's own credential (capability token or device credential), and nothing else:
     /// not the account that owns it.
     Mailbox,
+    /// A person holding the live staff role the action names, signed in recently and strongly.
+    /// Staff is a principal kind of its own: never automation, and never an account by itself.
+    Staff,
 }
 
 impl Action {
@@ -299,6 +395,31 @@ impl Action {
             Action::NestView => Requirement::AccountHolder,
             Action::NestOwn | Action::NestPurchase | Action::NestApprove => Requirement::Human,
             Action::NestToolRequest => Requirement::Mailbox,
+            Action::NestOperate | Action::NestInvoke => Requirement::NotConnector,
+            Action::NestDiscover => Requirement::Anyone,
+            Action::NestInstall
+            | Action::NestConfigure
+            | Action::NestManage
+            | Action::NestMarketplacePurchase
+            | Action::PublisherApply
+            | Action::PublisherManage => Requirement::Human,
+            Action::NestPublish | Action::StaffRolesManage => Requirement::HumanStepUp,
+            Action::NestReview
+            | Action::NestAttest
+            | Action::NestQuarantine
+            | Action::PayoutPrepare
+            | Action::PayoutApprove => Requirement::Staff,
+        }
+    }
+
+    /// The staff role that covers a `Staff` action.
+    fn staff_role(self) -> Option<StaffRole> {
+        match self {
+            Action::NestReview | Action::NestAttest | Action::NestQuarantine => {
+                Some(StaffRole::Reviewer)
+            }
+            Action::PayoutPrepare | Action::PayoutApprove => Some(StaffRole::Finance),
+            _ => None,
         }
     }
 }
@@ -334,6 +455,21 @@ pub(crate) struct Facts {
     /// org owner role or a live `ssh` delegation, with the org's `ssh_allowed` and the agent's own
     /// switch — or, for approvals, the org role that may approve.
     pub shell_permitted: bool,
+    /// The acting person's live staff roles, from `staff_roles`. Empty for everyone else.
+    pub staff_roles: Vec<StaffRole>,
+    /// The acting staff member has a stake in what they are acting on (their own publisher or
+    /// release), as resolved by `store::marketplace`. Refuses regardless of role.
+    pub staff_conflict: bool,
+    /// The acting person is the configured platform owner.
+    pub platform_owner: bool,
+    /// The listing's status and visibility let this caller see it.
+    pub listing_visible: bool,
+    /// The caller owns this publisher profile, or holds the org role that manages it.
+    pub publisher_permitted: bool,
+    /// The caller owns this installed Nest or holds the org role or delegation for the action.
+    pub nest_permitted: bool,
+    /// The job passed admission and any payment it needs is valid for it.
+    pub job_admitted: bool,
 }
 
 /// Why a request was refused. Stable; mapped to an HTTP status and error code.
@@ -345,6 +481,8 @@ pub(crate) enum DenyReason {
     Auth(AuthDenial),
     /// A mandatory-deny hook fired.
     Mandatory(&'static str),
+    /// The action is for staff holding a role this person does not hold.
+    StaffRequired,
     /// The actor holds no grant on this resource.
     NotPermitted,
 }
@@ -353,6 +491,7 @@ impl DenyReason {
     pub(crate) fn code(&self) -> &'static str {
         match self {
             DenyReason::CredentialNotAccepted => "credential_not_accepted",
+            DenyReason::StaffRequired => "staff_required",
             DenyReason::Auth(denial) => denial.code(),
             DenyReason::Mandatory(code) => code,
             DenyReason::NotPermitted => "forbidden",
@@ -394,12 +533,17 @@ fn deny_org_inactive(_: &Actor, _: Action, _: &Resource, f: &Facts) -> Option<&'
     f.org_inactive.then_some("org_inactive")
 }
 
+fn deny_staff_conflict(_: &Actor, _: Action, _: &Resource, f: &Facts) -> Option<&'static str> {
+    f.staff_conflict.then_some("staff_conflict")
+}
+
 /// The hooks every decision runs.
 pub(crate) const MANDATORY_DENIES: &[MandatoryDeny] = &[
     deny_revoked,
     deny_suspended,
     deny_blocked,
     deny_org_inactive,
+    deny_staff_conflict,
 ];
 
 /// Decide with the standard mandatory hooks.
@@ -424,9 +568,10 @@ pub(crate) fn authorize_with(
     match (action.requirement(), actor) {
         (Requirement::OrgKey, Actor::OrgKey { .. }) => {}
         // Re-authenticating cannot turn an org API key into a person (SDS §3.4).
-        (Requirement::Human | Requirement::HumanStepUp, Actor::OrgKey { .. }) => {
-            return Err(DenyReason::Auth(AuthDenial::HumanRequired))
-        }
+        (
+            Requirement::Human | Requirement::HumanStepUp | Requirement::Staff,
+            Actor::OrgKey { .. },
+        ) => return Err(DenyReason::Auth(AuthDenial::HumanRequired)),
         (_, Actor::OrgKey { .. }) | (Requirement::OrgKey, _) => {
             return Err(DenyReason::CredentialNotAccepted)
         }
@@ -466,6 +611,24 @@ pub(crate) fn authorize_with(
             )
             .map_err(DenyReason::Auth)?;
         }
+        (Requirement::Staff, Actor::Principal(p)) => {
+            require_human(p).map_err(DenyReason::Auth)?;
+            // The role before step-up: re-authenticating cannot make someone staff, so a person
+            // without the role is told so rather than sent through a sign-in that cannot help.
+            if !action
+                .staff_role()
+                .is_some_and(|role| facts.staff_roles.contains(&role))
+            {
+                return Err(DenyReason::StaffRequired);
+            }
+            require_step_up(
+                p,
+                facts.step_up.max_age,
+                &facts.step_up.acr_values,
+                facts.now,
+            )
+            .map_err(DenyReason::Auth)?;
+        }
     }
 
     // 2. Mandatory denies.
@@ -477,6 +640,12 @@ pub(crate) fn authorize_with(
 
     // 3. An action-specific grant on this resource; 4. otherwise deny.
     let granted = match (actor, resource) {
+        // These two are bound to their own resources. The general arms below grant on ownership,
+        // and owning an account must never reach a staff action or the staff table.
+        _ if action.staff_role().is_some() => matches!(resource, Resource::StaffSubject(_)),
+        _ if action == Action::StaffRolesManage => {
+            matches!(resource, Resource::StaffRoles) && facts.platform_owner
+        }
         (Actor::Service(_), Resource::Platform) => true,
         // The one public platform action: the invitation code was checked by the caller.
         (Actor::Principal(_) | Actor::Anonymous, Resource::Platform) => {
@@ -557,6 +726,23 @@ pub(crate) fn authorize_with(
                     *viewer_known,
                 )
         }
+        // Discovery is the one marketplace action open without a credential.
+        (Actor::Principal(_) | Actor::Anonymous, Resource::NestListing(_)) => {
+            action == Action::NestDiscover && facts.listing_visible
+        }
+        (Actor::Principal(_), Resource::NestOperation(_)) => {
+            action == Action::NestInvoke && facts.job_admitted
+        }
+        (Actor::Principal(_), Resource::InstalledNest(_)) => {
+            matches!(
+                action,
+                Action::NestOperate | Action::NestConfigure | Action::NestManage
+            ) && facts.nest_permitted
+        }
+        (Actor::Principal(_), Resource::Publisher(_)) => {
+            matches!(action, Action::PublisherManage | Action::NestPublish)
+                && facts.publisher_permitted
+        }
         _ => false,
     };
     if granted {
@@ -630,6 +816,17 @@ mod tests {
             MemberSession {
                 auth_time: Some(NOW - 10),
                 acr: acr.map(str::to_string),
+                ..MemberSession::default()
+            },
+        )
+    }
+
+    fn human_at(account: &str, acr: &str, auth_time: u64) -> Principal {
+        member_principal(
+            account,
+            MemberSession {
+                auth_time: Some(auth_time),
+                acr: Some(acr.to_string()),
                 ..MemberSession::default()
             },
         )
@@ -1451,6 +1648,497 @@ mod tests {
             ),
             Err(DenyReason::CredentialNotAccepted)
         );
+    }
+
+    // ---- marketplace foundations (build plan §4, M0) -------------------------------------------
+
+    const STAFF_ACTIONS: [Action; 5] = [
+        Action::NestReview,
+        Action::NestAttest,
+        Action::NestQuarantine,
+        Action::PayoutPrepare,
+        Action::PayoutApprove,
+    ];
+
+    fn connector(account: &str) -> Principal {
+        Principal::Account(
+            account.into(),
+            AccountCredential::Connector { client: "c".into() },
+        )
+    }
+
+    fn api_key(account: &str) -> Principal {
+        Principal::Account(account.into(), AccountCredential::ApiKey)
+    }
+
+    fn staff(roles: &[StaffRole]) -> Facts {
+        Facts {
+            staff_roles: roles.to_vec(),
+            ..facts()
+        }
+    }
+
+    fn role_for(action: Action) -> StaffRole {
+        action.staff_role().expect("a staff action")
+    }
+
+    /// Every credential that is not a person, for a staff action: refused before any role is read.
+    #[test]
+    fn staff_actions_refuse_every_kind_of_automation() {
+        let subject = Resource::StaffSubject("rel_1");
+        let all_roles = staff(&[StaffRole::Reviewer, StaffRole::Finance]);
+        let mb = mailbox(Some("a1"));
+        let service_account = member_principal(
+            "a1",
+            MemberSession {
+                service_account: true,
+                acr: Some("gold".into()),
+                auth_time: Some(NOW - 10),
+                ..MemberSession::default()
+            },
+        );
+        for action in STAFF_ACTIONS {
+            for p in [&api_key("a1"), &connector("a1"), &mb, &service_account] {
+                assert_eq!(
+                    authorize(&Actor::Principal(p), action, &subject, &all_roles),
+                    Err(DenyReason::Auth(AuthDenial::HumanRequired)),
+                    "{action:?}"
+                );
+            }
+            assert_eq!(
+                authorize(
+                    &Actor::OrgKey {
+                        key_id: "k",
+                        org_id: "o"
+                    },
+                    action,
+                    &subject,
+                    &all_roles
+                ),
+                Err(DenyReason::Auth(AuthDenial::HumanRequired))
+            );
+            for actor in [Actor::Anonymous, Actor::Service("ops")] {
+                assert_eq!(
+                    authorize(&actor, action, &subject, &all_roles),
+                    Err(DenyReason::CredentialNotAccepted)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn staff_actions_need_the_role_then_step_up_and_no_conflict() {
+        let subject = Resource::StaffSubject("rel_1");
+        let strong = human("a1", Some("gold"));
+        let weak = human("a1", Some("1"));
+        for action in STAFF_ACTIONS {
+            let holder = staff(&[role_for(action)]);
+            assert!(
+                authorize(&Actor::Principal(&strong), action, &subject, &holder).is_ok(),
+                "{action:?}"
+            );
+            // Not staff: told so, however strong the sign-in, and step-up is not offered.
+            for p in [&strong, &weak] {
+                assert_eq!(
+                    authorize(&Actor::Principal(p), action, &subject, &facts()),
+                    Err(DenyReason::StaffRequired),
+                    "{action:?}"
+                );
+            }
+            // Staff, without a recent strong sign-in.
+            assert_eq!(
+                authorize(&Actor::Principal(&weak), action, &subject, &holder)
+                    .unwrap_err()
+                    .code(),
+                "step_up_required"
+            );
+            let stale = human_at("a1", "gold", NOW - 601);
+            assert_eq!(
+                authorize(&Actor::Principal(&stale), action, &subject, &holder)
+                    .unwrap_err()
+                    .code(),
+                "step_up_required",
+                "a strong sign-in older than the limit does not count"
+            );
+            // Step-up not configured on the server refuses even a strong session.
+            let unconfigured = Facts {
+                step_up: StepUpPolicy::default(),
+                ..holder.clone()
+            };
+            assert_eq!(
+                authorize(&Actor::Principal(&strong), action, &subject, &unconfigured)
+                    .unwrap_err()
+                    .code(),
+                "step_up_unavailable"
+            );
+            // A conflict and the other mandatory denies beat the role.
+            assert_eq!(
+                authorize(
+                    &Actor::Principal(&strong),
+                    action,
+                    &subject,
+                    &Facts {
+                        staff_conflict: true,
+                        ..holder.clone()
+                    }
+                ),
+                Err(DenyReason::Mandatory("staff_conflict"))
+            );
+            assert_eq!(
+                authorize(
+                    &Actor::Principal(&strong),
+                    action,
+                    &subject,
+                    &Facts {
+                        credential_revoked: true,
+                        ..holder.clone()
+                    }
+                ),
+                Err(DenyReason::Mandatory("credential_revoked"))
+            );
+        }
+    }
+
+    #[test]
+    fn a_staff_role_covers_only_its_own_actions() {
+        let strong = human("a1", Some("gold"));
+        let subject = Resource::StaffSubject("rel_1");
+        let reviewer = staff(&[StaffRole::Reviewer]);
+        let finance = staff(&[StaffRole::Finance]);
+        for action in [
+            Action::NestReview,
+            Action::NestAttest,
+            Action::NestQuarantine,
+        ] {
+            assert!(authorize(&Actor::Principal(&strong), action, &subject, &reviewer).is_ok());
+            assert_eq!(
+                authorize(&Actor::Principal(&strong), action, &subject, &finance),
+                Err(DenyReason::StaffRequired)
+            );
+        }
+        for action in [Action::PayoutPrepare, Action::PayoutApprove] {
+            assert!(authorize(&Actor::Principal(&strong), action, &subject, &finance).is_ok());
+            assert_eq!(
+                authorize(&Actor::Principal(&strong), action, &subject, &reviewer),
+                Err(DenyReason::StaffRequired)
+            );
+        }
+        // A staff action reaches only a staff subject; holding a role opens nothing else.
+        let both = staff(&[StaffRole::Reviewer, StaffRole::Finance]);
+        for resource in [
+            Resource::Account("a1"),
+            Resource::Org("o1"),
+            Resource::Platform,
+            Resource::Publisher("pub_1"),
+            Resource::NestListing("lst_1"),
+            Resource::StaffRoles,
+        ] {
+            assert_eq!(
+                authorize(
+                    &Actor::Principal(&strong),
+                    Action::NestReview,
+                    &resource,
+                    &both
+                ),
+                Err(DenyReason::NotPermitted),
+                "{resource:?}"
+            );
+        }
+        // A non-staff action does not reach a staff subject, even with every grant fact set.
+        let everything = Facts {
+            platform_owner: true,
+            publisher_permitted: true,
+            nest_permitted: true,
+            listing_visible: true,
+            job_admitted: true,
+            ..both.clone()
+        };
+        for action in [
+            Action::PublisherManage,
+            Action::NestPublish,
+            Action::NestManage,
+            Action::StaffRolesManage,
+        ] {
+            assert_eq!(
+                authorize(&Actor::Principal(&strong), action, &subject, &everything),
+                Err(DenyReason::NotPermitted),
+                "{action:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn only_the_platform_owner_with_step_up_manages_staff_roles() {
+        let strong = human("owner", Some("gold"));
+        let weak = human("owner", None);
+        let roles = Resource::StaffRoles;
+        let owner = Facts {
+            platform_owner: true,
+            ..facts()
+        };
+        assert!(authorize(
+            &Actor::Principal(&strong),
+            Action::StaffRolesManage,
+            &roles,
+            &owner
+        )
+        .is_ok());
+        assert_eq!(
+            authorize(
+                &Actor::Principal(&weak),
+                Action::StaffRolesManage,
+                &roles,
+                &owner
+            )
+            .unwrap_err()
+            .code(),
+            "step_up_required"
+        );
+        // A stranger, and a staff member who is not the owner.
+        for f in [facts(), staff(&[StaffRole::Reviewer, StaffRole::Finance])] {
+            assert_eq!(
+                authorize(
+                    &Actor::Principal(&strong),
+                    Action::StaffRolesManage,
+                    &roles,
+                    &f
+                ),
+                Err(DenyReason::NotPermitted)
+            );
+        }
+        for p in [
+            &api_key("owner"),
+            &connector("owner"),
+            &mailbox(Some("owner")),
+        ] {
+            assert_eq!(
+                authorize(
+                    &Actor::Principal(p),
+                    Action::StaffRolesManage,
+                    &roles,
+                    &owner
+                )
+                .unwrap_err()
+                .code(),
+                "human_required"
+            );
+        }
+        assert_eq!(
+            authorize(
+                &Actor::Service("ops"),
+                Action::StaffRolesManage,
+                &roles,
+                &owner
+            ),
+            Err(DenyReason::CredentialNotAccepted)
+        );
+    }
+
+    /// Who may discover: anyone for a visible listing, nobody for a hidden one, no automation
+    /// identity that is not a member credential.
+    #[test]
+    fn discovery_follows_the_listing_and_grants_nothing_else() {
+        let listing = Resource::NestListing("lst_1");
+        let visible = Facts {
+            listing_visible: true,
+            ..facts()
+        };
+        let me = human("a1", None);
+        let (key, conn, mb) = (api_key("a1"), connector("a1"), mailbox(Some("a1")));
+        for actor in [
+            Actor::Anonymous,
+            Actor::Principal(&me),
+            Actor::Principal(&key),
+            Actor::Principal(&conn),
+            Actor::Principal(&mb),
+        ] {
+            assert!(authorize(&actor, Action::NestDiscover, &listing, &visible).is_ok());
+            assert_eq!(
+                authorize(&actor, Action::NestDiscover, &listing, &facts()),
+                Err(DenyReason::NotPermitted)
+            );
+        }
+        for actor in [
+            Actor::Service("ops"),
+            Actor::OrgKey {
+                key_id: "k",
+                org_id: "o",
+            },
+        ] {
+            assert_eq!(
+                authorize(&actor, Action::NestDiscover, &listing, &visible),
+                Err(DenyReason::CredentialNotAccepted)
+            );
+        }
+        // A visible listing buys nothing: buying and installing are other decisions.
+        for action in [Action::NestInstall, Action::NestMarketplacePurchase] {
+            assert_eq!(
+                authorize(&Actor::Principal(&me), action, &listing, &visible),
+                Err(DenyReason::NotPermitted)
+            );
+        }
+    }
+
+    #[test]
+    fn buyer_actions_are_for_a_person_on_their_own_account_or_org() {
+        let me = human("a1", None);
+        let own = Resource::Account("a1");
+        let (key, conn, mb) = (api_key("a1"), connector("a1"), mailbox(Some("a1")));
+        // Paying is per purchase and a person's: there is no mandate for automation to consume.
+        for action in [
+            Action::NestMarketplacePurchase,
+            Action::NestInstall,
+            Action::PublisherApply,
+        ] {
+            assert!(authorize(&Actor::Principal(&me), action, &own, &facts()).is_ok());
+            for no in [&key, &conn, &mb] {
+                assert_eq!(
+                    authorize(&Actor::Principal(no), action, &own, &facts())
+                        .unwrap_err()
+                        .code(),
+                    "human_required",
+                    "{action:?}"
+                );
+            }
+            // A stranger's account, an org without the role, and the org with it.
+            assert_eq!(
+                authorize(
+                    &Actor::Principal(&me),
+                    action,
+                    &Resource::Account("a2"),
+                    &facts()
+                ),
+                Err(DenyReason::NotPermitted)
+            );
+            assert_eq!(
+                authorize(
+                    &Actor::Principal(&me),
+                    action,
+                    &Resource::Org("o1"),
+                    &facts()
+                ),
+                Err(DenyReason::NotPermitted)
+            );
+            let role = Facts {
+                org_permitted: true,
+                ..facts()
+            };
+            assert!(authorize(&Actor::Principal(&me), action, &Resource::Org("o1"), &role).is_ok());
+        }
+        // Configure and manage: the installed Nest's own grant, a person only.
+        let nest = Resource::InstalledNest("nst_1");
+        let held = Facts {
+            nest_permitted: true,
+            ..facts()
+        };
+        for action in [Action::NestConfigure, Action::NestManage] {
+            assert!(authorize(&Actor::Principal(&me), action, &nest, &held).is_ok());
+            assert_eq!(
+                authorize(&Actor::Principal(&me), action, &nest, &facts()),
+                Err(DenyReason::NotPermitted)
+            );
+            for no in [&key, &conn, &mb] {
+                assert!(matches!(
+                    authorize(&Actor::Principal(no), action, &nest, &held),
+                    Err(DenyReason::Auth(AuthDenial::HumanRequired))
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn operating_and_invoking_exclude_connectors_and_need_their_grant() {
+        let me = human("a1", None);
+        let (key, conn, mb) = (api_key("a1"), connector("a1"), mailbox(Some("a1")));
+        let nest = Resource::InstalledNest("nst_1");
+        let op = Resource::NestOperation("lst_1");
+        let held = Facts {
+            nest_permitted: true,
+            ..facts()
+        };
+        let admitted = Facts {
+            job_admitted: true,
+            ..facts()
+        };
+        for ok in [&me, &key, &mb] {
+            assert!(authorize(&Actor::Principal(ok), Action::NestOperate, &nest, &held).is_ok());
+            assert!(authorize(&Actor::Principal(ok), Action::NestInvoke, &op, &admitted).is_ok());
+            assert_eq!(
+                authorize(&Actor::Principal(ok), Action::NestOperate, &nest, &facts()),
+                Err(DenyReason::NotPermitted)
+            );
+            // Admission is what grants a job; holding a Nest does not stand in for it.
+            assert_eq!(
+                authorize(&Actor::Principal(ok), Action::NestInvoke, &op, &held),
+                Err(DenyReason::NotPermitted)
+            );
+        }
+        assert_eq!(
+            authorize(&Actor::Principal(&conn), Action::NestOperate, &nest, &held),
+            Err(DenyReason::CredentialNotAccepted)
+        );
+        assert_eq!(
+            authorize(&Actor::Principal(&conn), Action::NestInvoke, &op, &admitted),
+            Err(DenyReason::CredentialNotAccepted)
+        );
+        for actor in [Actor::Anonymous, Actor::Service("ops")] {
+            assert_eq!(
+                authorize(&actor, Action::NestInvoke, &op, &admitted),
+                Err(DenyReason::CredentialNotAccepted)
+            );
+        }
+    }
+
+    #[test]
+    fn publisher_actions_need_the_profile_grant_and_publishing_needs_step_up() {
+        let strong = human("a1", Some("gold"));
+        let weak = human("a1", None);
+        let stranger = human("a2", Some("gold"));
+        let (key, conn, mb) = (api_key("a1"), connector("a1"), mailbox(Some("a1")));
+        let publisher = Resource::Publisher("pub_1");
+        let granted = Facts {
+            publisher_permitted: true,
+            ..facts()
+        };
+        assert!(authorize(
+            &Actor::Principal(&weak),
+            Action::PublisherManage,
+            &publisher,
+            &granted
+        )
+        .is_ok());
+        assert!(authorize(
+            &Actor::Principal(&strong),
+            Action::NestPublish,
+            &publisher,
+            &granted
+        )
+        .is_ok());
+        assert_eq!(
+            authorize(
+                &Actor::Principal(&weak),
+                Action::NestPublish,
+                &publisher,
+                &granted
+            )
+            .unwrap_err()
+            .code(),
+            "step_up_required"
+        );
+        for action in [Action::PublisherManage, Action::NestPublish] {
+            assert_eq!(
+                authorize(&Actor::Principal(&stranger), action, &publisher, &facts()),
+                Err(DenyReason::NotPermitted)
+            );
+            for no in [&key, &conn, &mb] {
+                assert_eq!(
+                    authorize(&Actor::Principal(no), action, &publisher, &granted)
+                        .unwrap_err()
+                        .code(),
+                    "human_required"
+                );
+            }
+        }
     }
 
     #[test]

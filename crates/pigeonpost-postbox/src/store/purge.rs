@@ -105,6 +105,44 @@ pub(crate) const TABLES: &[(&str, Rule)] = &[
     // Approval cards carry message text a Nest proposed for the owner.
     ("nest_approvals", Block(A, "account_id = ?1")),
     ("apple_plan_names", Block(A, "account_id = ?1")),
+    // A person who holds a live staff role is not an empty account; a revoked row stays as the
+    // record of who held the role.
+    (
+        "staff_roles",
+        Block(A, "account_id = ?1 AND revoked_at IS NULL"),
+    ),
+    // A publisher profile is an obligation to buyers and reviewers, whoever holds it now.
+    (
+        "publisher_profiles",
+        Block(
+            A,
+            "(owner_kind = 'account' AND owner_id = ?1) OR applied_by = ?1",
+        ),
+    ),
+    (
+        "nest_templates",
+        Keep("Catalog record of a publisher; the publisher profile blocks the purge"),
+    ),
+    (
+        "nest_releases",
+        Keep("Immutable catalog record of what was reviewed; names its author by account id"),
+    ),
+    (
+        "nest_listings",
+        Keep("Catalog record of a publisher; the publisher profile blocks the purge"),
+    ),
+    (
+        "review_cases",
+        Keep("Review evidence for a release; append-only history"),
+    ),
+    (
+        "review_decisions",
+        Keep("Append-only review evidence; the reviewer is staff, whose role row blocks the purge"),
+    ),
+    (
+        "release_attestations",
+        Keep("Append-only signed evidence for a release"),
+    ),
     ("plan_names", Block(A, "account_id = ?1")),
     ("test_handle_claims", Block(A, "account_id = ?1")),
     (

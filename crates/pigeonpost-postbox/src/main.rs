@@ -93,6 +93,9 @@ mod inbox_paging_tests;
 mod internal_api;
 mod limits;
 mod mail_layout;
+mod marketplace;
+#[cfg(test)]
+mod marketplace_tests;
 mod mcp;
 mod meetings;
 #[cfg(test)]
@@ -219,6 +222,9 @@ struct AppState {
     auditor: Arc<audit::Auditor>,
     /// Which `acr` values count as a strong sign-in, and for how long (SDS §3.4).
     step_up: Arc<principal::StepUpPolicy>,
+    /// The account allowed to assign staff roles (`POSTBOX_PLATFORM_OWNER_ACCOUNT`). `None` means
+    /// nobody can.
+    platform_owner: Option<Arc<str>>,
     /// Per-service bearer tokens for the internal API.
     service_tokens: Arc<internal_api::ServiceTokens>,
     /// Per-account wakeups for open `/v1/events` streams.
@@ -661,6 +667,11 @@ fn build_state(cfg: &Config, master_key: [u8; 32]) -> Result<AppState, store::St
         public_url: cfg.public_url.trim_end_matches('/').to_string(),
         auditor: Arc::new(audit::Auditor::new(audit_ip_key)),
         step_up: Arc::new(principal::StepUpPolicy::from_env()),
+        platform_owner: std::env::var("POSTBOX_PLATFORM_OWNER_ACCOUNT")
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .map(Arc::from),
         service_tokens: Arc::new(internal_api::ServiceTokens::from_env()),
         event_hub: Arc::new(account_events::EventHub::from_env()),
         avatar_blobs: avatar_blobs.map(Arc::new),
@@ -1038,6 +1049,8 @@ fn build_router(state: AppState) -> Router {
         .merge(nest_approvals::router())
         .merge(nest_manage::router())
         .merge(nest_org::router())
+        // Marketplace foundations (build plan M0), behind the `marketplace` flag.
+        .merge(marketplace::router())
         // Phase 3B: calendar and scheduled meetings (SDS §14B.5, docs/calendar.md).
         .route(
             "/v1/calendars",
@@ -7344,6 +7357,7 @@ mod tests {
             github: None,
             auditor: Arc::new(audit::Auditor::new([0u8; 32])),
             step_up: Arc::new(principal::StepUpPolicy::default()),
+            platform_owner: None,
             service_tokens: Arc::new(internal_api::ServiceTokens::default()),
             event_hub: Arc::new(account_events::EventHub::default()),
             avatar_blobs: None,
@@ -10176,6 +10190,7 @@ mod tests {
             github: None,
             auditor: Arc::new(audit::Auditor::new([0u8; 32])),
             step_up: Arc::new(principal::StepUpPolicy::default()),
+            platform_owner: None,
             service_tokens: Arc::new(internal_api::ServiceTokens::default()),
             event_hub: Arc::new(account_events::EventHub::default()),
             avatar_blobs: None,

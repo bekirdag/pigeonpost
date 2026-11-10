@@ -1,8 +1,9 @@
 # Nests marketplace core contracts (proposed)
 
-**Status:** design contracts for the Nests marketplace build plan. Nothing here is implemented or
-deployed. The routes would sit on the postbox member API (`/v1`) behind a `nests_marketplace`
-feature flag that does not exist yet.
+**Status:** design contracts for the Nests marketplace build plan. Operations marked
+`x-pigeonpost-status: implemented` are served by the postbox (`crates/pigeonpost-postbox/src/marketplace.rs`)
+behind the per-account `marketplace` flag, off by default, and none of them is deployed. The other
+operations are proposed only. See "Marketplace M0" below.
 
 These files are the aligned version of the core contracts in the owner's external marketplace
 expansion (v5, 2026-11-03). v5 was written without full knowledge of the current system; this
@@ -140,8 +141,43 @@ After editing the YAML:
    `#/components/schemas/` to `#/$defs/` and adding `$schema` and `$id`;
 3. validate: `python .github/scripts/openapi/check_openapi.py docs/nests/contracts/pigeonpost-nests.v1.yaml`.
 
-The CI `openapi` job checks only the two production specs today. Add this file to its argument list
-when implementation starts.
+The CI `openapi` job validates this file along with the two production specs. A postbox test
+(`marketplace_tests::the_routes_and_the_contract_match`) fails when a route in `marketplace.rs` and
+an operation marked implemented stop matching, or when an operation names a policy action its
+handlers do not use.
+
+## Marketplace M0: what is built and how it departs from the plan
+
+All routes are behind the per-account `marketplace` flag. The flag is off by default. When off, every route returns 404 feature_disabled. No marketplace code is deployed.
+
+### Routes and Policies
+
+| Route | Policy Action | Who Can Access |
+| :--- | :--- | :--- |
+| GET /v1/staff/roles<br>POST /v1/staff/roles<br>DELETE /v1/staff/roles/{role} | StaffRolesManage | Platform owner only. A person with step-up. Owner is set in env `POSTBOX_PLATFORM_OWNER_ACCOUNT`. If unset, nobody has access. |
+| POST /v1/publisher-applications | PublisherApply | A person for their account, or an org owner/admin for the org. |
+| GET /v1/publisher-applications/{application} | PublisherManage | The applicant account, or org owner/admin. Others get 404. |
+| GET /v1/staff/publisher-applications/{application} | NestReview | A person with a live reviewer role and step-up. Must have no stake in the publisher. Returns 403 staff_conflict if they have a stake. Returns 403 staff_required if not staff. |
+| GET /v1/marketplace/listings/{listing} | NestDiscover | Anyone, for published public or unlisted listings. The publisher for its own listings. Others get 404. |
+
+### New Policy Actions and Requirements
+
+New actions: NestOperate, NestDiscover, NestInstall, NestConfigure, NestManage, NestInvoke, NestMarketplacePurchase, PublisherApply, PublisherManage, NestPublish, NestReview, NestAttest, NestQuarantine, PayoutPrepare, PayoutApprove, StaffRolesManage.
+
+New requirement: `Requirement::Staff`. This requires a person holding the live staff role named by the action (reviewer or finance) and step-up authentication.
+
+### Deviations from the Build Plan
+
+Owner decisions from 2026-11-09. These are not to be reopened.
+
+1. **Host isolation**: Uses nests-1 only. No KVM, no Firecracker. Marketplace code runs under gVisor as a separate pool behind the Sandbox trait. One sandbox per buyer context. No shared mounts between contexts. Network access is limited to the broker. The plan (R-51, R-66, section 9) called for Firecracker on a KVM host. gVisor is a weaker boundary, as stated in phase-a-plan.md.
+2. **Payments**: No wallet or stored credit balance. Per-purchase payment is used instead. CreditsTopUp, CreateSpendMandate, RevokeSpendMandate, ConsumeSpendMandate, and Requirement::MandateHolder are not added. NestMarketplacePurchase (for a person) replaces them. The proposed /v1/nest-payment-authorizations operation still describes wallets and mandates but is not implemented; it will be reworked with payments in M3.
+3. **Reviewer roles**: The owner is the only reviewer. Staff remains a principal kind, but review does not require two named people. The separate preparer/approver rule for payouts stays in the design but is not in M0 code.
+4. **Seller of record**: Piyote Bilişim Ltd. Commission, reserve, and payout values never appear in tracked files.
+5. **Infrastructure**: The nestd ledger stays on SQLite instead of the plan's PostgreSQL. OpenBao and SeaweedFS are skipped for now (one host).
+6. **Models**: Self-hosted only. No third-party model route is added for marketplace work.
+7. **Flag name**: Uses `marketplace` per account, instead of this README's earlier `nests_marketplace`.
+8. **Database schema**: The `nests` table does not have an owner_kind column. Org-owned Nests are already identified through orgs.internal_account_id, so the column would duplicate a fact that can drift. New tables that can belong to a person or an org carry owner_kind and owner_id.
 
 ## Validation (2026-11-03)
 

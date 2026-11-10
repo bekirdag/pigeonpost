@@ -54,6 +54,30 @@ table inet nests {
 	}
 }
 
+# The marketplace pool (build plan M0): publisher code on its own bridge nestsmp0
+# (10.69.0.0/24), one sandbox per buyer context. Its only destination is the broker on
+# 10.67.255.1:8788. Unlike a first-party Nest it has no route to the postbox at all, so there is
+# no postbox set here; the pool gets its work through the broker. Inert until nestsmp0 exists.
+table inet nests_marketplace
+delete table inet nests_marketplace
+
+table inet nests_marketplace {
+	chain input {
+		type filter hook input priority -10; policy accept;
+		iifname != "nestsmp0" return
+		meta nfproto ipv6 counter drop
+		ct state established,related return
+		ip daddr 10.67.255.1 tcp dport 8788 ct state new return
+		counter drop comment "marketplace nest -> host: only the model broker"
+	}
+
+	chain forward {
+		type filter hook forward priority -10; policy accept;
+		iifname "nestsmp0" counter drop comment "marketplace nest egress: nothing forwarded"
+		oifname "nestsmp0" counter drop comment "nothing initiates into a marketplace nest"
+	}
+}
+
 # The backup tunnel to raijin (wg-backup, docs/nests/backups.md): this host may open exactly one
 # kind of connection over it — SSH to the borg target 10.68.0.2:2222 — and the target may open
 # nothing towards this host.
@@ -92,5 +116,6 @@ table bridge nests_l2 {
 	chain forward {
 		type filter hook forward priority -10; policy accept;
 		ibrname "nests0" counter drop comment "no nest-to-nest traffic"
+		ibrname "nestsmp0" counter drop comment "no traffic between buyer contexts"
 	}
 }

@@ -125,6 +125,10 @@ pub(crate) const KNOWN_FEATURES: &[(&str, &str)] = &[
         "Nests: hosted agents on the worker host, /internal/v1/nests and /v1/nests/enroll (Phase A, no sales)",
     ),
     (
+        MARKETPLACE,
+        "Nests marketplace foundations: staff roles, publisher applications and listing reads (M0, no sales)",
+    ),
+    (
         DISPLAY_NAMES,
         "Self-set display names per mailbox (/v1/profile/name, /v1/profiles, profile.name events)",
     ),
@@ -189,6 +193,8 @@ pub(crate) const ORG_API: &str = "org_api";
 pub(crate) const AGENT_SSH: &str = "agent_ssh";
 /// Hosted agents (Nests Phase A, docs/nests/phase-a-plan.md). Off unless a row turns it on.
 pub(crate) const NESTS: &str = "nests";
+/// The Nests marketplace (build plan M0 onward). Off unless a row turns it on.
+pub(crate) const MARKETPLACE: &str = "marketplace";
 
 /// Typed event names the account stream may emit when `account_events` is on.
 pub(crate) const EVENT_TYPES: &[&str] = &[

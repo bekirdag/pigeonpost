@@ -30,6 +30,7 @@ mod groups;
 mod lifecycle;
 mod limits;
 mod listing;
+pub(crate) mod marketplace;
 pub(crate) mod meetings;
 mod msgactions;
 pub(crate) mod nest_funding;
@@ -1010,6 +1011,8 @@ impl Store {
         // Nests Phase B4: file metadata (the bytes live on the Nest's volume).
         conn.execute_batch(crate::nest_files::SCHEMA)?;
         conn.execute_batch(crate::nest_approvals::SCHEMA)?;
+        // Marketplace foundations (M0): staff roles, publishers and the catalog.
+        conn.execute_batch(marketplace::SCHEMA)?;
         for stmt in MIGRATIONS
             .iter()
             .chain(filtering::MIGRATIONS)
