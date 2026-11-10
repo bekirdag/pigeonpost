@@ -121,7 +121,7 @@ pub enum PostboxSend {
     Refused,
 }
 
-/// Whether a notification also goes out by email: always for `Postbox*` alerts (a postbox outage
+/// Whether a notification also goes out through Postmark: always for `Postbox*` alerts (a postbox outage
 /// would swallow them, and a later recovery would deliver them late), and whenever the postbox
 /// could not be reached.
 pub fn needs_email(body: &serde_json::Value, postbox: PostboxSend) -> bool {
@@ -139,25 +139,25 @@ pub fn needs_email(body: &serde_json::Value, postbox: PostboxSend) -> bool {
 pub struct Relay {
     cfg: crate::config::AlertsConfig,
     token: String,
-    email_token: Option<String>,
+    postmark_token: Option<String>,
     client: reqwest::Client,
 }
 
 impl Relay {
-    /// Read the alerts mailbox token and, when `[alerts.email]` is set, the Postmark token.
+    /// Read the alerts mailbox token and, when `[alerts.postmark]` is set, the Postmark token.
     pub fn load(cfg: crate::config::AlertsConfig) -> Result<Self, String> {
         let token = crate::config::read_secret_file(&cfg.token_file)?;
-        let email_token = match &cfg.email {
+        let postmark_token = match &cfg.postmark {
             Some(e) => Some(crate::config::read_secret_file(&e.token_file)?),
             None => None,
         };
-        Self::with_tokens(cfg, token, email_token)
+        Self::with_tokens(cfg, token, postmark_token)
     }
 
     pub fn with_tokens(
         cfg: crate::config::AlertsConfig,
         token: String,
-        email_token: Option<String>,
+        postmark_token: Option<String>,
     ) -> Result<Self, String> {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
@@ -166,7 +166,7 @@ impl Relay {
         Ok(Relay {
             cfg,
             token,
-            email_token,
+            postmark_token,
             client,
         })
     }
@@ -203,9 +203,9 @@ impl Relay {
         }
     }
 
-    /// Send one email through Postmark. `false` when not configured or not accepted.
+    /// Send one message through Postmark. `false` when not configured or not accepted.
     async fn send_email(&self, body: &serde_json::Value, text: &str) -> bool {
-        let (Some(e), Some(token)) = (&self.cfg.email, &self.email_token) else {
+        let (Some(e), Some(token)) = (&self.cfg.postmark, &self.postmark_token) else {
             return false;
         };
         let mut names: Vec<&str> = body["alerts"]
@@ -244,14 +244,14 @@ impl Relay {
         match r {
             Ok(r) if r.status().is_success() => true,
             Ok(r) => {
-                tracing::warn!(status = %r.status(), "alert relay: email fallback refused");
+                tracing::warn!(status = %r.status(), "alert relay: Postmark fallback refused");
                 false
             }
             Err(e) => {
                 tracing::warn!(
                     timeout = e.is_timeout(),
                     connect = e.is_connect(),
-                    "alert relay: email fallback unreachable"
+                    "alert relay: Postmark fallback unreachable"
                 );
                 false
             }
@@ -276,7 +276,7 @@ impl Relay {
 }
 
 /// `pigeonpost-nestd alert-relay`: receive Alertmanager's webhook on loopback, send it on as a
-/// Pigeonpost message from the alerts mailbox, with an optional email fallback.
+/// Pigeonpost message from the alerts mailbox, with an optional Postmark fallback.
 pub async fn relay(cfg: crate::config::AlertsConfig) -> Result<(), String> {
     use axum::{extract::State, http::StatusCode, routing::post, Json, Router};
     let bind = cfg.bind.clone();
@@ -312,7 +312,7 @@ mod tests {
         assert!(alert_text(&serde_json::json!({"alerts":[]})).is_none());
     }
 
-    use crate::config::{AlertsConfig, EmailFallbackConfig};
+    use crate::config::{AlertsConfig, PostmarkFallbackConfig};
     use axum::http::{HeaderMap, StatusCode};
     use std::sync::{Arc, Mutex};
 
@@ -339,8 +339,8 @@ mod tests {
         (format!("http://{}", addr), recorded)
     }
 
-    fn cfg(postbox_url: String, email_url: Option<String>) -> AlertsConfig {
-        let email = email_url.map(|url| EmailFallbackConfig {
+    fn cfg(postbox_url: String, postmark_url: Option<String>) -> AlertsConfig {
+        let postmark = postmark_url.map(|url| PostmarkFallbackConfig {
             token_file: std::path::PathBuf::from("unused"),
             from: "alerts@example.test".to_string(),
             to: "ops@example.test".to_string(),
@@ -353,7 +353,7 @@ mod tests {
             postbox_url,
             token_file: std::path::PathBuf::from("unused"),
             to: "/bekir".to_string(),
-            email,
+            postmark,
         }
     }
 
@@ -380,10 +380,10 @@ mod tests {
 
     #[tokio::test]
     async fn relay_falls_back_to_email_when_the_postbox_fails() {
-        // Case 1: postbox fails, email succeeds for NestsLocked
+        // Case 1: postbox fails, Postmark succeeds for NestsLocked
         let (postbox_url, _) = mock(503).await;
-        let (email_url, email_rec) = mock(200).await;
-        let config = cfg(postbox_url, Some(email_url));
+        let (postmark_url, email_rec) = mock(200).await;
+        let config = cfg(postbox_url, Some(postmark_url));
         let relay = Relay::with_tokens(
             config,
             "pbx-token".to_string(),
@@ -412,7 +412,7 @@ mod tests {
                 .contains("NestsLocked"));
         }
 
-        // Case 2: postbox succeeds, no email for NestsLocked; email for PostboxPublicDown
+        // Case 2: postbox succeeds, no Postmark message for NestsLocked; Postmark message for PostboxPublicDown
         let (postbox_url2, _) = mock(200).await;
         let (email_url2, email_rec2) = mock(200).await;
         let config2 = cfg(postbox_url2, Some(email_url2));
@@ -437,7 +437,7 @@ mod tests {
             assert_eq!(recs.len(), 1);
         }
 
-        // Case 3: postbox unreachable, email fails -> BAD_GATEWAY
+        // Case 3: postbox unreachable, Postmark fails -> BAD_GATEWAY
         let (email_url3, _) = mock(500).await;
         let config3 = cfg("http://127.0.0.1:9".to_string(), Some(email_url3));
         let relay3 = Relay::with_tokens(
@@ -450,10 +450,10 @@ mod tests {
         let res_unreach = relay3.deliver(&body("NestsLocked")).await;
         assert_eq!(res_unreach, StatusCode::BAD_GATEWAY);
 
-        // Case 4: postbox fails, no email configured -> BAD_GATEWAY
+        // Case 4: postbox fails, no Postmark fallback configured -> BAD_GATEWAY
         let (postbox_url4, _) = mock(503).await;
         let mut config4 = cfg(postbox_url4, None);
-        config4.email = None;
+        config4.postmark = None;
         let relay4 = Relay::with_tokens(config4, "pbx-token".to_string(), None).unwrap();
 
         let res_no_email = relay4.deliver(&body("NestsLocked")).await;

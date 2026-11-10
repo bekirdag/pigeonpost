@@ -30,22 +30,22 @@ pub struct AlertsConfig {
     pub token_file: PathBuf,
     /// The operator's Pigeonpost address.
     pub to: String,
-    /// Optional email fallback (Postmark). Used when the postbox send fails (connection error,
+    /// Optional Postmark fallback (Postmark). Used when the postbox send fails (connection error,
     /// timeout, 5xx) and always for alerts named `Postbox*`, which a postbox outage would
     /// otherwise swallow.
     #[serde(default)]
-    pub email: Option<EmailFallbackConfig>,
+    pub postmark: Option<PostmarkFallbackConfig>,
 }
 
-/// `[alerts.email]`: Postmark's HTTP API, one email per undeliverable (or postbox) notification.
+/// `[alerts.postmark]`: Postmark's HTTP API, one Postmark message per undeliverable (or postbox) notification.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct EmailFallbackConfig {
+pub struct PostmarkFallbackConfig {
     /// File holding the Postmark server token (sent as `X-Postmark-Server-Token`; never logged).
     pub token_file: PathBuf,
     /// A sender signature verified in Postmark.
     pub from: String,
-    /// The operator's email address.
+    /// The operator's address for the Postmark fallback.
     pub to: String,
     #[serde(default = "default_message_stream")]
     pub message_stream: String,
@@ -374,10 +374,10 @@ mod tests {
             "../../../deploy/nests/host/nestd.toml.example"
         ))
         .unwrap();
-        let e = c.alerts.unwrap().email.unwrap();
+        let e = c.alerts.unwrap().postmark.unwrap();
         assert_eq!(e.message_stream, "outbound");
         assert_eq!(e.api_url, "https://api.postmarkapp.com/email");
-        let minimal: EmailFallbackConfig =
+        let minimal: PostmarkFallbackConfig =
             toml::from_str("token_file = \"/t\"\nfrom = \"a@x\"\nto = \"b@x\"").unwrap();
         assert_eq!(minimal.message_stream, "outbound");
     }
