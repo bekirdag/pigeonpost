@@ -12,12 +12,18 @@
 //!    sources, with no capabilities, base images pinned by digest and nothing cached. Nothing in
 //!    this step can reach a network.
 //!
+//! Node and Python releases follow the same two steps with their own lockfile and fetch tool
+//! ([`crate::ecosystem`]): `npm ci --ignore-scripts` into a vendored `node_modules/`, or
+//! `pip download --require-hashes` into a `wheelhouse/` the image installs from offline.
+//!
 //! What comes out is a [`BuildRecord`]: the digests of the source tree, the vendored sources, the
 //! manifest, the SBOM (CycloneDX 1.5 JSON, written here from `Cargo.lock` and the file list, so it
 //! is deterministic and needs no network) and the image, and one **release digest** over all of
 //! them. Staff attest that digest; nothing else identifies a release.
 
+use crate::ecosystem::{self, Ecosystem};
 use crate::sandbox::Podman;
+use pigeonpost_core::nest_package;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -69,68 +75,37 @@ pub struct Manifest {
     pub operations: Vec<Operation>,
     /// Package name → the SPDX expression its own manifest declares.
     pub licences: BTreeMap<String, String>,
+    /// The installation configuration schema (marketplace M2), a JSON Schema subset checked by
+    /// `pigeonpost_core::nest_package`. Absent: the release takes no configuration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_schema: Option<Value>,
 }
 
 impl Manifest {
+    /// Parse `nest-release.toml` and hold it to the shared package rules
+    /// (`pigeonpost_core::nest_package::validate_manifest`). Only malformed manifests are refused
+    /// here; what the pool does not offer (capabilities, syscalls, egress, external writes) is the
+    /// deterministic scan's to block, with evidence.
     pub fn parse(text: &str) -> Result<Manifest, String> {
-        let m: Manifest = toml::from_str(text).map_err(|e| format!("{MANIFEST_FILE}: {e}"))?;
-        let slug_ok = |s: &str| {
-            !s.is_empty()
-                && s.len() <= 64
-                && s.bytes()
-                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-        };
-        if !slug_ok(&m.name) {
-            return Err("name: 1-64 of a-z 0-9 -".into());
+        let raw: toml::Value = toml::from_str(text).map_err(|e| format!("{MANIFEST_FILE}: {e}"))?;
+        let json = serde_json::to_value(&raw).map_err(|e| format!("{MANIFEST_FILE}: {e}"))?;
+        let errors = nest_package::errors(&nest_package::validate_manifest(&json));
+        if !errors.is_empty() {
+            let lines: Vec<String> = errors.iter().map(|i| i.to_string()).collect();
+            return Err(format!("{MANIFEST_FILE}: {}", lines.join("; ")));
         }
-        if !semver_ok(&m.version) {
-            return Err("version: major.minor.patch".into());
-        }
-        if m.operations.is_empty() {
-            return Err("a release offers at least one operation".into());
-        }
-        for op in &m.operations {
-            if !operation_name_ok(&op.name) || !operation_version_ok(&op.version) {
-                return Err(format!("operation {:?} is malformed", op.name));
-            }
-            if op.fields.is_empty() || op.fields.iter().any(|f| f.max_chars == 0) {
-                return Err(format!("operation {:?} needs bounded fields", op.name));
-            }
-        }
-        if !m.listing_address.starts_with('/') || m.listing_address.len() > 128 {
-            return Err("listing_address: an absolute address".into());
-        }
-        Ok(m)
+        toml::from_str(text).map_err(|e| format!("{MANIFEST_FILE}: {e}"))
     }
-}
-
-fn semver_ok(v: &str) -> bool {
-    let parts: Vec<&str> = v.split('.').collect();
-    parts.len() == 3
-        && parts
-            .iter()
-            .all(|p| !p.is_empty() && p.len() <= 9 && p.bytes().all(|b| b.is_ascii_digit()))
 }
 
 /// The contract's `operation` pattern: lower-case dotted words.
 pub fn operation_name_ok(name: &str) -> bool {
-    !name.is_empty()
-        && name.len() <= 80
-        && name.split('.').all(|w| {
-            w.bytes().next().is_some_and(|b| b.is_ascii_lowercase())
-                && w.bytes()
-                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
-        })
+    nest_package::operation_name_ok(name)
 }
 
 /// The contract's `operation_version` pattern: `major.minor[.patch]`.
 pub fn operation_version_ok(v: &str) -> bool {
-    let parts: Vec<&str> = v.split('.').collect();
-    (2..=3).contains(&parts.len())
-        && v.len() <= 32
-        && parts
-            .iter()
-            .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+    nest_package::operation_version_ok(v)
 }
 
 /// One regular file of a tree, by its path relative to the root (with `/` separators).
@@ -307,6 +282,19 @@ pub fn sbom(
     files: &[SourceFile],
     source_digest: &str,
 ) -> String {
+    sbom_for(Ecosystem::Rust, manifest, packages, files, source_digest)
+}
+
+/// [`sbom`] for any ecosystem: packages carry its purl type and their pinned hashes (cargo and
+/// pip: SHA-256 hex; npm: the lockfile's SHA-512 integrity, as hex).
+pub fn sbom_for(
+    eco: Ecosystem,
+    manifest: &Manifest,
+    packages: &[LockedPackage],
+    files: &[SourceFile],
+    source_digest: &str,
+) -> String {
+    let purl = eco.purl_type();
     let serial = {
         let h = crate::util::sha256_hex(source_digest.as_bytes());
         format!(
@@ -330,14 +318,14 @@ pub fn sbom(
         .map(|p| {
             let mut c = json!({
                 "type": "library",
-                "bom-ref": format!("pkg:cargo/{}@{}", p.name, p.version),
+                "bom-ref": format!("pkg:{purl}/{}@{}", p.name, p.version),
                 "name": p.name,
                 "version": p.version,
-                "purl": format!("pkg:cargo/{}@{}", p.name, p.version),
+                "purl": format!("pkg:{purl}/{}@{}", p.name, p.version),
                 "licenses": licence(&p.name),
             });
             if let Some(sum) = &p.checksum {
-                c["hashes"] = json!([{ "alg": "SHA-256", "content": sum }]);
+                c["hashes"] = ecosystem::sbom_hashes(eco, sum);
             }
             c
         })
@@ -359,7 +347,7 @@ pub fn sbom(
             "tools": { "components": [{ "type": "application", "name": "pigeonpost-nest-release" }] },
             "component": {
                 "type": "application",
-                "bom-ref": format!("pkg:cargo/{}@{}", manifest.name, manifest.version),
+                "bom-ref": format!("pkg:{purl}/{}@{}", manifest.name, manifest.version),
                 "name": manifest.name,
                 "version": manifest.version,
                 "licenses": [{ "expression": manifest.licence }],
@@ -443,6 +431,42 @@ pub struct BuildConfig {
     pub fetch_image: String,
     /// Local image name the build is tagged with; the digest comes from podman.
     pub image_name: String,
+    /// The fetch image for Node releases (`npm` inside), pinned by digest. Unset: Node releases
+    /// are refused. Use the same Node as the runner images' base so `node_modules` matches.
+    #[serde(default)]
+    pub node_fetch_image: Option<String>,
+    /// The fetch image for Python releases (`pip` inside), pinned by digest. Unset: Python
+    /// releases are refused. Use the same Python as the runner images' base so the wheels match.
+    #[serde(default)]
+    pub python_fetch_image: Option<String>,
+    /// Hardening: resource limits for both steps, so a build cannot starve a shared host (the
+    /// build plane may share its host with model serving). Unset: no podman-level limit.
+    #[serde(default)]
+    pub memory_mib: Option<u64>,
+    /// Thousandths of one core.
+    #[serde(default)]
+    pub cpu_millis: Option<u64>,
+    #[serde(default)]
+    pub pids: Option<u64>,
+}
+
+impl BuildConfig {
+    /// `--memory`, CPU quota and `--pids-limit` flags for `podman run`/`podman build`.
+    pub fn limit_args(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        if let Some(m) = self.memory_mib {
+            out.push(format!("--memory={m}m"));
+            out.push(format!("--memory-swap={m}m"));
+        }
+        if let Some(c) = self.cpu_millis {
+            out.push("--cpu-period=100000".into());
+            out.push(format!("--cpu-quota={}", c.max(10) * 100));
+        }
+        if let Some(p) = self.pids {
+            out.push(format!("--pids-limit={p}"));
+        }
+        out
+    }
 }
 
 impl BuildConfig {
@@ -452,6 +476,14 @@ impl BuildConfig {
         }
         if !pinned(&self.fetch_image) {
             return Err("fetch_image must be pinned by digest".into());
+        }
+        for (key, image) in [
+            ("node_fetch_image", &self.node_fetch_image),
+            ("python_fetch_image", &self.python_fetch_image),
+        ] {
+            if image.as_deref().is_some_and(|i| !pinned(i)) {
+                return Err(format!("{key} must be pinned by digest"));
+            }
         }
         if self.fetch_network.is_empty() || matches!(self.fetch_network.as_str(), "host" | "none") {
             return Err("fetch_network: a named podman network of its own".into());
@@ -468,7 +500,7 @@ impl BuildConfig {
 
 /// The fetch step: `cargo vendor` from a read-only copy of the source tree into `vendor`.
 pub fn fetch_args(cfg: &BuildConfig, src: &Path, vendor: &Path) -> Vec<String> {
-    vec![
+    let mut args: Vec<String> = vec![
         "run".into(),
         "--rm".into(),
         "--pull=never".into(),
@@ -482,13 +514,88 @@ pub fn fetch_args(cfg: &BuildConfig, src: &Path, vendor: &Path) -> Vec<String> {
         format!("--volume={}:/src:ro", src.display()),
         format!("--volume={}:/vendor:rw", vendor.display()),
         "--workdir=/src".into(),
+    ];
+    args.extend(cfg.limit_args());
+    args.extend([
         cfg.fetch_image.clone(),
         "cargo".into(),
         "vendor".into(),
         "--locked".into(),
         "--versioned-dirs".into(),
         "/vendor".into(),
-    ]
+    ]);
+    args
+}
+
+/// The fetch step for a Node release: `npm ci` from the copied `package.json` and
+/// `package-lock.json` in `vendor`, lifecycle scripts off, dev dependencies left out, no audit or
+/// telemetry. It writes `vendor/node_modules` and nothing else that is kept.
+pub fn npm_fetch_args(cfg: &BuildConfig, image: &str, vendor: &Path) -> Vec<String> {
+    let mut args: Vec<String> = vec![
+        "run".into(),
+        "--rm".into(),
+        "--pull=never".into(),
+        format!("--runtime={}", cfg.runtime),
+        format!("--network={}", cfg.fetch_network),
+        "--cap-drop=ALL".into(),
+        "--security-opt=no-new-privileges".into(),
+        "--read-only".into(),
+        "--tmpfs=/tmp:rw,nosuid,nodev,size=512m".into(),
+        "--env=HOME=/tmp".into(),
+        "--env=npm_config_cache=/tmp/npm-cache".into(),
+        "--env=npm_config_update_notifier=false".into(),
+        format!("--volume={}:/vendor:rw", vendor.display()),
+        "--workdir=/vendor".into(),
+    ];
+    args.extend(cfg.limit_args());
+    args.extend([
+        image.to_string(),
+        "npm".into(),
+        "ci".into(),
+        "--ignore-scripts".into(),
+        "--omit=dev".into(),
+        "--no-audit".into(),
+        "--no-fund".into(),
+        "--registry=https://registry.npmjs.org/".into(),
+    ]);
+    args
+}
+
+/// The fetch step for a Python release: `pip download` in hash-checking mode, binary wheels only
+/// (no sdist builds, so no publisher code runs here), no dependency resolution beyond the list.
+pub fn pip_fetch_args(cfg: &BuildConfig, image: &str, src: &Path, vendor: &Path) -> Vec<String> {
+    let mut args: Vec<String> = vec![
+        "run".into(),
+        "--rm".into(),
+        "--pull=never".into(),
+        format!("--runtime={}", cfg.runtime),
+        format!("--network={}", cfg.fetch_network),
+        "--cap-drop=ALL".into(),
+        "--security-opt=no-new-privileges".into(),
+        "--read-only".into(),
+        "--tmpfs=/tmp:rw,nosuid,nodev,size=512m".into(),
+        "--env=HOME=/tmp".into(),
+        "--env=PIP_DISABLE_PIP_VERSION_CHECK=1".into(),
+        format!("--volume={}:/src:ro", src.display()),
+        format!("--volume={}:/vendor:rw", vendor.display()),
+        "--workdir=/src".into(),
+    ];
+    args.extend(cfg.limit_args());
+    args.extend([
+        image.to_string(),
+        "python3".into(),
+        "-m".into(),
+        "pip".into(),
+        "download".into(),
+        "--require-hashes".into(),
+        "--only-binary=:all:".into(),
+        "--no-deps".into(),
+        "--no-cache-dir".into(),
+        "--index-url=https://pypi.org/simple".into(),
+        "--requirement=/src/requirements.txt".into(),
+        "--dest=/vendor".into(),
+    ]);
+    args
 }
 
 /// The build step. `--network=none` is the line that must not move.
@@ -498,7 +605,7 @@ pub fn build_args(
     tag: &str,
     source_digest: &str,
 ) -> Vec<String> {
-    vec![
+    let mut args: Vec<String> = vec![
         "build".into(),
         "--pull=never".into(),
         "--network=none".into(),
@@ -506,11 +613,25 @@ pub fn build_args(
         "--no-cache".into(),
         "--cap-drop=ALL".into(),
         "--security-opt=no-new-privileges".into(),
+        // Reproducibility (R-62): a fixed creation time for the image and every file in its
+        // layers, so the same source and vendored tree give the same image digest.
+        "--timestamp=0".into(),
         format!("--label=dev.pigeonpost.release.source={source_digest}"),
         format!("--file={}", context.join(CONTAINERFILE).display()),
         format!("--tag={tag}"),
-        context.display().to_string(),
-    ]
+    ];
+    args.extend(cfg.limit_args());
+    args.push(context.display().to_string());
+    args
+}
+
+/// The local tag a build of `source_digest` gets.
+pub fn build_tag(cfg: &BuildConfig, source_digest: &str) -> String {
+    format!(
+        "{}:{}",
+        cfg.image_name,
+        &source_digest.trim_start_matches("sha256:")[..12]
+    )
 }
 
 /// The vendored-source configuration written into the build context.
@@ -549,43 +670,40 @@ impl<P: Podman> Builder<P> {
         let containerfile = std::fs::read_to_string(src.join(CONTAINERFILE))
             .map_err(|e| format!("{CONTAINERFILE}: {e}"))?;
         containerfile_pinned(&containerfile)?;
-        let lock = std::fs::read_to_string(src.join("Cargo.lock"))
-            .map_err(|e| format!("Cargo.lock: {e}"))?;
-        let packages = locked_packages(&lock)?;
+        let eco = ecosystem::detect(src)?;
+        let packages = ecosystem::locked(eco, src)?;
         let files = read_tree(src)?;
-        if files.iter().any(|f| {
-            f.path == "vendor"
-                || f.path.starts_with("vendor/")
-                || f.path.starts_with("target/")
-                || f.path.starts_with(".cargo/")
-        }) {
-            return Err("vendor/, target/ and .cargo/ are made by the build plane".into());
+        if files.iter().any(|f| Ecosystem::reserved(&f.path)) {
+            return Err(
+                "vendor/, target/, .cargo/, node_modules/ and wheelhouse/ are made by the build plane"
+                    .into(),
+            );
         }
         let source_digest = tree_digest(&files);
 
         // 1. fetch, the only step with a network.
         let vendor = work.join("vendor");
         std::fs::create_dir_all(&vendor).map_err(|e| e.to_string())?;
-        if packages.iter().any(|p| p.source.is_some()) {
-            let args = fetch_args(&self.cfg, src, &vendor);
-            let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-            self.podman.run(&refs)?;
-        }
-        let vendored = read_tree(&vendor)?;
+        let fetched = if packages.iter().any(|p| p.source.is_some()) {
+            self.fetch(eco, src, &vendor)?
+        } else {
+            vendor.clone()
+        };
+        let vendored = read_tree(&fetched)?;
         let vendor_digest = tree_digest(&vendored);
 
         // 2. build, with none.
         let context = work.join("context");
         copy_tree(src, &files, &context)?;
-        copy_tree(&vendor, &vendored, &context.join("vendor"))?;
-        std::fs::create_dir_all(context.join(".cargo")).map_err(|e| e.to_string())?;
-        std::fs::write(context.join(".cargo/config.toml"), CARGO_VENDOR_CONFIG)
-            .map_err(|e| e.to_string())?;
-        let tag = format!(
-            "{}:{}",
-            self.cfg.image_name,
-            &source_digest.trim_start_matches("sha256:")[..12]
-        );
+        copy_tree(&fetched, &vendored, &context.join(eco.vendor_dir()))?;
+        if eco == Ecosystem::Rust {
+            std::fs::create_dir_all(context.join(".cargo")).map_err(|e| e.to_string())?;
+            std::fs::write(context.join(".cargo/config.toml"), CARGO_VENDOR_CONFIG)
+                .map_err(|e| e.to_string())?;
+        } else {
+            std::fs::create_dir_all(context.join(eco.vendor_dir())).map_err(|e| e.to_string())?;
+        }
+        let tag = build_tag(&self.cfg, &source_digest);
         let args = build_args(&self.cfg, &context, &tag, &source_digest);
         let refs: Vec<&str> = args.iter().map(String::as_str).collect();
         self.podman.run(&refs)?;
@@ -601,7 +719,7 @@ impl<P: Podman> Builder<P> {
             return Err(format!("podman reported no digest for {tag}"));
         }
 
-        let sbom = sbom(&manifest, &packages, &files, &source_digest);
+        let sbom = sbom_for(eco, &manifest, &packages, &files, &source_digest);
         let sbom_digest = digest_of(sbom.as_bytes());
         let manifest_digest = digest_of(manifest_text.as_bytes());
         let release_digest = release_digest(
@@ -627,8 +745,52 @@ impl<P: Podman> Builder<P> {
                 "rootless": true,
                 "fetch_network": self.cfg.fetch_network,
                 "build_network": "none",
+                "ecosystem": eco.name(),
             }),
         })
+    }
+
+    /// The fetch step of `eco` into `vendor`; returns the directory whose tree is the vendored
+    /// dependencies (`vendor` itself, or `vendor/node_modules`).
+    fn fetch(&self, eco: Ecosystem, src: &Path, vendor: &Path) -> Result<PathBuf, String> {
+        let run = |args: Vec<String>| -> Result<String, String> {
+            let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+            self.podman.run(&refs)
+        };
+        match eco {
+            Ecosystem::Rust => {
+                run(fetch_args(&self.cfg, src, vendor))?;
+                Ok(vendor.to_path_buf())
+            }
+            Ecosystem::Node => {
+                let image =
+                    self.cfg.node_fetch_image.as_deref().ok_or(
+                        "this build plane does not build Node releases (no node_fetch_image)",
+                    )?;
+                // npm ci reads both files from its working directory; only node_modules is kept.
+                for f in [ecosystem::NPM_PACKAGE, ecosystem::NPM_LOCK] {
+                    std::fs::copy(src.join(f), vendor.join(f)).map_err(|e| format!("{f}: {e}"))?;
+                }
+                run(npm_fetch_args(&self.cfg, image, vendor))?;
+                for f in [ecosystem::NPM_PACKAGE, ecosystem::NPM_LOCK] {
+                    let _ = std::fs::remove_file(vendor.join(f));
+                }
+                let modules = vendor.join("node_modules");
+                std::fs::create_dir_all(&modules).map_err(|e| e.to_string())?;
+                let lock = std::fs::read_to_string(src.join(ecosystem::NPM_LOCK))
+                    .map_err(|e| e.to_string())?;
+                ecosystem::check_node_modules(vendor, &lock)?;
+                Ok(modules)
+            }
+            Ecosystem::Python => {
+                let image = self.cfg.python_fetch_image.as_deref().ok_or(
+                    "this build plane does not build Python releases (no python_fetch_image)",
+                )?;
+                run(pip_fetch_args(&self.cfg, image, src, vendor))?;
+                ecosystem::check_wheelhouse(vendor, &ecosystem::locked(eco, src)?)?;
+                Ok(vendor.to_path_buf())
+            }
+        }
     }
 }
 
@@ -672,6 +834,17 @@ mod tests {
                 "1".repeat(64)
             ),
             image_name: "localhost/pigeonpost-release-hr-policy-qa".into(),
+            node_fetch_image: Some(format!(
+                "docker.io/library/node:22.21.1-bookworm-slim@sha256:{}",
+                "2".repeat(64)
+            )),
+            python_fetch_image: Some(format!(
+                "docker.io/library/python:3.12.12-slim-bookworm@sha256:{}",
+                "3".repeat(64)
+            )),
+            memory_mib: None,
+            cpu_millis: None,
+            pids: None,
         }
     }
 

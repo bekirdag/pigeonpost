@@ -1,0 +1,15 @@
+# /etc/systemd/system/nestbuild-nft.service — load the build plane's nftables table at boot.
+# Loads only `table inet nestbuild`. Never enable the distribution's nftables.service for this:
+# its /etc/nftables.conf starts with `flush ruleset`, which would also wipe Docker's rules.
+[Unit]
+Description=Load the build plane nftables table (inet nestbuild) without touching other rulesets
+After=network-pre.target
+Before=network-online.target nestbuild-allowlist.service pigeonpost-nest-buildd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/nftables.d/nestbuild.nft
+
+[Install]
+WantedBy=multi-user.target

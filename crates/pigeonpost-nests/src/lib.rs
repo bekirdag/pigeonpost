@@ -24,11 +24,15 @@
 //! shared Nest dispatcher ([`dispatch`]), which runs attested releases in the marketplace pool.
 
 pub mod analysis;
+pub mod artifacts;
+pub mod attest;
 pub mod broker;
+pub mod buildd;
 pub mod config;
 pub mod control;
 pub mod db;
 pub mod dispatch;
+pub mod ecosystem;
 pub mod files;
 pub mod keywrap;
 pub mod metrics;
@@ -38,3 +42,4 @@ pub mod release;
 pub mod sandbox;
 pub mod storage;
 pub mod util;
+pub mod worker_api;

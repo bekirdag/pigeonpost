@@ -119,7 +119,7 @@ async fn run_control(args: &[String]) -> Result<(), String> {
     let bind = cfg.control.bind.clone();
     let every = cfg.control.reconcile_secs.max(10);
     let ctx = control::Ctx::new(cfg, db, sandbox, volumes, token_hash.to_lowercase(), host)
-        .with_vault(vault);
+        .with_vault(vault.clone());
 
     // Reconcile before serving: after a reboot every sandbox is gone and every volume closed.
     if let Err(e) = control::reconcile(&ctx).await {
@@ -168,12 +168,38 @@ async fn run_control(args: &[String]) -> Result<(), String> {
     let mut app = control::router(ctx.clone());
     if let Some(pool) = sandbox::marketplace_from_config(&ctx.cfg.sandbox)? {
         let mp = ctx.cfg.sandbox.marketplace.clone().expect("checked above");
-        let d = pigeonpost_nests::dispatch::Dispatcher::new(
+        let keys = pigeonpost_nests::attest::TrustedKeys::from_hex(&mp.attestation_keys)?;
+        tracing::info!(keys = ?keys, "marketplace attestation keys");
+        let mut d = pigeonpost_nests::dispatch::Dispatcher::new(
             Arc::from(pool),
             ctx.db.clone(),
             mp.volume_root.clone(),
             ctx.cfg.storage.sandbox_uid,
-        );
+        )
+        .with_keys(keys)
+        .with_storage(
+            pigeonpost_nests::dispatch::WorkerStorage::for_host(
+                &ctx.cfg.storage,
+                vault.clone(),
+                mp.worker_gib,
+            ),
+            ctx.cfg.storage.max_total_gib,
+        )
+        .with_test_pool(mp.test_pool);
+        if mp.test_pool {
+            tracing::warn!(
+                "marketplace pool is a TEST pool: test statements only, no production releases"
+            );
+        }
+        // Release images come from the build plane, by digest, when this host lacks them.
+        if let Some(a) = mp.artifacts.clone() {
+            let token = config::read_secret_file(&a.token_file)?;
+            d = d.with_images(Arc::new(pigeonpost_nests::artifacts::BuilddImages::new(
+                a,
+                token,
+                sandbox::HostPodman,
+            )?));
+        }
         app = app.merge(pigeonpost_nests::dispatch::router(
             pigeonpost_nests::dispatch::Http {
                 dispatcher: Arc::new(d),

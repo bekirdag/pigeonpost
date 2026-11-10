@@ -126,7 +126,7 @@ pub(crate) const KNOWN_FEATURES: &[(&str, &str)] = &[
     ),
     (
         MARKETPLACE,
-        "Nests marketplace: staff roles, publisher applications and listing reads (M0); free native jobs, staff review, attestation and quarantine (M1); no sales",
+        "Nests marketplace: staff roles, publisher applications and listing reads (M0); free native jobs, staff review, attestation and quarantine (M1); publisher certification, builds, reviews, listings, catalog and free installations (M2); no sales",
     ),
     (
         DISPLAY_NAMES,

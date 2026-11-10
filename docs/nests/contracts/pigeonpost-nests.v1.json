@@ -4,7 +4,7 @@
     "title": "Pigeonpost Nests marketplace core API (proposed)",
     "version": "0.1.0",
     "summary": "Native Nest jobs, payment authorizations and release review status.",
-    "description": "**Status: mostly a proposed design contract.** Operations marked `x-pigeonpost-status: implemented`\nare served by the postbox under the member API (`/v1`) behind the `marketplace` feature flag,\nper account and off by default; none is deployed. The rest are not implemented. A route whose\nphase is not enabled answers `404 feature_disabled`. Each implemented operation names its\npolicy action in `x-pigeonpost-action`; a postbox test keeps the routes and this file in step.\n\nScope: the four core operations of the marketplace build plan, plus the seven M0 routes and\nthe M1 reference path (native jobs with zero-priced quotes and payment authorizations, staff\nreview, attestation and quarantine). Operations marked `x-pigeonpost-status: implemented` are\nserved by the postbox. Everything else in the plan (catalog, installations, publisher console,\npaid purchases, test environments) needs its own operation schemas and policy actions before\nimplementation.\n\nM1 moves no money: every quote and payment authorization is zero-priced, and there is no\nwallet and no spend mandate (owner decision 2026-11-09, per-purchase payments).\n\nConventions (same as the Enterprise API, `openapi/pigeonpost-org.v1.yaml`):\n\n* JSON, `application/json; charset=utf-8`, snake_case; timestamps are ISO 8601 UTC.\n* Success is `{\"data\": …}`; lists are `{\"data\": […], \"next_cursor\": \"…\" | null}`.\n* Errors are `{\"error\": {\"code\", \"message\", \"doc_url\"}}` with stable codes.\n* `Idempotency-Key` is **required** on the two financial or job-creating `POST`s below. It is\n  scoped to the authenticated caller, the acting mailbox and the route, and bound to a hash of\n  the canonical request. A replay returns the original response with `Idempotent-Replayed: true`;\n  the same key with a different request is `409 idempotency_conflict`. Unlike ordinary org API\n  replays (24 h), these keys are kept for the lifetime of the job or financial record.\n* The acting mailbox is chosen with `x-pigeonpost-identity`, checked against the credential\n  exactly as for sending a message.\n\nAuthority is decided by `authorize(actor, action, resource)` in the postbox (`policy.rs`), not by\nthese schemas. A schema validates structure only: it does not establish identity, funding,\nreview state, revocation or time ordering.\n",
+    "description": "**Status: mostly a proposed design contract.** Operations marked `x-pigeonpost-status: implemented`\nare served by the postbox under the member API (`/v1`) behind the `marketplace` feature flag,\nper account and off by default; none is deployed. The rest are not implemented. A route whose\nphase is not enabled answers `404 feature_disabled`. Each implemented operation names its\npolicy action in `x-pigeonpost-action`; a postbox test keeps the routes and this file in step.\n\nScope: the four core operations of the marketplace build plan, the seven M0 routes, the M1\nreference path (native jobs with zero-priced quotes and payment authorizations, staff review,\nattestation and quarantine) and the M2 publisher beta (publisher certification and roles,\ntemplates, source builds, the publisher's review view with redacted findings, listings and\nvisibility, the catalog, installations with configuration, update, rollback and uninstall,\nstaff queues and moderation). Operations marked `x-pigeonpost-status: implemented` are served\nby the postbox. Paid purchases (M3), hosted test Nests and invite-only or organization\nvisibility still need their own operations.\n\nM1 moves no money: every quote and payment authorization is zero-priced, and there is no\nwallet and no spend mandate (owner decision 2026-11-09, per-purchase payments).\n\nConventions (same as the Enterprise API, `openapi/pigeonpost-org.v1.yaml`):\n\n* JSON, `application/json; charset=utf-8`, snake_case; timestamps are ISO 8601 UTC.\n* Success is `{\"data\": …}`; lists are `{\"data\": […], \"next_cursor\": \"…\" | null}`.\n* Errors are `{\"error\": {\"code\", \"message\", \"doc_url\"}}` with stable codes.\n* `Idempotency-Key` is **required** on the two financial or job-creating `POST`s below. It is\n  scoped to the authenticated caller, the acting mailbox and the route, and bound to a hash of\n  the canonical request. A replay returns the original response with `Idempotent-Replayed: true`;\n  the same key with a different request is `409 idempotency_conflict`. Unlike ordinary org API\n  replays (24 h), these keys are kept for the lifetime of the job or financial record.\n* The acting mailbox is chosen with `x-pigeonpost-identity`, checked against the credential\n  exactly as for sending a message.\n\nAuthority is decided by `authorize(actor, action, resource)` in the postbox (`policy.rs`), not by\nthese schemas. A schema validates structure only: it does not establish identity, funding,\nreview state, revocation or time ordering.\n",
     "contact": {
       "name": "Pigeonpost",
       "url": "https://developers.pigeonpost.dev"
@@ -50,6 +50,34 @@
     {
       "name": "Publisher reviews",
       "description": "Redacted status of a release candidate's review."
+    },
+    {
+      "name": "Publisher console",
+      "description": "Marketplace M2: what a publisher's team does: roles, templates, builds, reviews and listings."
+    },
+    {
+      "name": "Nest installations",
+      "description": "Marketplace M2: a buyer's pinned use of a listing, with its configuration, updates, rollback and uninstall. Free (test credits only)."
+    },
+    {
+      "name": "Visibility grants",
+      "description": "Marketplace M2b: invites by address and organization grants for `invite_only` and `organization` listings. Discover, install and invoke are separate switches, checked live."
+    },
+    {
+      "name": "Org installations",
+      "description": "Marketplace M2b: an organization installs a listing; its Nest admins manage it and members with an `operate_nest` delegation use it."
+    },
+    {
+      "name": "Source connections",
+      "description": "Marketplace M2b: registered repositories for builds, public https or a deploy key Pigeonpost generates (private key sealed, never returned)."
+    },
+    {
+      "name": "Hosted test Nests",
+      "description": "Marketplace M2b (R-70): test Nests on a staging postbox only, in the test pool, with synthetic jobs and an expiry."
+    },
+    {
+      "name": "Marketplace console",
+      "description": "Marketplace M2b: install counts, listing reports and the staff listing list."
     }
   ],
   "paths": {
@@ -413,6 +441,8 @@
         ],
         "operationId": "getNestReview",
         "summary": "Read a release candidate's review status",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "PublisherManage",
         "description": "A redacted, monotonically versioned projection for the publisher's authorized team: a\npersonal publisher's own account, or an org publisher's members holding the publisher role\n(resolved from live org membership). Others get `404 not_found`.\n\n`allowed_actions` are hints for the console; the server re-authorizes every action. An\napproved review is not production admission: security state, revocation, consent, funding\nand capacity are checked separately at installation and at every start.\n",
         "security": [
           {
@@ -1060,6 +1090,4232 @@
           }
         }
       }
+    },
+    "/v1/publishers": {
+      "get": {
+        "tags": [
+          "Publisher console"
+        ],
+        "operationId": "listPublishers",
+        "summary": "List the publishers the caller acts for",
+        "description": "The caller's own publisher and those of the orgs they administer or hold a publisher role in, each with the caller's `role`.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "PublisherManage",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Publishers.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "next_cursor"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Publisher"
+                      }
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/v1/publishers/{publisher}": {
+      "get": {
+        "tags": [
+          "Publisher console"
+        ],
+        "operationId": "readPublisher",
+        "summary": "Read a publisher profile",
+        "description": "The publisher's team: a personal publisher's own account; for an org publisher, the org's owner and full admins and active members holding a live `publisher_admin` or `publisher_finance` role. Anyone else gets `404 not_found`.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "PublisherManage",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Publisher"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The publisher, with the caller's role.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Publisher"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/v1/publishers/{publisher}/roles": {
+      "get": {
+        "tags": [
+          "Publisher console"
+        ],
+        "operationId": "listPublisherRoles",
+        "summary": "List an org publisher's roles",
+        "description": "The publisher's team: a personal publisher's own account; for an org publisher, the org's owner and full admins and active members holding a live `publisher_admin` or `publisher_finance` role. Anyone else gets `404 not_found`.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "PublisherManage",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Publisher"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Live roles.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "next_cursor"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/PublisherRole"
+                      }
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Publisher console"
+        ],
+        "operationId": "grantPublisherRole",
+        "summary": "Grant a publisher role",
+        "description": "An org publisher's org owner or full admin gives an **active org member** `publisher_admin` (acts for the publisher, publishes with step-up) or `publisher_finance` (reads only; earnings arrive in M3). Roles live in `publisher_roles`, not `org_roles`, and count only while the person stays an active member (`400 not_org_member`, `409 role_already_held`).",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "PublisherManage",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Publisher"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublisherRoleGrant"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The granted role.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/PublisherRole"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/v1/publishers/{publisher}/roles/{role}": {
+      "delete": {
+        "tags": [
+          "Publisher console"
+        ],
+        "operationId": "revokePublisherRole",
+        "summary": "Revoke a publisher role",
+        "description": "An org owner or full admin takes a publisher role back.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "PublisherManage",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Publisher"
+          },
+          {
+            "$ref": "#/components/parameters/PublisherRoleId"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Revoked."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/v1/publishers/{publisher}/templates": {
+      "get": {
+        "tags": [
+          "Publisher console"
+        ],
+        "operationId": "listTemplates",
+        "summary": "List templates",
+        "description": "The publisher's team: a personal publisher's own account; for an org publisher, the org's owner and full admins and active members holding a live `publisher_admin` or `publisher_finance` role. Anyone else gets `404 not_found`.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "PublisherManage",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Publisher"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Templates.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "next_cursor"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Template"
+                      }
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Publisher console"
+        ],
+        "operationId": "createTemplate",
+        "summary": "Create a template",
+        "description": "A person acting for a **certified** publisher: the owning account, an org owner or admin, or a `publisher_admin` (`403 publisher_role_required` for `publisher_finance`; `403 publisher_not_certified` / `publisher_revoked` otherwise). A template is the line of releases one package name has (`409 template_exists`).",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "PublisherManage",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Publisher"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TemplateCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The template.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Template"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/v1/publishers/{publisher}/builds": {
+      "get": {
+        "tags": [
+          "Publisher console"
+        ],
+        "operationId": "listBuilds",
+        "summary": "List build requests",
+        "description": "The publisher's team: a personal publisher's own account; for an org publisher, the org's owner and full admins and active members holding a live `publisher_admin` or `publisher_finance` role. Anyone else gets `404 not_found`.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "PublisherManage",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Publisher"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Newest first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "next_cursor"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Build"
+                      }
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Publisher console"
+        ],
+        "operationId": "requestBuild",
+        "summary": "Request a build from source",
+        "description": "A person acting for a **certified** publisher: the owning account, an org owner or admin, or a `publisher_admin` (`403 publisher_role_required` for `publisher_finance`; `403 publisher_not_certified` / `publisher_revoked` otherwise). Pigeonpost builds the release itself from the pinned commit (R-62: no image-only production). The build plane picks the request up; when it answers, the review starts with its intake stage and `nest.review.stage_changed` is sent. One build per template version (`409 version_exists`).",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "PublisherManage",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Publisher"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BuildCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The queued build request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Build"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/v1/publishers/{publisher}/builds/{build}": {
+      "get": {
+        "tags": [
+          "Publisher console"
+        ],
+        "operationId": "readBuild",
+        "summary": "Read a build request",
+        "description": "The publisher's team: a personal publisher's own account; for an org publisher, the org's owner and full admins and active members holding a live `publisher_admin` or `publisher_finance` role. Anyone else gets `404 not_found`.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "PublisherManage",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Publisher"
+          },
+          {
+            "$ref": "#/components/parameters/Build"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The build request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Build"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/v1/publishers/{publisher}/reviews": {
+      "get": {
+        "tags": [
+          "Publisher console"
+        ],
+        "operationId": "listNestReviews",
+        "summary": "List reviews",
+        "description": "The publisher's team: a personal publisher's own account; for an org publisher, the org's owner and full admins and active members holding a live `publisher_admin` or `publisher_finance` role. Anyone else gets `404 not_found`.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "PublisherManage",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Publisher"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Newest first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "next_cursor"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/NestReviewStatus"
+                      }
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/v1/publishers/{publisher}/reviews/{review}/findings": {
+      "get": {
+        "tags": [
+          "Publisher console"
+        ],
+        "operationId": "readNestReviewFindings",
+        "summary": "Read redacted findings",
+        "description": "The publisher's team: a personal publisher's own account; for an org publisher, the org's owner and full admins and active members holding a live `publisher_admin` or `publisher_finance` role. Anyone else gets `404 not_found`. Deterministic-scan findings are shown in full (they are about the publisher's own source); behaviour-test findings show only their rule; the AI review is advisory evidence for staff and shows only a count.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "PublisherManage",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Publisher"
+          },
+          {
+            "$ref": "#/components/parameters/Review"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Per-stage findings.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/NestReviewFindings"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/v1/publishers/{publisher}/reviews/{review}/withdraw": {
+      "post": {
+        "tags": [
+          "Publisher console"
+        ],
+        "operationId": "withdrawNestReview",
+        "summary": "Withdraw a review",
+        "description": "The publisher's admins take an open or blocked review out of the queue (`409 review_closed` once decided).",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "PublisherManage",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Publisher"
+          },
+          {
+            "$ref": "#/components/parameters/Review"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The withdrawn review.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/NestReviewStatus"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/v1/publishers/{publisher}/listings": {
+      "get": {
+        "tags": [
+          "Publisher console"
+        ],
+        "operationId": "listPublisherListings",
+        "summary": "List the publisher's listings",
+        "description": "The publisher's team: a personal publisher's own account; for an org publisher, the org's owner and full admins and active members holding a live `publisher_admin` or `publisher_finance` role. Anyone else gets `404 not_found`.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "PublisherManage",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Publisher"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Every status and visibility.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "next_cursor"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Listing"
+                      }
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Publisher console"
+        ],
+        "operationId": "createListing",
+        "summary": "Create a draft listing",
+        "description": "A person acting for a **certified** publisher: the owning account, an org owner or admin, or a `publisher_admin` (`403 publisher_role_required` for `publisher_finance`; `403 publisher_not_certified` / `publisher_revoked` otherwise). The listing serves the release manifest's `listing_address` (`409 listing_address_taken`). Visibility is `public`, `unlisted`, `private`, `invite_only` or `organization`; the last two are reached through grants (`…/grants`, M2b). `price` sets the terms (`currency`, `term`); `amount_minor` must be 0 (`400 price_not_available`).",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "PublisherManage",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Publisher"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ListingCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The draft listing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Listing"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/v1/publishers/{publisher}/listings/{listing}": {
+      "patch": {
+        "tags": [
+          "Publisher console"
+        ],
+        "operationId": "editListing",
+        "summary": "Edit listing metadata",
+        "description": "A person acting for a **certified** publisher: the owning account, an org owner or admin, or a `publisher_admin` (`403 publisher_role_required` for `publisher_finance`; `403 publisher_not_certified` / `publisher_revoked` otherwise). Publisher-editable fields only: `title`, `summary`, `description`, `visibility`. Status, release and address change through `publish`/`withdraw`; moderation (`suspended`) is staff's. Sends `nest.listing.updated`.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "PublisherManage",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Publisher"
+          },
+          {
+            "$ref": "#/components/parameters/Listing"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ListingPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The listing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Listing"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/v1/publishers/{publisher}/listings/{listing}/publish": {
+      "post": {
+        "tags": [
+          "Publisher console"
+        ],
+        "operationId": "publishListing",
+        "summary": "Publish a listing",
+        "description": "A person acting for a **certified** publisher: the owning account, an org owner or admin, or a `publisher_admin` (`403 publisher_role_required` for `publisher_finance`; `403 publisher_not_certified` / `publisher_revoked` otherwise). Needs **step-up**. Publishes the listing on an attested, live release of its template (the current one, or `release_id`), or moves a live listing to a newer one. Existing installations stay on their release until their owner updates. `409 review_required`, `release_revoked`, `security_quarantined`, `listing_suspended`, `listing_address_changed`.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "NestPublish",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Publisher"
+          },
+          {
+            "$ref": "#/components/parameters/Listing"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ListingPublish"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The published listing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Listing"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/v1/publishers/{publisher}/listings/{listing}/withdraw": {
+      "post": {
+        "tags": [
+          "Publisher console"
+        ],
+        "operationId": "withdrawListing",
+        "summary": "Withdraw a listing",
+        "description": "A person acting for a publisher: the owning account, an org owner or admin, or a `publisher_admin` (`403 publisher_role_required` for `publisher_finance`; `403 publisher_not_certified` / `publisher_revoked` otherwise). Its installations stop taking jobs; they can still be read and uninstalled. A suspended listing is staff's (`409 listing_suspended`).",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "PublisherManage",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Publisher"
+          },
+          {
+            "$ref": "#/components/parameters/Listing"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The withdrawn listing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Listing"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/v1/marketplace/listings": {
+      "get": {
+        "tags": [
+          "Marketplace listings"
+        ],
+        "operationId": "searchListings",
+        "summary": "Search the catalog",
+        "description": "Anyone, with or without a credential (a presented credential must be valid). Published, **public** listings of certified publishers on live releases only; unlisted listings are reachable by id, never listed. Discovery grants nothing.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "NestDiscover",
+        "security": [
+          {},
+          {
+            "memberToken": []
+          },
+          {
+            "apiKey": []
+          },
+          {
+            "capToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "description": "Words in the title or summary.",
+            "schema": {
+              "type": "string",
+              "maxLength": 100
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "The `next_cursor` of the previous page.",
+            "schema": {
+              "type": "string",
+              "maxLength": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "At most 100 per page.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "next_cursor"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Listing"
+                      }
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/v1/nest-installations": {
+      "get": {
+        "tags": [
+          "Nest installations"
+        ],
+        "operationId": "listInstallations",
+        "summary": "List installations",
+        "description": "A person's own installations, active first.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "NestInstall",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Installations.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "next_cursor"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Installation"
+                      }
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Nest installations"
+        ],
+        "operationId": "install",
+        "summary": "Install a listing",
+        "description": "A person installs a listing they can see (published; public, unlisted, or private to their own publisher team) for their own account, on the listing's current attested release. The installation pins that release: its jobs run it, with this configuration, in the account's own worker. A free listing: `funding` is `test_credits` and no money moves. A priced listing needs `purchase_id`, the caller's paid purchase: after every other check its payment authorization is consumed through the billing bridge for exactly the purchase's intent (single use; the installation takes the purchase's id), and `funding` is `licence`. A replay with the same `purchase_id` answers `200` with that installation and consumes nothing. `400 invalid_configuration` with `details.issues`, `402 payment_required` (with `details.price`) / `payment_pending` / `payment_failed` / `payment_expired` / `payment_revoked`, `409 already_installed`, `intent_mismatch`, `authorization_used`, `review_required`, `release_revoked`, `security_quarantined`, `503 billing_unavailable`.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "NestInstall",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InstallationCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A replay of a paid install; the existing installation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Installation"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "The installation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Installation"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "503": {
+            "$ref": "#/components/responses/BillingUnavailable"
+          }
+        }
+      }
+    },
+    "/v1/marketplace/purchases": {
+      "post": {
+        "tags": [
+          "Nest installations"
+        ],
+        "operationId": "createPurchase",
+        "summary": "Start buying a priced listing",
+        "description": "Called by the billing bridge with the buyer's own token when a checkout starts (`POST /v1/marketplace/checkout` on the bridge). Checks, as an install would, that the listing is published, visible to the caller, from a certified publisher, on an attested release and not already installed, and that it is on sale; then reserves the installation id the payment will admit and returns the exact intent the payment is bound to. One purchase per caller and `intent_id`: a replay answers `200` with the same purchase. An organization buys through someone who is both one of its Nest admins (`ManageAgents`) and a billing manager (`ManageBilling`); the org install consumes the purchase. `403 forbidden` for another account or an org the caller may not buy for, `409 not_on_sale`, `intent_conflict`, `already_installed`.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "NestInstall",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PurchaseCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The same purchase (a replay).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Purchase"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "The purchase.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Purchase"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/v1/publishers/{publisher}/listings/{listing}/price": {
+      "get": {
+        "tags": [
+          "Publisher console"
+        ],
+        "operationId": "getListingPrice",
+        "summary": "Read a listing's price and offer",
+        "description": "The publisher's team. The price as set, and the offer the financial authority holds for it on the listing's current release line (`on_sale`, `error` when a mirror failed and is being retried).",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "PublisherManage",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Publisher"
+          },
+          {
+            "$ref": "#/components/parameters/Listing"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The price.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ListingPriceState"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Publisher console"
+        ],
+        "operationId": "setListingPrice",
+        "summary": "Price a listing",
+        "description": "A **certified** publisher's admin, with **step-up**. Sets the tax-inclusive price (minor units), currency and term (`one_off` or `monthly`; no wallet, no per-job terms). The price is mirrored to the financial authority through the billing bridge before it stands: as an immutable offer whose id derives from listing, publisher, release line, term, currency and amount, so any change is a new offer and the previous one is retired. Monthly offers are provisioned there. Publishing on a new major version mirrors a new offer for that release line. Licences already bought keep their terms. `422 price_not_invoiceable` with `details.nearest`, `409 currency_unavailable`, `503 billing_unavailable`.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "NestPublish",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Publisher"
+          },
+          {
+            "$ref": "#/components/parameters/Listing"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ListingPriceSet"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The price and its offer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ListingPriceState"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/PriceNotInvoiceable"
+          },
+          "503": {
+            "$ref": "#/components/responses/BillingUnavailable"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Publisher console"
+        ],
+        "operationId": "clearListingPrice",
+        "summary": "Make a listing free",
+        "description": "A **certified** publisher's admin, with **step-up**. Removes the price; the listing's offers are retired at the financial authority. Licences already bought keep their terms.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "NestPublish",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Publisher"
+          },
+          {
+            "$ref": "#/components/parameters/Listing"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The listing's (now empty) price.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ListingPriceState"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/v1/nest-installations/{installation}": {
+      "get": {
+        "tags": [
+          "Nest installations"
+        ],
+        "operationId": "readInstallation",
+        "summary": "Read an installation",
+        "description": "The installing account, a person. Anyone else gets `404`. Secret values are never returned: `secrets` says which are set.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "NestManage",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Installation"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The installation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Installation"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Nest installations"
+        ],
+        "operationId": "uninstall",
+        "summary": "Uninstall",
+        "description": "The configuration and its sealed secrets are deleted, open jobs are cancelled, and the worker host deletes the account's worker and its volume (`runtime_removed` says whether it confirmed).",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "NestManage",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Installation"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Uninstalled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Uninstalled"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/v1/nest-installations/{installation}/configuration": {
+      "put": {
+        "tags": [
+          "Nest installations"
+        ],
+        "operationId": "configureInstallation",
+        "summary": "Replace the configuration",
+        "description": "Validated server-side against the installed release's `config_schema` with the same rules `pigeonpost nest validate` runs. `writeOnly` properties are secrets: sealed at rest, never stored in the plain configuration, never returned. A secret left out keeps its stored value; one sent as `null` is cleared.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "NestConfigure",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Installation"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InstallationConfiguration"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The installation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Installation"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/v1/nest-installations/{installation}/update": {
+      "post": {
+        "tags": [
+          "Nest installations"
+        ],
+        "operationId": "updateInstallation",
+        "summary": "Update to a newer release",
+        "description": "Moves to a newer attested, live release of the same template: the listing's current one, or `release_id`. The configuration must fit the target's schema; send one with the request if it does not (`409 configuration_invalid_for_release`). `409 not_newer`, `up_to_date`, `review_required`, `release_revoked`, `security_quarantined`.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "NestManage",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Installation"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InstallationMove"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The installation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Installation"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/v1/nest-installations/{installation}/rollback": {
+      "post": {
+        "tags": [
+          "Nest installations"
+        ],
+        "operationId": "rollbackInstallation",
+        "summary": "Roll back to the previous release",
+        "description": "Back to the release this installation ran before its last update, if that release is still attested and live (`409 no_previous_release`, `release_revoked`, `security_quarantined`). `previous_release_id` is cleared: update again to move forward.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "NestManage",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Installation"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InstallationMove"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The installation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Installation"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/v1/staff/publisher-applications": {
+      "get": {
+        "tags": [
+          "Staff"
+        ],
+        "operationId": "staffListPublisherApplications",
+        "summary": "Certification queue",
+        "description": "A person with a live `reviewer` staff role and a recent strong sign-in (`403 staff_required`, `step_up_required`). Each row says whether the reviewer has a stake in it (`conflict`).",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "NestReview",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "applied",
+                "approved",
+                "rejected",
+                "revoked"
+              ],
+              "default": "applied"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Oldest first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "next_cursor"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Publisher"
+                      }
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/v1/staff/publisher-applications/{application}/decisions": {
+      "post": {
+        "tags": [
+          "Staff"
+        ],
+        "operationId": "staffCertifyPublisher",
+        "summary": "Certify or reject a publisher",
+        "description": "A person with a live `reviewer` staff role and a recent strong sign-in (`403 staff_required`, `step_up_required`). The reviewer must have no stake in the publisher (`403 staff_conflict`). Only an `applied` application is decided (`409 application_decided`). Recorded in `publisher_certifications`, audited, and sent as `nest.publisher.decision`.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "NestReview",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Application"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CertificationCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The decided publisher.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Publisher"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/v1/staff/publishers/{publisher}/revocation": {
+      "post": {
+        "tags": [
+          "Staff"
+        ],
+        "operationId": "staffRevokePublisher",
+        "summary": "Revoke a publisher",
+        "description": "A person with a live `reviewer` staff role and a recent strong sign-in (`403 staff_required`, `step_up_required`). The reviewer must have no stake in the publisher (`403 staff_conflict`). Its listings are suspended (so their installations stop taking jobs), queued builds are cancelled and open reviews can no longer be decided. Releases keep their own security state.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "NestQuarantine",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Publisher"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReasonRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Revoked.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/PublisherRevocation"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/v1/staff/reviews": {
+      "get": {
+        "tags": [
+          "Staff"
+        ],
+        "operationId": "staffListReviews",
+        "summary": "Review queue",
+        "description": "A person with a live `reviewer` staff role and a recent strong sign-in (`403 staff_required`, `step_up_required`). Each row says whether it is first party and whether the reviewer has a stake in it.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "NestReview",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "open",
+                "blocked",
+                "decided",
+                "withdrawn"
+              ],
+              "default": "open"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Oldest first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "next_cursor"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/StaffReviewSummary"
+                      }
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/v1/staff/listings/{listing}/moderation": {
+      "post": {
+        "tags": [
+          "Staff"
+        ],
+        "operationId": "staffModerateListing",
+        "summary": "Suspend or reinstate a listing",
+        "description": "A person with a live `reviewer` staff role and a recent strong sign-in (`403 staff_required`, `step_up_required`). The reviewer must have no stake in the publisher (`403 staff_conflict`). A suspended listing takes no jobs and its publisher cannot change its status. Reinstating returns it to `published` only if its release is still attested and live, its publisher certified and it was published before; otherwise to `draft`.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "NestQuarantine",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Listing"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ListingModeration"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The new status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ListingModerationResult"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/v1/publishers/{publisher}/listings/{listing}/grants": {
+      "get": {
+        "tags": [
+          "Visibility grants"
+        ],
+        "operationId": "listListingGrants",
+        "summary": "A listing's grants",
+        "description": "The publisher's team. Revoked and declined grants stay as the record.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "PublisherManage",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Publisher"
+          },
+          {
+            "$ref": "#/components/parameters/Listing"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "next_cursor"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ListingGrant"
+                      }
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Visibility grants"
+        ],
+        "operationId": "createListingGrant",
+        "summary": "Invite an address, or grant an organization",
+        "description": "A certified publisher's admins. `kind: invite` (an `address`: a mailbox address or handle) serves `invite_only` listings; `kind: organization` (an `org_id`) serves `organization` listings (`409 grant_kind_mismatch`). `discover`, `install` and `invoke` default to true; at least one must be. The answer is the same whether the address exists; its holder hears `nest.invite.received` on `/v1/events`. `409 grant_exists` for a live duplicate.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "PublisherManage",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Publisher"
+          },
+          {
+            "$ref": "#/components/parameters/Listing"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind"
+                ],
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "invite",
+                      "organization"
+                    ]
+                  },
+                  "address": {
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  "org_id": {
+                    "type": "string",
+                    "maxLength": 64
+                  },
+                  "discover": {
+                    "type": "boolean"
+                  },
+                  "install": {
+                    "type": "boolean"
+                  },
+                  "invoke": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The grant (`pending` for an invite, `active` for an organization).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ListingGrant"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/v1/publishers/{publisher}/listings/{listing}/grants/{grant}": {
+      "delete": {
+        "tags": [
+          "Visibility grants"
+        ],
+        "operationId": "revokeListingGrant",
+        "summary": "Revoke a grant",
+        "description": "The publisher's admins. Discovery, new installs and every later job through it stop at once (`403 grant_required`); installations stay readable and can be uninstalled.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "PublisherManage",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Publisher"
+          },
+          {
+            "$ref": "#/components/parameters/Listing"
+          },
+          {
+            "$ref": "#/components/parameters/Grant"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ListingGrant"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/v1/marketplace/invites": {
+      "get": {
+        "tags": [
+          "Visibility grants"
+        ],
+        "operationId": "listMyInvites",
+        "summary": "Invites to my mailboxes",
+        "description": "A person: pending and active invites to any mailbox address or handle they hold, with the listing's title, summary and publisher name.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "NestInstall",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "next_cursor"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ListingGrant"
+                      }
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/v1/marketplace/invites/{grant}/accept": {
+      "post": {
+        "tags": [
+          "Visibility grants"
+        ],
+        "operationId": "acceptInvite",
+        "summary": "Accept an invite",
+        "description": "The person holding the invited address (anyone else gets 404). Accepting binds the invite to their account; `409 grant_not_live` once it was revoked or declined.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "NestInstall",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Grant"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ListingGrant"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/v1/marketplace/invites/{grant}/decline": {
+      "post": {
+        "tags": [
+          "Visibility grants"
+        ],
+        "operationId": "declineInvite",
+        "summary": "Decline an invite",
+        "description": "The person holding the invited address (anyone else gets 404). Accepting binds the invite to their account; `409 grant_not_live` once it was revoked or declined.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "NestInstall",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Grant"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ListingGrant"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/v1/orgs/{org}/nest-installations": {
+      "get": {
+        "tags": [
+          "Org installations"
+        ],
+        "operationId": "listOrgInstallations",
+        "summary": "An organization's installations",
+        "description": "An active member: every installation for the org's Nest admins (owner, admin, agent_admin), those they operate for everyone else. Each carries `role` (`admin` or `operator`).",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "NestInstall",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Org"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "next_cursor"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Installation"
+                      }
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Org installations"
+        ],
+        "operationId": "installForOrg",
+        "summary": "Install a listing for an organization",
+        "description": "A Nest admin (`ManageAgents`). The installation takes one of the org's agent addresses (`handle`, in the org's namespace; `409 agent_limit`), and `operators` (member ids) get a live `operate_nest` delegation on it. Visibility: public and unlisted listings; private ones of a publisher the admin acts for; `organization` listings with an organization grant to this org that allows install (`403 grant_required` when it only allows discovery). Members invoke it by sending `x-pigeonpost-installation` with a quote and a job; its jobs run in one worker per listing and org. Removing a member, revoking the delegation or deleting the agent ends that person's use at once; uninstalling deletes the agent address and every delegation on it. A priced listing needs the org's paid purchase (`purchase_id`, from `POST /v1/marketplace/purchases` with `owner_kind: org`; `402 payment_required` without one); it is consumed for exactly that intent and a replay answers `200` with the installation.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "NestInstall",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Org"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "listing_id",
+                  "handle"
+                ],
+                "properties": {
+                  "listing_id": {
+                    "type": "string"
+                  },
+                  "handle": {
+                    "type": "string"
+                  },
+                  "label": {
+                    "type": "string",
+                    "maxLength": 64
+                  },
+                  "configuration": {
+                    "type": "object"
+                  },
+                  "operators": {
+                    "type": "array",
+                    "maxItems": 50,
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "purchase_id": {
+                    "type": "string",
+                    "description": "A priced listing: the org's paid purchase (its reserved installation id)."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A replay of an install under the same purchase.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Installation"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Installation"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/v1/orgs/{org}/nest-installations/{installation}/operators/{member}": {
+      "put": {
+        "tags": [
+          "Org installations"
+        ],
+        "operationId": "addInstallationOperator",
+        "summary": "Make a member an operator",
+        "description": "A Nest admin. A live `operate_nest` delegation on the installation's agent address; a new one replaces the old.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "NestInstall",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Org"
+          },
+          {
+            "$ref": "#/components/parameters/Installation"
+          },
+          {
+            "$ref": "#/components/parameters/Member"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Org installations"
+        ],
+        "operationId": "removeInstallationOperator",
+        "summary": "Take a member's operator delegation",
+        "description": "A Nest admin. Their use ends at once.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "NestInstall",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Org"
+          },
+          {
+            "$ref": "#/components/parameters/Installation"
+          },
+          {
+            "$ref": "#/components/parameters/Member"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/v1/publishers/{publisher}/sources": {
+      "get": {
+        "tags": [
+          "Source connections"
+        ],
+        "operationId": "listSources",
+        "summary": "A publisher's sources",
+        "description": "The team. Never a private key.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "PublisherManage",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Publisher"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "next_cursor"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/PublisherSource"
+                      }
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Source connections"
+        ],
+        "operationId": "createSource",
+        "summary": "Register a source",
+        "description": "A certified publisher's admins. `kind: https` (a public `https://host/path`, no credentials) or `kind: deploy_key` (`ssh://git@host/owner/repo` or `git@host:owner/repo`): Pigeonpost generates an Ed25519 key, seals the private half with the vault and answers with the public half to add to the repository read-only. Every host must be on the postbox's allowlist (`403 git_host_not_allowed`). A build names it with `source.source_id`.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "PublisherManage",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Publisher"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "repository",
+                  "label"
+                ],
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "https",
+                      "deploy_key"
+                    ]
+                  },
+                  "repository": {
+                    "type": "string",
+                    "maxLength": 300
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/PublisherSource"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/v1/publishers/{publisher}/sources/{source}": {
+      "get": {
+        "tags": [
+          "Source connections"
+        ],
+        "operationId": "readSource",
+        "summary": "One source",
+        "description": "The team.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "PublisherManage",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Publisher"
+          },
+          {
+            "$ref": "#/components/parameters/Source"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/PublisherSource"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Source connections"
+        ],
+        "operationId": "deleteSource",
+        "summary": "Delete a source",
+        "description": "The admins. The sealed key is wiped; queued builds that named it fail with `source_deleted`.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "PublisherManage",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Publisher"
+          },
+          {
+            "$ref": "#/components/parameters/Source"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/PublisherSource"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/v1/publishers/{publisher}/test-nests": {
+      "get": {
+        "tags": [
+          "Hosted test Nests"
+        ],
+        "operationId": "listTestNests",
+        "summary": "A publisher's test Nests",
+        "description": "The team. Staging postbox only: `404 staging_only` elsewhere; `503 test_pool_unavailable` without a test pool.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "PublisherManage",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Publisher"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "next_cursor"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/TestNest"
+                      }
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Hosted test Nests"
+        ],
+        "operationId": "createTestNest",
+        "summary": "Create a test Nest",
+        "description": "A certified publisher's admins, from a `release_id` or a `build_id` of theirs that passed intake and failed no stage (approval not needed; `409 intake_required`, `release_not_testable`, `build_not_built`). It lives `days` (default and maximum: the postbox's `POSTBOX_MARKETPLACE_TEST_NEST_DAYS`, 7 unless set), runs in the test pool only and admits only a test statement (`pigeonpost.nest.release.test.v1`), which a production pool refuses. At most 5 live per publisher (`409 too_many_test_nests`). A day before expiry the team gets `nest.test.expiring`; at expiry `nest.test.expired`, and its worker and volume are removed. Staging postbox only: `404 staging_only` elsewhere; `503 test_pool_unavailable` without a test pool.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "PublisherManage",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Publisher"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [],
+                "properties": {
+                  "release_id": {
+                    "type": "string"
+                  },
+                  "build_id": {
+                    "type": "string"
+                  },
+                  "label": {
+                    "type": "string",
+                    "maxLength": 80
+                  },
+                  "days": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 30
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/TestNest"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/v1/publishers/{publisher}/test-nests/{test_nest}": {
+      "get": {
+        "tags": [
+          "Hosted test Nests"
+        ],
+        "operationId": "readTestNest",
+        "summary": "One test Nest",
+        "description": "The team. Staging postbox only: `404 staging_only` elsewhere; `503 test_pool_unavailable` without a test pool.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "PublisherManage",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Publisher"
+          },
+          {
+            "$ref": "#/components/parameters/TestNestId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/TestNest"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Hosted test Nests"
+        ],
+        "operationId": "deleteTestNest",
+        "summary": "Delete a test Nest",
+        "description": "The admins. Open jobs stop; the worker and its volume are removed (`runtime_removed`). Staging postbox only: `404 staging_only` elsewhere; `503 test_pool_unavailable` without a test pool.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "PublisherManage",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Publisher"
+          },
+          {
+            "$ref": "#/components/parameters/TestNestId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/v1/publishers/{publisher}/test-nests/{test_nest}/reset": {
+      "post": {
+        "tags": [
+          "Hosted test Nests"
+        ],
+        "operationId": "resetTestNest",
+        "summary": "Reset a test Nest",
+        "description": "The admins. Open jobs stop, the worker and its data are removed, and the next job starts on a fresh one (`generation` + 1). The expiry does not move. Staging postbox only: `404 staging_only` elsewhere; `503 test_pool_unavailable` without a test pool.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "PublisherManage",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Publisher"
+          },
+          {
+            "$ref": "#/components/parameters/TestNestId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/TestNest"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/v1/publishers/{publisher}/test-nests/{test_nest}/jobs": {
+      "get": {
+        "tags": [
+          "Hosted test Nests"
+        ],
+        "operationId": "listTestNestJobs",
+        "summary": "A test Nest's jobs",
+        "description": "The team. Staging postbox only: `404 staging_only` elsewhere; `503 test_pool_unavailable` without a test pool.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "PublisherManage",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Publisher"
+          },
+          {
+            "$ref": "#/components/parameters/TestNestId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "next_cursor"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/TestNestJob"
+                      }
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Hosted test Nests"
+        ],
+        "operationId": "invokeTestNest",
+        "summary": "Run a synthetic job",
+        "description": "The admins. The operation's input schema is enforced; no quote, no payment, no buyer. At most 500 a day per test Nest (`429 rate_limited`); `409 test_nest_ended` after expiry or deletion. Staging postbox only: `404 staging_only` elsewhere; `503 test_pool_unavailable` without a test pool.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "PublisherManage",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Publisher"
+          },
+          {
+            "$ref": "#/components/parameters/TestNestId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "operation",
+                  "operation_version",
+                  "payload"
+                ],
+                "properties": {
+                  "operation": {
+                    "type": "string"
+                  },
+                  "operation_version": {
+                    "type": "string"
+                  },
+                  "payload": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/TestNestJob"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/v1/publishers/{publisher}/test-nests/{test_nest}/jobs/{job}": {
+      "get": {
+        "tags": [
+          "Hosted test Nests"
+        ],
+        "operationId": "readTestNestJob",
+        "summary": "One synthetic job",
+        "description": "The team. Retries a queued job's hand-over and collects a running one's result. Staging postbox only: `404 staging_only` elsewhere; `503 test_pool_unavailable` without a test pool.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "PublisherManage",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Publisher"
+          },
+          {
+            "$ref": "#/components/parameters/TestNestId"
+          },
+          {
+            "$ref": "#/components/parameters/Job"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/TestNestJob"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/v1/publishers/{publisher}/test-nests/{test_nest}/logs": {
+      "get": {
+        "tags": [
+          "Hosted test Nests"
+        ],
+        "operationId": "readTestNestLogs",
+        "summary": "A test Nest's log",
+        "description": "The team: created, job, reset, expiring, expired and deleted entries, with ids, states and error codes only. Staging postbox only: `404 staging_only` elsewhere; `503 test_pool_unavailable` without a test pool.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "PublisherManage",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Publisher"
+          },
+          {
+            "$ref": "#/components/parameters/TestNestId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/v1/publishers/{publisher}/listing-stats": {
+      "get": {
+        "tags": [
+          "Marketplace console"
+        ],
+        "operationId": "listingStats",
+        "summary": "Installation counts per listing",
+        "description": "The team. Counts only (active, active by accounts and by orgs, total, uninstalled); never who installed.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "PublisherManage",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Publisher"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/v1/marketplace/listings/{listing}/reports": {
+      "post": {
+        "tags": [
+          "Marketplace console"
+        ],
+        "operationId": "reportListing",
+        "summary": "Report a listing",
+        "description": "A person who can see the listing. `reason` is one of malicious, misleading, broken, privacy, illegal, spam, other; `detail` at most 500 characters. One open report per person and listing (`409 already_reported`); 10 a day (`429 rate_limited`).",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "NestInstall",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Listing"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "reason"
+                ],
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "enum": [
+                      "malicious",
+                      "misleading",
+                      "broken",
+                      "privacy",
+                      "illegal",
+                      "spam",
+                      "other"
+                    ]
+                  },
+                  "detail": {
+                    "type": "string",
+                    "maxLength": 500
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/v1/staff/listing-reports": {
+      "get": {
+        "tags": [
+          "Staff"
+        ],
+        "operationId": "staffListListingReports",
+        "summary": "The listing report queue",
+        "description": "A reviewer with step-up. `status=open` (default) or `closed`, oldest first, paged with `cursor`. Reporters are not named.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "NestReview",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 20
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "open",
+                "closed"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/v1/staff/listing-reports/{report}/close": {
+      "post": {
+        "tags": [
+          "Staff"
+        ],
+        "operationId": "staffCloseListingReport",
+        "summary": "Close a report",
+        "description": "A reviewer with step-up, with a `resolution`. Moderation itself is `POST /v1/staff/listings/{listing}/moderation`.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "NestReview",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Report"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "resolution"
+                ],
+                "properties": {
+                  "resolution": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 500
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/v1/staff/listings": {
+      "get": {
+        "tags": [
+          "Staff"
+        ],
+        "operationId": "staffListListings",
+        "summary": "Every listing, for moderation",
+        "description": "A reviewer with step-up. Filter by `status` and `publisher`; newest first; paged with `cursor`; each with its open report count.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "NestReview",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 20
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "draft",
+                "published",
+                "suspended",
+                "withdrawn"
+              ]
+            }
+          },
+          {
+            "name": "publisher",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 64
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1084,6 +5340,57 @@
       }
     },
     "parameters": {
+      "Build": {
+        "name": "build",
+        "in": "path",
+        "required": true,
+        "description": "Build request id.",
+        "schema": {
+          "type": "string",
+          "pattern": "^bld_[a-z2-7]{26}$"
+        }
+      },
+      "Listing": {
+        "name": "listing",
+        "in": "path",
+        "required": true,
+        "description": "Listing id.",
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        }
+      },
+      "Installation": {
+        "name": "installation",
+        "in": "path",
+        "required": true,
+        "description": "Installation id.",
+        "schema": {
+          "type": "string",
+          "pattern": "^ins_[a-z2-7]{26}$"
+        }
+      },
+      "PublisherRoleId": {
+        "name": "role",
+        "in": "path",
+        "required": true,
+        "description": "Publisher role id.",
+        "schema": {
+          "type": "string",
+          "pattern": "^prl_[a-z2-7]{26}$"
+        }
+      },
+      "Application": {
+        "name": "application",
+        "in": "path",
+        "required": true,
+        "description": "Publisher application (profile) id.",
+        "schema": {
+          "type": "string",
+          "pattern": "^pub_[a-z2-7]{26}$"
+        }
+      },
       "ActingIdentity": {
         "name": "x-pigeonpost-identity",
         "in": "header",
@@ -1137,6 +5444,68 @@
           "type": "string",
           "pattern": "^rvw_[a-z2-7]{26}$"
         }
+      },
+      "Grant": {
+        "name": "grant",
+        "in": "path",
+        "required": true,
+        "description": "Grant id.",
+        "schema": {
+          "type": "string",
+          "pattern": "^gnt_[a-z2-7]{26}$"
+        }
+      },
+      "Org": {
+        "name": "org",
+        "in": "path",
+        "required": true,
+        "description": "Organization id.",
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        }
+      },
+      "Member": {
+        "name": "member",
+        "in": "path",
+        "required": true,
+        "description": "Org member id.",
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        }
+      },
+      "Source": {
+        "name": "source",
+        "in": "path",
+        "required": true,
+        "description": "Source id.",
+        "schema": {
+          "type": "string",
+          "pattern": "^src_[a-z2-7]{26}$"
+        }
+      },
+      "TestNestId": {
+        "name": "test_nest",
+        "in": "path",
+        "required": true,
+        "description": "Test Nest id.",
+        "schema": {
+          "type": "string",
+          "pattern": "^tnt_[a-z2-7]{26}$"
+        }
+      },
+      "Report": {
+        "name": "report",
+        "in": "path",
+        "required": true,
+        "description": "Listing report id.",
+        "schema": {
+          "type": "string",
+          "pattern": "^lrp_[a-z2-7]{26}$"
+        }
       }
     },
     "headers": {
@@ -1167,7 +5536,7 @@
     },
     "responses": {
       "BadRequest": {
-        "description": "Malformed request (`bad_request`, `invalid_json`, `invalid_request`, `invalid_role`, `bad_display_name`, `invalid_operation_payload`, `deadline_invalid`).",
+        "description": "Malformed request (`bad_request`, `invalid_json`, `invalid_request`, `invalid_role`, `bad_display_name`, `invalid_operation_payload`, `deadline_invalid`, `not_org_member`, `visibility_not_available`, `invalid_cursor`, `invalid_configuration` (with `details.issues`)).",
         "content": {
           "application/json": {
             "schema": {
@@ -1187,7 +5556,7 @@
         }
       },
       "Forbidden": {
-        "description": "The credential kind or the caller's authority does not allow this (`credential_not_accepted`, `human_required`, `step_up_required`, `step_up_unavailable`, `forbidden`, `staff_required`, `staff_conflict`, `not_admitted`, `mandate_revoked`, `mandate_limit`).",
+        "description": "The credential kind or the caller's authority does not allow this (`credential_not_accepted`, `human_required`, `step_up_required`, `step_up_unavailable`, `forbidden`, `staff_required`, `staff_conflict`, `not_admitted`, `mandate_revoked`, `mandate_limit`, `publisher_role_required`, `publisher_not_certified`, `publisher_revoked`).",
         "content": {
           "application/json": {
             "schema": {
@@ -1207,7 +5576,37 @@
         }
       },
       "Conflict": {
-        "description": "State or binding conflict (`role_already_held`, `application_exists`, `idempotency_conflict`, `quote_expired`, `authorization_expired`, `authorization_reused`, `authorization_intent_mismatch`, `environment_mismatch`, `currency_mismatch`, `review_required`, `release_revoked`, `security_quarantined`, `access_expired`, `recovery_window_closed`, `review_closed`, `stages_incomplete`, `release_digest_mismatch`, `invalid_request` for a security action that does not apply).",
+        "description": "State or binding conflict (`role_already_held`, `application_exists`, `idempotency_conflict`, `quote_expired`, `authorization_expired`, `authorization_reused`, `authorization_intent_mismatch`, `environment_mismatch`, `currency_mismatch`, `review_required`, `release_revoked`, `security_quarantined`, `access_expired`, `recovery_window_closed`, `review_closed`, `stages_incomplete`, `release_digest_mismatch`, `invalid_request` for a security action that does not apply, `template_exists`, `version_exists`, `listing_address_taken`, `listing_address_changed`, `listing_suspended`, `listing_not_suspended`, `configuration_invalid_for_release`, `already_installed`, `installation_removed`, `installation_changed`, `installation_required`, `not_newer`, `up_to_date`, `no_previous_release`, `application_decided`, `not_on_sale`, `intent_conflict`, `intent_mismatch`, `authorization_used`, `owner_not_supported`, `currency_unavailable`).",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "PaymentRequired": {
+        "description": "A priced listing without a paid purchase (`payment_required`, with `details.price`), a payment not confirmed or not usable (`payment_pending`, `payment_failed`, `payment_expired`, `payment_revoked`), or a paid installation whose licence gives no access now (`licence_inactive`).",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "PriceNotInvoiceable": {
+        "description": "The financial authority cannot invoice this tax-inclusive price exactly (`price_not_invoiceable`); `details.nearest` lists the nearest prices it can. Nothing changed.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "BillingUnavailable": {
+        "description": "The billing bridge or the financial authority is not answering, or payments are not configured (`billing_unavailable`). Nothing changed.",
         "content": {
           "application/json": {
             "schema": {
@@ -1268,6 +5667,375 @@
       }
     },
     "schemas": {
+      "ListingPriceTerms": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Price terms a publisher sets (M2b). `amount_minor` must be 0 until payments land (`400 price_not_available`).",
+        "properties": {
+          "amount_minor": {
+            "type": "integer",
+            "const": 0
+          },
+          "currency": {
+            "type": "string",
+            "enum": [
+              "TRY",
+              "USD",
+              "EUR"
+            ]
+          },
+          "term": {
+            "type": "string",
+            "enum": [
+              "one_off",
+              "monthly"
+            ]
+          }
+        }
+      },
+      "ListingPrice": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "amount_minor",
+          "currency",
+          "term",
+          "funding"
+        ],
+        "description": "A listing's price. Free: `amount_minor` 0 and `funding: test_credits`, with the listing's preferred `currency` and `term` (M2b). Priced (payments): the publisher's tax-inclusive price in minor units, `funding: card`, and `on_sale` once the financial authority holds the offer.",
+        "properties": {
+          "amount_minor": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "currency": {
+            "type": "string",
+            "enum": [
+              "TRY",
+              "USD",
+              "EUR"
+            ]
+          },
+          "term": {
+            "type": "string",
+            "enum": [
+              "one_off",
+              "monthly"
+            ]
+          },
+          "funding": {
+            "type": "string",
+            "enum": [
+              "test_credits",
+              "card"
+            ]
+          },
+          "on_sale": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ListingGrant": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "listing_id",
+          "kind",
+          "discover",
+          "install",
+          "invoke",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "listing_id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "invite",
+              "organization"
+            ]
+          },
+          "address": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "org_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "discover": {
+            "type": "boolean"
+          },
+          "install": {
+            "type": "boolean"
+          },
+          "invoke": {
+            "type": "boolean"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "active",
+              "declined",
+              "revoked"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "accepted_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "revoked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "listing": {
+            "type": "object",
+            "description": "On `GET /v1/marketplace/invites`: title, summary, status, publisher name."
+          }
+        }
+      },
+      "PublisherSource": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "publisher_id",
+          "kind",
+          "repository",
+          "host",
+          "label",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "publisher_id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "https",
+              "deploy_key"
+            ]
+          },
+          "repository": {
+            "type": "string"
+          },
+          "host": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "deploy_key": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The public key to add read-only, its SHA-256 fingerprint and `access: read_only`. Never the private key.",
+            "properties": {
+              "public_key": {
+                "type": "string"
+              },
+              "fingerprint": {
+                "type": "string"
+              },
+              "access": {
+                "type": "string",
+                "const": "read_only"
+              }
+            }
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "deleted"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "deleted_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "TestNest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "publisher_id",
+          "release_id",
+          "label",
+          "generation",
+          "status",
+          "expires_at",
+          "environment"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "publisher_id": {
+            "type": "string"
+          },
+          "release_id": {
+            "type": "string"
+          },
+          "build_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "label": {
+            "type": "string"
+          },
+          "generation": {
+            "type": "integer"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "expired",
+              "deleted"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "ended_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "version": {
+            "type": "string"
+          },
+          "environment": {
+            "type": "string",
+            "const": "staging"
+          }
+        }
+      },
+      "TestNestJob": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "test_nest_id",
+          "generation",
+          "operation",
+          "operation_version",
+          "state",
+          "synthetic"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "test_nest_id": {
+            "type": "string"
+          },
+          "generation": {
+            "type": "integer"
+          },
+          "operation": {
+            "type": "string"
+          },
+          "operation_version": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "succeeded",
+              "failed",
+              "stopped"
+            ]
+          },
+          "result": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "error_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "synthetic": {
+            "type": "boolean",
+            "const": true
+          }
+        }
+      },
       "Error": {
         "type": "object",
         "description": "Every refusal. `code` is stable; private resources are never distinguished from missing ones.",
@@ -1329,7 +6097,32 @@
                   "payload_too_large",
                   "rate_limited",
                   "financial_authority_unavailable",
-                  "store_error"
+                  "store_error",
+                  "publisher_role_required",
+                  "publisher_not_certified",
+                  "publisher_revoked",
+                  "not_org_member",
+                  "template_exists",
+                  "version_exists",
+                  "build_not_queued",
+                  "listing_address_taken",
+                  "listing_address_changed",
+                  "listing_suspended",
+                  "listing_not_suspended",
+                  "visibility_not_available",
+                  "invalid_cursor",
+                  "invalid_configuration",
+                  "configuration_invalid_for_release",
+                  "already_installed",
+                  "installation_removed",
+                  "installation_changed",
+                  "installation_required",
+                  "not_newer",
+                  "up_to_date",
+                  "no_previous_release",
+                  "application_decided",
+                  "stage_out_of_order",
+                  "stage_already_recorded"
                 ]
               },
               "message": {
@@ -1815,8 +6608,10 @@
               "in_review",
               "approved",
               "changes_requested",
-              "rejected"
-            ]
+              "rejected",
+              "withdrawn"
+            ],
+            "description": "`changes_requested` also covers a review an analysis stage blocked (its `decision_ref` is that stage's record); `withdrawn` is the publisher's own."
           },
           "stages": {
             "type": "array",
@@ -2473,6 +7268,7 @@
           "visibility",
           "status"
         ],
+        "description": "A listing. The public read adds `publisher`, `operations`, `config_schema` and `price`; the publisher's own reads add `template_id`, `moderation_reason` and timestamps. The catalog leaves out `moderation_reason`.",
         "properties": {
           "id": {
             "type": "string"
@@ -2483,10 +7279,19 @@
           "release_id": {
             "type": "string"
           },
+          "template_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "title": {
             "type": "string"
           },
           "summary": {
+            "type": "string"
+          },
+          "description": {
             "type": "string"
           },
           "visibility": {
@@ -2506,6 +7311,1306 @@
               "published",
               "suspended",
               "withdrawn"
+            ],
+            "description": "`suspended` is staff's (moderation, revocation); a publisher cannot leave it."
+          },
+          "address": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The shared Nest address jobs are sent to."
+          },
+          "moderation_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "version": {
+            "type": "string"
+          },
+          "publisher": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "display_name",
+              "first_party"
+            ],
+            "properties": {
+              "display_name": {
+                "type": "string"
+              },
+              "first_party": {
+                "type": "boolean"
+              }
+            }
+          },
+          "operations": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "description": "The release manifest's operations and their input fields."
+          },
+          "config_schema": {
+            "$ref": "#/components/schemas/NestConfigSchema"
+          },
+          "price": {
+            "$ref": "#/components/schemas/ListingPrice"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "published_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "Publisher": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "owner_kind",
+          "owner_id",
+          "display_name",
+          "status",
+          "decision_reason",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^pub_[a-z2-7]{26}$"
+          },
+          "owner_kind": {
+            "type": "string",
+            "enum": [
+              "account",
+              "org",
+              "platform"
+            ]
+          },
+          "owner_id": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "applied",
+              "approved",
+              "rejected",
+              "revoked"
+            ],
+            "description": "`approved` is certified."
+          },
+          "decision_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Staff's reason for the latest decision or revocation."
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "owner",
+              "org_admin",
+              "publisher_admin",
+              "publisher_finance"
+            ],
+            "description": "The caller's role (publisher reads)."
+          },
+          "conflict": {
+            "type": "boolean",
+            "description": "The reviewer has a stake in this publisher (staff queue)."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "PublisherRoleGrant": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "The member by `account_id`, or (M2b) by `member_id`, the org member id the org's member list shows. Exactly one of the two.",
+        "required": [
+          "role"
+        ],
+        "oneOf": [
+          {
+            "required": [
+              "account_id"
+            ]
+          },
+          {
+            "required": [
+              "member_id"
+            ]
+          }
+        ],
+        "properties": {
+          "account_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "member_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "publisher_admin",
+              "publisher_finance"
+            ]
+          }
+        }
+      },
+      "PublisherRole": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "account_id",
+          "role",
+          "granted_by",
+          "granted_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^prl_[a-z2-7]{26}$"
+          },
+          "account_id": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "publisher_admin",
+              "publisher_finance"
+            ]
+          },
+          "granted_by": {
+            "type": "string"
+          },
+          "granted_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "TemplateCreate": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "slug",
+          "name"
+        ],
+        "properties": {
+          "slug": {
+            "type": "string",
+            "pattern": "^[a-z0-9-]{1,64}$",
+            "description": "The manifest `name` of every release of this template."
+          },
+          "name": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 80
+          }
+        }
+      },
+      "Template": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "publisher_id",
+          "slug",
+          "name",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^tpl_[a-z2-7]{26}$"
+          },
+          "publisher_id": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "BuildCreate": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "template_id",
+          "version",
+          "source"
+        ],
+        "properties": {
+          "template_id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string",
+            "pattern": "^[0-9]{1,9}\\.[0-9]{1,9}\\.[0-9]{1,9}$"
+          },
+          "source": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "repository",
+              "commit"
+            ],
+            "properties": {
+              "repository": {
+                "type": "string",
+                "maxLength": 300,
+                "pattern": "^https://[^/@?#]+/[^?#]+$",
+                "description": "Read-only fetch; no credentials in the URL."
+              },
+              "commit": {
+                "type": "string",
+                "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+              }
+            }
+          }
+        }
+      },
+      "Build": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "publisher_id",
+          "template_id",
+          "version",
+          "source",
+          "status",
+          "release_id",
+          "review_id",
+          "failure",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^bld_[a-z2-7]{26}$"
+          },
+          "publisher_id": {
+            "type": "string"
+          },
+          "template_id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "source": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "repository",
+              "commit"
+            ],
+            "properties": {
+              "repository": {
+                "type": "string"
+              },
+              "commit": {
+                "type": "string"
+              }
+            }
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "built",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "release_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "review_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "failure": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": false,
+            "required": [
+              "code",
+              "reason"
+            ],
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "reason": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Redacted by the build plane."
+              }
+            }
+          },
+          "template_slug": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "NestReviewFindings": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "review_id",
+          "stages"
+        ],
+        "properties": {
+          "review_id": {
+            "type": "string"
+          },
+          "stages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "stage",
+                "decision",
+                "reason",
+                "findings",
+                "recorded_at"
+              ],
+              "properties": {
+                "stage": {
+                  "type": "string",
+                  "enum": [
+                    "intake",
+                    "deterministic_scan",
+                    "ai_analysis",
+                    "behavioral_test",
+                    "human_review",
+                    "attestation"
+                  ]
+                },
+                "decision": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "findings": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "rule",
+                      "blocker"
+                    ],
+                    "properties": {
+                      "rule": {
+                        "type": "string"
+                      },
+                      "path": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "detail": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "blocker": {
+                        "type": [
+                          "boolean",
+                          "null"
+                        ]
+                      }
+                    }
+                  }
+                },
+                "advisory_findings": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "model": {
+                  "type": "string",
+                  "const": "qwen-latest-flash-next"
+                },
+                "recorded_at": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              }
+            }
+          }
+        }
+      },
+      "ListingCreate": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "release_id",
+          "title",
+          "summary",
+          "visibility"
+        ],
+        "properties": {
+          "release_id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 120
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 300
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 5000
+          },
+          "visibility": {
+            "type": "string",
+            "enum": [
+              "public",
+              "unlisted",
+              "private",
+              "invite_only",
+              "organization"
+            ]
+          },
+          "price": {
+            "$ref": "#/components/schemas/ListingPriceTerms"
+          }
+        }
+      },
+      "ListingPatch": {
+        "type": "object",
+        "additionalProperties": false,
+        "minProperties": 1,
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 120
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 300
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 5000
+          },
+          "visibility": {
+            "type": "string",
+            "enum": [
+              "public",
+              "unlisted",
+              "private",
+              "invite_only",
+              "organization"
+            ]
+          },
+          "price": {
+            "$ref": "#/components/schemas/ListingPriceTerms"
+          }
+        }
+      },
+      "ListingPublish": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "release_id": {
+            "type": "string",
+            "description": "An attested release of the listing's template; default the listing's current one."
+          }
+        }
+      },
+      "NestConfigSchema": {
+        "type": "object",
+        "description": "A release's installation configuration schema: the Pigeonpost subset of JSON Schema 2020-12 (`pigeonpost_core::nest_package`). One flat object (`additionalProperties: false`) of `string` (with `maxLength` <= 4096 or `enum`; optional `minLength`), `integer` and `number` (optional `minimum`, `maximum`) and `boolean` properties, each with optional `title`, `description` and `default`; at most 32. `writeOnly: true` marks a secret string (no `default`, no `enum`). Every other keyword is refused by name. Fixtures: `examples/nest-config-fixtures.json`.",
+        "required": [
+          "type",
+          "additionalProperties",
+          "properties"
+        ],
+        "properties": {
+          "type": {
+            "const": "object"
+          },
+          "additionalProperties": {
+            "const": false
+          },
+          "properties": {
+            "type": "object",
+            "maxProperties": 32
+          },
+          "required": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "$schema": {
+            "type": "string"
+          }
+        }
+      },
+      "InstallationCreate": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "listing_id"
+        ],
+        "properties": {
+          "listing_id": {
+            "type": "string"
+          },
+          "configuration": {
+            "type": "object",
+            "description": "Validated against the release's `config_schema`; default `{}`."
+          },
+          "purchase_id": {
+            "type": "string",
+            "pattern": "^ins_[a-z2-7]{26}$",
+            "description": "A priced listing only. The caller's paid purchase (`POST /v1/marketplace/purchases`, paid through the billing bridge); the installation takes its id."
+          }
+        }
+      },
+      "InstallationLicence": {
+        "type": "object",
+        "description": "The licence a paid installation runs under, as the financial authority last reported it. Without `access` the installation takes no jobs and its worker is stopped (data kept); past `deletion_due_at` it is uninstalled and its worker and data removed.",
+        "additionalProperties": false,
+        "required": [
+          "licence_id",
+          "term",
+          "status",
+          "access",
+          "runtime"
+        ],
+        "properties": {
+          "licence_id": {
+            "type": "string"
+          },
+          "term": {
+            "type": "string",
+            "enum": [
+              "one_off",
+              "monthly"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "canceling",
+              "paused",
+              "expired",
+              "terminated",
+              "revoked"
+            ]
+          },
+          "access": {
+            "type": "boolean"
+          },
+          "paid_through": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "cancel_at_period_end": {
+            "type": "boolean"
+          },
+          "deletion_due_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "runtime": {
+            "type": "string",
+            "enum": [
+              "running",
+              "stopped",
+              "removed"
+            ]
+          }
+        }
+      },
+      "ListingPriceSet": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "amount_minor",
+          "currency",
+          "term"
+        ],
+        "properties": {
+          "amount_minor": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100000000,
+            "description": "Tax-inclusive, in minor units."
+          },
+          "currency": {
+            "type": "string",
+            "enum": [
+              "TRY",
+              "USD",
+              "EUR"
+            ]
+          },
+          "term": {
+            "type": "string",
+            "enum": [
+              "one_off",
+              "monthly"
+            ]
+          }
+        }
+      },
+      "ListingPriceState": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "listing_id",
+          "price",
+          "offer"
+        ],
+        "properties": {
+          "listing_id": {
+            "type": "string"
+          },
+          "price": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ListingPriceSet"
+              }
+            ]
+          },
+          "offer": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "offer_id",
+                  "state",
+                  "on_sale",
+                  "release_line"
+                ],
+                "properties": {
+                  "offer_id": {
+                    "type": "string",
+                    "pattern": "^mpo_[0-9a-f]{32}$"
+                  },
+                  "state": {
+                    "type": "string",
+                    "enum": [
+                      "pending",
+                      "active",
+                      "retiring",
+                      "retired"
+                    ]
+                  },
+                  "on_sale": {
+                    "type": "boolean"
+                  },
+                  "release_line": {
+                    "type": "string"
+                  },
+                  "error": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "PurchaseCreate": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "listing_id",
+          "owner_kind",
+          "owner_id",
+          "intent_id"
+        ],
+        "properties": {
+          "listing_id": {
+            "type": "string"
+          },
+          "owner_kind": {
+            "type": "string",
+            "enum": [
+              "account",
+              "org"
+            ]
+          },
+          "owner_id": {
+            "type": "string"
+          },
+          "intent_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{32}$"
+          }
+        }
+      },
+      "Purchase": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "purchase_id",
+          "installation_id",
+          "listing_id",
+          "owner_kind",
+          "owner_id",
+          "status",
+          "offer",
+          "intent"
+        ],
+        "properties": {
+          "purchase_id": {
+            "type": "string"
+          },
+          "installation_id": {
+            "type": "string",
+            "pattern": "^ins_[a-z2-7]{26}$"
+          },
+          "listing_id": {
+            "type": "string"
+          },
+          "owner_kind": {
+            "type": "string"
+          },
+          "owner_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "installed"
+            ]
+          },
+          "offer": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "offer_id",
+              "term",
+              "currency",
+              "amount_minor",
+              "release_line",
+              "title"
+            ],
+            "properties": {
+              "offer_id": {
+                "type": "string"
+              },
+              "term": {
+                "type": "string"
+              },
+              "currency": {
+                "type": "string"
+              },
+              "amount_minor": {
+                "type": "integer"
+              },
+              "release_line": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              }
+            }
+          },
+          "intent": {
+            "type": "object",
+            "description": "What the payment admits, exactly as the financial authority binds it.",
+            "additionalProperties": false,
+            "required": [
+              "action",
+              "listing_id",
+              "release_line",
+              "owner_kind",
+              "owner_id",
+              "installation_id"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "const": "install"
+              },
+              "listing_id": {
+                "type": "string"
+              },
+              "release_line": {
+                "type": "string"
+              },
+              "owner_kind": {
+                "type": "string"
+              },
+              "owner_id": {
+                "type": "string"
+              },
+              "installation_id": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "InstallationConfiguration": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "configuration"
+        ],
+        "properties": {
+          "configuration": {
+            "type": "object"
+          }
+        }
+      },
+      "InstallationMove": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "release_id": {
+            "type": "string",
+            "description": "Update only: the target release; default the listing's current one."
+          },
+          "configuration": {
+            "type": "object",
+            "description": "A configuration for the target release, when the current one does not fit its schema."
+          }
+        }
+      },
+      "Installation": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "listing_id",
+          "release_id",
+          "status",
+          "funding",
+          "configuration",
+          "config_schema",
+          "secrets",
+          "config_revision",
+          "update_available",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^ins_[a-z2-7]{26}$"
+          },
+          "listing_id": {
+            "type": "string"
+          },
+          "address": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "listing_status": {
+            "type": "string"
+          },
+          "release_id": {
+            "type": "string"
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "security_state": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "normal",
+              "quarantined",
+              "revoked",
+              null
+            ]
+          },
+          "previous_release_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "configuration": {
+            "type": "object",
+            "description": "The stored, non-secret values."
+          },
+          "config_schema": {
+            "$ref": "#/components/schemas/NestConfigSchema"
+          },
+          "secrets": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "name",
+                "set"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "set": {
+                  "type": "boolean"
+                }
+              }
+            }
+          },
+          "config_revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "uninstalled"
+            ]
+          },
+          "funding": {
+            "type": "string",
+            "description": "`test_credits` for a free listing; `licence` for a paid one, whose `licence` says what was bought.",
+            "enum": [
+              "test_credits",
+              "licence"
+            ]
+          },
+          "licence": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/InstallationLicence"
+              }
+            ]
+          },
+          "update_available": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": false,
+            "required": [
+              "release_id",
+              "version"
+            ],
+            "properties": {
+              "release_id": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            }
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "uninstalled_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "Uninstalled": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "status",
+          "jobs_cancelled",
+          "runtime_removed"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "const": "uninstalled"
+          },
+          "jobs_cancelled": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "runtime_removed": {
+            "type": "boolean"
+          }
+        }
+      },
+      "CertificationCreate": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "decision",
+          "reason"
+        ],
+        "properties": {
+          "decision": {
+            "type": "string",
+            "enum": [
+              "approved",
+              "rejected"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        }
+      },
+      "ReasonRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "reason"
+        ],
+        "properties": {
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        }
+      },
+      "PublisherRevocation": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "publisher_id",
+          "status",
+          "listings_suspended",
+          "builds_cancelled"
+        ],
+        "properties": {
+          "publisher_id": {
+            "type": "string"
+          },
+          "status": {
+            "const": "revoked"
+          },
+          "listings_suspended": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "builds_cancelled": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "StaffReviewSummary": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "release_id",
+          "publisher_id",
+          "publisher_name",
+          "version",
+          "status",
+          "revision",
+          "updated_at",
+          "stages_recorded",
+          "first_party",
+          "conflict"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "release_id": {
+            "type": "string"
+          },
+          "publisher_id": {
+            "type": "string"
+          },
+          "publisher_name": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "blocked",
+              "decided",
+              "withdrawn"
+            ]
+          },
+          "revision": {
+            "type": "integer"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "stages_recorded": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "first_party": {
+            "type": "boolean"
+          },
+          "conflict": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ListingModeration": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "action",
+          "reason"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "suspend",
+              "reinstate"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        }
+      },
+      "ListingModerationResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "listing_id",
+          "status"
+        ],
+        "properties": {
+          "listing_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "published",
+              "draft",
+              "suspended"
             ]
           }
         }

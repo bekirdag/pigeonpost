@@ -107,3 +107,26 @@
 .pp-context { display: block; margin-bottom: .75rem; }
 .pp-operators { border: 1px solid var(--line, #ddd); border-radius: .5rem; padding: .4rem .75rem; display: grid; gap: .25rem; }
 .pp-operator { display: block; }
+
+/* Marketplace: Services catalog, publisher console, staff dashboard (marketplace-*.js) */
+.mp-status:empty { display: none; }
+.mp-status { margin: .5rem 0; }
+.mp-section { border-top: 1px solid var(--rule); padding-top: .75rem; margin-top: 1rem; }
+.mp-list { list-style: none; padding: 0; margin: .25rem 0; }
+.mp-row { display: flex; flex-wrap: wrap; gap: .4rem .75rem; align-items: baseline; padding: .45rem 0; border-top: 1px solid var(--rule); }
+.mp-row:first-child { border-top: 0; }
+.mp-row > form { flex-basis: 100%; }
+.mp-badge { display: inline-block; font-size: .8em; padding: 0 .45rem; border-radius: .6rem; border: 1px solid var(--rule); color: var(--muted); }
+.mp-badge-first { border-color: var(--blue); color: var(--blue); }
+.mp-hint { font-size: 13px; color: var(--muted); }
+.ac-form label.mp-check, label.mp-check { display: flex; flex-direction: row; align-items: baseline; gap: .35rem; color: var(--ink); }
+.mp-filter, .mp-config, .mp-visibility, .mp-section fieldset, .mp-installation fieldset { border: 1px solid var(--rule); border-radius: .5rem; padding: .5rem .75rem; margin: .5rem 0; display: grid; gap: .35rem; }
+.mp-filter { display: flex; flex-wrap: wrap; gap: .75rem; }
+.mp-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin: .5rem 0; }
+.mp-stages { padding-left: 1.2rem; }
+.mp-stage-failed, .mp-stage-blocked { color: #b3261e; }
+.mp-evidence { display: grid; grid-template-columns: max-content 1fr; gap: .2rem .75rem; }
+.mp-evidence dd { margin: 0; overflow-wrap: anywhere; }
+.mp-secret-state { font-size: 13px; }
+.ac-form textarea { border: 1px solid var(--rule); border-radius: 8px; padding: 9px 11px; font: 15px var(--sans); color: var(--ink); background: var(--ground); }
+.pp-operators-panel { flex-basis: 100%; margin-top: .5rem; }

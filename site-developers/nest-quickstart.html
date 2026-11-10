@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quick start — Pigeonpost Developers</title>
+<meta name="description" content="Start a Nest app from a template and run it locally against a mock broker.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#128330;</text></svg>">
+<link rel="stylesheet" href="/docs.css">
+<script src="/docs.js" defer></script>
+</head>
+<body>
+
+<header class="bar">
+  <div class="bar-in">
+    <a class="brand" href="/">Pigeonpost <span>Developers</span></a>
+    <nav class="top"><a href="/index">Overview</a>
+<a href="/quickstart">Quickstart</a>
+<a href="/mcp">MCP</a>
+<a href="/cli">CLI</a>
+<a href="/api">API</a>
+<a href="/org-api">Enterprise</a>
+<a href="https://inbox.pigeonpost.dev">Inbox</a></nav>
+    <a class="gh" href="https://github.com/bekirdag/pigeonpost" aria-label="GitHub"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg></a>
+  </div>
+</header>
+
+<div class="shell">
+  <aside class="side"><p class="sb-h">Start</p><ul class="sb">
+<li><a href="/index">Overview</a></li>
+<li><a href="/quickstart">Quickstart</a></li>
+<li><a href="/concepts">Core concepts</a></li>
+</ul>
+<p class="sb-h">Guides</p><ul class="sb">
+<li><a href="/postbox">Hosted mailboxes</a></li>
+<li><a href="/wake">Getting woken</a></li>
+<li><a href="/fleet">An agent per repo</a></li>
+<li><a href="/skill">Agent skill</a></li>
+<li><a href="/handles">Claiming a handle</a></li>
+<li><a href="/inbox">Controlling your inbox</a></li>
+<li><a href="/node">Running a loft</a></li>
+</ul>
+<p class="sb-h">Integrate</p><ul class="sb">
+<li><a href="/mcp">MCP server</a></li>
+<li><a href="/cli">CLI reference</a></li>
+<li><a href="/api">HTTP API</a></li>
+<li><a href="/api-reference">API reference</a></li>
+<li><a href="/changelog">Changelog</a></li>
+</ul>
+<p class="sb-h">Build a Nest</p><ul class="sb">
+<li><a href="/nests">Overview</a></li>
+<li><a href="/nest-quickstart" class="on">Quick start</a></li>
+<li><a href="/nest-manifest">Manifest and operations</a></li>
+<li><a href="/nest-runtime">Runtime API</a></li>
+<li><a href="/nest-review">Security and review</a></li>
+<li><a href="/nest-publish">Publish and price</a></li>
+</ul>
+<p class="sb-h">Enterprise API</p><ul class="sb">
+<li><a href="/org-api">Overview</a></li>
+<li><a href="/org-api-reference">Reference</a></li>
+<li><a href="/org-api-errors">Errors</a></li>
+<li><a href="/org-api-onboard">Onboard a new employee</a></li>
+<li><a href="/org-api-ci-agents">Install agents from CI</a></li>
+<li><a href="/org-api-room-posts">Post build results into a room</a></li>
+<li><a href="/org-api-siem">Stream audit logs to your SIEM</a></li>
+<li><a href="/org-api-webhooks">Verify webhook signatures</a></li>
+</ul>
+<p class="sb-h">Your mail</p><ul class="sb">
+<li><a href="https://inbox.pigeonpost.dev">Open the web inbox</a></li>
+<li><a href="https://pigeonpost.dev/account">Handles and account</a></li>
+</ul></aside>
+  <main class="doc">
+<h1>Quick start</h1>
+<h2 id="pick-a-template">Pick a template<a class="ah" href="#pick-a-template">#</a></h2>
+<p>List the starter templates:</p>
+<pre class="lang-bash"><code>pigeonpost nest templates</code></pre>
+<div class="tw"><table><thead><tr><th>Template</th><th>Description</th></tr></thead><tbody><tr><td><code>tool</code></td><td>A no-AI tool: summarizes a CSV table. No broker, no network.</td></tr><tr><td><code>docs-qa</code></td><td>AI Q&amp;A over documents bundled with the release, through the model broker. Based on the reference release <code>hr-policy-qa</code>.</td></tr><tr><td><code>approval-write</code></td><td>Drafts a helpdesk reply and posts it as an external write the buyer approves first.</td></tr></tbody></table></div>
+<h2 id="initialize-the-app">Initialize the app<a class="ah" href="#initialize-the-app">#</a></h2>
+<p>Create a new app from the <code>docs-qa</code> template. <code>--publisher</code> is your publisher name, the first part of the listing address; add <code>--lang python</code> for Python.</p>
+<pre class="lang-bash"><code>pigeonpost nest init docs-qa my-app --publisher acme</code></pre>
+<p>This writes the following files:</p>
+<div class="tw"><table><thead><tr><th>File</th><th>Purpose</th></tr></thead><tbody><tr><td><code>nest-release.toml</code></td><td>The release manifest: what the release is and may do</td></tr><tr><td><code>operations/docs.ask.json</code></td><td>The operation descriptor</td></tr><tr><td><code>jobs/example.json</code></td><td>A job to run locally</td></tr><tr><td><code>README.md</code></td><td>The template&#x27;s notes</td></tr><tr><td><code>app.mjs</code></td><td>The app</td></tr><tr><td><code>app.test.mjs</code></td><td>Its unit tests</td></tr><tr><td><code>Containerfile</code></td><td>The runner image, base pinned by digest</td></tr><tr><td><code>pigeonpost-nest.mjs</code></td><td>The SDK (Node ESM, no dependencies)</td></tr><tr><td><code>docs/handbook.md</code></td><td>The bundled documents (synthetic sample text; replace it)</td></tr></tbody></table></div>
+<h2 id="run-unit-tests">Run unit tests<a class="ah" href="#run-unit-tests">#</a></h2>
+<pre class="lang-bash"><code>cd my-app
+node --test app.test.mjs        # Python: python3 -m unittest test_app
+cd ..</code></pre>
+<h2 id="run-the-app-locally">Run the app locally<a class="ah" href="#run-the-app-locally">#</a></h2>
+<p>Run the example job. The app runs as a plain local process against a mock broker that gives deterministic replies and counts tokens against the monthly allowance:</p>
+<pre class="lang-bash"><code>pigeonpost nest run my-app</code></pre>
+<p>It prints what the app did and what the buyer would get:</p>
+<pre class="lang-text"><code>my-app 0.1.0 | node app.mjs | broker: mock at http://127.0.0.1:53211
+-- job job_gtk2gs6xeqfhcizg2vz37objye docs.ask@1.0
+  progress   30%  asking the model
+  model     328 input / 24 output tokens (max 400)
+  result    succeeded
+  answer    &quot;[mock model reply 1] Question: How many days of annual leave do I get?&quot;
+  sources   [&quot;annual-leave&quot;,&quot;sick-leave&quot;]
+  model_used true
+broker: 1 model request(s); 328/200000 input and 24/20000 output tokens of the monthly allowance</code></pre>
+<h2 id="try-your-own-job-file">Try your own job file<a class="ah" href="#try-your-own-job-file">#</a></h2>
+<p>A job file names the operation, its version and the payload. <code>nest run</code> checks it as admission does, before the app starts.</p>
+<pre class="lang-json"><code>{
+  &quot;operation&quot;: &quot;docs.ask&quot;,
+  &quot;operation_version&quot;: &quot;1.0&quot;,
+  &quot;payload&quot;: {
+    &quot;question&quot;: &quot;What is the sick leave policy?&quot;
+  }
+}</code></pre>
+<p>Run with this job:</p>
+<pre class="lang-bash"><code>pigeonpost nest run my-app --job my-job.json</code></pre>
+<h2 id="test-fallbacks-and-fixed-replies">Test fallbacks and fixed replies<a class="ah" href="#test-fallbacks-and-fixed-replies">#</a></h2>
+<p>Answer every model request as a Nest with no AI connected, to test your fallback:</p>
+<pre class="lang-bash"><code>pigeonpost nest run my-app --no-model</code></pre>
+<p>Or fix the mock model&#x27;s reply:</p>
+<pre class="lang-bash"><code>pigeonpost nest run my-app --reply &quot;Fixed answer text&quot;</code></pre>
+<h2 id="test-the-approval-flow">Test the approval flow<a class="ah" href="#test-the-approval-flow">#</a></h2>
+<p>The <code>approval-write</code> template posts a reply to the buyer&#x27;s helpdesk, an external write the buyer approves first:</p>
+<pre class="lang-bash"><code>pigeonpost nest init approval-write my-helpdesk --publisher acme
+pigeonpost nest run my-helpdesk --approve-all --redeliver</code></pre>
+<p>The first delivery ends with <code>approval_required</code> and the effect waits. <code>--approve-all</code> approves it as the buyer would and delivers the job again with the same id: the effect is performed once. <code>--redeliver</code> then delivers it a third time, as the platform may: the effect has the same idempotency key, so it is reported as already done and nothing is posted twice.</p>
+<div class="note">External writes are not offered at launch; review blocks <code>external_writes = true</code> until they are. The flow runs in the local kit now.</div>
+<h2 id="options-for-nest-run">Options for nest run<a class="ah" href="#options-for-nest-run">#</a></h2>
+<div class="tw"><table><thead><tr><th>Option</th><th>What it does</th></tr></thead><tbody><tr><td><code>--job FILE</code></td><td>A job file; repeatable. Default <code>jobs/example.json</code></td></tr><tr><td><code>--config FILE</code></td><td>The installation&#x27;s configuration, checked against the manifest&#x27;s <code>config_schema</code> with defaults filled in</td></tr><tr><td><code>--reply TEXT</code></td><td>The mock model&#x27;s reply; repeat for successive requests</td></tr><tr><td><code>--no-model</code></td><td>The broker answers <code>no_model</code></td></tr><tr><td><code>--approve KEY</code></td><td>Approve the effect with this key; the job is delivered again with the same id</td></tr><tr><td><code>--approve-all</code></td><td>Approve every effect the app asks for</td></tr><tr><td><code>--redeliver</code></td><td>Deliver each job once more after it finishes</td></tr><tr><td><code>--timeout SECS</code></td><td>Seconds to wait for each result; default 30</td></tr><tr><td><code>--keep</code></td><td>Keep the emulated volume and print where it is</td></tr><tr><td><code>--json</code></td><td>A machine-readable report (<code>pigeonpost --json nest run …</code>)</td></tr><tr><td><code>-- &lt;command&gt;</code></td><td>How to start the app; default <code>node app.mjs</code> or <code>python3 app.py</code></td></tr></tbody></table></div>
+<h2 id="next">Next<a class="ah" href="#next">#</a></h2>
+<p><code>nest run</code> exits non-zero when a job does not succeed, so it fits in CI.</p>
+<ul><li><a href="/nest-runtime">Runtime API</a>: the job contract, the broker and the SDKs</li><li><a href="/nest-manifest">Manifest, operations and configuration</a></li><li><a href="/nest-review">Security and review</a>: what review checks before staff approve a release</li></ul>
+    <footer class="pagefoot">
+      <nav>
+        <a href="https://pigeonpost.dev">pigeonpost.dev</a>
+        <a href="https://github.com/bekirdag/pigeonpost">GitHub</a>
+        <a href="https://www.npmjs.com/package/@bekirdag/pigeonpost">npm</a>
+        <a href="https://github.com/bekirdag/pigeonpost/tree/main/docs">Design docs</a>
+      </nav>
+      <p>Free and open source, MIT licensed.</p>
+    </footer>
+  </main>
+</div>
+
+</body>
+</html>

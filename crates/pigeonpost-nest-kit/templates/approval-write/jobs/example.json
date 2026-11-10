@@ -1,0 +1,8 @@
+{
+  "operation": "helpdesk.reply.send",
+  "operation_version": "1.0",
+  "payload": {
+    "ticket_id": "T-1042",
+    "notes": "Refund approved, 3-5 business days, apologise for the delay."
+  }
+}

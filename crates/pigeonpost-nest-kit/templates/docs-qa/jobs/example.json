@@ -1,0 +1,5 @@
+{
+  "operation": "docs.ask",
+  "operation_version": "1.0",
+  "payload": { "question": "How many days of annual leave do I get?" }
+}

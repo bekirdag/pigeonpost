@@ -313,6 +313,31 @@ test("the hosted form page sends a company Nest checkout with its org", async (t
   assert.match(window.document.querySelector("#pp-pay-summary").textContent, /^Company Nest package: \$10\.00 per month/);
 });
 
+test("the hosted form page sends a marketplace checkout for a company and says the term", async (t) => {
+  const html = readFileSync(new URL("../../site/billing/checkout.html", import.meta.url), "utf8");
+  const script = readFileSync(new URL("../../site/billing/checkout.js", import.meta.url), "utf8");
+  const dom = new JSDOM(html.replace("__CSP_NONCE__", "nonce123"), { url: "https://pigeonpost.dev/billing/checkout", runScripts: "outside-only", virtualConsole: new VirtualConsole() });
+  t.after(() => dom.window.close());
+  const { window } = dom;
+  window.eval(config);
+  window.sessionStorage.setItem("pp_session", "member-token");
+  const pending = { kind: "marketplace", intent_id: "d".repeat(32), listing_id: "lst_a", title: "HR helper",
+    owner: { kind: "org", id: "org_acme0123" }, billing_profile_id: "p", locale: "en" };
+  window.sessionStorage.setItem("pp_cloud_checkout", JSON.stringify(pending));
+  const calls = [];
+  window.fetch = async (url, init) => {
+    calls.push({ url, body: JSON.parse(init.body) });
+    return { ok: true, status: 200, json: async () => ({ intent_id: pending.intent_id, installation_id: "ins_x", listing_id: "lst_a",
+      term: "monthly", amount_minor: 12000, currency: "USD", checkout_form_content: '<div id="iyzipay-checkout-form" class="responsive"></div>' }) };
+  };
+  window.eval(script);
+  for (let i = 0; i < 20; i++) await tick();
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, "/api/v1/marketplace/checkout");
+  assert.deepEqual(calls[0].body, { intent_id: pending.intent_id, listing_id: "lst_a", owner: { kind: "org", id: "org_acme0123" }, billing_profile_id: "p", locale: "en" });
+  assert.match(window.document.querySelector("#pp-pay-summary").textContent, /^HR helper for your company: \$120\.00 per month, renewing monthly/);
+});
+
 test("the hosted form page warns about a store plan and starts the form only after the person confirms", async (t) => {
   const html = readFileSync(new URL("../../site/billing/checkout.html", import.meta.url), "utf8");
   const script = readFileSync(new URL("../../site/billing/checkout.js", import.meta.url), "utf8");

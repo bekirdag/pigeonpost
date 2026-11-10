@@ -48,6 +48,7 @@ pub mod envelope;
 pub mod error;
 pub mod fetch_auth;
 pub mod keys;
+pub mod nest_package;
 pub mod network;
 pub mod policy;
 pub mod pow;

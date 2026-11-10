@@ -7721,7 +7721,7 @@
         ],
         "operationId": "receiveOrgEvent",
         "summary": "Event delivery (to your endpoint)",
-        "description": "Pigeonpost `POST`s each event to every webhook subscribed to it. Verify `Pigeonpost-Signature` before trusting the body: `t=<unix seconds>,v1=<hex>`, where each `v1` is HMAC-SHA256 with the webhook secret over the exact bytes `t + \".\" + raw body`. During the 24 hours after a rotation there are two `v1=` entries (new secret first); accept either. Compare in constant time, reject timestamps more than 5 minutes from your clock, and deduplicate on `Pigeonpost-Event-Id`: delivery is at least once.\n\nA 2xx within 10 seconds is success. Anything else, including any 3xx (redirects are never followed), is retried after 30 s, 2 min, 10 min, 30 min, 1 h, then every 2 h until 24 h after the event, then marked failed.\n\nEvents: `member.invited`, `member.joined`, `member.suspended`, `member.removed` (`member_id`, `handle`); `agent.created` (`agent`, `handle`); `agent.connected`, `agent.disconnected` (`agent`, `device_id`); `room.created`, `room.deleted` (`room_id`); `billing.status_changed` (`status`, `previous_status`). `meeting.brief_ready` and `security.ssh_session` are reserved and not emitted yet.\n",
+        "description": "Pigeonpost `POST`s each event to every webhook subscribed to it. Verify `Pigeonpost-Signature` before trusting the body: `t=<unix seconds>,v1=<hex>`, where each `v1` is HMAC-SHA256 with the webhook secret over the exact bytes `t + \".\" + raw body`. During the 24 hours after a rotation there are two `v1=` entries (new secret first); accept either. Compare in constant time, reject timestamps more than 5 minutes from your clock, and deduplicate on `Pigeonpost-Event-Id`: delivery is at least once.\n\nA 2xx within 10 seconds is success. Anything else, including any 3xx (redirects are never followed), is retried after 30 s, 2 min, 10 min, 30 min, 1 h, then every 2 h until 24 h after the event, then marked failed.\n\nEvents: `member.invited`, `member.joined`, `member.suspended`, `member.removed` (`member_id`, `handle`); `agent.created` (`agent`, `handle`); `agent.connected`, `agent.disconnected` (`agent`, `device_id`); `room.created`, `room.deleted` (`room_id`); `billing.status_changed` (`status`, `previous_status`). `meeting.brief_ready` and `security.ssh_session` are reserved and not emitted yet. Marketplace (behind the `marketplace` flag): an org publisher's `nest.publisher.decision`, `nest.build.failed`, `nest.review.stage_changed|blocked|decision|completed`, `nest.listing.updated`, `nest.listing.grant_changed`, `nest.test.changed|expiring|expired` (`publisher_id` plus ids and states), and the org's own `nest.installation.changed` (`installation_id`, `listing_id`, `change`, `from_release`, `to_release`).\n",
         "parameters": [
           {
             "name": "Pigeonpost-Signature",
@@ -7761,7 +7761,19 @@
                 "room.deleted",
                 "billing.status_changed",
                 "meeting.brief_ready",
-                "security.ssh_session"
+                "security.ssh_session",
+                "nest.publisher.decision",
+                "nest.build.failed",
+                "nest.review.stage_changed",
+                "nest.review.blocked",
+                "nest.review.decision",
+                "nest.review.completed",
+                "nest.listing.updated",
+                "nest.listing.grant_changed",
+                "nest.installation.changed",
+                "nest.test.changed",
+                "nest.test.expiring",
+                "nest.test.expired"
               ]
             },
             "example": "member.joined"
@@ -9530,6 +9542,18 @@
                 "billing.status_changed",
                 "meeting.brief_ready",
                 "security.ssh_session",
+                "nest.publisher.decision",
+                "nest.build.failed",
+                "nest.review.stage_changed",
+                "nest.review.blocked",
+                "nest.review.decision",
+                "nest.review.completed",
+                "nest.listing.updated",
+                "nest.listing.grant_changed",
+                "nest.installation.changed",
+                "nest.test.changed",
+                "nest.test.expiring",
+                "nest.test.expired",
                 "*"
               ]
             }
@@ -9613,6 +9637,18 @@
                 "billing.status_changed",
                 "meeting.brief_ready",
                 "security.ssh_session",
+                "nest.publisher.decision",
+                "nest.build.failed",
+                "nest.review.stage_changed",
+                "nest.review.blocked",
+                "nest.review.decision",
+                "nest.review.completed",
+                "nest.listing.updated",
+                "nest.listing.grant_changed",
+                "nest.installation.changed",
+                "nest.test.changed",
+                "nest.test.expiring",
+                "nest.test.expired",
                 "*"
               ]
             }
@@ -9698,7 +9734,19 @@
               "room.deleted",
               "billing.status_changed",
               "meeting.brief_ready",
-              "security.ssh_session"
+              "security.ssh_session",
+              "nest.publisher.decision",
+              "nest.build.failed",
+              "nest.review.stage_changed",
+              "nest.review.blocked",
+              "nest.review.decision",
+              "nest.review.completed",
+              "nest.listing.updated",
+              "nest.listing.grant_changed",
+              "nest.installation.changed",
+              "nest.test.changed",
+              "nest.test.expiring",
+              "nest.test.expired"
             ]
           },
           "attempt": {
@@ -9820,7 +9868,19 @@
               "room.deleted",
               "billing.status_changed",
               "meeting.brief_ready",
-              "security.ssh_session"
+              "security.ssh_session",
+              "nest.publisher.decision",
+              "nest.build.failed",
+              "nest.review.stage_changed",
+              "nest.review.blocked",
+              "nest.review.decision",
+              "nest.review.completed",
+              "nest.listing.updated",
+              "nest.listing.grant_changed",
+              "nest.installation.changed",
+              "nest.test.changed",
+              "nest.test.expiring",
+              "nest.test.expired"
             ]
           },
           "created_at": {

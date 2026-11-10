@@ -18,6 +18,7 @@ peer and the egress allowance for `10.66.0.2:8790`.
 | `host/nestd.toml.example` | `/etc/nests/nestd.toml` |
 | `host/nestd-control.service`, `nestd-broker.service`, `nestd-mock-upstream.service` | `/etc/systemd/system/` (the mock only for tests without mswarm) |
 | `host/journald-nests.conf` | `/etc/systemd/journald.conf.d/nests.conf` |
+| `host/nests-postbox-probe`, `nests-postbox-probe.service`, `.timer` | `/usr/local/sbin/`, `/etc/systemd/system/` — every minute, the postbox's public `/health` into node_exporter's textfile directory |
 | `host/nests-backup`, `nests-restore`, `nests-backup.service`, `.timer` | `/usr/local/sbin/`, `/etc/systemd/system/` — nightly ledger copy + borg archive (ledger, LUKS keys, Nest volume images) to raijin's HDD; [docs/nests/backups.md](../../docs/nests/backups.md) |
 | `host/backup.env.example`, `host/wg-backup.conf.example` | `/etc/nests/backup.env`, `/etc/wireguard/wg-backup.conf` — the backup tunnel (`10.68.0.1` nests-1 ↔ `10.68.0.2` raijin) |
 | `backup-target/*` | raijin only: `wg-nestsbak`, the dedicated borg sshd and the `inet nestsbak` table; see backups.md |
@@ -144,11 +145,24 @@ credential was revoked at delete time anyway.
 - Prometheus (`127.0.0.1:9090`, 15 days) scrapes nestd's metrics (`127.0.0.1:9790`, no ids or
   content) and node_exporter (`127.0.0.1:9100`).
 - `nests-rules.yml` covers: nestd down, locked, failed Nests, admission limit, thin pool, volume
-  allocation, stale or missing backups, memory (the VMware balloon), root disk, and
-  platform-error tokens.
+  allocation, stale or missing backups, memory (the VMware balloon), root disk,
+  platform-error tokens, and the postbox itself (silent, publicly down, probe stale).
 - Alertmanager (`127.0.0.1:9093`) posts to `pigeonpost-nestd alert-relay` (`127.0.0.1:9796`).
   The relay sends one Pigeonpost message per notification from a dedicated alerts mailbox.
   Its token is `/etc/nests/alerts.token`, root 0400, passed with `LoadCredential`.
 - The backup writes `/var/lib/nests/backup-last-success` after each archive.
 - Packages: Debian `prometheus`, `prometheus-alertmanager`, `prometheus-node-exporter`
   (Apache-2.0). Bind each to loopback in `/etc/default/*`.
+
+**Postbox down (alerts that do not depend on the postbox).**
+- nestd exports `nests_postbox_last_unlock_seconds` (0 until the first unlock after a start); `PostboxSilent` fires when the postbox has not called for more than 5 minutes.
+- `nests-postbox-probe` (timer, every minute) curls https://postbox.pigeonpost.dev/health with a 10 s timeout and writes `nests_postbox_public_up` / `nests_postbox_public_probe_seconds` to node_exporter's textfile directory `/var/lib/prometheus/node-exporter` (Debian's default; check `ARGS` in `/etc/default/prometheus-node-exporter` contains `--collector.textfile.directory=/var/lib/prometheus/node-exporter`, add it if not and restart prometheus-node-exporter). Rules `PostboxPublicDown`, `PostboxProbeStale`.
+- Postmark fallback: `[alerts.postmark]` in nestd.toml. The relay sends through Postmark when the postbox send fails (connection error, timeout, 5xx) and always for `Postbox*` alerts. The Postmark server token is never logged.
+
+Deploy:
+1. Install `host/nests-postbox-probe` to `/usr/local/sbin/` (0755), `nests-postbox-probe.service` and `.timer` to `/etc/systemd/system/`; `systemctl daemon-reload && systemctl enable --now nests-postbox-probe.timer`; check `cat /var/lib/prometheus/node-exporter/nests_postbox_probe.prom`.
+2. Postmark token: `install -d -m 0700 -o root -g root /etc/credstore`, then write the token from its source without echoing it: `umask 077; <source> > /etc/credstore/postmark.token; chmod 0400 /etc/credstore/postmark.token` (root:root). The relay unit has `LoadCredential=postmark.token` with no path: systemd looks it up in /etc/credstore and starts the relay without it when it is missing, so the line is harmless when no fallback is configured.
+3. Add `[alerts.postmark]` (see nestd.toml.example), install the new `nests-alert-relay.service`, `systemctl daemon-reload && systemctl restart nests-alert-relay`. With `[alerts.postmark]` set but no token, the relay refuses to start (by design).
+4. Copy `monitoring/nests-rules.yml` to `/etc/nests/monitoring/`, `promtool check rules /etc/nests/monitoring/nests-rules.yml`, `systemctl reload prometheus`.
+5. Install the new `pigeonpost-nestd` and restart `nestd-control` (it is locked until the next unlock, about a minute).
+6. Test: `curl -s 127.0.0.1:9790/metrics | grep nests_postbox_last_unlock_seconds`; send a test alert: `curl -s -XPOST 127.0.0.1:9796/alert -H 'content-type: application/json' -d '{"status":"firing","alerts":[{"status":"firing","labels":{"alertname":"PostboxTest"},"annotations":{"summary":"test"}}]}'` should give a Pigeonpost message and a Postmark message.

@@ -1,0 +1,63 @@
+# Staging postbox (marketplace M2b, R-70, OD-9) — a template. Rootless podman-compose or docker
+# compose. It shares nothing with production: its own network, its own volume, its own vault key,
+# its own realm client. See README.md in this folder for the steps and what must exist first.
+#
+#   podman-compose -f deploy/staging/compose.yaml --env-file ~/pp-staging/staging.env up -d
+#
+# Ports are published to loopback only; the host's existing reverse proxy terminates TLS for the
+# staging domain and forwards to 127.0.0.1:18480. Check the ports are free first (README step 1).
+name: pigeonpost-staging
+
+x-logging: &bounded-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+networks:
+  pp-staging:
+    # Its own bridge. The test nestd on the host listens on this bridge's gateway (10.89.40.1),
+    # which is POSTBOX_MARKETPLACE_TEST_NESTS_URL. Change the subnet if it collides on the host.
+    ipam:
+      config:
+        - subnet: 10.89.40.0/24
+          gateway: 10.89.40.1
+
+volumes:
+  pp-staging-data: {}   # SQLite database, loft store and blobs of the staging postbox only
+
+services:
+  postbox:
+    image: ${STAGING_POSTBOX_IMAGE:-localhost/pigeonpost-postbox:staging}
+    build:
+      context: ../..
+      dockerfile: deploy/postbox/Dockerfile
+    restart: unless-stopped
+    # A block list: inside [..] the `{` of ${...} would start a YAML flow mapping.
+    env_file:
+      - ${STAGING_ENV_FILE:-./staging.env}
+    environment:
+      POSTBOX_STAGING_MODE: "1"
+      POSTBOX_BIND: 0.0.0.0:8480
+      POSTBOX_INTERNAL_BIND: 0.0.0.0:8481
+      POSTBOX_DB_PATH: /data/postbox.db
+      POSTBOX_LOFT_DIR: /data/loft
+      POSTBOX_KMS: sealed-file:/kms/master.key
+    logging: *bounded-logging
+    networks:
+      pp-staging:
+        ipv4_address: 10.89.40.10
+    mem_limit: 1g
+    memswap_limit: 1g
+    ports:
+      - "127.0.0.1:18480:8480"   # public API, behind the host's reverse proxy
+      - "127.0.0.1:18481:8481"   # internal API, loopback only; never proxied
+    volumes:
+      - pp-staging-data:/data
+      - ${STAGING_MASTER_KEY_FILE:-./secrets/master.key}:/kms/master.key:ro
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/pigeonpost-postbox", "--healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

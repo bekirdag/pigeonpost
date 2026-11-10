@@ -11,9 +11,19 @@
 //!
 //! Quarantine and revocation stop every worker of the release at once, fence its broker tokens,
 //! mark its running jobs `stopped_security` and refuse new ones. Revocation is permanent.
+//!
+//! Hardening (W1): every admission and every dispatch verifies the statement's Ed25519 signature
+//! against the host's trusted keys ([`crate::attest`]); worker volumes are LUKS2 thin volumes
+//! with KEK-wrapped keys when the host's storage is `lvm-luks` ([`WorkerStorage`]); a release
+//! image this host does not have is pulled by digest from the build plane ([`ImageSource`]); a
+//! listing can be stopped outright (the kill switch); and the postbox's per-publisher limits
+//! (concurrent workers, monthly broker tokens) are enforced before a worker starts or a job lands.
 
+use crate::attest::TrustedKeys;
+use crate::config::StorageConfig;
 use crate::db::{Db, MpWorker};
 use crate::sandbox::{pinned_image, valid_buyer_context, RuntimeState, Sandbox, Spec};
+use crate::storage::Volumes;
 use crate::storage::{dir_for_sandbox, write_for_sandbox};
 use crate::util::{ct_eq, random_hex, sha256_hex};
 use axum::extract::{Path as UrlPath, State};
@@ -43,6 +53,23 @@ pub struct Admission {
     pub statement: String,
     /// `sha256:` of `statement`.
     pub statement_digest: String,
+    /// The postbox's Ed25519 signature over the statement (128 hex digits, [`crate::attest`]).
+    pub signature: String,
+    /// The key the statement was signed with (`ppk_…`); the statement names it too.
+    pub key_id: String,
+}
+
+/// The postbox's per-publisher limits for this job's release (abuse controls, W1.8). Absent for a
+/// first-party release, which the platform bounds by its own caps.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Limits {
+    pub publisher_id: String,
+    /// Workers of this publisher's listings that may run at once on this host.
+    pub max_workers: u32,
+    /// Broker tokens (input + output, used and reserved) all of the publisher's workers may
+    /// spend in the current month.
+    pub monthly_tokens: i64,
 }
 
 /// One job, as the postbox's dispatcher hands it over.
@@ -56,6 +83,31 @@ pub struct JobIn {
     pub operation_version: String,
     pub payload: Value,
     pub release: Admission,
+    /// The installation's stored configuration (marketplace M2), secrets never included: an
+    /// object, or absent for a listing used without an installation.
+    #[serde(default)]
+    pub config: Value,
+    #[serde(default)]
+    pub limits: Option<Limits>,
+    /// The release declares external writes (its manifest): the broker records effects as
+    /// requests instead of refusing them.
+    #[serde(default)]
+    pub external_writes: bool,
+    /// The installation's secret configuration values (W1.6), sealed here for the worker's
+    /// current start and handed out by the broker only; never in the job file.
+    #[serde(default)]
+    pub secrets: Secrets,
+}
+
+/// Secret values; never printed.
+#[derive(Clone, Default, Deserialize)]
+#[serde(transparent)]
+pub struct Secrets(pub serde_json::Map<String, Value>);
+
+impl std::fmt::Debug for Secrets {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Secrets([{} redacted])", self.0.len())
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -73,9 +125,15 @@ impl DispatchError {
     }
     fn status(&self) -> StatusCode {
         match self.code {
-            "release_quarantined" | "release_revoked" | "release_mismatch" => StatusCode::CONFLICT,
+            "release_quarantined" | "release_revoked" | "release_mismatch" | "listing_stopped" => {
+                StatusCode::CONFLICT
+            }
             "not_attested" | "invalid" => StatusCode::BAD_REQUEST,
             "not_found" => StatusCode::NOT_FOUND,
+            "quota_exceeded" => StatusCode::TOO_MANY_REQUESTS,
+            // The postbox keeps the job queued and retries: the host is locked until the postbox
+            // releases the KEK, or has no room right now, or the image is not here yet.
+            "host_locked" | "no_storage" | "image_unavailable" => StatusCode::SERVICE_UNAVAILABLE,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -103,15 +161,22 @@ fn valid_ref(id: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
 
-/// The attestation statement must be exactly what was hashed, and must name this release, this
-/// image and this digest with an approving staff decision.
-pub fn verify_admission(a: &Admission) -> Result<(), DispatchError> {
+/// The attestation statement must be exactly what was hashed, must carry a valid signature by a
+/// key this host trusts, and must name this release, this image and this digest with an
+/// approving staff decision.
+pub fn verify_admission(a: &Admission, keys: &TrustedKeys) -> Result<(), DispatchError> {
     let refuse = |why: &str| Err(DispatchError::new("not_attested", why.to_string()));
     if !valid_ref(&a.release_id) || !pinned_image(&a.image) {
         return refuse("malformed release");
     }
     if a.statement_digest != format!("sha256:{}", sha256_hex(a.statement.as_bytes())) {
         return refuse("the statement does not match its digest");
+    }
+    if keys.is_empty() {
+        return refuse("this host trusts no attestation key");
+    }
+    if let Err(why) = keys.verify(&a.statement, &a.key_id, &a.signature) {
+        return refuse(&why);
     }
     let Ok(s) = serde_json::from_str::<Value>(&a.statement) else {
         return refuse("the statement is not JSON");
@@ -131,11 +196,123 @@ pub fn verify_admission(a: &Admission) -> Result<(), DispatchError> {
     Ok(())
 }
 
+/// The test pool's admission (M2b): a staging postbox's test statement for this release, image
+/// and digest, signed like an attestation (hardening) by a key the test pool trusts (the staging
+/// postbox's own, never production's). Never an approval, and a production pool never accepts
+/// one.
+pub fn verify_test_admission(a: &Admission, keys: &TrustedKeys) -> Result<(), DispatchError> {
+    let refuse = |why: &str| Err(DispatchError::new("not_attested", why.to_string()));
+    if !valid_ref(&a.release_id) || !pinned_image(&a.image) {
+        return refuse("malformed release");
+    }
+    if a.statement_digest != format!("sha256:{}", sha256_hex(a.statement.as_bytes())) {
+        return refuse("the statement does not match its digest");
+    }
+    if keys.is_empty() {
+        return refuse("this host trusts no attestation key");
+    }
+    if let Err(why) = keys.verify(&a.statement, &a.key_id, &a.signature) {
+        return refuse(&why);
+    }
+    let Ok(s) = serde_json::from_str::<Value>(&a.statement) else {
+        return refuse("the statement is not JSON");
+    };
+    if s["type"] != "pigeonpost.nest.release.test.v1"
+        || s["decision"] != "test_only"
+        || s["environment"] != "staging"
+        || s["release_id"] != a.release_id.as_str()
+        || s["release_digest"] != a.release_digest.as_str()
+        || s["image"] != a.image.as_str()
+        || !s["test_nest_id"].is_string()
+    {
+        return refuse("the statement is not a test statement for this release");
+    }
+    if !a.image.ends_with(s["image_digest"].as_str().unwrap_or("-")) {
+        return refuse("the image is not the stated digest");
+    }
+    Ok(())
+}
+
 /// The worker that serves one buyer context of one listing. Derived, so the same pair always
 /// lands on the same worker and two pairs never share one.
 pub fn worker_id(listing_id: &str, context: &str) -> String {
     let h = sha256_hex(format!("pigeonpost-mp-worker\0{listing_id}\0{context}").as_bytes());
     format!("nst_{}", &h[..32])
+}
+
+/// The worker id for the pair after `n` earlier workers of it were destroyed. A destroyed worker's
+/// id is a tombstone (a restore must not bring its volume back), so a new worker never reuses it.
+pub fn worker_id_after(listing_id: &str, context: &str, n: u32) -> String {
+    if n == 0 {
+        return worker_id(listing_id, context);
+    }
+    let h = sha256_hex(format!("pigeonpost-mp-worker\0{listing_id}\0{context}\0{n}").as_bytes());
+    format!("nst_{}", &h[..32])
+}
+
+/// Where a worker's files live.
+pub enum WorkerStorage {
+    /// Plain directories, `<volume_root>/<context>/<nest>`: development and tests only.
+    Dirs,
+    /// One LUKS2 thin volume per worker in the host's thin pool, with its own random key wrapped
+    /// under the KEK the postbox releases (as first-party Nests, `storage::LvmLuks`). Mounted at
+    /// `<volume_root>/<context>/<nest>`, so the pool's one-directory-per-context rule holds. The
+    /// LV is `nest-<id>` and the key `<key_dir>/<id>.key`, so `nests-backup` takes it and
+    /// tombstone replay on unlock destroys it like any Nest's.
+    Encrypted {
+        storage: StorageConfig,
+        vault: Arc<crate::keywrap::Vault>,
+        gib: u64,
+    },
+}
+
+impl WorkerStorage {
+    /// What the host's own storage implies: encrypted on `lvm-luks`, directories on `dir`.
+    pub fn for_host(storage: &StorageConfig, vault: Arc<crate::keywrap::Vault>, gib: u64) -> Self {
+        if storage.backend == "lvm-luks" {
+            WorkerStorage::Encrypted {
+                storage: storage.clone(),
+                vault,
+                gib,
+            }
+        } else {
+            WorkerStorage::Dirs
+        }
+    }
+
+    fn volumes(&self, root: &std::path::Path, context: &str) -> Option<Box<dyn Volumes>> {
+        match self {
+            WorkerStorage::Dirs => None,
+            WorkerStorage::Encrypted { storage, vault, .. } => {
+                let cfg = StorageConfig {
+                    mount_root: root.join(context),
+                    ..storage.clone()
+                };
+                Some(Box::new(crate::storage::LvmLuks::new(cfg, vault.clone())))
+            }
+        }
+    }
+
+    fn locked(&self) -> bool {
+        match self {
+            WorkerStorage::Dirs => false,
+            WorkerStorage::Encrypted { storage, vault, .. } => storage.key_wrap && vault.locked(),
+        }
+    }
+
+    fn gib(&self) -> u64 {
+        match self {
+            WorkerStorage::Dirs => 1,
+            WorkerStorage::Encrypted { gib, .. } => (*gib).max(1),
+        }
+    }
+}
+
+/// Where release images come from when this host does not have them yet: the build plane, by
+/// digest. `ensure` returns once `image` (`name@sha256:…`) is present locally with exactly that
+/// digest, or fails.
+pub trait ImageSource: Send + Sync {
+    fn ensure(&self, image: &str) -> Result<(), String>;
 }
 
 pub struct Dispatcher {
@@ -145,8 +322,17 @@ pub struct Dispatcher {
     pub volume_root: PathBuf,
     /// The uid sandboxes run as (`storage.sandbox_uid`).
     pub uid: u32,
+    /// Attestation keys this host trusts. Empty refuses every release.
+    pub keys: TrustedKeys,
+    pub storage: WorkerStorage,
+    /// Admission: all Nest volumes on the host together (`storage.max_total_gib`).
+    pub max_total_gib: u64,
+    pub images: Option<Arc<dyn ImageSource>>,
     /// One dispatch decision at a time: worker start and quarantine never interleave.
     lock: Mutex<()>,
+    /// A staging test pool (M2b): admits test statements only. Production pools admit
+    /// attestations only.
+    test_pool: bool,
 }
 
 impl Dispatcher {
@@ -156,12 +342,124 @@ impl Dispatcher {
             db,
             volume_root,
             uid,
+            keys: TrustedKeys::default(),
+            storage: WorkerStorage::Dirs,
+            max_total_gib: u64::MAX,
+            images: None,
             lock: Mutex::new(()),
+            test_pool: false,
         }
+    }
+
+    pub fn with_keys(mut self, keys: TrustedKeys) -> Self {
+        self.keys = keys;
+        self
+    }
+
+    pub fn with_storage(mut self, storage: WorkerStorage, max_total_gib: u64) -> Self {
+        self.storage = storage;
+        self.max_total_gib = max_total_gib;
+        self
+    }
+
+    pub fn with_images(mut self, images: Arc<dyn ImageSource>) -> Self {
+        self.images = Some(images);
+        self
+    }
+
+    /// Make this the test pool of a staging postbox (`[sandbox.marketplace] test_pool = true`).
+    pub fn with_test_pool(mut self, on: bool) -> Self {
+        self.test_pool = on;
+        self
     }
 
     fn volume(&self, w: &MpWorker) -> PathBuf {
         self.volume_root.join(&w.buyer_context).join(&w.nest_id)
+    }
+
+    /// Create (first start) or open the worker's volume; returns its mount path.
+    fn open_volume(&self, w: &MpWorker) -> Result<PathBuf, DispatchError> {
+        match self.storage.volumes(&self.volume_root, &w.buyer_context) {
+            None => {
+                let volume = self.volume(w);
+                dir_for_sandbox(&volume, self.uid, 0o700).map_err(internal)?;
+                Ok(volume)
+            }
+            Some(v) => {
+                if self.storage.locked() {
+                    return Err(DispatchError::new(
+                        "host_locked",
+                        "worker volumes are locked until the postbox releases the host key",
+                    ));
+                }
+                std::fs::create_dir_all(self.volume_root.join(&w.buyer_context))
+                    .map_err(|e| internal(e.to_string()))?;
+                v.create(&w.nest_id, self.storage.gib()).map_err(internal)
+            }
+        }
+    }
+
+    /// Unmount and close a stopped worker's volume, so its key is out of memory. Idempotent.
+    fn close_volume(&self, w: &MpWorker) {
+        if let Some(v) = self.storage.volumes(&self.volume_root, &w.buyer_context) {
+            if let Err(e) = v.close(&w.nest_id) {
+                tracing::warn!(nest = %w.nest_id, error = %e, "closing a worker volume failed");
+            }
+        }
+    }
+
+    /// Stop one worker for `reason`: fence its broker token first, stop the sandbox, close its
+    /// volume and stop its running jobs.
+    fn stop_worker(&self, w: &MpWorker, reason: &str) -> Result<(), DispatchError> {
+        // Fence first: from this instant the broker refuses the worker's token.
+        self.db.revoke_broker_token(&w.nest_id).map_err(internal)?;
+        self.pool.stop(&w.nest_id).map_err(internal)?;
+        let _ = std::fs::remove_file(self.volume(w).join("run/broker-token"));
+        self.close_volume(w);
+        self.db
+            .set_state(&w.nest_id, "stopped", "stopped", Some(reason), None)
+            .map_err(internal)?;
+        self.db.mp_stop_jobs_of(&w.nest_id).map_err(internal)?;
+        crate::worker_api::worker_stopped(&self.db, &w.nest_id);
+        self.db.event(Some(&w.nest_id), "mp_worker_stopped", reason);
+        Ok(())
+    }
+
+    /// The per-publisher limits, checked before any job lands on a publisher's worker and, when a
+    /// worker has to start for it, against the publisher's running workers.
+    fn check_limits(
+        &self,
+        limits: &Limits,
+        worker: &str,
+        starting: bool,
+    ) -> Result<(), DispatchError> {
+        if !valid_ref(&limits.publisher_id) || limits.monthly_tokens < 0 {
+            return Err(DispatchError::new("invalid", "malformed limits"));
+        }
+        let period = crate::util::period_of(crate::util::now());
+        let spent = self
+            .db
+            .mp_publisher_tokens(&limits.publisher_id, &period)
+            .map_err(internal)?;
+        if spent >= limits.monthly_tokens {
+            return Err(DispatchError::new(
+                "quota_exceeded",
+                "this publisher's monthly model allowance is spent",
+            ));
+        }
+        if starting {
+            let running = self
+                .db
+                .mp_publisher_running(&limits.publisher_id, worker)
+                .map_err(internal)?;
+            if running >= i64::from(limits.max_workers) {
+                return Err(DispatchError::new(
+                    "quota_exceeded",
+                    "this publisher runs as many workers as it may",
+                ));
+            }
+        }
+        Ok(())
     }
 
     fn release_state_ok(&self, release_id: &str) -> Result<(), DispatchError> {
@@ -180,7 +478,12 @@ impl Dispatcher {
 
     /// Start (or restart) a worker on `image` with a fresh generation and broker token.
     fn start_worker(&self, w: &MpWorker, image: &str) -> Result<(), DispatchError> {
-        let volume = self.volume(w);
+        if let Some(images) = &self.images {
+            images
+                .ensure(image)
+                .map_err(|e| DispatchError::new("image_unavailable", e))?;
+        }
+        let volume = self.open_volume(w)?;
         for dir in [
             volume.clone(),
             volume.join("run"),
@@ -239,15 +542,30 @@ impl Dispatcher {
             || !crate::release::operation_name_ok(&job.operation)
             || !crate::release::operation_version_ok(&job.operation_version)
             || !job.payload.is_object()
+            || !(job.config.is_null() || job.config.is_object())
         {
             return Err(DispatchError::new("invalid", "malformed job"));
         }
-        verify_admission(&job.release)?;
+        if self.test_pool {
+            verify_test_admission(&job.release, &self.keys)?;
+        } else {
+            verify_admission(&job.release, &self.keys)?;
+        }
         let _one = self.lock.lock().map_err(|_| internal("dispatch lock"))?;
         let a = &job.release;
         self.release_state_ok(&a.release_id)?;
         if let Some(existing) = self.db.mp_job(&job.job_id).map_err(internal)? {
             return Ok(json!({ "job_id": job.job_id, "state": existing.1, "worker": existing.0 }));
+        }
+        if self
+            .db
+            .mp_listing_stopped(&job.listing_id)
+            .map_err(internal)?
+        {
+            return Err(DispatchError::new(
+                "listing_stopped",
+                "this listing is stopped by the platform",
+            ));
         }
         self.db
             .mp_admit(
@@ -267,7 +585,6 @@ impl Dispatcher {
             }
         }
 
-        let id = worker_id(&job.listing_id, &job.buyer_context);
         let worker = match self
             .db
             .mp_worker_for(&job.listing_id, &job.buyer_context)
@@ -275,6 +592,28 @@ impl Dispatcher {
         {
             Some(w) => w,
             None => {
+                // A destroyed worker's id stays a tombstone: take the next unused one.
+                let mut id = None;
+                for n in 0..1000 {
+                    let candidate = worker_id_after(&job.listing_id, &job.buyer_context, n);
+                    if self.db.nest(&candidate).map_err(internal)?.is_none() {
+                        id = Some(candidate);
+                        break;
+                    }
+                }
+                let id = id.ok_or_else(|| internal("no free worker id for this pair"))?;
+                let allocated = self.db.allocated_gib().map_err(internal)?;
+                if (allocated.max(0) as u64).saturating_add(self.storage.gib()) > self.max_total_gib
+                {
+                    return Err(DispatchError::new(
+                        "no_storage",
+                        "this host has no room for another worker volume",
+                    ));
+                }
+                // Over a publisher limit, no ledger row is made for a worker that will not start.
+                if let Some(limits) = &job.limits {
+                    self.check_limits(limits, &id, true)?;
+                }
                 let w = MpWorker {
                     nest_id: id,
                     listing_id: job.listing_id.clone(),
@@ -306,6 +645,12 @@ impl Dispatcher {
             release_id: a.release_id.clone(),
             ..worker
         };
+        if let Some(limits) = &job.limits {
+            self.db
+                .mp_set_worker_publisher(&worker.nest_id, &limits.publisher_id)
+                .map_err(internal)?;
+            self.check_limits(limits, &worker.nest_id, moved || !running)?;
+        }
         if moved || !running {
             self.start_worker(&worker, &a.image)?;
         }
@@ -314,15 +659,31 @@ impl Dispatcher {
             "operation": job.operation,
             "operation_version": job.operation_version,
             "payload": job.payload,
+            "config": if job.config.is_null() { json!({}) } else { job.config.clone() },
         });
+        // The secrets for this start, sealed under its broker token, before the job is visible.
+        let token = std::fs::read_to_string(self.volume(&worker).join("run/broker-token"))
+            .map(|t| zeroize::Zeroizing::new(t.trim().to_string()))
+            .map_err(|e| internal(format!("broker token: {e}")))?;
+        crate::worker_api::store_secrets(&self.db, &worker.nest_id, &token, &job.secrets.0)
+            .map_err(|e| DispatchError::new("invalid", e))?;
+        drop(token);
+        self.db
+            .mp_insert_job(&job.job_id, &worker.nest_id)
+            .map_err(internal)?;
+        self.db
+            .raw(|c| {
+                c.execute(
+                    "INSERT OR REPLACE INTO mp_job_writes (job_id, allowed) VALUES (?1, ?2)",
+                    rusqlite::params![job.job_id, job.external_writes],
+                )
+            })
+            .map_err(internal)?;
         let inbox = self
             .volume(&worker)
             .join("jobs/in")
             .join(format!("{}.json", job.job_id));
         write_for_sandbox(&inbox, body.to_string().as_bytes(), self.uid).map_err(internal)?;
-        self.db
-            .mp_insert_job(&job.job_id, &worker.nest_id)
-            .map_err(internal)?;
         self.db.touch_active(&worker.nest_id);
         Ok(json!({ "job_id": job.job_id, "state": "running", "worker": worker.nest_id }))
     }
@@ -340,6 +701,7 @@ impl Dispatcher {
                 "job_id": job_id,
                 "state": state,
                 "result": result.and_then(|r| serde_json::from_str::<Value>(&r).ok()),
+                "effects": crate::worker_api::job_extras(&self.db, job_id)["effects"],
             }));
         }
         let Some(worker) = self.db.mp_worker(&nest_id).map_err(internal)? else {
@@ -350,7 +712,11 @@ impl Dispatcher {
             .join("jobs/out")
             .join(format!("{job_id}.json"));
         let Ok(meta) = std::fs::symlink_metadata(&out) else {
-            return Ok(json!({ "job_id": job_id, "state": "running" }));
+            let mut v = json!({ "job_id": job_id, "state": "running" });
+            let extras = crate::worker_api::job_extras(&self.db, job_id);
+            v["progress"] = extras["progress"].clone();
+            v["effects"] = extras["effects"].clone();
+            return Ok(v);
         };
         // The outbox is the worker's to write: read only a bounded regular file, never a link.
         let result: Value = if meta.is_file() && meta.len() <= MAX_RESULT_BYTES {
@@ -376,7 +742,53 @@ impl Dispatcher {
         self.db
             .mp_finish_job(job_id, state, Some(&kept.to_string()))
             .map_err(internal)?;
-        Ok(json!({ "job_id": job_id, "state": state, "result": kept }))
+        Ok(json!({
+            "job_id": job_id,
+            "state": state,
+            "result": kept,
+            "effects": crate::worker_api::job_extras(&self.db, job_id)["effects"],
+        }))
+    }
+
+    /// The postbox settles one effect of a job (`worker_api::settle_effect`).
+    pub fn settle_effect(
+        &self,
+        job_id: &str,
+        key: &str,
+        action: &str,
+        reference: Option<&str>,
+    ) -> Result<Value, DispatchError> {
+        if !valid_job_id(job_id) {
+            return Err(DispatchError::new("invalid", "malformed job id"));
+        }
+        crate::worker_api::settle_effect(&self.db, job_id, key, action, reference).map_err(
+            |(status, code, detail)| {
+                if status >= 500 {
+                    internal(detail)
+                } else {
+                    DispatchError::new(code, detail)
+                }
+            },
+        )
+    }
+
+    /// A paused licence (marketplace payments): the buyer context's worker stops, its broker token
+    /// is fenced, its running jobs stop and its volume is closed but kept. The next admitted job
+    /// (after the licence is paid again) starts it on a new generation. Idempotent.
+    pub fn stop(&self, listing_id: &str, context: &str) -> Result<Value, DispatchError> {
+        if !valid_ref(listing_id) || !valid_buyer_context(context) {
+            return Err(DispatchError::new("invalid", "malformed worker reference"));
+        }
+        let _one = self.lock.lock().map_err(|_| internal("dispatch lock"))?;
+        let Some(w) = self
+            .db
+            .mp_worker_for(listing_id, context)
+            .map_err(internal)?
+        else {
+            return Ok(json!({ "stopped": false }));
+        };
+        self.stop_worker(&w, "licence_paused")?;
+        Ok(json!({ "stopped": true, "worker": w.nest_id }))
     }
 
     /// Lift a quarantine: the release takes jobs again, on fresh workers. A revoked release stays
@@ -428,18 +840,70 @@ impl Dispatcher {
             .mp_workers_of_release(release_id)
             .map_err(internal)?
         {
-            // Fence first: from this instant the broker refuses the worker's token.
-            self.db.revoke_broker_token(&w.nest_id).map_err(internal)?;
-            self.pool.stop(&w.nest_id).map_err(internal)?;
-            let _ = std::fs::remove_file(self.volume(&w).join("run/broker-token"));
-            self.db
-                .set_state(&w.nest_id, "stopped", "stopped", Some(state), None)
-                .map_err(internal)?;
-            self.db.mp_stop_jobs_of(&w.nest_id).map_err(internal)?;
-            self.db.event(Some(&w.nest_id), "mp_worker_stopped", state);
+            self.stop_worker(&w, state)?;
             stopped.push(w.nest_id);
         }
         Ok(json!({ "release_id": release_id, "state": state, "stopped": stopped }))
+    }
+
+    /// The kill switch for one listing: stop every worker of it now and refuse its jobs until the
+    /// platform restores it (`stop = false`). Recorded here, so a postbox that cannot be reached
+    /// afterwards changes nothing: this host keeps refusing.
+    pub fn stop_listing(&self, listing_id: &str, stop: bool) -> Result<Value, DispatchError> {
+        if !valid_ref(listing_id) {
+            return Err(DispatchError::new("invalid", "malformed listing id"));
+        }
+        let _one = self.lock.lock().map_err(|_| internal("dispatch lock"))?;
+        self.db
+            .mp_set_listing_stopped(listing_id, stop)
+            .map_err(internal)?;
+        let mut stopped = Vec::new();
+        if stop {
+            for w in self
+                .db
+                .mp_workers_of_listing(listing_id)
+                .map_err(internal)?
+            {
+                self.stop_worker(&w, "killed")?;
+                stopped.push(w.nest_id);
+            }
+        }
+        Ok(json!({
+            "listing_id": listing_id,
+            "state": if stop { "stopped" } else { "restored" },
+            "stopped": stopped,
+        }))
+    }
+
+    /// Destroy one buyer's worker for a listing (uninstall, or erasure after a kill): stop it,
+    /// crypto-erase its volume and mark it deleted. Its id is returned so the postbox can keep it
+    /// as a tombstone; the next worker for the pair gets a new id.
+    pub fn destroy_worker(&self, listing_id: &str, context: &str) -> Result<Value, DispatchError> {
+        if !valid_ref(listing_id) || !valid_buyer_context(context) {
+            return Err(DispatchError::new("invalid", "malformed worker reference"));
+        }
+        let _one = self.lock.lock().map_err(|_| internal("dispatch lock"))?;
+        let Some(w) = self
+            .db
+            .mp_worker_for(listing_id, context)
+            .map_err(internal)?
+        else {
+            return Ok(json!({ "listing_id": listing_id, "destroyed": Value::Null }));
+        };
+        self.stop_worker(&w, "destroyed")?;
+        match self.storage.volumes(&self.volume_root, &w.buyer_context) {
+            Some(v) => v.destroy(&w.nest_id).map_err(internal)?,
+            None => {
+                let dir = self.volume(&w);
+                if dir.exists() {
+                    std::fs::remove_dir_all(&dir).map_err(|e| internal(e.to_string()))?;
+                }
+            }
+        }
+        self.db.mp_forget_worker(&w.nest_id).map_err(internal)?;
+        self.db
+            .event(Some(&w.nest_id), "mp_worker_destroyed", listing_id);
+        Ok(json!({ "listing_id": listing_id, "destroyed": w.nest_id }))
     }
 }
 
@@ -504,6 +968,26 @@ async fn http_poll(
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct EffectReq {
+    action: String,
+    #[serde(default)]
+    reference: Option<String>,
+}
+
+async fn http_effect(
+    State(h): State<Http>,
+    headers: HeaderMap,
+    UrlPath((job, key)): UrlPath<(String, String)>,
+    Json(req): Json<EffectReq>,
+) -> Reply {
+    on_blocking(&h, &headers, move |d| {
+        d.settle_effect(&job, &key, &req.action, req.reference.as_deref())
+    })
+    .await
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct QuarantineReq {
     #[serde(default)]
     revoke: bool,
@@ -534,15 +1018,65 @@ async fn http_quarantine(
     .await
 }
 
-/// `POST /v1/mp/jobs`, `GET /v1/mp/jobs/{job}`, `POST /v1/mp/releases/{release}/quarantine`.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ListingStopReq {
+    stop: bool,
+}
+
+async fn http_stop_listing(
+    State(h): State<Http>,
+    headers: HeaderMap,
+    UrlPath(listing): UrlPath<String>,
+    Json(req): Json<ListingStopReq>,
+) -> Reply {
+    on_blocking(&h, &headers, move |d| d.stop_listing(&listing, req.stop)).await
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DestroyReq {
+    listing_id: String,
+    buyer_context: String,
+}
+
+async fn http_destroy_worker(
+    State(h): State<Http>,
+    headers: HeaderMap,
+    Json(req): Json<DestroyReq>,
+) -> Reply {
+    on_blocking(&h, &headers, move |d| {
+        d.destroy_worker(&req.listing_id, &req.buyer_context)
+    })
+    .await
+}
+
+async fn http_stop(
+    State(h): State<Http>,
+    headers: HeaderMap,
+    Json(req): Json<DestroyReq>,
+) -> Reply {
+    on_blocking(&h, &headers, move |d| {
+        d.stop(&req.listing_id, &req.buyer_context)
+    })
+    .await
+}
+
+/// `POST /v1/mp/jobs`, `GET /v1/mp/jobs/{job}`, `POST /v1/mp/releases/{release}/quarantine`,
+/// `POST /v1/mp/listings/{listing}/stop` (the kill switch), `POST /v1/mp/workers/destroy` (an
+/// uninstall), `POST /v1/mp/workers/stop` (a paused licence).
 pub fn router(h: Http) -> Router {
     Router::new()
         .route("/v1/mp/jobs", post(http_submit))
         .route("/v1/mp/jobs/{job}", get(http_poll))
+        .route("/v1/mp/jobs/{job}/effects/{key}", post(http_effect))
         .route(
             "/v1/mp/releases/{release}/quarantine",
             post(http_quarantine),
         )
+        .route("/v1/mp/listings/{listing}/stop", post(http_stop_listing))
+        .route("/v1/mp/workers/destroy", post(http_destroy_worker))
+        .route("/v1/mp/workers/stop", post(http_stop))
         .layer(axum::extract::DefaultBodyLimit::max(300 * 1024))
         .with_state(h)
 }
@@ -617,6 +1151,8 @@ mod tests {
                 "release_digest": format!("sha256:{}", "b".repeat(64)),
                 "statement": "{}",
                 "statement_digest": "sha256:00",
+                "signature": "00",
+                "key_id": "ppk_0000000000000000",
             },
         });
         let r = post("/v1/mp/jobs", Some("nst_secret_token"), job.clone())
@@ -627,5 +1163,61 @@ mod tests {
         assert_eq!(v["error"], "not_attested");
         let r = post("/v1/mp/jobs", Some("wrong"), job).await.unwrap();
         assert_eq!(r.status(), 401);
+    }
+
+    fn admission_with(statement: serde_json::Value) -> Admission {
+        let image = format!("localhost/x@sha256:{}", "b".repeat(64));
+        let mut st = statement;
+        st["release_id"] = json!("rel_1");
+        st["release_digest"] = json!(format!("sha256:{}", "a".repeat(64)));
+        st["image"] = json!(image);
+        st["image_digest"] = json!(format!("sha256:{}", "b".repeat(64)));
+        let key = crate::attest::test_key();
+        let key_id = crate::attest::key_id(&key.verifying_key());
+        st["key_id"] = json!(key_id);
+        let text = st.to_string();
+        Admission {
+            release_id: "rel_1".into(),
+            image,
+            release_digest: format!("sha256:{}", "a".repeat(64)),
+            statement_digest: format!("sha256:{}", sha256_hex(text.as_bytes())),
+            signature: crate::attest::sign(&key, &text),
+            key_id,
+            statement: text,
+        }
+    }
+
+    #[test]
+    fn test_pools_and_production_pools_admit_disjoint_statements() {
+        let approval = admission_with(json!({
+            "type": "pigeonpost.nest.release.attestation.v1",
+            "decision": "approved", "attester": "acct_staff",
+        }));
+        let test = admission_with(json!({
+            "type": "pigeonpost.nest.release.test.v1",
+            "decision": "test_only", "environment": "staging", "test_nest_id": "tnt_1",
+        }));
+        let keys = TrustedKeys::from_hex(&[crate::util::hex(
+            crate::attest::test_key().verifying_key().as_bytes(),
+        )])
+        .unwrap();
+        assert!(verify_admission(&approval, &keys).is_ok());
+        assert!(verify_test_admission(&test, &keys).is_ok());
+        assert_eq!(
+            verify_admission(&test, &keys).unwrap_err().code,
+            "not_attested"
+        );
+        assert_eq!(
+            verify_test_admission(&approval, &keys).unwrap_err().code,
+            "not_attested"
+        );
+        let mut forged = test.clone();
+        forged.statement = forged.statement.replace("staging", "production");
+        assert!(verify_test_admission(&forged, &keys).is_err());
+        // Unsigned, or with no trusted key, a test statement is refused too.
+        assert!(verify_test_admission(&test, &TrustedKeys::default()).is_err());
+        let mut unsigned = test.clone();
+        unsigned.signature = "0".repeat(128);
+        assert!(verify_test_admission(&unsigned, &keys).is_err());
     }
 }

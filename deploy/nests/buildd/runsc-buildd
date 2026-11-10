@@ -1,0 +1,12 @@
+#!/bin/sh
+# /usr/local/bin/runsc-buildd — gVisor for the build plane's rootless podman (user nestbuild).
+# Mapped as the runtime named "runsc" in ~nestbuild/.config/containers/containers.conf, so the
+# build plane's `--runtime=runsc` always gets this reviewed profile:
+#   --platform=systrap   no KVM needed (KVM is not used for this)
+#   --network=sandbox    gVisor's own network stack, not the host's
+#   --host-uds=none      no host Unix sockets from inside (no podman, docker or systemd socket)
+#   --host-fifo=none     no host FIFOs
+#   --ignore-cgroups     rootless podman already runs runsc inside the user's namespace; runsc's
+#                        --rootless only works for `runsc do` ("Rootless mode not supported with
+#                        create"). The limits in 50-nestbuild-limits.conf cap memory, CPU and tasks.
+exec /usr/local/bin/runsc --ignore-cgroups --platform=systrap --network=sandbox --host-uds=none --host-fifo=none "$@"

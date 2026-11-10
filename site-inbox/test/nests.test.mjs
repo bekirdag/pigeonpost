@@ -23,7 +23,7 @@ const PRICES = { plans: [
   { code: "nest-ai-starter-monthly-eur", package: "nest.ai.starter.monthly", currency: "EUR", amount: "9.00", available: true },
 ] };
 
-function productsPage(t, { features = ["nests"], nests = { allowance: { slots: 0, used: 0, duplicates: [] }, nests: [], setups: [] }, profile = "00000000-0000-4000-8000-000000000042", prices = PRICES, orgs = [], orgNests = null, members = null, bridgeFor = null, search = "" } = {}) {
+function productsPage(t, { features = ["nests"], nests = { allowance: { slots: 0, used: 0, duplicates: [] }, nests: [], setups: [] }, profile = "00000000-0000-4000-8000-000000000042", prices = PRICES, orgs = [], orgNests = null, members = null, bridgeFor = null, search = "", operators = null } = {}) {
   const dom = new JSDOM('<div id="root"></div>', { url: "https://pigeonpost.dev/account", runScripts: "outside-only", virtualConsole: new VirtualConsole() });
   t.after(() => dom.window.close());
   const { window } = dom;
@@ -38,6 +38,7 @@ function productsPage(t, { features = ["nests"], nests = { allowance: { slots: 0
       if (path === "/v1/nests") return nests;
       if (path === "/v1/orgs") return { orgs };
       if (orgNests && /^\/v1\/orgs\/[^/]+\/nests$/.test(path)) return orgNests;
+      if (operators && /^\/v1\/orgs\/[^/]+\/nests\/[^/]+\/operators$/.test(path)) return operators(path, init);
       if (/^\/v1\/orgs\/[^/]+\/members\?status=active$/.test(path)) {
         if (!members) throw Object.assign(new Error("forbidden"), { status: 403, code: "forbidden" });
         return { members };
@@ -530,4 +531,124 @@ test("a Nest awaiting payment says when it will be deleted", async (t) => {
   const p = productsPage(t, { nests: { ...FUNDED(1), nests: [{ nest_id: "nst_a", label: "A", status: "needs_you", status_reason: "payment", delete_after: 1900000000 }] } });
   await tick();
   assert.match(p.doc.querySelector('[data-nest="nst_a"] .pp-warn').textContent, /Deleted on/);
+});
+
+test("a company admin manages a Nest's operators", async (t) => {
+  const p = productsPage(t, {
+    orgs: [{ id: "org1", name: "Acme", my_roles: ["agent_admin"], my_member_id: "m_me" }],
+    orgNests: { allowance: { slots: 3, used: 1 }, package: { code: "x", slots: 3 }, nests: [{ nest_id: "nst_a", address: "/k/a", label: "Ops", state: "running", role: "owner" }] },
+    members: [
+      { id: "m_me", first_name: "Me" },
+      { id: "m_2", first_name: "Ada", last_name: "L" },
+      { id: "m_3", first_name: "Bo" },
+      { id: "m_4", first_name: "Cy", roles: ["admin"] }
+    ],
+    operators: (path, init) => {
+      if (init.method === "PUT") {
+        return { operators: JSON.parse(init.body).operators.map(id => ({ member_id: id })) };
+      }
+      return { operators: [{ member_id: "m_3", first_name: "Bo" }] };
+    }
+  });
+
+  await tick();
+  const ctx = p.doc.querySelector("#pp-context");
+  ctx.value = "org1";
+  ctx.dispatchEvent(new p.window.Event("change"));
+  await tick();
+
+  const toggle = p.doc.querySelector('[data-manage-operators="nst_a"]');
+  assert.ok(toggle, "toggle button exists");
+  assert.equal(toggle.getAttribute("aria-expanded"), "false");
+
+  const panel = p.doc.querySelector("#pp-ops-nst_a");
+  assert.ok(panel, "panel exists");
+  assert.ok(panel.hidden, "panel is hidden initially");
+
+  toggle.click();
+  await tick();
+
+  assert.equal(toggle.getAttribute("aria-expanded"), "true");
+  assert.ok(!panel.hidden, "panel is visible after click");
+
+  const checkboxes = panel.querySelectorAll("[data-nest-operator]");
+  assert.equal(checkboxes.length, 2, "exactly two checkboxes offered (m_2 and m_3)");
+  
+  const ids = Array.from(checkboxes).map(cb => cb.getAttribute("data-nest-operator")).sort();
+  assert.deepEqual(ids, ["m_2", "m_3"], "checkboxes are for m_2 and m_3");
+
+  const cbM3 = panel.querySelector('[data-nest-operator="m_3"]');
+  const cbM2 = panel.querySelector('[data-nest-operator="m_2"]');
+  
+  assert.ok(cbM3.checked, "m_3 is checked");
+  assert.ok(!cbM2.checked, "m_2 is not checked");
+  for (const cb of checkboxes) assert.match(panel.querySelector(`label[for="${cb.id}"]`).textContent, /\S/, "every checkbox is labelled");
+
+  const fieldset = panel.querySelector("fieldset.pp-operators");
+  assert.ok(fieldset, "fieldset exists");
+  const legend = fieldset.querySelector("legend");
+  assert.ok(legend.textContent.includes("Ops"), "legend contains 'Ops'");
+
+  cbM2.checked = true;
+  cbM3.checked = false;
+
+  const form = panel.querySelector("form");
+  assert.ok(form, "form exists in panel");
+  form.dispatchEvent(new p.window.Event("submit", { cancelable: true }));
+  
+  await tick();
+
+  const putCall = p.calls.find(c => c.path === "/v1/orgs/org1/nests/nst_a/operators" && c.method === "PUT");
+  assert.ok(putCall, "PUT call was made");
+  assert.deepEqual(JSON.parse(putCall.body), { operators: ["m_2"] });
+
+  const status = panel.querySelector('[role="status"]');
+  assert.ok(status, "status element exists");
+  assert.match(status.textContent, /Saved\. 1 person/);
+});
+
+test("without the member list an admin can only remove operators; errors are announced", async (t) => {
+  const p = productsPage(t, {
+    orgs: [{ id: "org1", name: "Acme", my_roles: ["agent_admin"], my_member_id: "m_me" }],
+    orgNests: { allowance: { slots: 3, used: 1 }, package: { code: "x", slots: 3 }, nests: [{ nest_id: "nst_a", address: "/k/a", label: "Ops", state: "running", role: "owner" }] },
+    members: null, // member list fetch fails
+    operators: (path, init) => {
+      if (init.method === "PUT") {
+        throw Object.assign(new Error("x"), { status: 409, code: "org_read_only" });
+      }
+      return { operators: [{ member_id: "m_3", first_name: "Bo" }] };
+    }
+  });
+
+  await tick();
+  const ctx = p.doc.querySelector("#pp-context");
+  ctx.value = "org1";
+  ctx.dispatchEvent(new p.window.Event("change"));
+  await tick();
+
+  const toggle = p.doc.querySelector('[data-manage-operators="nst_a"]');
+  assert.ok(toggle, "toggle button exists");
+  
+  toggle.click();
+  await tick();
+
+  const panel = p.doc.querySelector("#pp-ops-nst_a");
+  assert.ok(panel, "panel exists");
+  assert.ok(!panel.hidden, "panel is visible after click");
+
+  const checkboxes = panel.querySelectorAll("[data-nest-operator]");
+  assert.equal(checkboxes.length, 1, "only one checkbox offered (m_3)");
+  assert.equal(checkboxes[0].getAttribute("data-nest-operator"), "m_3");
+
+  assert.match(panel.textContent, /remove operators here but not add/);
+
+  const form = panel.querySelector("form");
+  assert.ok(form, "form exists in panel");
+  form.dispatchEvent(new p.window.Event("submit", { cancelable: true }));
+  
+  await tick();
+
+  const status = panel.querySelector('[role="status"]');
+  assert.ok(status, "status element exists");
+  assert.match(status.textContent, /read-only/);
 });

@@ -45,3 +45,15 @@ groups:
         expr: nests_platform_error_tokens_month{direction="input"} > 500000
         for: 1h
         annotations: {summary: "many model calls ended with an unknown outcome this month"}
+      - alert: PostboxSilent
+        expr: time() - nests_postbox_last_unlock_seconds > 300
+        for: 2m
+        annotations: {summary: "the postbox has not called nestd /v1/unlock for over 5 minutes (postbox or the WireGuard tunnel down; nestd cannot unlock after a restart)"}
+      - alert: PostboxPublicDown
+        expr: nests_postbox_public_up == 0
+        for: 3m
+        annotations: {summary: "https://postbox.pigeonpost.dev/health has not answered from the internet for 3 minutes"}
+      - alert: PostboxProbeStale
+        expr: absent(nests_postbox_public_probe_seconds) or time() - nests_postbox_public_probe_seconds > 300
+        for: 2m
+        annotations: {summary: "the public postbox probe (nests-postbox-probe.timer) has not reported for over 5 minutes"}

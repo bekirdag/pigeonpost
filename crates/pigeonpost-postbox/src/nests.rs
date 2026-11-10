@@ -101,10 +101,14 @@ pub(crate) struct Runtime {
     pub(crate) input_tokens: u64,
     pub(crate) output_tokens: u64,
     /// Last wake sent per Nest, for the debounce.
-    woken: Mutex<HashMap<String, u64>>,
+    pub(crate) woken: Mutex<HashMap<String, u64>>,
     /// Phase B6: the Nests host's key-encryption key, released to nestd over the private link
     /// (`POSTBOX_NESTS_KEK_FILE`, 64 hex characters). Never logged, never sent anywhere else.
     pub(crate) kek: Option<zeroize::Zeroizing<String>>,
+    /// Marketplace hardening (W1): attestation key, quotas, the remote build plane.
+    pub(crate) marketplace: crate::marketplace_hardening::Hardening,
+    /// Marketplace M2b: staging mode, the hosted test pool and the git host allowlist.
+    pub(crate) mp: crate::marketplace_env::MpEnv,
 }
 
 impl Default for Runtime {
@@ -116,7 +120,33 @@ impl Default for Runtime {
             output_tokens: 100_000,
             woken: Mutex::new(HashMap::new()),
             kek: None,
+            marketplace: crate::marketplace_hardening::Hardening::default(),
+            mp: crate::marketplace_env::MpEnv::default(),
         }
+    }
+}
+
+/// An HTTP transport to a nestd at `url` with `token`, or `Disabled` when both are empty or
+/// either is unusable (`what` names the variables in the warning).
+pub(crate) fn http_transport(url: &str, token: &str, what: &str) -> Transport {
+    if url.is_empty() && token.is_empty() {
+        return Transport::Disabled;
+    }
+    if !url_ok(url) || token.len() < 32 {
+        tracing::warn!("{what} unusable; disabled");
+        return Transport::Disabled;
+    }
+    match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+    {
+        Ok(client) => Transport::Http {
+            url: url.to_string(),
+            token: token.to_string(),
+            client,
+        },
+        Err(_) => Transport::Disabled,
     }
 }
 
@@ -163,24 +193,10 @@ impl Runtime {
             .unwrap_or_default()
             .trim()
             .to_string();
-        let transport = if url.is_empty() && token.is_empty() {
-            Transport::Disabled
-        } else if !url_ok(&url) || token.len() < 32 {
-            tracing::warn!("POSTBOX_NESTS_URL/POSTBOX_NESTS_TOKEN unusable; Nests disabled");
-            Transport::Disabled
-        } else {
-            match reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(20))
-                .redirect(reqwest::redirect::Policy::none())
-                .build()
-            {
-                Ok(client) => {
-                    tracing::info!("Nests configured (nestd on the worker host)");
-                    Transport::Http { url, token, client }
-                }
-                Err(_) => Transport::Disabled,
-            }
-        };
+        let transport = http_transport(&url, &token, "POSTBOX_NESTS_URL/POSTBOX_NESTS_TOKEN");
+        if matches!(transport, Transport::Http { .. }) {
+            tracing::info!("Nests configured (nestd on the worker host)");
+        }
         Runtime {
             transport,
             max_per_account: env_num("POSTBOX_NESTS_MAX_PER_ACCOUNT", 1).min(1_000) as i64,
@@ -188,6 +204,8 @@ impl Runtime {
             output_tokens: env_num("POSTBOX_NESTS_OUTPUT_TOKENS", d.output_tokens),
             woken: Mutex::new(HashMap::new()),
             kek: read_kek(),
+            marketplace: crate::marketplace_hardening::Hardening::from_env(),
+            mp: crate::marketplace_env::MpEnv::from_env(&url),
         }
     }
 
@@ -199,6 +217,7 @@ impl Runtime {
                 calls: Mutex::new(Vec::new()),
                 fail: AtomicBool::new(false),
             },
+            marketplace: crate::marketplace_hardening::Hardening::for_test(),
             ..Runtime::default()
         }
     }
@@ -244,6 +263,13 @@ impl Runtime {
                 });
                 if fail.load(Ordering::SeqCst) {
                     return Ok((500, json!({ "error": "capture_failure" })));
+                }
+                // Hardening: destroying a buyer worker names the id it retired.
+                if path == "/v1/mp/workers/destroy" {
+                    return Ok((
+                        200,
+                        json!({ "destroyed": format!("nst_{}", "d".repeat(32)) }),
+                    ));
                 }
                 // The marketplace dispatcher (M1): a polled job has finished on the worker host.
                 if method == reqwest::Method::GET && path.starts_with("/v1/mp/jobs/") {
@@ -432,7 +458,12 @@ async fn tombstones(state: &AppState) -> Vec<String> {
                 "SELECT id FROM nests WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC LIMIT 1000",
             )?;
             let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
-            Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+            let mut ids = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+            // Marketplace hardening: destroyed buyer workers are tombstones too.
+            let mut stmt = c.prepare(crate::marketplace_hardening::WORKER_TOMBSTONES_SQL)?;
+            let workers = stmt.query_map([], |r| r.get::<_, String>(0))?;
+            ids.extend(workers.collect::<rusqlite::Result<Vec<_>>>()?);
+            Ok(ids)
         })
         .await
         .unwrap_or_default()

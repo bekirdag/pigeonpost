@@ -1,0 +1,32 @@
+meta {
+  name: Replace who operates a company Nest (ManageAgents)
+  type: http
+  seq: 20
+}
+
+put {
+  url: {{baseUrl}}/v1/orgs/:org/nests/:nest/operators
+  body: json
+  auth: bearer
+}
+
+params:path {
+  org: 
+  nest: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "operators": [
+      "string"
+    ]
+  }
+}
+
+docs {
+  The listed active members get the `operate_nest` delegation; members left out lose it at once, for chat, files and approvals alike (other capabilities on the same delegation are kept). Nest admins named in the list are skipped. Sending the current set again changes nothing. Adding operators is refused while the organization is read-only or suspended; removing them never is.
+}

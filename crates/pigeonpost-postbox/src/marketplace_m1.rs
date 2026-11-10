@@ -55,7 +55,7 @@ const ANALYSIS_PLANE: &str = "system:analysis";
 const PLATFORM_OWNER_ID: &str = "pigeonpost";
 /// The release digest's domain separator; `pigeonpost_nests::release` computes the same.
 const RELEASE_DIGEST_CONTEXT: &str = "pigeonpost-nest-release-v1";
-const STATEMENT_TYPE: &str = "pigeonpost.nest.release.attestation.v1";
+pub(crate) const STATEMENT_TYPE: &str = "pigeonpost.nest.release.attestation.v1";
 
 pub(crate) fn router() -> Router<AppState> {
     Router::new()
@@ -93,7 +93,7 @@ pub(crate) fn digest_of(data: &[u8]) -> String {
     format!("sha256:{}", sha256_hex(data))
 }
 
-fn sha256_ok(d: &str) -> bool {
+pub(crate) fn sha256_ok(d: &str) -> bool {
     d.strip_prefix("sha256:")
         .is_some_and(|h| h.len() == 64 && h.bytes().all(|b| b.is_ascii_hexdigit()))
 }
@@ -173,7 +173,7 @@ fn pattern_ok(s: &str, prefix: &str) -> bool {
     })
 }
 
-fn operation_ok(op: &str) -> bool {
+pub(crate) fn operation_ok(op: &str) -> bool {
     !op.is_empty()
         && op.len() <= 80
         && op.split('.').all(|w| {
@@ -183,7 +183,7 @@ fn operation_ok(op: &str) -> bool {
         })
 }
 
-fn version_ok(v: &str) -> bool {
+pub(crate) fn version_ok(v: &str) -> bool {
     let parts: Vec<&str> = v.split('.').collect();
     (2..=3).contains(&parts.len())
         && (3..=32).contains(&v.len())
@@ -209,11 +209,11 @@ fn header<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
     headers.get(name).and_then(|v| v.to_str().ok())
 }
 
-fn user_agent(headers: &HeaderMap) -> Option<&str> {
+pub(crate) fn user_agent(headers: &HeaderMap) -> Option<&str> {
     header(headers, "user-agent")
 }
 
-fn conflict_code(code: &'static str, message: &str) -> GErr {
+pub(crate) fn conflict_code(code: &'static str, message: &str) -> GErr {
     GErr::conflict(code, message.to_string())
 }
 
@@ -463,18 +463,50 @@ struct Offer {
     security_state: String,
     input_schema: Option<String>,
     attestation: Option<(String, String)>,
+    /// A third-party listing and no active installation for this account (M2).
+    install_required: bool,
+    /// Hardening: `(key_id, signature)` of that attestation, and whether a kill is in force.
+    signature: Option<(String, String)>,
+    killed: bool,
+    /// The installation the job runs under (M2b): the account's own, or the org's one named in
+    /// `x-pigeonpost-installation` that the caller administers or operates.
+    installation_id: Option<String>,
+    /// Whose worker the job runs in: the account, or `org:<id>` for an org installation.
+    scope: String,
+    /// An `invite_only` or `organization` listing whose grant no longer lets this installation
+    /// invoke it (M2b).
+    grant_denied: bool,
+    /// A paid installation whose licence gives no access now (marketplace payments).
+    licence_inactive: bool,
 }
 
+/// `x-pigeonpost-installation`: the org installation a member invokes a listing through (M2b).
+fn installation_hint(headers: &HeaderMap) -> GResult<Option<String>> {
+    match header(headers, "x-pigeonpost-installation") {
+        None => Ok(None),
+        Some(v) if v.starts_with("ins_") && v.len() <= 64 && trace_ok(v) => Ok(Some(v.to_string())),
+        Some(_) => Err(GErr::bad(
+            "invalid_request",
+            "x-pigeonpost-installation: an installation id",
+        )),
+    }
+}
+
+/// The offer behind `address` for `account`. An account's active installation (M2) pins the
+/// release: its jobs run the installed release and its operation schema, not the listing's
+/// current one. A third-party listing is usable only through an installation.
 fn load_offer_in(
     c: &Connection,
     address: &str,
     operation: &str,
     version: &str,
+    account: &str,
+    installation: Option<&str>,
 ) -> rusqlite::Result<Option<Offer>> {
     let found = c
         .query_row(
             "SELECT l.id, l.address, l.status, r.id, r.release_digest, r.image, r.security_state,
-                    o.input_schema
+                    o.input_schema, l.visibility
                FROM nest_listings l JOIN nest_releases r ON r.id = l.release_id
                LEFT JOIN nest_operations o ON o.listing_id = l.id AND o.operation = ?2
                     AND o.operation_version = ?3
@@ -491,19 +523,140 @@ fn load_offer_in(
                     security_state: r.get(6)?,
                     input_schema: r.get(7)?,
                     attestation: None,
+                    install_required: false,
+                    signature: None,
+                    killed: false,
+                    installation_id: None,
+                    scope: account.to_string(),
+                    grant_denied: false,
+                    licence_inactive: false,
                 })
+                .map(|o| (o, r.get::<_, String>(8)))
             },
         )
         .optional()?;
-    let Some(mut offer) = found else {
+    let Some((mut offer, visibility)) = found else {
         return Ok(None);
     };
+    let visibility = visibility?;
+    let first_party: bool = c.query_row(
+        "SELECT p.owner_kind = 'platform' FROM nest_listings l
+           JOIN publisher_profiles p ON p.id = l.publisher_id WHERE l.id = ?1",
+        [&offer.listing_id],
+        |r| r.get(0),
+    )?;
+    #[allow(clippy::type_complexity)]
+    let pinned: Option<(
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+        Option<String>,
+        String,
+        String,
+    )> = match installation {
+        // An org installation (M2b): only for one of its Nest admins or live operators; anyone
+        // else is told nothing about it.
+        Some(iid) => {
+            let Some(i) = crate::marketplace_m2::inst_in(c, iid)? else {
+                return Ok(None);
+            };
+            if i.owner_kind != "org"
+                || i.status != "active"
+                || i.listing_id != offer.listing_id
+                || crate::marketplace_org::org_role_in(c, &i, account, now_unix())?.is_none()
+            {
+                return Ok(None);
+            }
+            c.query_row(
+                "SELECT r.id, r.release_digest, r.image, r.security_state, r.manifest, i.id,
+                        'org:' || i.owner_id
+                   FROM nest_installations i JOIN nest_releases r ON r.id = i.release_id
+                  WHERE i.id = ?1",
+                [iid],
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        r.get(5)?,
+                        r.get(6)?,
+                    ))
+                },
+            )
+            .optional()?
+        }
+        None => c
+            .query_row(
+                "SELECT r.id, r.release_digest, r.image, r.security_state, r.manifest, i.id, ?2
+                   FROM nest_installations i JOIN nest_releases r ON r.id = i.release_id
+                  WHERE i.listing_id = ?1 AND i.owner_kind = 'account' AND i.owner_id = ?2
+                    AND i.status = 'active'",
+                params![offer.listing_id, account],
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        r.get(5)?,
+                        r.get(6)?,
+                    ))
+                },
+            )
+            .optional()?,
+    };
+    // Granted visibility (M2b): the grant's invoke switch is checked on every job, so revoking
+    // it stops use at once.
+    if matches!(visibility.as_str(), "invite_only" | "organization") {
+        let allowed = match pinned.as_ref().map(|p| p.6.as_str()) {
+            Some(scope) if scope.starts_with("org:") => crate::marketplace_grants::org_grant_in(
+                c,
+                &offer.listing_id,
+                &visibility,
+                &scope[4..],
+                crate::marketplace_grants::Use::Invoke,
+            )?,
+            _ => crate::marketplace_grants::account_grant_in(
+                c,
+                &offer.listing_id,
+                &visibility,
+                account,
+                crate::marketplace_grants::Use::Invoke,
+            )?,
+        };
+        offer.grant_denied = !allowed;
+    }
+    match pinned {
+        Some((release, digest, image, security, manifest, iid, scope)) => {
+            offer.licence_inactive = crate::marketplace_pay::licence_inactive_in(c, &iid)?;
+            offer.installation_id = Some(iid);
+            offer.scope = scope;
+            offer.input_schema = manifest
+                .as_deref()
+                .and_then(|m| serde_json::from_str::<Value>(m).ok())
+                .and_then(|m| crate::marketplace_m2::operation_schema(&m, operation, version));
+            offer.release_id = release;
+            offer.release_digest = digest;
+            offer.image = image;
+            offer.security_state = security;
+        }
+        None => offer.install_required = !first_party,
+    }
     offer.attestation = attestation_in(c, &offer.release_id)?;
+    offer.signature = crate::marketplace_hardening::signature_in(c, &offer.release_id)?;
+    offer.killed = crate::marketplace_hardening::killed_in(c, &offer.listing_id)?;
     Ok(Some(offer))
 }
 
 /// The release's attestation statement, if it has one whose digest still matches.
-fn attestation_in(c: &Connection, release: &str) -> rusqlite::Result<Option<(String, String)>> {
+pub(crate) fn attestation_in(
+    c: &Connection,
+    release: &str,
+) -> rusqlite::Result<Option<(String, String)>> {
     let row: Option<(Option<String>, String)> = c
         .query_row(
             "SELECT statement, statement_digest FROM release_attestations
@@ -516,13 +669,41 @@ fn attestation_in(c: &Connection, release: &str) -> rusqlite::Result<Option<(Str
 }
 
 /// Admission's view of a release: attested over its digest, live, and offering the operation.
-fn admit(offer: &Option<Offer>) -> GResult<&Offer> {
+fn admit<'a>(
+    offer: &'a Option<Offer>,
+    keys: &crate::marketplace_hardening::Hardening,
+) -> GResult<&'a Offer> {
     let Some(o) = offer else {
         return Err(not_found());
     };
     // Unpublished listings are private: no answer distinguishes them from missing ones.
     if o.listing_status != "published" {
         return Err(not_found());
+    }
+    if o.killed {
+        return Err(conflict_code(
+            "listing_suspended",
+            "this listing is stopped by the platform",
+        ));
+    }
+    if o.install_required {
+        return Err(conflict_code(
+            "installation_required",
+            "install this listing before invoking it",
+        ));
+    }
+    if o.grant_denied {
+        return Err(GErr::forbidden(
+            "grant_required",
+            "your access to this listing does not include invoking it",
+        ));
+    }
+    if o.licence_inactive {
+        return Err(GErr::new(
+            StatusCode::PAYMENT_REQUIRED,
+            "licence_inactive",
+            "this installation's licence is paused or has ended",
+        ));
     }
     match o.security_state.as_str() {
         "revoked" => return Err(conflict_code("release_revoked", "this release is revoked")),
@@ -544,6 +725,9 @@ fn admit(offer: &Option<Offer>) -> GResult<&Offer> {
                         && s["image"] == image.as_str()
                         && s["decision"] == "approved"
                 })
+                && o.signature
+                    .as_ref()
+                    .is_some_and(|(kid, sig)| keys.verify(statement, kid, sig))
         }
         _ => false,
     };
@@ -565,7 +749,7 @@ fn admit(offer: &Option<Offer>) -> GResult<&Offer> {
 
 /// Check a payload against the operation's input fields: declared string fields only, within
 /// their bounds, the required ones present.
-fn validate_payload(schema: &str, payload: &Map<String, Value>) -> GResult<()> {
+pub(crate) fn validate_payload(schema: &str, payload: &Map<String, Value>) -> GResult<()> {
     let bad = |m: &str| GErr::bad("invalid_operation_payload", m.to_string());
     let schema: Value = serde_json::from_str(schema).map_err(|_| bad("unreadable schema"))?;
     let fields = schema["fields"].as_array().cloned().unwrap_or_default();
@@ -627,13 +811,15 @@ async fn quote(
             req.operation.clone(),
             req.operation_version.clone(),
         );
+        let who = account.clone();
+        let hint = installation_hint(&headers)?;
         let offer = state
             .store
             .group_read(move |c| -> GResult<Option<Offer>> {
-                Ok(load_offer_in(c, &to, &op, &ver)?)
+                Ok(load_offer_in(c, &to, &op, &ver, &who, hint.as_deref())?)
             })
             .await?;
-        let o = admit(&offer)?.clone();
+        let o = admit(&offer, &state.nests.marketplace)?.clone();
         let f = Facts {
             job_admitted: true,
             ..facts(&state)
@@ -923,15 +1109,18 @@ async fn submit_job(State(state): State<AppState>, headers: HeaderMap, body: Byt
         let now = now_unix();
         let deadline = deadline_of(&req.deadline_at, now)?;
 
+        crate::marketplace_hardening::rate_limit_jobs(&state, &account, &req.to).await?;
         let (to, op, ver) = (req.to.clone(), req.operation.clone(), req.operation_version.clone());
         let auth_hash = sha256_hex(req.payment_authorization.as_bytes());
         let (qid, ah) = (req.quote_id.clone(), auth_hash.clone());
+        let who = account.clone();
+        let hint = installation_hint(&headers)?;
         type Quote = (String, String, String, String, i64);
         type Auth = (String, String, Option<String>, i64);
         let (offer, quote, auth) = state
             .store
             .group_read(move |c| -> GResult<(Option<Offer>, Option<Quote>, Option<Auth>)> {
-                let offer = load_offer_in(c, &to, &op, &ver)?;
+                let offer = load_offer_in(c, &to, &op, &ver, &who, hint.as_deref())?;
                 let quote = c
                     .query_row(
                         "SELECT account_id, listing_id, operation, operation_version, expires_at
@@ -951,7 +1140,7 @@ async fn submit_job(State(state): State<AppState>, headers: HeaderMap, body: Byt
                 Ok((offer, quote, auth))
             })
             .await?;
-        let o = admit(&offer)?.clone();
+        let o = admit(&offer, &state.nests.marketplace)?.clone();
         validate_payload(o.input_schema.as_deref().unwrap_or("{}"), &req.payload)?;
         // The quote binds the caller, the listing and the operation; the target never moves.
         let Some(q) = quote.filter(|q| q.0 == account) else {
@@ -1003,7 +1192,8 @@ async fn submit_job(State(state): State<AppState>, headers: HeaderMap, body: Byt
         .map_err(|d| deny(d, false))?;
 
         let id = format!("job_{}", crate::groups::rand_b32(16));
-        let context = buyer_context(&o.listing_id, &account);
+        let context = buyer_context(&o.listing_id, &o.scope);
+        let installation = o.installation_id.clone();
         let payload = Value::Object(req.payload.clone());
         let intent = digest_of(
             canonical_json(&json!({
@@ -1063,12 +1253,12 @@ async fn submit_job(State(state): State<AppState>, headers: HeaderMap, body: Byt
                     "INSERT INTO nest_jobs (id, account_id, acting, buyer_context, listing_id, address,
                         release_id, operation, operation_version, quote_id, authorization_sha256,
                         intent_digest, payload, client_trace_id, admission, execution, settlement,
-                        revision, deadline_at, created_at, updated_at)
+                        revision, deadline_at, created_at, updated_at, installation_id)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
-                        'admitted', 'queued', 'none', 1, ?15, ?16, ?16)",
+                        'admitted', 'queued', 'none', 1, ?15, ?16, ?16, ?17)",
                     params![
                         jid, acct, acting, ctx_id, listing, address, rel, op, ver, qid, auth_hash,
-                        intent, payload.to_string(), trace, deadline, now
+                        intent, payload.to_string(), trace, deadline, now, installation
                     ],
                 )?;
                 job_event_in(tx, &jid, "nest.job.admitted", json!({ "execution": "queued" }), now)?;
@@ -1102,12 +1292,13 @@ fn job_event_in(
     kind: &str,
     detail: Value,
     now: i64,
-) -> rusqlite::Result<()> {
+) -> GResult<()> {
     tx.execute(
         "INSERT INTO nest_job_events (job_id, kind, detail, created_at) VALUES (?1, ?2, ?3, ?4)",
         params![job, kind, detail.to_string(), now],
-    )
-    .map(|_| ())
+    )?;
+    // Hardening: the same change as a typed event on the buyer's `/v1/events` stream.
+    crate::marketplace_hardening::job_event_in(tx, job, kind, &detail, now)
 }
 
 /// `GET /v1/nest-jobs/{job}`
@@ -1122,39 +1313,49 @@ async fn read_job(
         let row = state
             .store
             .group_read(move |c| -> GResult<Option<(String, Value)>> {
-                Ok(c.query_row(
-                    "SELECT account_id, id, address, operation, operation_version, admission,
+                let found = c
+                    .query_row(
+                        "SELECT account_id, id, address, operation, operation_version, admission,
                             execution, settlement, revision, result, error_code, created_at,
                             updated_at, deadline_at
                        FROM nest_jobs WHERE id = ?1",
-                    [&jid],
-                    |r| {
-                        let result: Option<String> = r.get(9)?;
-                        Ok((
-                            r.get::<_, String>(0)?,
-                            json!({
-                                "job_id": r.get::<_, String>(1)?,
-                                "to": r.get::<_, String>(2)?,
-                                "operation": r.get::<_, String>(3)?,
-                                "operation_version": r.get::<_, String>(4)?,
-                                "admission": r.get::<_, String>(5)?,
-                                "execution": r.get::<_, String>(6)?,
-                                "settlement": r.get::<_, String>(7)?,
-                                "revision": r.get::<_, i64>(8)?,
-                                "effects_outcome_unknown": 0,
-                                "result_attachments": [],
-                                "result": result
-                                    .and_then(|t| serde_json::from_str::<Value>(&t).ok())
-                                    .unwrap_or(Value::Null),
-                                "error_code": r.get::<_, Option<String>>(10)?,
-                                "created_at": iso(r.get(11)?),
-                                "updated_at": iso(r.get(12)?),
-                                "deadline_at": iso(r.get(13)?),
-                            }),
-                        ))
-                    },
-                )
-                .optional()?)
+                        [&jid],
+                        |r| {
+                            let result: Option<String> = r.get(9)?;
+                            Ok((
+                                r.get::<_, String>(0)?,
+                                json!({
+                                    "job_id": r.get::<_, String>(1)?,
+                                    "to": r.get::<_, String>(2)?,
+                                    "operation": r.get::<_, String>(3)?,
+                                    "operation_version": r.get::<_, String>(4)?,
+                                    "admission": r.get::<_, String>(5)?,
+                                    "execution": r.get::<_, String>(6)?,
+                                    "settlement": r.get::<_, String>(7)?,
+                                    "revision": r.get::<_, i64>(8)?,
+                                    "effects_outcome_unknown": 0,
+                                    "result_attachments": [],
+                                    "result": result
+                                        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+                                        .unwrap_or(Value::Null),
+                                    "error_code": r.get::<_, Option<String>>(10)?,
+                                    "created_at": iso(r.get(11)?),
+                                    "updated_at": iso(r.get(12)?),
+                                    "deadline_at": iso(r.get(13)?),
+                                }),
+                            ))
+                        },
+                    )
+                    .optional()?;
+                Ok(match found {
+                    Some((owner, mut v)) => {
+                        // Effects whose outcome is unknown (worker routes, `marketplace_worker`).
+                        let (unknown, _) = crate::marketplace_worker::activity_in(c, &jid)?;
+                        v["effects_outcome_unknown"] = json!(unknown);
+                        Some((owner, v))
+                    }
+                    None => None,
+                })
             })
             .await?;
         let f = Facts {
@@ -1190,20 +1391,34 @@ struct Queued {
     image: Option<String>,
     digest: Option<String>,
     attestation: Option<(String, String)>,
+    /// The installation's stored configuration with the release's defaults (M2), or null.
+    config: Value,
+    signature: Option<(String, String)>,
+    limits: Option<Value>,
+    killed: bool,
+    /// The release's manifest declares external writes (the broker then records effects).
+    external_writes: bool,
+    /// The installation and its sealed secrets (W1.6), opened only to hand them to nestd.
+    installation: Option<String>,
+    sealed: Vec<(String, Vec<u8>)>,
 }
 
 /// Hand queued jobs to nestd's dispatcher (`POST /v1/mp/jobs`). A job whose release is no longer
 /// live stops instead. A transport failure leaves the job queued: nestd dedupes by job id, so a
 /// retry is never a second job.
 pub(crate) async fn dispatch_once(state: &AppState) -> usize {
+    let quotas = state.nests.marketplace.quotas;
     let queued = state
         .store
-        .group_read(|c| -> GResult<Vec<Queued>> {
+        .group_read(move |c| -> GResult<Vec<Queued>> {
             let mut stmt = c.prepare(
                 "SELECT j.id, j.listing_id, j.buyer_context, j.operation, j.operation_version,
-                        j.payload, j.release_id, r.security_state, r.image, r.release_digest
+                        j.payload, j.release_id, r.security_state, r.image, r.release_digest,
+                        r.manifest, i.config, i.id
                    FROM nest_jobs j JOIN nest_releases r ON r.id = j.release_id
-                  WHERE j.execution = 'queued' ORDER BY j.created_at, j.id LIMIT 20",
+                   LEFT JOIN nest_installations i ON i.id = j.installation_id
+                        AND i.status = 'active'
+                  WHERE j.execution IN ('queued','reconciling') ORDER BY j.created_at, j.id LIMIT 20",
             )?;
             let rows = stmt
                 .query_map([], |r| {
@@ -1219,12 +1434,31 @@ pub(crate) async fn dispatch_once(state: &AppState) -> usize {
                         image: r.get(8)?,
                         digest: r.get(9)?,
                         attestation: None,
+                        config: crate::marketplace_m2::delivered_config(
+                            r.get::<_, Option<String>>(10)?.as_deref(),
+                            r.get::<_, Option<String>>(11)?.as_deref(),
+                        ),
+                        signature: None,
+                        limits: None,
+                        killed: false,
+                        external_writes: r
+                            .get::<_, Option<String>>(10)?
+                            .and_then(|m| serde_json::from_str::<Value>(&m).ok())
+                            .is_some_and(|m| m["external_writes"] == true),
+                        installation: r.get(12)?,
+                        sealed: Vec::new(),
                     })
                 })?
                 .collect::<rusqlite::Result<Vec<Queued>>>()?;
             let mut out = Vec::new();
             for mut q in rows {
                 q.attestation = attestation_in(c, &q.release)?;
+                q.signature = crate::marketplace_hardening::signature_in(c, &q.release)?;
+                q.limits = crate::marketplace_hardening::limits_in(c, &q.release, quotas)?;
+                q.killed = crate::marketplace_hardening::killed_in(c, &q.listing)?;
+                if let Some(i) = &q.installation {
+                    q.sealed = crate::marketplace_m2::sealed_secrets_in(c, i)?;
+                }
                 out.push(q);
             }
             Ok(out)
@@ -1245,6 +1479,13 @@ pub(crate) async fn dispatch_once(state: &AppState) -> usize {
             image,
             digest,
             attestation: att,
+            config,
+            signature,
+            limits,
+            killed,
+            external_writes,
+            installation,
+            sealed,
         } = q;
         let (next, worker, error): (&str, Option<String>, Option<String>) = if security != "normal"
         {
@@ -1253,9 +1494,15 @@ pub(crate) async fn dispatch_once(state: &AppState) -> usize {
                 None,
                 Some("security_quarantined".into()),
             )
+        } else if killed {
+            ("stopped_security", None, Some("listing_killed".into()))
         } else {
-            let (Some(image), Some(digest), Some((statement, statement_digest))) =
-                (image, digest, att)
+            let (
+                Some(image),
+                Some(digest),
+                Some((statement, statement_digest)),
+                Some((key_id, signature)),
+            ) = (image, digest, att, signature)
             else {
                 continue;
             };
@@ -1272,8 +1519,24 @@ pub(crate) async fn dispatch_once(state: &AppState) -> usize {
                     "release_digest": digest,
                     "statement": statement,
                     "statement_digest": statement_digest,
+                    "signature": signature,
+                    "key_id": key_id,
                 },
+                "config": config,
+                "limits": limits,
+                "external_writes": external_writes,
             });
+            // Secrets go in the body to nestd only (the private link), never in the job file.
+            let mut job = job;
+            if let Some(i) = installation.as_deref().filter(|_| !sealed.is_empty()) {
+                match crate::marketplace_m2::open_secrets(state, i, &sealed) {
+                    Ok(s) => job["secrets"] = Value::Object(s),
+                    Err(_) => {
+                        tracing::warn!(job = %id, "installation secrets could not be opened");
+                        continue;
+                    }
+                }
+            }
             match state
                 .nests
                 .call(reqwest::Method::POST, "/v1/mp/jobs", Some(job))
@@ -1311,7 +1574,7 @@ pub(crate) async fn dispatch_once(state: &AppState) -> usize {
                 let n = tx.execute(
                     "UPDATE nest_jobs SET execution = ?2, worker = COALESCE(?3, worker),
                         error_code = ?4, revision = revision + 1, updated_at = ?5
-                      WHERE id = ?1 AND execution = 'queued'",
+                      WHERE id = ?1 AND execution IN ('queued','reconciling')",
                     params![jid, next, worker, error, now],
                 )?;
                 if n > 0 {
@@ -1350,13 +1613,42 @@ pub(crate) async fn poll_once(state: &AppState) -> usize {
         .unwrap_or_default();
     let mut done = 0;
     for id in running {
-        let Ok((200, v)) = state
+        let v = match state
             .nests
             .call(reqwest::Method::GET, &format!("/v1/mp/jobs/{id}"), None)
             .await
-        else {
-            continue;
+        {
+            Ok((200, v)) => v,
+            // The worker host no longer knows a running job (restored ledger, lost host): it is
+            // reconciling, and the dispatcher hands it over again (nestd dedupes by job id).
+            Ok((404, _)) => {
+                let (jid, now) = (id.clone(), now_unix() as i64);
+                let _ = state
+                    .store
+                    .group_tx(move |tx| -> GResult<()> {
+                        let n = tx.execute(
+                            "UPDATE nest_jobs SET execution = 'reconciling',
+                                revision = revision + 1, updated_at = ?2
+                              WHERE id = ?1 AND execution = 'running'",
+                            params![jid, now],
+                        )?;
+                        if n > 0 {
+                            job_event_in(
+                                tx,
+                                &jid,
+                                "nest.job.reconciling",
+                                json!({ "execution": "reconciling" }),
+                                now,
+                            )?;
+                        }
+                        Ok(())
+                    })
+                    .await;
+                continue;
+            }
+            _ => continue,
         };
+        crate::marketplace_worker::record(state, &id, &v).await;
         let next = match v["state"].as_str() {
             Some("succeeded") => "succeeded",
             Some("failed") => "failed",
@@ -1415,8 +1707,12 @@ pub(crate) fn start_dispatcher(state: AppState) {
         let mut tick = tokio::time::interval(std::time::Duration::from_secs(2));
         loop {
             tick.tick().await;
+            // Kill-switch stops first: a killed listing's workers stop before any new dispatch.
+            crate::marketplace_hardening::reconcile_runtime_stops(&state).await;
             dispatch_once(&state).await;
             poll_once(&state).await;
+            crate::marketplace_hardening::source_builds_once(&state).await;
+            crate::marketplace_hardening::wake_new_events(&state).await;
         }
     });
 }
@@ -1596,8 +1892,10 @@ pub(crate) fn attestation_statement(
     first_party: bool,
     stages: &Value,
     at: i64,
+    key_id: &str,
 ) -> String {
     canonical_json(&json!({
+        "key_id": key_id,
         "type": STATEMENT_TYPE,
         "release_id": release_id,
         "release_digest": release_digest,
@@ -1643,6 +1941,13 @@ async fn staff_decide(
             actions.push(Action::NestAttest);
         }
         let view = staff_gate(&state, &principal, &account, &review, &actions).await?;
+        // Hardening: an approval is only attested with a signature (503 without a key).
+        let signer = if req.decision == "approved" {
+            Some(state.nests.marketplace.signer()?)
+        } else {
+            None
+        };
+        let platform_owner = state.platform_owner.as_deref().map(str::to_string);
         let now = now_unix() as i64;
         let decision_id = format!("dec_{}", crate::groups::rand_b32(16));
         let audit = state.auditor.row(
@@ -1660,13 +1965,21 @@ async fn staff_decide(
         let out = state
             .store
             .group_tx(move |tx| -> GResult<Value> {
-                let status: String = tx.query_row(
-                    "SELECT status FROM review_cases WHERE id = ?1",
+                let (status, _publisher_id, publisher_status): (String, String, String) = tx.query_row(
+                    "SELECT c.status, c.publisher_id, p.status FROM review_cases c
+                       JOIN publisher_profiles p ON p.id = c.publisher_id WHERE c.id = ?1",
                     [&view.case_id],
-                    |r| r.get(0),
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
                 )?;
                 if status != "open" {
                     return Err(conflict_code("review_closed", "this review is decided or blocked"));
+                }
+                // A third-party release is decided only while its publisher is certified (M2).
+                if publisher_status != "approved" {
+                    return Err(conflict_code(
+                        "publisher_not_certified",
+                        "the publisher is not certified",
+                    ));
                 }
                 let (digest, image, security, manifest): (Option<String>, Option<String>, String, Option<String>) =
                     tx.query_row(
@@ -1728,7 +2041,7 @@ async fn staff_decide(
                     params![did, view.case_id, who, req.decision, reason, now, first_party as i64],
                 )?;
                 let mut attestation = Value::Null;
-                if req.decision == "approved" {
+                if let (true, Some((key, key_id))) = (req.decision == "approved", signer.as_ref()) {
                     let stages = Value::Object(stages);
                     let statement = attestation_statement(
                         &view.release_id,
@@ -1740,6 +2053,7 @@ async fn staff_decide(
                         first_party,
                         &stages,
                         now,
+                        key_id,
                     );
                     let statement_digest = digest_of(statement.as_bytes());
                     let aid = format!("att_{}", crate::groups::rand_b32(16));
@@ -1752,6 +2066,8 @@ async fn staff_decide(
                             did, statement, first_party as i64
                         ],
                     )?;
+                    let signature = crate::marketplace_hardening::sign(key, &statement);
+                    crate::marketplace_hardening::record_signature_in(tx, &aid, key_id, &signature, now)?;
                     tx.execute(
                         "INSERT INTO review_decisions (id, case_id, reviewer, decision, reason,
                             created_at, stage, evidence_digest)
@@ -1768,12 +2084,13 @@ async fn staff_decide(
                         "UPDATE nest_releases SET status = 'approved' WHERE id = ?1",
                         [&view.release_id],
                     )?;
-                    // A first-party release publishes its listing and its operations with it.
+                    // A first-party release publishes its listing and its operations with it. A
+                    // third party publishes its own listing (`NestPublish`, M2).
                     let m: Value = manifest
                         .as_deref()
                         .and_then(|t| serde_json::from_str(t).ok())
                         .unwrap_or(Value::Null);
-                    if let Some(address) = m["listing_address"].as_str() {
+                    if let Some(address) = m["listing_address"].as_str().filter(|_| first_party) {
                         let listing: Option<String> = tx
                             .query_row(
                                 "SELECT id FROM nest_listings WHERE address = ?1",
@@ -1787,26 +2104,15 @@ async fn staff_decide(
                                     updated_at = ?3 WHERE id = ?1",
                                 params![listing, view.release_id, now],
                             )?;
-                            tx.execute(
-                                "DELETE FROM nest_operations WHERE listing_id = ?1",
-                                [&listing],
-                            )?;
-                            for op in m["operations"].as_array().cloned().unwrap_or_default() {
-                                tx.execute(
-                                    "INSERT INTO nest_operations (listing_id, operation,
-                                        operation_version, input_schema)
-                                     VALUES (?1, ?2, ?3, ?4)",
-                                    params![
-                                        listing,
-                                        op["name"].as_str().unwrap_or(""),
-                                        op["version"].as_str().unwrap_or(""),
-                                        json!({ "fields": op["fields"] }).to_string()
-                                    ],
-                                )?;
-                            }
+                            crate::marketplace_m2::operations_in(tx, &listing, &m)?;
                         }
                     }
-                    attestation = json!({ "id": aid, "statement_digest": statement_digest });
+                    attestation = json!({
+                        "id": aid,
+                        "statement_digest": statement_digest,
+                        "key_id": key_id,
+                        "signature": signature,
+                    });
                 } else if req.decision == "rejected" {
                     tx.execute(
                         "UPDATE nest_releases SET status = 'rejected' WHERE id = ?1",
@@ -1814,9 +2120,27 @@ async fn staff_decide(
                     )?;
                 }
                 tx.execute(
-                    "UPDATE review_cases SET status = 'decided', updated_at = ?2 WHERE id = ?1",
+                    "UPDATE review_cases SET status = 'decided', updated_at = ?2,
+                        revision = revision + 1 WHERE id = ?1",
                     params![view.case_id, now],
                 )?;
+                // `completed` only when the review is over: changes requested leaves it to the
+                // publisher's next build (M2).
+                let kinds: &[&str] = if req.decision == "changes_requested" {
+                    &["decision"]
+                } else {
+                    &["decision", "completed"]
+                };
+                for kind in kinds {
+                    crate::marketplace_hardening::review_event_in(
+                        tx,
+                        &view.case_id,
+                        kind,
+                        json!({ "decision": req.decision }),
+                        platform_owner.as_deref(),
+                        now,
+                    )?;
+                }
                 crate::store::audit::append_in(tx, &audit)?;
                 Ok(json!({
                     "decision_id": did,
@@ -1826,6 +2150,7 @@ async fn staff_decide(
                 }))
             })
             .await?;
+        crate::marketplace_hardening::wake_new_events(&state).await;
         Ok((StatusCode::CREATED, Json(json!({ "data": out }))))
     }
     .await;
@@ -1909,6 +2234,7 @@ async fn staff_security(
             now as u64,
         );
         let (rel, who) = (release.clone(), account.clone());
+        let platform_owner = state.platform_owner.as_deref().map(str::to_string);
         let stopped = state
             .store
             .group_tx(move |tx| -> GResult<i64> {
@@ -1981,10 +2307,21 @@ async fn staff_security(
                         stopped += 1;
                     }
                 }
+                if next != "normal" {
+                    crate::marketplace_hardening::security_event_in(
+                        tx,
+                        next,
+                        Some(&rel),
+                        None,
+                        platform_owner.as_deref(),
+                        now,
+                    )?;
+                }
                 crate::store::audit::append_in(tx, &audit)?;
                 Ok(stopped)
             })
             .await?;
+        crate::marketplace_hardening::wake_new_events(&state).await;
         // Running workers stop at once on the worker host. The postbox has already refused new
         // jobs; a host that cannot be reached is told again by the dispatcher (it refuses work for
         // this release because the postbox never sends any).
@@ -2014,7 +2351,7 @@ async fn staff_security(
 // ---- internal: build plane and analysis plane ------------------------------------------------------
 
 /// The ops service token, as for every internal route.
-fn service_gate(state: &AppState, headers: &HeaderMap) -> Result<(), Box<Response>> {
+pub(crate) fn service_gate(state: &AppState, headers: &HeaderMap) -> Result<(), Box<Response>> {
     crate::internal_api::authorize_service(
         state,
         headers,
@@ -2025,7 +2362,7 @@ fn service_gate(state: &AppState, headers: &HeaderMap) -> Result<(), Box<Respons
 }
 
 /// The internal routes need the `marketplace` flag on for the platform owner's account.
-async fn flag_gate(state: &AppState) -> GResult<()> {
+pub(crate) async fn flag_gate(state: &AppState) -> GResult<()> {
     let owner = state.platform_owner.as_deref();
     if owner.is_none()
         || !crate::filtering::feature_on(state, owner, capabilities::MARKETPLACE).await
@@ -2037,17 +2374,20 @@ async fn flag_gate(state: &AppState) -> GResult<()> {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct BuildReq {
-    manifest: Value,
-    manifest_digest: String,
-    source_digest: String,
-    vendor_digest: String,
-    sbom: String,
-    sbom_digest: String,
-    image: String,
-    image_digest: String,
-    release_digest: String,
-    isolation: Value,
+pub(crate) struct BuildReq {
+    pub(crate) manifest: Value,
+    pub(crate) manifest_digest: String,
+    pub(crate) source_digest: String,
+    pub(crate) vendor_digest: String,
+    pub(crate) sbom: String,
+    pub(crate) sbom_digest: String,
+    pub(crate) image: String,
+    pub(crate) image_digest: String,
+    pub(crate) release_digest: String,
+    pub(crate) isolation: Value,
+    /// The publisher's build request this record answers (M2). Absent: a first-party build.
+    #[serde(default)]
+    pub(crate) build_id: Option<String>,
 }
 
 fn check_build(b: &BuildReq) -> GResult<()> {
@@ -2087,6 +2427,16 @@ fn check_build(b: &BuildReq) -> GResult<()> {
         return Err(bad("release_digest does not cover these digests"));
     }
     let m = &b.manifest;
+    // The shared package rules first (`pigeonpost_core::nest_package`), the same ones the CLI
+    // runs offline; then this route's own stricter checks.
+    let issues =
+        pigeonpost_core::nest_package::errors(&pigeonpost_core::nest_package::validate_manifest(m));
+    if !issues.is_empty() {
+        return Err(
+            GErr::bad("invalid_request", "the manifest breaks the package rules")
+                .with("issues", json!(issues)),
+        );
+    }
     let slug = m["name"].as_str().unwrap_or("");
     if slug.is_empty()
         || slug.len() > 64
@@ -2138,41 +2488,85 @@ async fn register_build(
         let b: BuildReq = crate::marketplace::parse(body)?;
         check_build(&b)?;
         let now = now_unix() as i64;
+        if b.build_id.is_some() {
+            let (out, wake) = state
+                .store
+                .group_tx(move |tx| crate::marketplace_m2::third_party_build_in(tx, &b, now))
+                .await?;
+            for a in wake {
+                state.event_hub.wake(&a);
+            }
+            return Ok((StatusCode::CREATED, Json(json!({ "data": out }))));
+        }
+        let platform_owner = state.platform_owner.as_deref().map(str::to_string);
         let out = state
             .store
             .group_tx(move |tx| -> GResult<Value> {
-                let publisher = platform_publisher_in(tx, now)?;
-                let slug = b.manifest["name"].as_str().unwrap_or("").to_string();
-                let version = b.manifest["version"].as_str().unwrap_or("").to_string();
-                let template: String = match tx
-                    .query_row(
-                        "SELECT id FROM nest_templates WHERE publisher_id = ?1 AND slug = ?2",
-                        params![publisher, slug],
-                        |r| r.get(0),
-                    )
-                    .optional()?
-                {
-                    Some(t) => t,
-                    None => {
-                        let t = format!("tpl_{}", crate::groups::rand_b32(16));
-                        tx.execute(
-                            "INSERT INTO nest_templates (id, publisher_id, slug, name, created_by, created_at)
+                register_build_in(tx, &b, None, platform_owner.as_deref(), now)
+            })
+            .await?;
+        crate::marketplace_hardening::wake_new_events(&state).await;
+        Ok((StatusCode::CREATED, Json(json!({ "data": out }))))
+    }
+    .await;
+    into_response(result)
+}
+
+/// A checked build record becomes a release, its listing (new or the publisher's own), a review
+/// case and the passed intake stage. `publisher`: a source build's publisher; `None` is the
+/// platform publisher (every M1 build).
+fn register_build_in(
+    tx: &Transaction<'_>,
+    b: &BuildReq,
+    publisher: Option<&str>,
+    platform_owner: Option<&str>,
+    now: i64,
+) -> GResult<Value> {
+    let publisher = match publisher {
+        Some(p) => p.to_string(),
+        None => platform_publisher_in(tx, now)?,
+    };
+    let slug = b.manifest["name"].as_str().unwrap_or("").to_string();
+    let version = b.manifest["version"].as_str().unwrap_or("").to_string();
+    let template: String = match tx
+        .query_row(
+            "SELECT id FROM nest_templates WHERE publisher_id = ?1 AND slug = ?2",
+            params![publisher, slug],
+            |r| r.get(0),
+        )
+        .optional()?
+    {
+        Some(t) => t,
+        None => {
+            let t = format!("tpl_{}", crate::groups::rand_b32(16));
+            tx.execute(
+                "INSERT INTO nest_templates (id, publisher_id, slug, name, created_by, created_at)
                              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                            params![t, publisher, slug, b.manifest["title"].as_str().unwrap_or(""), BUILD_PLANE, now],
-                        )?;
-                        t
-                    }
-                };
-                let exists: bool = tx.query_row(
-                    "SELECT EXISTS (SELECT 1 FROM nest_releases WHERE template_id = ?1 AND version = ?2)",
-                    params![template, version],
-                    |r| r.get(0),
-                )?;
-                if exists {
-                    return Err(conflict_code("release_exists", "this version is already recorded"));
-                }
-                let release = format!("rel_{}", crate::groups::rand_b32(16));
-                tx.execute(
+                params![
+                    t,
+                    publisher,
+                    slug,
+                    b.manifest["title"].as_str().unwrap_or(""),
+                    BUILD_PLANE,
+                    now
+                ],
+            )?;
+            t
+        }
+    };
+    let exists: bool = tx.query_row(
+        "SELECT EXISTS (SELECT 1 FROM nest_releases WHERE template_id = ?1 AND version = ?2)",
+        params![template, version],
+        |r| r.get(0),
+    )?;
+    if exists {
+        return Err(conflict_code(
+            "release_exists",
+            "this version is already recorded",
+        ));
+    }
+    let release = format!("rel_{}", crate::groups::rand_b32(16));
+    tx.execute(
                     "INSERT INTO nest_releases (id, template_id, publisher_id, version, image_digest,
                         status, created_by, created_at, release_digest, source_digest, vendor_digest,
                         manifest_digest, sbom_digest, sbom, manifest, image, build_isolation)
@@ -2183,39 +2577,45 @@ async fn register_build(
                         b.sbom_digest, b.sbom, b.manifest.to_string(), b.image, b.isolation.to_string()
                     ],
                 )?;
-                let address = b.manifest["listing_address"].as_str().unwrap_or("").to_string();
-                let listing: String = match tx
-                    .query_row(
-                        "SELECT id, publisher_id FROM nest_listings WHERE address = ?1",
-                        [&address],
-                        |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
-                    )
-                    .optional()?
-                {
-                    Some((id, owner)) if owner == publisher => id,
-                    Some(_) => {
-                        return Err(conflict_code("listing_address_taken", "another publisher holds this address"))
-                    }
-                    None => {
-                        let id = format!("lst_{}", crate::groups::rand_b32(16));
-                        tx.execute(
-                            "INSERT INTO nest_listings (id, publisher_id, release_id, title, summary,
+    let address = b.manifest["listing_address"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
+    let listing: String = match tx
+        .query_row(
+            "SELECT id, publisher_id FROM nest_listings WHERE address = ?1",
+            [&address],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+        )
+        .optional()?
+    {
+        Some((id, owner)) if owner == publisher => id,
+        Some(_) => {
+            return Err(conflict_code(
+                "listing_address_taken",
+                "another publisher holds this address",
+            ))
+        }
+        None => {
+            let id = format!("lst_{}", crate::groups::rand_b32(16));
+            tx.execute(
+                "INSERT INTO nest_listings (id, publisher_id, release_id, title, summary,
                                 visibility, status, created_at, updated_at, address)
                              VALUES (?1, ?2, ?3, ?4, ?5, 'public', 'draft', ?6, ?6, ?7)",
-                            params![
-                                id,
-                                publisher,
-                                release,
-                                b.manifest["title"].as_str().unwrap_or(""),
-                                b.manifest["summary"].as_str().unwrap_or(""),
-                                now,
-                                address
-                            ],
-                        )?;
-                        id
-                    }
-                };
-                let previous: Option<String> = tx
+                params![
+                    id,
+                    publisher,
+                    release,
+                    b.manifest["title"].as_str().unwrap_or(""),
+                    b.manifest["summary"].as_str().unwrap_or(""),
+                    now,
+                    address
+                ],
+            )?;
+            id
+        }
+    };
+    let previous: Option<String> = tx
                     .query_row(
                         "SELECT c.id FROM review_cases c JOIN nest_releases r ON r.id = c.release_id
                           WHERE r.template_id = ?1 AND c.id IS NOT NULL ORDER BY c.created_at DESC LIMIT 1",
@@ -2223,23 +2623,23 @@ async fn register_build(
                         |r| r.get(0),
                     )
                     .optional()?;
-                let case = format!("rvw_{}", crate::groups::rand_b32(16));
-                tx.execute(
+    let case = format!("rvw_{}", crate::groups::rand_b32(16));
+    tx.execute(
                     "INSERT INTO review_cases (id, release_id, publisher_id, status, previous_id, created_at, updated_at)
                      VALUES (?1, ?2, ?3, 'open', ?4, ?5, ?5)",
                     params![case, release, publisher, previous, now],
                 )?;
-                let evidence = canonical_json(&json!({
-                    "stage": "intake",
-                    "decision": "passed",
-                    "isolation": b.isolation,
-                    "release_digest": b.release_digest,
-                    "source_digest": b.source_digest,
-                    "vendor_digest": b.vendor_digest,
-                    "sbom_digest": b.sbom_digest,
-                    "image_digest": b.image_digest,
-                }));
-                tx.execute(
+    let evidence = canonical_json(&json!({
+        "stage": "intake",
+        "decision": "passed",
+        "isolation": b.isolation,
+        "release_digest": b.release_digest,
+        "source_digest": b.source_digest,
+        "vendor_digest": b.vendor_digest,
+        "sbom_digest": b.sbom_digest,
+        "image_digest": b.image_digest,
+    }));
+    tx.execute(
                     "INSERT INTO review_decisions (id, case_id, reviewer, decision, reason, created_at,
                         stage, evidence, evidence_digest)
                      VALUES (?1, ?2, ?3, 'passed', 'built from the pinned source tree', ?4, 'intake', ?5, ?6)",
@@ -2252,13 +2652,17 @@ async fn register_build(
                         digest_of(evidence.as_bytes())
                     ],
                 )?;
-                Ok(json!({ "release_id": release, "review_id": case, "listing_id": listing, "publisher_id": publisher }))
-            })
-            .await?;
-        Ok((StatusCode::CREATED, Json(json!({ "data": out }))))
-    }
-    .await;
-    into_response(result)
+    crate::marketplace_hardening::review_event_in(
+        tx,
+        &case,
+        "stage_changed",
+        json!({ "stage": "intake", "decision": "passed" }),
+        platform_owner,
+        now,
+    )?;
+    Ok(
+        json!({ "release_id": release, "review_id": case, "listing_id": listing, "publisher_id": publisher }),
+    )
 }
 
 /// The platform publisher, made on first use. It is approved by construction: it is Pigeonpost.
@@ -2308,66 +2712,311 @@ async fn record_stage(
     let result = async {
         flag_gate(&state).await?;
         let s: StageReq = crate::marketplace::parse(body)?;
-        let bad = |m: &str| GErr::bad("invalid_request", m.to_string());
-        let wanted = match s.stage.as_str() {
-            "deterministic_scan" | "behavioral_test" => ["passed", "failed"].as_slice(),
-            // The AI review never decides (R-64, R-65).
-            "ai_analysis" => ["advisory"].as_slice(),
-            _ => return Err(bad("stage: deterministic_scan, behavioral_test or ai_analysis")),
-        };
-        if !wanted.contains(&s.decision.as_str()) {
-            return Err(bad("this stage cannot record that decision"));
-        }
-        if digest_of(s.evidence.as_bytes()) != s.evidence_digest {
-            return Err(bad("evidence_digest does not match the evidence"));
-        }
-        let ev: Value = serde_json::from_str(&s.evidence).map_err(|_| bad("evidence is JSON"))?;
-        if ev["stage"] != s.stage.as_str() || ev["decision"] != s.decision.as_str() {
-            return Err(bad("the evidence is for another stage or decision"));
-        }
-        if s.stage == "ai_analysis" && ev["evidence"]["model"] != AI_REVIEW_MODEL {
-            return Err(bad("the AI review runs on the self-hosted model only"));
-        }
-        let reason = s.reason.chars().take(2000).collect::<String>();
+        check_stage(&s)?;
         let now = now_unix() as i64;
-        let id = format!("dec_{}", crate::groups::rand_b32(16));
-        let did = id.clone();
-        state
+        let platform_owner = state.platform_owner.as_deref().map(str::to_string);
+        let (id, replayed) = state
             .store
-            .group_tx(move |tx| -> GResult<()> {
-                let status: Option<String> = tx
-                    .query_row(
-                        "SELECT status FROM review_cases WHERE id = ?1",
-                        [&review],
-                        |r| r.get(0),
-                    )
-                    .optional()?;
-                match status.as_deref() {
-                    None => return Err(not_found()),
-                    Some("open") => {}
-                    Some(_) => {
-                        return Err(conflict_code("review_closed", "this review is decided or blocked"))
-                    }
+            .group_tx(move |tx| -> GResult<(String, bool)> {
+                let out = record_stage_in(tx, &review, &s, platform_owner.as_deref(), now)?;
+                if !out.1 {
+                    replay_deferred_in(tx, &review, platform_owner.as_deref(), now)?;
                 }
-                tx.execute(
-                    "INSERT INTO review_decisions (id, case_id, reviewer, decision, reason, created_at,
-                        stage, evidence, evidence_digest)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-                    params![did, review, ANALYSIS_PLANE, s.decision, reason, now, s.stage, s.evidence, s.evidence_digest],
-                )?;
-                if s.decision == "failed" {
-                    tx.execute(
-                        "UPDATE review_cases SET status = 'blocked', updated_at = ?2 WHERE id = ?1",
-                        params![review, now],
-                    )?;
-                }
-                Ok(())
+                Ok(out)
             })
             .await?;
-        Ok((StatusCode::CREATED, Json(json!({ "data": { "decision_id": id } }))))
+        if replayed {
+            return Ok((
+                StatusCode::OK,
+                Json(json!({ "data": { "decision_id": id, "replayed": true } })),
+            ));
+        }
+        crate::marketplace_hardening::wake_new_events(&state).await;
+        Ok((
+            StatusCode::CREATED,
+            Json(json!({ "data": { "decision_id": id, "replayed": false } })),
+        ))
     }
     .await;
     into_response(result)
+}
+
+/// What a stage report must be before it is recorded: a stage the analysis plane may record, a
+/// decision that stage may take, evidence that is its own digest and names that stage.
+fn check_stage(s: &StageReq) -> GResult<()> {
+    let bad = |m: &str| GErr::bad("invalid_request", m.to_string());
+    let wanted = match s.stage.as_str() {
+        "deterministic_scan" | "behavioral_test" => ["passed", "failed"].as_slice(),
+        // The AI review never decides (R-64, R-65).
+        "ai_analysis" => ["advisory"].as_slice(),
+        _ => {
+            return Err(bad(
+                "stage: deterministic_scan, behavioral_test or ai_analysis",
+            ))
+        }
+    };
+    if !wanted.contains(&s.decision.as_str()) {
+        return Err(bad("this stage cannot record that decision"));
+    }
+    if digest_of(s.evidence.as_bytes()) != s.evidence_digest {
+        return Err(bad("evidence_digest does not match the evidence"));
+    }
+    let ev: Value = serde_json::from_str(&s.evidence).map_err(|_| bad("evidence is JSON"))?;
+    if ev["stage"] != s.stage.as_str() || ev["decision"] != s.decision.as_str() {
+        return Err(bad("the evidence is for another stage or decision"));
+    }
+    if s.stage == "ai_analysis" && ev["evidence"]["model"] != AI_REVIEW_MODEL {
+        return Err(bad("the AI review runs on the self-hosted model only"));
+    }
+    Ok(())
+}
+
+/// Record a checked stage on an open review; a failed stage blocks it. Emits
+/// `nest.review.stage_changed` (and `nest.review.blocked`). Stages run in order, once each (M2);
+/// the same record again is a replay: `(earlier decision id, true)`, no new row or event.
+fn record_stage_in(
+    tx: &Transaction<'_>,
+    review: &str,
+    s: &StageReq,
+    platform_owner: Option<&str>,
+    now: i64,
+) -> GResult<(String, bool)> {
+    let status: Option<String> = tx
+        .query_row(
+            "SELECT status FROM review_cases WHERE id = ?1",
+            [review],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let Some(status) = status else {
+        return Err(not_found());
+    };
+    // The same record again (a retry of a lost answer) is the same decision.
+    let earlier: Option<(String, String)> = tx
+        .query_row(
+            "SELECT id, decision FROM review_decisions
+              WHERE case_id = ?1 AND stage = ?2 AND evidence_digest = ?3",
+            params![review, s.stage, s.evidence_digest],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    if let Some((earlier, decision)) = earlier {
+        if decision == s.decision {
+            return Ok((earlier, true));
+        }
+    }
+    if status != "open" {
+        return Err(conflict_code(
+            "review_closed",
+            "this review is decided or blocked",
+        ));
+    }
+    // No skipping: each stage needs the one before it (M2).
+    if let Some(before) = crate::marketplace_m2::stage_before(&s.stage) {
+        let done: bool = tx.query_row(
+            "SELECT EXISTS (SELECT 1 FROM review_decisions WHERE case_id = ?1
+                AND stage = ?2 AND decision IN ('passed','advisory'))",
+            params![review, before],
+            |r| r.get(0),
+        )?;
+        if !done {
+            return Err(conflict_code(
+                "stage_out_of_order",
+                "the stage before this one has not completed",
+            )
+            .with("requires", before));
+        }
+    }
+    let already: bool = tx.query_row(
+        "SELECT EXISTS (SELECT 1 FROM review_decisions WHERE case_id = ?1 AND stage = ?2)",
+        params![review, s.stage],
+        |r| r.get(0),
+    )?;
+    if already {
+        return Err(conflict_code(
+            "stage_already_recorded",
+            "this stage is recorded for this review",
+        ));
+    }
+    let reason = s.reason.chars().take(2000).collect::<String>();
+    let id = format!("dec_{}", crate::groups::rand_b32(16));
+    tx.execute(
+        "INSERT INTO review_decisions (id, case_id, reviewer, decision, reason, created_at,
+            stage, evidence, evidence_digest)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        params![
+            id,
+            review,
+            ANALYSIS_PLANE,
+            s.decision,
+            reason,
+            now,
+            s.stage,
+            s.evidence,
+            s.evidence_digest
+        ],
+    )?;
+    tx.execute(
+        "UPDATE review_cases SET updated_at = ?2, revision = revision + 1,
+            status = CASE WHEN ?3 THEN 'blocked' ELSE status END WHERE id = ?1",
+        params![review, now, s.decision == "failed"],
+    )?;
+    let revision: i64 = tx.query_row(
+        "SELECT revision FROM review_cases WHERE id = ?1",
+        [review],
+        |r| r.get(0),
+    )?;
+    let outcome = if s.decision == "failed" {
+        "failed"
+    } else {
+        "passed"
+    };
+    crate::marketplace_hardening::review_event_in(
+        tx,
+        review,
+        "stage_changed",
+        json!({
+            "stage": s.stage,
+            "decision": s.decision,
+            "status": outcome,
+            "revision": revision,
+        }),
+        platform_owner,
+        now,
+    )?;
+    if s.decision == "failed" {
+        crate::marketplace_hardening::review_event_in(
+            tx,
+            review,
+            "blocked",
+            json!({ "stage": s.stage, "blocker_code": "stage_failed", "revision": revision }),
+            platform_owner,
+            now,
+        )?;
+    }
+    Ok((id, false))
+}
+
+/// Record the stages a source build left waiting for `review` (see `register_source_build`), in
+/// order, as far as they now go; the rest keep waiting.
+fn replay_deferred_in(
+    tx: &Transaction<'_>,
+    review: &str,
+    platform_owner: Option<&str>,
+    now: i64,
+) -> GResult<()> {
+    let row: Option<(String, String)> = tx
+        .query_row(
+            "SELECT id, deferred_stages FROM marketplace_source_builds
+              WHERE review_id = ?1 AND deferred_stages IS NOT NULL",
+            [review],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    let Some((bid, text)) = row else {
+        return Ok(());
+    };
+    let waiting: Vec<Value> = serde_json::from_str(&text).unwrap_or_default();
+    let mut left = Vec::new();
+    for raw in waiting {
+        if !left.is_empty() {
+            left.push(raw);
+            continue;
+        }
+        let Ok(s) = serde_json::from_value::<StageReq>(raw.clone()) else {
+            continue;
+        };
+        if check_stage(&s).is_err() {
+            continue;
+        }
+        match record_stage_in(tx, review, &s, platform_owner, now) {
+            Ok(_) => {}
+            Err(e) if e.code == "stage_out_of_order" => left.push(raw),
+            // The review moved on (blocked or decided): nothing more is recorded.
+            Err(_) => break,
+        }
+    }
+    tx.execute(
+        "UPDATE marketplace_source_builds SET deferred_stages = ?2 WHERE id = ?1",
+        params![
+            bid,
+            (!left.is_empty()).then(|| Value::Array(left).to_string())
+        ],
+    )?;
+    Ok(())
+}
+
+/// A finished source build from the remote build plane (`marketplace_hardening`): its record is
+/// checked as `POST /internal/v1/marketplace/builds` checks one, registered for `publisher`, and
+/// its analysis stages are recorded on the new review, all in one transaction. Returns
+/// `(release_id, review_id)`. A build answering a publisher's build request (M2, `nest_build`)
+/// registers through M2's third-party intake: the request's template and version, authored by the
+/// person who asked, no listing until the publisher makes one.
+pub(crate) async fn register_source_build(
+    state: &AppState,
+    build_id: &str,
+    publisher: &str,
+    result: &Value,
+    nest_build: Option<&str>,
+) -> GResult<(String, String)> {
+    let mut b: BuildReq = serde_json::from_value(result["record"].clone())
+        .map_err(|e| GErr::bad("invalid_build", e.to_string()))?;
+    b.build_id = nest_build.map(str::to_string);
+    check_build(&b)?;
+    let mut stages = Vec::new();
+    let raw_stages = result["stages"].as_array().cloned().unwrap_or_default();
+    for st in raw_stages.clone() {
+        let s: StageReq =
+            serde_json::from_value(st).map_err(|e| GErr::bad("invalid_build", e.to_string()))?;
+        check_stage(&s)?;
+        stages.push(s);
+    }
+    if result["reproducibility"]["equal"] != true {
+        return Err(GErr::bad(
+            "not_reproducible",
+            "the build plane did not confirm a reproducible build",
+        ));
+    }
+    let now = now_unix() as i64;
+    let platform_owner = state.platform_owner.as_deref().map(str::to_string);
+    let (p, bid) = (publisher.to_string(), build_id.to_string());
+    state
+        .store
+        .group_tx(move |tx| -> GResult<(String, String)> {
+            let out = if b.build_id.is_some() {
+                crate::marketplace_m2::third_party_build_in(tx, &b, now)?.0
+            } else {
+                register_build_in(tx, &b, Some(&p), platform_owner.as_deref(), now)?
+            };
+            let release = out["release_id"].as_str().unwrap_or_default().to_string();
+            let review = out["review_id"].as_str().unwrap_or_default().to_string();
+            // Stages in the contract's order. One whose predecessor is not recorded yet (the
+            // behaviour test when the build plane ran no AI review) waits, with those after it.
+            let mut deferred: Vec<Value> = Vec::new();
+            for (s, raw) in stages.iter().zip(&raw_stages) {
+                if !deferred.is_empty() {
+                    deferred.push(raw.clone());
+                    continue;
+                }
+                match record_stage_in(tx, &review, s, platform_owner.as_deref(), now) {
+                    Ok(_) => {}
+                    Err(e) if e.code == "stage_out_of_order" => deferred.push(raw.clone()),
+                    Err(e) => return Err(e),
+                }
+            }
+            tx.execute(
+                "UPDATE marketplace_source_builds SET deferred_stages = ?2, review_id = ?3
+                  WHERE id = ?1",
+                params![
+                    bid,
+                    (!deferred.is_empty()).then(|| Value::Array(deferred).to_string()),
+                    review
+                ],
+            )?;
+            tracing::info!(build = %bid, %release, "source build registered for review");
+            Ok((release, review))
+        })
+        .await
 }
 
 #[cfg(test)]

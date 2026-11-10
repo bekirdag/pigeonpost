@@ -157,9 +157,92 @@ pub(crate) const TABLES: &[(&str, Rule)] = &[
         Remove(A, "substr(scope, 1, length(?1) + 1) = ?1 || '|'"),
     ),
     ("nest_operations", Unrelated),
+    // Marketplace M2. A live publisher role is a duty to an org; an installation is the account's
+    // own use of a listing, with its configuration.
+    (
+        "publisher_roles",
+        Block(A, "account_id = ?1 AND revoked_at IS NULL"),
+    ),
+    (
+        "publisher_certifications",
+        Keep("Append-only certification record of a publisher; the deciding staff role blocks"),
+    ),
+    (
+        "nest_builds",
+        Keep("Catalog record of a publisher; the publisher profile blocks the purge"),
+    ),
+    (
+        "nest_installations",
+        Block(A, "owner_kind = 'account' AND owner_id = ?1"),
+    ),
+    (
+        "nest_installation_secrets",
+        Keep("Sealed values of an installation; the installation row blocks the purge"),
+    ),
+    (
+        "nest_installation_events",
+        Keep("Ids and versions of an installation; the installation row blocks the purge"),
+    ),
     (
         "release_security_events",
         Keep("Append-only security record of a release; the actor is staff"),
+    ),
+    // Marketplace hardening (W1).
+    (
+        "release_attestation_signatures",
+        Keep("Append-only signature over an attestation; no account data"),
+    ),
+    (
+        "marketplace_publisher_quotas",
+        Keep("Platform limits of a publisher; set by staff, the publisher profile blocks"),
+    ),
+    (
+        "marketplace_kills",
+        Keep("Append-only staff kill-switch record; the actor is staff"),
+    ),
+    ("marketplace_kill_state", Unrelated),
+    ("marketplace_runtime_stops", Unrelated),
+    (
+        "marketplace_source_builds",
+        Keep("Build provenance of a publisher's releases; the publisher profile blocks"),
+    ),
+    ("marketplace_worker_tombstones", Unrelated),
+    ("marketplace_job_activity", Unrelated),
+    // Marketplace M2b. An accepted invite only describes the account's access; a report is the
+    // account's own words about a listing.
+    ("nest_listing_grants", Remove(A, "account_id = ?1")),
+    ("nest_listing_reports", Remove(A, "reporter = ?1")),
+    (
+        "publisher_sources",
+        Keep("Catalog record of a publisher; the publisher profile blocks the purge"),
+    ),
+    (
+        "nest_test_envs",
+        Keep("Staging test record of a publisher; the publisher profile blocks the purge"),
+    ),
+    (
+        "nest_test_jobs",
+        Keep("Synthetic jobs of a publisher's test Nest; the publisher profile blocks the purge"),
+    ),
+    (
+        "nest_test_events",
+        Keep("Ids and states of a test Nest; the publisher profile blocks the purge"),
+    ),
+    // Marketplace payments. A price and its offers are a publisher's catalog; a purchase is the
+    // account's own commercial record (the financial authority keeps the money side); a licence
+    // belongs to an installation, whose row blocks.
+    (
+        "nest_listing_prices",
+        Keep("Catalog record of a publisher's listing; the publisher profile blocks the purge"),
+    ),
+    (
+        "nest_listing_offers",
+        Keep("Catalog record of a publisher's listing; the publisher profile blocks the purge"),
+    ),
+    ("nest_mp_purchases", Block(A, "account_id = ?1")),
+    (
+        "nest_installation_licences",
+        Keep("Licence state of an installation; the installation row blocks the purge"),
     ),
     ("plan_names", Block(A, "account_id = ?1")),
     ("test_handle_claims", Block(A, "account_id = ?1")),

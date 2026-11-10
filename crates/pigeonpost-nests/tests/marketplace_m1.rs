@@ -153,9 +153,14 @@ mod dispatcher {
     //! hosts are Linux.
 
     use super::{json, qa, Value, HANDBOOK};
+    use ed25519_dalek::SigningKey;
+    use pigeonpost_nests::attest::{key_id, sign, TrustedKeys};
     use pigeonpost_nests::config::{MarketplacePoolConfig, SandboxConfig};
     use pigeonpost_nests::db::Db;
-    use pigeonpost_nests::dispatch::{verify_admission, worker_id, Admission, Dispatcher, JobIn};
+    use pigeonpost_nests::dispatch::{
+        verify_admission, worker_id, Admission, Dispatcher, ImageSource, JobIn, Limits,
+        WorkerStorage,
+    };
     use pigeonpost_nests::release::canonical_json;
     use pigeonpost_nests::sandbox::{
         MarketplacePool, Podman, MP_CONTEXT_LABEL, MP_GEN_LABEL, MP_LABEL,
@@ -253,6 +258,10 @@ mod dispatcher {
             cpu_max_millis: 500,
             pids: 64,
             tmp_mib: 32,
+            attestation_keys: vec![],
+            worker_gib: 1,
+            artifacts: None,
+            test_pool: false,
         };
         let podman = FakePodman::default();
         let pool = MarketplacePool::with_podman(base(), pool_cfg, podman.clone());
@@ -261,7 +270,8 @@ mod dispatcher {
             Db::open_memory().unwrap(),
             root.clone(),
             10001,
-        );
+        )
+        .with_keys(keys());
         Rig {
             d,
             podman,
@@ -277,9 +287,20 @@ mod dispatcher {
         )
     }
 
-    /// The postbox's attestation statement, as `marketplace_m1::attestation_statement` writes it.
-    fn admission(release: &str, img: &str) -> Admission {
+    /// The postbox's attestation key in these tests.
+    fn signer() -> SigningKey {
+        SigningKey::from_bytes(&[7u8; 32])
+    }
+
+    fn keys() -> TrustedKeys {
+        TrustedKeys::from_keys(&[signer().verifying_key()])
+    }
+
+    /// The postbox's attestation statement, as `marketplace_m1::attestation_statement` writes it,
+    /// signed as `marketplace_hardening` signs it.
+    fn signed_by(release: &str, img: &str, key: &SigningKey) -> Admission {
         let digest = format!("sha256:{}", sha256_hex(release.as_bytes()));
+        let kid = key_id(&key.verifying_key());
         let statement = canonical_json(&json!({
             "type": "pigeonpost.nest.release.attestation.v1",
             "release_id": release,
@@ -289,14 +310,21 @@ mod dispatcher {
             "decision": "approved",
             "attester": "acct_owner",
             "first_party": true,
+            "key_id": kid,
         }));
         Admission {
             release_id: release.into(),
             image: img.into(),
             release_digest: digest,
             statement_digest: format!("sha256:{}", sha256_hex(statement.as_bytes())),
+            signature: sign(key, &statement),
+            key_id: kid,
             statement,
         }
+    }
+
+    fn admission(release: &str, img: &str) -> Admission {
+        signed_by(release, img, &signer())
     }
 
     fn job_id(n: u32) -> String {
@@ -319,6 +347,10 @@ mod dispatcher {
             operation_version: qa::OPERATION_VERSION.into(),
             payload: json!({ "question": "How many days of annual leave do I get?" }),
             release: release.clone(),
+            config: Value::Null,
+            limits: None,
+            external_writes: false,
+            secrets: Default::default(),
         }
     }
 
@@ -451,8 +483,31 @@ mod dispatcher {
         unpinned.image = "localhost/pigeonpost-release-hr-policy-qa:latest".into();
         let mut redigested = good.clone();
         redigested.statement_digest = format!("sha256:{}", "f".repeat(64));
-        for bad in [tampered, other_image, unpinned, redigested] {
-            assert!(verify_admission(&bad).is_err(), "{bad:?}");
+        // Hardening: a re-hashed tampered statement still fails its signature; an untrusted key,
+        // a missing signature or a key id the statement does not name fail too.
+        let mut rehashed = good.clone();
+        rehashed.statement = rehashed.statement.replace("acct_owner", "acct_mallory");
+        rehashed.statement_digest = format!("sha256:{}", sha256_hex(rehashed.statement.as_bytes()));
+        let untrusted = signed_by(
+            "rel_reference1",
+            &image('a'),
+            &SigningKey::from_bytes(&[9; 32]),
+        );
+        let mut unsigned = good.clone();
+        unsigned.signature = String::new();
+        let mut renamed = good.clone();
+        renamed.key_id = "ppk_0000000000000000".into();
+        for bad in [
+            tampered,
+            other_image,
+            unpinned,
+            redigested,
+            rehashed,
+            untrusted,
+            unsigned,
+            renamed,
+        ] {
+            assert!(verify_admission(&bad, &keys()).is_err(), "{bad:?}");
             let err = rig.d.submit(&job(1, "ctx-buyer-a", &bad)).unwrap_err();
             assert_eq!(err.code, "not_attested");
         }
@@ -573,6 +628,213 @@ mod dispatcher {
             .is_empty());
     }
 
+    /// The worker routes the developer kit uses: progress, effects and secrets, each for the
+    /// worker's own running jobs and current start only.
+    #[test]
+    fn progress_effects_and_secrets_belong_to_one_worker_start() {
+        use pigeonpost_nests::dispatch::Secrets;
+        use pigeonpost_nests::worker_api;
+        let rig = rig();
+        let rel = admission("rel_reference1", &image('a'));
+        let mut j = job(1, "ctx-buyer-a", &rel);
+        j.secrets = Secrets(
+            serde_json::from_value(json!({ "api_token": "synthetic-secret-value-1" })).unwrap(),
+        );
+        rig.d.submit(&j).unwrap();
+        rig.d.submit(&job(2, "ctx-buyer-b", &rel)).unwrap();
+        let token = |ctx: &str| {
+            std::fs::read_to_string(rig.volume(ctx).join("run/broker-token"))
+                .unwrap()
+                .trim()
+                .to_string()
+        };
+        let (a, b) = (token("ctx-buyer-a"), token("ctx-buyer-b"));
+        let db = &rig.d.db;
+
+        // Secrets: the worker's own, through its token; never in its job file.
+        assert_eq!(
+            worker_api::secret(db, &a, "api_token").unwrap()["value"],
+            "synthetic-secret-value-1"
+        );
+        assert_eq!(
+            worker_api::secret(db, &b, "api_token").unwrap_err().1,
+            "secret_not_set"
+        );
+        assert_eq!(
+            worker_api::secret(db, "nbt_wrong", "api_token")
+                .unwrap_err()
+                .0,
+            401
+        );
+        for entry in std::fs::read_dir(rig.volume("ctx-buyer-a").join("jobs/in")).unwrap() {
+            let text = std::fs::read_to_string(entry.unwrap().path()).unwrap();
+            assert!(!text.contains("synthetic-secret-value-1"), "{text}");
+        }
+
+        // Progress: its own running job only, bounded.
+        worker_api::progress(
+            db,
+            &a,
+            &json!({ "job_id": j.job_id, "fraction": 0.5, "message": "half way" }),
+        )
+        .unwrap();
+        assert_eq!(
+            worker_api::progress(db, &b, &json!({ "job_id": j.job_id, "fraction": 0.1 }))
+                .unwrap_err()
+                .1,
+            "unknown_job"
+        );
+        let polled = rig.d.poll(&j.job_id).unwrap();
+        assert_eq!(polled["progress"]["fraction"], 0.5);
+        assert_eq!(polled["progress"]["message"], "half way");
+        for _ in 1..worker_api::MAX_PROGRESS_UPDATES {
+            worker_api::progress(db, &a, &json!({ "job_id": j.job_id, "fraction": 0.6 })).unwrap();
+        }
+        assert_eq!(
+            worker_api::progress(db, &a, &json!({ "job_id": j.job_id, "fraction": 0.7 }))
+                .unwrap_err()
+                .0,
+            429
+        );
+
+        // Effects: a release without external writes is refused, once per key.
+        let ask = |job: &str, key: &str, kind: &str| {
+            json!({ "job_id": job, "key": key, "kind": kind, "summary": "reply to ticket",
+                    "body": { "ticket": "T-1" }, "requires_approval": true })
+        };
+        let (s, v) =
+            worker_api::effect(db, &a, "k1", &ask(&j.job_id, "k1", "helpdesk.reply.send")).unwrap();
+        assert_eq!((s, v["error"].as_str()), (403, Some("effect_refused")));
+        let (s, _) =
+            worker_api::effect(db, &a, "k1", &ask(&j.job_id, "k1", "helpdesk.reply.send")).unwrap();
+        assert_eq!(s, 403);
+        assert_eq!(
+            worker_api::effect(db, &a, "k1", &ask(&j.job_id, "k1", "helpdesk.close"))
+                .unwrap_err()
+                .1,
+            "idempotency_conflict"
+        );
+        assert_eq!(
+            worker_api::effect(db, &a, "other", &ask(&j.job_id, "k1", "helpdesk.close"))
+                .unwrap_err()
+                .0,
+            400,
+            "the header names the key"
+        );
+
+        // One that declares them waits for approval; approved and then interrupted, its outcome
+        // is unknown and reported to the postbox with the job.
+        let mut w = job(3, "ctx-buyer-a", &rel);
+        w.external_writes = true;
+        rig.d.submit(&w).unwrap();
+        let (s, v) =
+            worker_api::effect(db, &a, "k2", &ask(&w.job_id, "k2", "helpdesk.reply.send")).unwrap();
+        assert_eq!((s, v["state"].as_str()), (202, Some("awaiting_approval")));
+        rig.d
+            .settle_effect(&w.job_id, "k2", "approve", None)
+            .unwrap();
+        assert_eq!(
+            rig.d
+                .settle_effect(&w.job_id, "k2", "approve", None)
+                .unwrap_err()
+                .code,
+            "effect_state"
+        );
+        rig.d.stop_listing(LISTING, true).unwrap();
+        let polled = rig.d.poll(&w.job_id).unwrap();
+        assert_eq!(polled["effects"][0]["state"], "outcome_unknown", "{polled}");
+        // The stopped start's token is fenced, and its secrets went with it.
+        assert_eq!(worker_api::secret(db, &a, "api_token").unwrap_err().0, 401);
+        rig.d
+            .settle_effect(&w.job_id, "k2", "done", Some("ext-ref-1"))
+            .unwrap();
+        assert_eq!(
+            rig.d.poll(&w.job_id).unwrap()["effects"][0]["state"],
+            "done"
+        );
+    }
+
+    /// Marketplace M2: an installation's configuration reaches the worker with each job, and an
+    /// uninstall stops the buyer's worker, fences its token and deletes its volume. Another buyer
+    /// of the same listing is untouched, and a reinstall starts on an empty volume.
+    #[test]
+    fn configuration_reaches_the_worker_and_an_uninstall_removes_it() {
+        let rig = rig();
+        let rel = admission("rel_reference1", &image('a'));
+        let mut j = job(1, "ctx-buyer-a", &rel);
+        j.config = json!({ "team_name": "Ops" });
+        rig.d.submit(&j).unwrap();
+        rig.d.submit(&job(2, "ctx-buyer-b", &rel)).unwrap();
+        let inbox = rig.volume("ctx-buyer-a").join("jobs/in");
+        let file = std::fs::read_dir(&inbox)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let written: Value = serde_json::from_str(&std::fs::read_to_string(file).unwrap()).unwrap();
+        assert_eq!(written["config"], json!({ "team_name": "Ops" }));
+        let mut bad = job(3, "ctx-buyer-a", &rel);
+        bad.config = json!("not an object");
+        assert_eq!(rig.d.submit(&bad).unwrap_err().code, "invalid");
+
+        let w = worker_id(LISTING, "ctx-buyer-a");
+        let volume = rig.volume("ctx-buyer-a");
+        let out = rig.d.destroy_worker(LISTING, "ctx-buyer-a").unwrap();
+        assert_eq!(out["destroyed"], w.as_str());
+        assert!(!volume.exists(), "the buyer's data is gone");
+        assert!(rig.volume("ctx-buyer-b").join("run/broker-token").exists());
+        assert_eq!(rig.d.pool.list().unwrap().len(), 1);
+        assert_eq!(rig.d.db.nest(&w).unwrap().unwrap().state, "deleted");
+        // Idempotent, and refuses a path-like context.
+        assert!(rig.d.destroy_worker(LISTING, "ctx-buyer-a").unwrap()["destroyed"].is_null());
+        assert!(rig.d.destroy_worker(LISTING, "ctx-none").unwrap()["destroyed"].is_null());
+        assert_eq!(
+            rig.d.destroy_worker(LISTING, "../x").unwrap_err().code,
+            "invalid"
+        );
+        // A reinstall starts a fresh worker (a new id) on an empty volume.
+        let again = rig.d.submit(&job(4, "ctx-buyer-a", &rel)).unwrap();
+        let fresh = again["worker"].as_str().unwrap().to_string();
+        assert_ne!(fresh, w);
+        let inbox = std::fs::read_dir(rig.root.join("ctx-buyer-a").join(&fresh).join("jobs/in"))
+            .unwrap()
+            .count();
+        assert_eq!(inbox, 1);
+    }
+
+    /// Marketplace payments: a paused licence stops the buyer's worker and fences its token but
+    /// keeps its volume; the next admitted job (the licence is paid again) restarts it.
+    #[test]
+    fn a_paused_licence_stops_the_worker_and_keeps_its_data() {
+        let rig = rig();
+        let rel = admission("rel_reference1", &image('a'));
+        let j = job(1, "ctx-buyer-a", &rel);
+        rig.d.submit(&j).unwrap();
+        rig.d.submit(&job(2, "ctx-buyer-b", &rel)).unwrap();
+        std::fs::write(rig.volume("ctx-buyer-a").join("kept.txt"), b"buyer data").unwrap();
+        let out = rig.d.stop(LISTING, "ctx-buyer-a").unwrap();
+        assert_eq!(out["stopped"], true);
+        assert!(
+            rig.volume("ctx-buyer-a").join("kept.txt").exists(),
+            "data kept"
+        );
+        assert!(!rig.volume("ctx-buyer-a").join("run/broker-token").exists());
+        assert!(rig.volume("ctx-buyer-b").join("run/broker-token").exists());
+        let w = worker_id(LISTING, "ctx-buyer-a");
+        assert_eq!(rig.d.db.nest(&w).unwrap().unwrap().state, "stopped");
+        assert_eq!(rig.d.poll(&j.job_id).unwrap()["state"], "stopped_security");
+        // Idempotent; nothing to stop for an unknown buyer; path-like contexts are refused.
+        assert_eq!(rig.d.stop(LISTING, "ctx-buyer-a").unwrap()["stopped"], true);
+        assert_eq!(rig.d.stop(LISTING, "ctx-none").unwrap()["stopped"], false);
+        assert_eq!(rig.d.stop(LISTING, "../x").unwrap_err().code, "invalid");
+        // Resumed: the next job restarts the same worker on its kept volume.
+        rig.d.submit(&job(3, "ctx-buyer-a", &rel)).unwrap();
+        assert_eq!(rig.d.db.nest(&w).unwrap().unwrap().state, "running");
+        assert!(rig.volume("ctx-buyer-a").join("kept.txt").exists());
+        assert!(rig.volume("ctx-buyer-a").join("run/broker-token").exists());
+    }
+
     #[test]
     fn malformed_jobs_are_refused_before_anything_runs() {
         let rig = rig();
@@ -593,6 +855,254 @@ mod dispatcher {
             assert_eq!(rig.d.submit(&j).unwrap_err().code, "invalid", "{j:?}");
         }
         assert!(rig.runs().is_empty());
+    }
+
+    // ---- hardening (W1) -------------------------------------------------------------------------
+
+    /// A host with no trusted key runs nothing, however well-formed the statement.
+    #[test]
+    fn a_host_without_trusted_keys_admits_nothing() {
+        let mut rig = rig();
+        rig.d.keys = TrustedKeys::default();
+        let err = rig
+            .d
+            .submit(&job(
+                1,
+                "ctx-buyer-a",
+                &admission("rel_reference1", &image('a')),
+            ))
+            .unwrap_err();
+        assert_eq!(err.code, "not_attested");
+        assert!(rig.runs().is_empty());
+    }
+
+    /// Key rotation: a host that trusts the old and the new key runs both releases; once the old
+    /// key is removed, only releases attested under the new key are dispatched.
+    #[test]
+    fn rotation_trusts_both_keys_then_only_the_new_one() {
+        let mut rig = rig();
+        let new = SigningKey::from_bytes(&[8u8; 32]);
+        rig.d.keys = TrustedKeys::from_keys(&[signer().verifying_key(), new.verifying_key()]);
+        let old_rel = admission("rel_old", &image('a'));
+        let new_rel = signed_by("rel_new", &image('b'), &new);
+        rig.d.submit(&job(1, "ctx-buyer-a", &old_rel)).unwrap();
+        rig.d.submit(&job(2, "ctx-buyer-b", &new_rel)).unwrap();
+        rig.d.keys = TrustedKeys::from_keys(&[new.verifying_key()]);
+        // Every dispatch verifies again, so a job for the old release stops here.
+        let err = rig.d.submit(&job(3, "ctx-buyer-a", &old_rel)).unwrap_err();
+        assert_eq!(err.code, "not_attested");
+        rig.d.submit(&job(4, "ctx-buyer-b", &new_rel)).unwrap();
+    }
+
+    /// The kill switch for a listing: every worker of it stops at once, fenced; new jobs are
+    /// refused until it is restored, and restoring starts fresh workers.
+    #[test]
+    fn a_stopped_listing_stops_its_workers_and_refuses_jobs_until_restored() {
+        let rig = rig();
+        let rel = admission("rel_reference1", &image('a'));
+        rig.d.submit(&job(1, "ctx-buyer-a", &rel)).unwrap();
+        rig.d.submit(&job(2, "ctx-buyer-b", &rel)).unwrap();
+        let out = rig.d.stop_listing(LISTING, true).unwrap();
+        assert_eq!(out["stopped"].as_array().unwrap().len(), 2);
+        assert!(rig.d.pool.list().unwrap().is_empty(), "no sandbox left");
+        assert!(!rig.volume("ctx-buyer-a").join("run/broker-token").exists());
+        assert_eq!(rig.d.poll(&job_id(1)).unwrap()["state"], "stopped_security");
+        let err = rig.d.submit(&job(3, "ctx-buyer-a", &rel)).unwrap_err();
+        assert_eq!(err.code, "listing_stopped");
+        // Idempotent, and it survives a "restart": the stop is in the ledger.
+        rig.d.stop_listing(LISTING, true).unwrap();
+        assert!(rig.d.db.mp_listing_stopped(LISTING).unwrap());
+        rig.d.stop_listing(LISTING, false).unwrap();
+        rig.d.submit(&job(4, "ctx-buyer-a", &rel)).unwrap();
+        assert_eq!(rig.d.pool.list().unwrap().len(), 1);
+    }
+
+    fn limited(n: u32, context: &str, rel: &Admission, max_workers: u32, tokens: i64) -> JobIn {
+        let mut j = job(n, context, rel);
+        j.limits = Some(Limits {
+            publisher_id: "pub_acme".into(),
+            max_workers,
+            monthly_tokens: tokens,
+        });
+        j
+    }
+
+    /// Per-publisher limits: a second buyer's worker is refused once the publisher runs its
+    /// maximum, and nothing lands once the month's model allowance is spent.
+    #[test]
+    fn publisher_limits_bound_workers_and_model_tokens() {
+        let rig = rig();
+        let rel = admission("rel_reference1", &image('a'));
+        rig.d
+            .submit(&limited(1, "ctx-buyer-a", &rel, 1, 1_000))
+            .unwrap();
+        // The running worker takes more jobs; a second worker is over the limit.
+        rig.d
+            .submit(&limited(2, "ctx-buyer-a", &rel, 1, 1_000))
+            .unwrap();
+        let err = rig
+            .d
+            .submit(&limited(3, "ctx-buyer-b", &rel, 1, 1_000))
+            .unwrap_err();
+        assert_eq!(err.code, "quota_exceeded");
+        assert_eq!(rig.runs().len(), 1);
+        assert!(
+            rig.d
+                .db
+                .mp_worker_for(LISTING, "ctx-buyer-b")
+                .unwrap()
+                .is_none(),
+            "no ledger row for a worker that never started"
+        );
+        // Spend the month: the publisher's workers take nothing more.
+        let token =
+            std::fs::read_to_string(rig.volume("ctx-buyer-a").join("run/broker-token")).unwrap();
+        rig.d
+            .db
+            .reserve(&sha256_hex(token.trim().as_bytes()), 600, 400, "m")
+            .expect("a broker reservation");
+        let period = pigeonpost_nests::util::period_of(pigeonpost_nests::util::now());
+        assert_eq!(
+            rig.d.db.mp_publisher_tokens("pub_acme", &period).unwrap(),
+            1_000
+        );
+        let err = rig
+            .d
+            .submit(&limited(4, "ctx-buyer-a", &rel, 1, 1_000))
+            .unwrap_err();
+        assert_eq!(err.code, "quota_exceeded");
+    }
+
+    /// Destroying a buyer's worker crypto-erases its volume and retires its id: the next worker
+    /// for the same pair gets a new one, so a tombstone never hits a live worker.
+    #[test]
+    fn a_destroyed_worker_is_erased_and_its_id_never_comes_back() {
+        let rig = rig();
+        let rel = admission("rel_reference1", &image('a'));
+        rig.d.submit(&job(1, "ctx-buyer-a", &rel)).unwrap();
+        let first = worker_id(LISTING, "ctx-buyer-a");
+        assert!(rig.volume("ctx-buyer-a").exists());
+        let out = rig.d.destroy_worker(LISTING, "ctx-buyer-a").unwrap();
+        assert_eq!(out["destroyed"], first.as_str());
+        assert!(!rig.root.join("ctx-buyer-a").join(&first).exists());
+        assert_eq!(rig.d.db.nest(&first).unwrap().unwrap().state, "deleted");
+        let again = rig.d.submit(&job(2, "ctx-buyer-a", &rel)).unwrap();
+        assert_ne!(again["worker"], first.as_str());
+        // Nothing to destroy is not an error.
+        let none = rig.d.destroy_worker(LISTING, "ctx-buyer-z").unwrap();
+        assert!(none["destroyed"].is_null());
+    }
+
+    /// Encrypted worker volumes stay closed while the host is locked: the job waits (503 to the
+    /// postbox, which keeps it queued) and nothing starts.
+    #[test]
+    fn encrypted_worker_volumes_wait_for_the_host_key() {
+        let mut rig = rig();
+        let dir = tempfile::tempdir().unwrap();
+        let storage = pigeonpost_nests::config::StorageConfig {
+            backend: "lvm-luks".into(),
+            vg: "nests".into(),
+            pool: "pool".into(),
+            mount_root: dir.path().join("mnt"),
+            key_dir: dir.path().join("keys"),
+            default_gib: 1,
+            max_total_gib: 8,
+            sandbox_uid: 10001,
+            key_wrap: true,
+        };
+        rig.d.storage = WorkerStorage::for_host(
+            &storage,
+            Arc::new(pigeonpost_nests::keywrap::Vault::new()),
+            1,
+        );
+        let err = rig
+            .d
+            .submit(&job(
+                1,
+                "ctx-buyer-a",
+                &admission("rel_reference1", &image('a')),
+            ))
+            .unwrap_err();
+        assert_eq!(err.code, "host_locked");
+        assert!(rig.runs().is_empty());
+        // A directory-backed host is never encrypted; that is for development only, and the
+        // configuration check refuses it for a production pool.
+        assert!(matches!(
+            WorkerStorage::for_host(
+                &pigeonpost_nests::config::StorageConfig {
+                    backend: "dir".into(),
+                    ..storage
+                },
+                Arc::new(pigeonpost_nests::keywrap::Vault::new()),
+                1
+            ),
+            WorkerStorage::Dirs
+        ));
+    }
+
+    /// The image source is asked for the attested image before a worker starts, and a failure
+    /// keeps the job waiting instead of starting anything.
+    #[test]
+    fn a_missing_image_is_pulled_before_a_worker_starts() {
+        #[derive(Default)]
+        struct Images {
+            asked: Mutex<Vec<String>>,
+            fail: bool,
+        }
+        impl ImageSource for Images {
+            fn ensure(&self, image: &str) -> Result<(), String> {
+                self.asked.lock().unwrap().push(image.into());
+                if self.fail {
+                    Err("unreachable".into())
+                } else {
+                    Ok(())
+                }
+            }
+        }
+        let rig = rig();
+        let images = Arc::new(Images::default());
+        let d = rig_with_images(&rig, images.clone());
+        let rel = admission("rel_reference1", &image('a'));
+        d.submit(&job(1, "ctx-buyer-a", &rel)).unwrap();
+        assert_eq!(images.asked.lock().unwrap().clone(), vec![image('a')]);
+        let failing = Arc::new(Images {
+            fail: true,
+            ..Images::default()
+        });
+        let d = rig_with_images(&rig, failing);
+        let err = d.submit(&job(2, "ctx-buyer-b", &rel)).unwrap_err();
+        assert_eq!(err.code, "image_unavailable");
+    }
+
+    fn rig_with_images(rig: &Rig, images: Arc<dyn ImageSource>) -> Dispatcher {
+        let pool_cfg = MarketplacePoolConfig {
+            image: format!("localhost/unused@sha256:{}", "1".repeat(64)),
+            network: "nests-mp".into(),
+            volume_root: rig.root.clone(),
+            broker_ip: "10.67.255.1".into(),
+            broker_port: 8788,
+            memory_mib: 256,
+            cpu_weight: 100,
+            cpu_max_millis: 500,
+            pids: 64,
+            tmp_mib: 32,
+            attestation_keys: vec![],
+            worker_gib: 1,
+            artifacts: None,
+            test_pool: false,
+        };
+        Dispatcher::new(
+            Arc::new(MarketplacePool::with_podman(
+                base(),
+                pool_cfg,
+                FakePodman::default(),
+            )),
+            Db::open_memory().unwrap(),
+            rig.root.clone(),
+            10001,
+        )
+        .with_keys(keys())
+        .with_images(images)
     }
 }
 
@@ -619,6 +1129,11 @@ fn live_build_of_the_reference_release() {
                 .unwrap_or_else(|_| "nests-fetch".into()),
             fetch_image: std::env::var("NESTS_LIVE_FETCH_IMAGE").expect("NESTS_LIVE_FETCH_IMAGE"),
             image_name: "localhost/pigeonpost-release-hr-policy-qa".into(),
+            node_fetch_image: std::env::var("NESTS_LIVE_NODE_FETCH_IMAGE").ok(),
+            python_fetch_image: std::env::var("NESTS_LIVE_PYTHON_FETCH_IMAGE").ok(),
+            memory_mib: None,
+            cpu_millis: None,
+            pids: None,
         },
         podman: pigeonpost_nests::sandbox::HostPodman,
     };

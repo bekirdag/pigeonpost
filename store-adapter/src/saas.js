@@ -15,7 +15,7 @@ function clean(message) {
   return String(message || "").replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/eyJ[\w-]+\.[\w-]+\.[\w-]*/g, "[token]").slice(0, 300);
 }
 
-async function request(url, { method = "GET", headers = {}, body, timeoutMs = config.requestTimeoutMs } = {}) {
+export async function request(url, { method = "GET", headers = {}, body, timeoutMs = config.requestTimeoutMs } = {}) {
   let res;
   try {
     res = await fetch(url, {
@@ -34,7 +34,11 @@ async function request(url, { method = "GET", headers = {}, body, timeoutMs = co
     const raw = payload?.message ?? payload?.error?.message ?? payload?.error ?? payload?.detail;
     const message = Array.isArray(raw) ? raw.join("; ") : typeof raw === "object" ? raw?.message : raw;
     const status = res.status === 401 ? 401 : res.status >= 500 ? 502 : [400, 403, 404, 409, 422, 429].includes(res.status) ? res.status : 502;
-    fail(status, clean(message) || `Billing returned ${res.status}`, "upstream_rejected");
+    // The upstream body stays on the error, not enumerable, for callers that read structured
+    // refusals (the marketplace's `nearest` prices); it is never sent to the browser as is.
+    const error = Object.assign(new Error(clean(message) || `Billing returned ${res.status}`), { status, code: "upstream_rejected" });
+    Object.defineProperty(error, "upstream", { value: payload, enumerable: false });
+    throw error;
   }
   if (payload === null || typeof payload !== "object") fail(502, "Billing returned an invalid response.", "invalid_upstream");
   return payload;
@@ -104,8 +108,18 @@ export function validSubscription(sub, id) {
   return sub;
 }
 
+/// A subscription a marketplace licence started (saas_be marketplace finance): its local
+/// `external_reference` / client reference is `mp-checkout:<checkout id>` and its plan is named
+/// `marketplace:…`. The bridge's own plan logic (Cloud, Nest packages, enterprise) never treats one
+/// as its own; marketplace licences are projected from the licence routes instead (marketplace.js).
+export function isMarketplaceSubscription(item) {
+  const refs = [item?.external_reference, item?.client_reference_id, item?.client_reference].filter((v) => typeof v === "string");
+  const names = [item?.plan_name, item?.plan?.name, item?.package_name].filter((v) => typeof v === "string");
+  return refs.some((r) => r.startsWith("mp-checkout:")) || names.some((n) => n.startsWith("marketplace:"));
+}
+
 export function validSummary(item) {
-  return item && isUuid(item.subscription_id) && item.provider === "iyzico" && PROVIDER.includes(item.provider_status)
+  return item && !isMarketplaceSubscription(item) && isUuid(item.subscription_id) && item.provider === "iyzico" && PROVIDER.includes(item.provider_status)
     && (item.pricing_plan_reference === null || REF.test(String(item.pricing_plan_reference)));
 }
 
@@ -129,7 +143,10 @@ export async function listSubscriptions(token) {
 export const operate = (token, id, operation, body, key) =>
   member(token, "POST", `/v1/integrations/iyzico/subscriptions/${id}/${operation}`, body, { key, timeoutMs: config.checkoutTimeoutMs });
 
-export const createBillingProfile = (token, body, key) => member(token, "POST", "/v1/billing/profiles", body, { key });
+/// The member's saas_be user (`GET /v1/profile`); its `id` is the buyer `user_id` marketplace quotes need.
+export const profile = (token) => member(token, "GET", "/v1/profile");
+
+export const createBillingProfile =(token, body, key) => member(token, "POST", "/v1/billing/profiles", body, { key });
 export const updateBillingProfile = (token, id, body, key) => member(token, "PATCH", `/v1/billing/profiles/${encodeURIComponent(id)}`, body, { key });
 export const listBillingProfiles = (token) => member(token, "GET", "/v1/billing/profiles?limit=20");
 export const listInvoices = (token) => member(token, "GET", "/v1/billing/invoices?limit=50");
@@ -150,6 +167,6 @@ export async function accessList() {
   const url = `${config.masaasSaasApiBase}/v1/internal/tenants/${encodeURIComponent(config.tenantId)}/subscription-packages?product_slug=${encodeURIComponent(config.masaasProductSlug)}&limit=1000`;
   const payload = await request(url, { headers: { accept: "application/json", authorization: `Bearer ${config.saasInternalToken}` } });
   if (!Array.isArray(payload.data)) fail(502, "Billing returned an invalid access list.", "invalid_upstream");
-  return payload.data.filter((row) => row && isUuid(row.subscription_id) && row.tenant_id === config.tenantId
+  return payload.data.filter((row) => row && !isMarketplaceSubscription(row) && isUuid(row.subscription_id) && row.tenant_id === config.tenantId
     && typeof row.external_reference === "string" && iso(row.current_period_end) && iso(row.current_period_start) !== undefined);
 }
