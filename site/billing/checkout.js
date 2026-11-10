@@ -106,6 +106,14 @@
         mount(r.checkout_form_content);
         return;
       }
+      if (pending.kind === "nest") {
+        // Nests Phase B2: a monthly Nest package, bought exactly like a Cloud plan.
+        const r = await post("/v1/nests/checkout", { intent_id: pending.intent_id, plan_code: pending.plan_code,
+          billing_profile_id: pending.billing_profile_id, locale: pending.locale });
+        say(`Nest package: ${money(Number(r.amount), r.currency)} per month, renewing monthly until you cancel.`);
+        mount(r.checkout_form_content);
+        return;
+      }
       const r = await post("/v1/cloud/checkout", { intent_id: pending.intent_id, plan_code: pending.plan_code,
         billing_profile_id: pending.billing_profile_id, locale: pending.locale, ...(pending.confirm_other_store ? { confirm_other_store: true } : {}) });
       const names = /cloud-(\d+)names/.exec(r.plan_code)?.[1];
