@@ -86,3 +86,24 @@
   .ac-search { flex-direction: column; }
   .ac-grid { grid-template-columns: 1fr; }
 }
+
+/* Products (Nests Phase B2) */
+.pp-tabs { display: flex; gap: .25rem; border-bottom: 1px solid var(--line, #ddd); margin: .5rem 0 1rem; flex-wrap: wrap; }
+.pp-tab { background: none; border: 0; border-bottom: 2px solid transparent; padding: .5rem .75rem; font: inherit; cursor: pointer; color: inherit; }
+.pp-tab[aria-selected="true"] { border-bottom-color: currentColor; font-weight: 600; }
+.pp-tab:focus-visible, .pp-panel:focus-visible { outline: 2px solid #4a7dff; outline-offset: 2px; }
+.pp-cards { list-style: none; padding: 0; display: grid; gap: .75rem; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); }
+.pp-card { border: 1px solid var(--line, #ddd); border-radius: .5rem; padding: .75rem; }
+.pp-card ul { padding-left: 1.1rem; margin: .25rem 0 .5rem; }
+.pp-price { font-weight: 600; }
+.pp-services { list-style: none; padding: 0; display: grid; gap: .5rem; }
+.pp-service { display: grid; gap: .15rem; border: 1px solid var(--line, #ddd); border-radius: .5rem; padding: .6rem .75rem; }
+.pp-soon { font-size: .85em; opacity: .75; }
+.pp-nests { list-style: none; padding: 0; }
+.pp-nest { display: flex; gap: .6rem; flex-wrap: wrap; align-items: baseline; padding: .35rem 0; }
+.pp-status { font-size: .85em; padding: 0 .4rem; border-radius: .6rem; border: 1px solid currentColor; }
+.pp-warn { color: #b3261e; }
+.pp-setup { display: flex; gap: .6rem; align-items: center; margin: .4rem 0; }
+.pp-context { display: block; margin-bottom: .75rem; }
+.pp-operators { border: 1px solid var(--line, #ddd); border-radius: .5rem; padding: .4rem .75rem; display: grid; gap: .25rem; }
+.pp-operator { display: block; }

@@ -1,5 +1,3 @@
-/* Copied verbatim from site-inbox/app.css lines 9-473 (fonts and design tokens). A test keeps
-   the copy exact; change the inbox first, then re-copy. */
 @font-face {
   font-family: "Geist";
   src: url("fonts/Geist-Variable.woff2") format("woff2");
