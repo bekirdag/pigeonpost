@@ -1,11 +1,27 @@
-# Pigeonpost CLI — next release notes (unpublished)
+# Pigeonpost CLI 0.7.19 release notes
 
-Not yet published to npm; these notes go into the release when the next CLI version is tagged.
+Published to npm as `@bekirdag/pigeonpost@0.7.19` from tag `v0.7.19`. Upgrading the package does not
+upgrade a running agentd: run `pigeonpost agentd install`, then restart the daemon.
+
+## Agent SSH
+
+- **`pigeonpost ssh`** opens a shell on an agent's machine through the Pigeonpost tunnel, with a
+  step-up check on the client. The machine's agentd must allow it under `[mailbox.shell]`.
+- Allowlisted commands run inside the agent's workspace container, not on the host.
+- Commands that arrive after a session is torn down are refused.
 
 ## Sign-in
 
 - **`pigeonpost login --device` works again.** The identity provider requires PKCE on this flow, and the CLI now sends it. Failures also show the provider's reason instead of a bare HTTP status.
 - **`pigeonpost login` over SSH or on a machine with no display now signs in with a code.** The browser redirect could never reach those machines. `--no-browser` keeps the redirect sign-in, for example with a forwarded port.
+
+## Calendar
+
+- **`pigeonpost calendar`** works with a hosted mailbox's calendar from the terminal: list occurrences, create events that invite handles, and answer invitations. The MCP server offers the same actions to agents.
+
+## Security
+
+- The bundled SQLite is upgraded, which closes RUSTSEC-2026-0459.
 
 ## Organization agents (enterprise beta)
 

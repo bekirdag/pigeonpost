@@ -2807,7 +2807,7 @@ dependencies = [
 
 [[package]]
 name = "pigeonpost-cli"
-version = "0.7.18"
+version = "0.7.19"
 dependencies = [
  "argon2 0.5.3",
  "axum",
@@ -2850,7 +2850,7 @@ dependencies = [
 
 [[package]]
 name = "pigeonpost-client"
-version = "0.7.18"
+version = "0.7.19"
 dependencies = [
  "axum",
  "ed25519-dalek 2.2.0",
@@ -2879,7 +2879,7 @@ dependencies = [
 
 [[package]]
 name = "pigeonpost-compliance"
-version = "0.7.18"
+version = "0.7.19"
 dependencies = [
  "chacha20poly1305",
  "curve25519-dalek 4.1.3",
@@ -2906,14 +2906,14 @@ dependencies = [
 
 [[package]]
 name = "pigeonpost-compliance-format"
-version = "0.7.18"
+version = "0.7.19"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "pigeonpost-compliance-seal"
-version = "0.7.18"
+version = "0.7.19"
 dependencies = [
  "chacha20poly1305",
  "curve25519-dalek 4.1.3",
@@ -2931,7 +2931,7 @@ dependencies = [
 
 [[package]]
 name = "pigeonpost-core"
-version = "0.7.18"
+version = "0.7.19"
 dependencies = [
  "chacha20poly1305",
  "curve25519-dalek 4.1.3",
@@ -2953,7 +2953,7 @@ dependencies = [
 
 [[package]]
 name = "pigeonpost-directory"
-version = "0.7.18"
+version = "0.7.19"
 dependencies = [
  "axum",
  "ed25519-dalek 2.2.0",
@@ -3001,7 +3001,7 @@ dependencies = [
 
 [[package]]
 name = "pigeonpost-loft"
-version = "0.7.18"
+version = "0.7.19"
 dependencies = [
  "axum",
  "ed25519-dalek 2.2.0",
@@ -3034,7 +3034,7 @@ dependencies = [
 
 [[package]]
 name = "pigeonpost-mcp"
-version = "0.7.18"
+version = "0.7.19"
 dependencies = [
  "ed25519-dalek 2.2.0",
  "fs2",
@@ -3052,11 +3052,11 @@ dependencies = [
 
 [[package]]
 name = "pigeonpost-nest-kit"
-version = "0.7.18"
+version = "0.7.19"
 
 [[package]]
 name = "pigeonpost-nests"
-version = "0.7.18"
+version = "0.7.19"
 dependencies = [
  "axum",
  "chacha20poly1305",
@@ -3082,7 +3082,7 @@ dependencies = [
 
 [[package]]
 name = "pigeonpost-postbox"
-version = "0.7.18"
+version = "0.7.19"
 dependencies = [
  "async-stream",
  "axum",
@@ -3119,7 +3119,7 @@ dependencies = [
 
 [[package]]
 name = "pigeonpost-registry"
-version = "0.7.18"
+version = "0.7.19"
 dependencies = [
  "async-trait",
  "axum",
@@ -3153,7 +3153,7 @@ dependencies = [
 
 [[package]]
 name = "pigeonpost-tunnel"
-version = "0.7.18"
+version = "0.7.19"
 dependencies = [
  "axum",
  "futures-util",
@@ -3168,7 +3168,7 @@ dependencies = [
 
 [[package]]
 name = "pigeonpost-unix-custody"
-version = "0.7.18"
+version = "0.7.19"
 dependencies = [
  "rustix",
  "tempfile",
@@ -3176,7 +3176,7 @@ dependencies = [
 
 [[package]]
 name = "pigeonpost-windows-custody"
-version = "0.7.18"
+version = "0.7.19"
 dependencies = [
  "tempfile",
  "windows-permissions",
@@ -3185,7 +3185,7 @@ dependencies = [
 
 [[package]]
 name = "pigeonpost-witness"
-version = "0.7.18"
+version = "0.7.19"
 dependencies = [
  "axum",
  "ed25519-dalek 2.2.0",
