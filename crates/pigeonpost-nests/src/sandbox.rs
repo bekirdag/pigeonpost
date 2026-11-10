@@ -4,7 +4,7 @@
 //! gVisor ([`GvisorPodman`]); a Firecracker/KVM worker implements the same trait on future
 //! hardware, and nothing above this module changes (docs/nests/phase-a-plan.md §6).
 
-use crate::config::SandboxConfig;
+use crate::config::{MarketplacePoolConfig, SandboxConfig};
 use crate::util::valid_nest_id;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -17,6 +17,8 @@ pub struct Spec {
     pub generation: i64,
     /// Host path of the Nest's mounted volume; appears at `/nest` inside.
     pub volume: PathBuf,
+    /// The buyer this sandbox serves, for the marketplace pool only. First-party Nests have none.
+    pub buyer_context: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -230,6 +232,10 @@ impl Sandbox for GvisorPodman {
     fn start(&self, spec: &Spec) -> Result<(), String> {
         if !valid_nest_id(&spec.nest_id) {
             return Err("invalid nest id".into());
+        }
+        // Publisher code never lands in the first-party pool by a wrong code path.
+        if spec.buyer_context.is_some() {
+            return Err("a buyer context belongs in the marketplace pool".into());
         }
         self.stop(&spec.nest_id)?;
         let args = Self::run_args(&self.cfg, spec);
@@ -468,6 +474,332 @@ impl Sandbox for Fake {
     }
 }
 
+// ---- the marketplace pool -----------------------------------------------------------------------
+
+/// Label of a marketplace sandbox. Deliberately different from [`LABEL`]: each pool's `list` sees
+/// only its own containers, so the first-party reconciler can never adopt or remove one of these.
+pub const MP_LABEL: &str = "dev.pigeonpost.marketplace.nest";
+pub const MP_GEN_LABEL: &str = "dev.pigeonpost.marketplace.generation";
+pub const MP_CONTEXT_LABEL: &str = "dev.pigeonpost.marketplace.context";
+
+fn mp_container_name(nest_id: &str) -> String {
+    format!("nest-mp-{nest_id}")
+}
+
+/// A buyer context id: what a directory and a label may safely be named.
+pub fn valid_buyer_context(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 64
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-')
+}
+
+/// How the pool runs `podman`. A trait so the isolation rules run in tests with no container
+/// runtime on the machine.
+pub trait Podman: Send + Sync {
+    fn run(&self, args: &[&str]) -> Result<String, String>;
+}
+
+/// The real thing.
+pub struct HostPodman;
+
+impl Podman for HostPodman {
+    fn run(&self, args: &[&str]) -> Result<String, String> {
+        crate::storage::run("podman", args)
+    }
+}
+
+/// One marketplace sandbox as `podman ps` reports it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PoolBox {
+    nest_id: String,
+    context: String,
+    state: RuntimeState,
+    generation: i64,
+}
+
+/// The marketplace pool: gVisor on the same host as the first-party pool, under a separate and
+/// stricter configuration (owner decision 2026-11-09: no KVM, so gVisor stands in for the plan's
+/// Firecracker).
+///
+/// What it guarantees, each checked here before anything starts:
+/// - one running sandbox per buyer context, and a Nest never moves between contexts;
+/// - the only mount is that context's own directory, `<volume_root>/<context>/<nest>`, so two
+///   contexts can never share one;
+/// - network only to the broker: no postbox address, no DNS, no other names.
+pub struct MarketplacePool<P: Podman = HostPodman> {
+    base: SandboxConfig,
+    pool: MarketplacePoolConfig,
+    podman: P,
+    /// Serializes `start`, so two starts for one context cannot both pass the one-sandbox check.
+    start_lock: Mutex<()>,
+}
+
+impl MarketplacePool<HostPodman> {
+    pub fn new(base: SandboxConfig, pool: MarketplacePoolConfig) -> Self {
+        Self::with_podman(base, pool, HostPodman)
+    }
+}
+
+impl<P: Podman> MarketplacePool<P> {
+    pub fn with_podman(base: SandboxConfig, pool: MarketplacePoolConfig, podman: P) -> Self {
+        MarketplacePool {
+            base,
+            pool,
+            podman,
+            start_lock: Mutex::new(()),
+        }
+    }
+
+    /// The exact `podman run` arguments. Pure, so the profile is asserted in tests.
+    pub fn run_args(
+        base: &SandboxConfig,
+        pool: &MarketplacePoolConfig,
+        spec: &Spec,
+        context: &str,
+    ) -> Vec<String> {
+        let mem = format!("{}m", pool.memory_mib);
+        vec![
+            "run".into(),
+            "--detach".into(),
+            "--name".into(),
+            mp_container_name(&spec.nest_id),
+            "--label".into(),
+            format!("{MP_LABEL}={}", spec.nest_id),
+            "--label".into(),
+            format!("{MP_GEN_LABEL}={}", spec.generation),
+            "--label".into(),
+            format!("{MP_CONTEXT_LABEL}={context}"),
+            "--runtime".into(),
+            base.oci_runtime.clone(),
+            "--pull".into(),
+            "never".into(),
+            "--hostname".into(),
+            "nest".into(),
+            "--user".into(),
+            "10001:10001".into(),
+            "--cap-drop".into(),
+            "ALL".into(),
+            "--security-opt".into(),
+            "no-new-privileges".into(),
+            // Immutable image, and none of podman's implicit writable tmpfs mounts: /tmp below is
+            // the only one. An image cannot bring a volume of its own either.
+            "--read-only".into(),
+            "--read-only-tmpfs=false".into(),
+            "--image-volume".into(),
+            "ignore".into(),
+            "--ipc".into(),
+            "private".into(),
+            "--cgroupns".into(),
+            "private".into(),
+            "--tmpfs".into(),
+            format!(
+                "/tmp:rw,nosuid,nodev,noexec,size={}m,mode=1777",
+                pool.tmp_mib
+            ),
+            "--volume".into(),
+            format!(
+                "{}:/nest:rw,nosuid,nodev,noexec",
+                spec.volume.to_string_lossy()
+            ),
+            "--memory".into(),
+            mem.clone(),
+            "--memory-swap".into(),
+            mem,
+            "--cpu-shares".into(),
+            shares_for_weight(pool.cpu_weight).to_string(),
+            "--cpus".into(),
+            format!("{:.3}", pool.cpu_max_millis as f64 / 1000.0),
+            "--pids-limit".into(),
+            pool.pids.to_string(),
+            // Network: the broker and nothing else. There is no postbox address and no name to
+            // resolve; the broker is reached by the address given in the environment below, and
+            // nftables refuses everything else on this bridge.
+            "--network".into(),
+            pool.network.clone(),
+            "--dns".into(),
+            "none".into(),
+            "--no-hosts".into(),
+            // No container logs: publisher code must not write a buyer's data to the host disk.
+            "--log-driver".into(),
+            "none".into(),
+            "--stop-timeout".into(),
+            "10".into(),
+            "--env".into(),
+            format!(
+                "NEST_BROKER_URL=http://{}:{}",
+                pool.broker_ip, pool.broker_port
+            ),
+            "--env".into(),
+            format!("NEST_ID={}", spec.nest_id),
+            pool.image.clone(),
+        ]
+    }
+
+    /// Check a spec against the pool's isolation rules. Returns the buyer context.
+    fn check_spec<'a>(&self, spec: &'a Spec) -> Result<&'a str, String> {
+        if !valid_nest_id(&spec.nest_id) {
+            return Err("invalid nest id".into());
+        }
+        let context = spec
+            .buyer_context
+            .as_deref()
+            .ok_or("the marketplace pool needs a buyer context")?;
+        if !valid_buyer_context(context) {
+            return Err("invalid buyer context".into());
+        }
+        // The real paths, so a symlink cannot make one context's directory another's.
+        let root = std::fs::canonicalize(&self.pool.volume_root)
+            .map_err(|e| format!("volume_root: {e}"))?;
+        let volume = std::fs::canonicalize(&spec.volume).map_err(|e| format!("volume: {e}"))?;
+        if volume != root.join(context).join(&spec.nest_id) {
+            return Err("the volume is not this buyer context's own directory".into());
+        }
+        Ok(context)
+    }
+
+    fn boxes(&self) -> Result<Vec<PoolBox>, String> {
+        let out = self.podman.run(&[
+            "ps",
+            "--all",
+            "--filter",
+            &format!("label={MP_LABEL}"),
+            "--format",
+            "json",
+        ])?;
+        Ok(parse_pool_boxes(&out))
+    }
+}
+
+/// `podman ps --format json` → this pool's sandboxes, skipping anything malformed.
+fn parse_pool_boxes(out: &str) -> Vec<PoolBox> {
+    let rows: serde_json::Value =
+        serde_json::from_str(out.trim()).unwrap_or(serde_json::Value::Array(vec![]));
+    let mut found = Vec::new();
+    for row in rows.as_array().cloned().unwrap_or_default() {
+        let labels = &row["Labels"];
+        let (Some(id), Some(context)) =
+            (labels[MP_LABEL].as_str(), labels[MP_CONTEXT_LABEL].as_str())
+        else {
+            continue;
+        };
+        if !valid_nest_id(id) || !valid_buyer_context(context) {
+            continue;
+        }
+        found.push(PoolBox {
+            nest_id: id.to_string(),
+            context: context.to_string(),
+            state: match row["State"].as_str().unwrap_or("") {
+                "running" => RuntimeState::Running,
+                "paused" => RuntimeState::Paused,
+                _ => RuntimeState::Exited,
+            },
+            generation: labels[MP_GEN_LABEL]
+                .as_str()
+                .and_then(|g| g.parse().ok())
+                .unwrap_or(0),
+        });
+    }
+    found
+}
+
+impl<P: Podman> Sandbox for MarketplacePool<P> {
+    fn start(&self, spec: &Spec) -> Result<(), String> {
+        let context = self.check_spec(spec)?;
+        let _one_at_a_time = self
+            .start_lock
+            .lock()
+            .map_err(|_| "pool lock poisoned".to_string())?;
+        for existing in self.boxes()? {
+            if existing.nest_id == spec.nest_id {
+                if existing.context != context {
+                    return Err("this Nest belongs to another buyer context".into());
+                }
+                continue;
+            }
+            // An exited box still counts: it holds its context until it is removed.
+            if existing.context == context {
+                return Err("this buyer context already has a sandbox".into());
+            }
+        }
+        self.stop(&spec.nest_id)?;
+        let args = Self::run_args(&self.base, &self.pool, spec, context);
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        self.podman.run(&refs).map(|_| ())
+    }
+
+    fn stop(&self, nest_id: &str) -> Result<(), String> {
+        if !valid_nest_id(nest_id) {
+            return Err("invalid nest id".into());
+        }
+        let name = mp_container_name(nest_id);
+        self.podman
+            .run(&["rm", "--force", "--time", "10", "--ignore", &name])
+            .map(|_| ())
+    }
+
+    fn pause(&self, nest_id: &str) -> Result<(), String> {
+        self.podman
+            .run(&["pause", &mp_container_name(nest_id)])
+            .map(|_| ())
+    }
+
+    fn resume(&self, nest_id: &str) -> Result<(), String> {
+        self.podman
+            .run(&["unpause", &mp_container_name(nest_id)])
+            .map(|_| ())
+    }
+
+    fn state(&self, nest_id: &str) -> Result<RuntimeState, String> {
+        Ok(self
+            .boxes()?
+            .into_iter()
+            .find(|b| b.nest_id == nest_id)
+            .map(|b| b.state)
+            .unwrap_or(RuntimeState::Absent))
+    }
+
+    fn list(&self) -> Result<Vec<(String, RuntimeState, i64)>, String> {
+        Ok(self
+            .boxes()?
+            .into_iter()
+            .map(|b| (b.nest_id, b.state, b.generation))
+            .collect())
+    }
+
+    fn stats(&self, _nest_id: &str) -> Option<Stats> {
+        None
+    }
+
+    fn kind(&self) -> &'static str {
+        "gvisor-marketplace"
+    }
+
+    /// Not offered in this pool yet: a parser here would need its own review as a place publisher
+    /// input and host files meet.
+    fn run_parser(
+        &self,
+        _input: &Path,
+        _out: &Path,
+        _timeout: std::time::Duration,
+    ) -> Result<(), String> {
+        Err("file parsing is not available in the marketplace pool".into())
+    }
+}
+
+/// The marketplace pool, when `[sandbox.marketplace]` is configured. `fake` runtimes have none.
+pub fn marketplace_from_config(cfg: &SandboxConfig) -> Result<Option<Box<dyn Sandbox>>, String> {
+    let Some(pool) = cfg.marketplace.clone() else {
+        return Ok(None);
+    };
+    match cfg.runtime.as_str() {
+        "gvisor" => Ok(Some(Box::new(MarketplacePool::new(cfg.clone(), pool)))),
+        "fake" => Ok(None),
+        other => Err(format!("unknown sandbox runtime {other:?}")),
+    }
+}
+
 pub fn from_config(cfg: &SandboxConfig) -> Result<Box<dyn Sandbox>, String> {
     match cfg.runtime.as_str() {
         "gvisor" => Ok(Box::new(GvisorPodman::new(cfg.clone()))),
@@ -489,6 +821,7 @@ mod tests {
             nest_id: "nst_00000000000000bb".into(),
             generation: 7,
             volume: PathBuf::from("/var/lib/nests/mnt/nst_00000000000000bb"),
+            buyer_context: None,
         };
         let a = GvisorPodman::run_args(&cfg, &spec).join(" ");
         for must in [
@@ -528,6 +861,333 @@ mod tests {
             let back = 1 + (s - 2) * 9999 / 262_142;
             assert_eq!(back, w, "weight {w} -> shares {s}");
         }
+    }
+
+    // ---- the marketplace pool: isolation between buyer contexts ---------------------------------
+
+    const NEST_A: &str = "nst_00000000000000aa";
+    #[cfg(unix)]
+    const NEST_B: &str = "nst_00000000000000bb";
+    const NEST_A2: &str = "nst_00000000000000a2";
+
+    /// A podman that remembers what ran, enough for `start` to see its own sandboxes.
+    #[derive(Default, Clone)]
+    struct FakePodman {
+        rows: std::sync::Arc<Mutex<Vec<serde_json::Value>>>,
+        calls: std::sync::Arc<Mutex<Vec<Vec<String>>>>,
+    }
+
+    impl Podman for FakePodman {
+        fn run(&self, args: &[&str]) -> Result<String, String> {
+            let argv: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+            self.calls.lock().unwrap().push(argv.clone());
+            match args.first().copied() {
+                Some("run") => {
+                    let label = |key: &str| {
+                        argv.iter()
+                            .find_map(|a| a.strip_prefix(&format!("{key}=")))
+                            .unwrap()
+                            .to_string()
+                    };
+                    let name = argv[argv.iter().position(|a| a == "--name").unwrap() + 1].clone();
+                    self.rows.lock().unwrap().push(serde_json::json!({
+                        "Names": [name],
+                        "State": "running",
+                        "Labels": {
+                            MP_LABEL: label(MP_LABEL),
+                            MP_GEN_LABEL: label(MP_GEN_LABEL),
+                            MP_CONTEXT_LABEL: label(MP_CONTEXT_LABEL),
+                        },
+                    }));
+                    Ok(String::new())
+                }
+                Some("rm") => {
+                    let name = args.last().unwrap();
+                    self.rows
+                        .lock()
+                        .unwrap()
+                        .retain(|r| r["Names"][0].as_str() != Some(name));
+                    Ok(String::new())
+                }
+                Some("ps") => {
+                    Ok(serde_json::Value::Array(self.rows.lock().unwrap().clone()).to_string())
+                }
+                _ => Ok(String::new()),
+            }
+        }
+    }
+
+    struct Rig {
+        pool: MarketplacePool<FakePodman>,
+        podman: FakePodman,
+        root: PathBuf,
+    }
+
+    fn rig() -> Rig {
+        let root = std::env::temp_dir().join(format!(
+            "pp-mp-{}-{}",
+            std::process::id(),
+            crate::util::random_hex(6)
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut base = crate::config::test_config(&root).sandbox;
+        base.runtime = "gvisor".into();
+        let pool_cfg = crate::config::test_marketplace_pool(&root);
+        let podman = FakePodman::default();
+        Rig {
+            pool: MarketplacePool::with_podman(base, pool_cfg, podman.clone()),
+            podman,
+            root,
+        }
+    }
+
+    impl Rig {
+        fn volume(&self, context: &str, nest: &str) -> PathBuf {
+            let path = self.root.join("mp").join(context).join(nest);
+            std::fs::create_dir_all(&path).unwrap();
+            path
+        }
+        fn spec(&self, context: &str, nest: &str) -> Spec {
+            Spec {
+                nest_id: nest.into(),
+                generation: 1,
+                volume: self.volume(context, nest),
+                buyer_context: Some(context.into()),
+            }
+        }
+        fn runs(&self) -> Vec<Vec<String>> {
+            self.podman
+                .calls
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|c| c[0] == "run")
+                .cloned()
+                .collect()
+        }
+    }
+
+    #[cfg(unix)]
+    fn mounts_in(argv: &[String]) -> Vec<String> {
+        argv.iter()
+            .enumerate()
+            .filter(|(_, a)| *a == "--volume" || *a == "--mount")
+            .map(|(i, _)| argv[i + 1].clone())
+            .collect()
+    }
+
+    // Linux podman arguments with host paths; Nests hosts are Linux.
+    #[cfg(unix)]
+    #[test]
+    fn the_marketplace_profile_is_fixed_and_stricter_than_first_party() {
+        let rig = rig();
+        let spec = rig.spec("buyer-a", NEST_A);
+        rig.pool.start(&spec).unwrap();
+        let runs = rig.runs();
+        assert_eq!(runs.len(), 1);
+        let argv = &runs[0];
+        let a = argv.join(" ");
+        let cfg = &rig.pool.pool;
+        for must in [
+            "--runtime runsc-nests",
+            "--user 10001:10001",
+            "--cap-drop ALL",
+            "--security-opt no-new-privileges",
+            "--read-only",
+            "--read-only-tmpfs=false",
+            "--image-volume ignore",
+            "--network nests-mp",
+            "--dns none",
+            "--no-hosts",
+            "--log-driver none",
+            "--pull never",
+            "--ipc private",
+            "--cgroupns private",
+            "dev.pigeonpost.marketplace.context=buyer-a",
+        ] {
+            assert!(a.contains(must), "missing {must} in {a}");
+        }
+        for never in [
+            "--privileged",
+            "--cap-add",
+            "docker.sock",
+            "podman.sock",
+            "--pid host",
+            "--network host",
+            "--add-host",
+            "PIGEONPOST_POSTBOX",
+            "PIGEONPOST_AGENTD_LISTEN",
+            "postbox.pigeonpost.dev",
+            "45.132.181.100",
+        ] {
+            assert!(!a.contains(never), "found {never} in {a}");
+        }
+        assert!(a.ends_with(&cfg.image));
+        // One mount, this context's own directory, and that is all the host it can touch.
+        assert_eq!(mounts_in(argv).len(), 1, "{a}");
+        assert!(
+            mounts_in(argv)[0].contains("/mp/buyer-a/nst_00000000000000aa:/nest:"),
+            "{a}"
+        );
+        // The pool's limits, not the first-party ones.
+        assert!(a.contains("--memory 256m --memory-swap 256m"), "{a}");
+        assert!(a.contains("--pids-limit 64"), "{a}");
+        assert!(a.contains("NEST_BROKER_URL=http://10.67.255.1:8788"), "{a}");
+    }
+
+    // Linux podman arguments with host paths; Nests hosts are Linux.
+    #[cfg(unix)]
+    #[test]
+    fn two_contexts_share_no_mount_no_container_and_no_label() {
+        let rig = rig();
+        rig.pool.start(&rig.spec("buyer-a", NEST_A)).unwrap();
+        rig.pool.start(&rig.spec("buyer-b", NEST_B)).unwrap();
+        let runs = rig.runs();
+        assert_eq!(runs.len(), 2);
+        let mounts: Vec<Vec<String>> = runs.iter().map(|r| mounts_in(r)).collect();
+        assert_eq!(mounts[0].len(), 1);
+        assert_eq!(mounts[1].len(), 1);
+        assert_ne!(mounts[0], mounts[1]);
+        let host_path = |m: &str| m.split(':').next().unwrap().to_string();
+        let (a, b) = (host_path(&mounts[0][0]), host_path(&mounts[1][0]));
+        assert!(!a.starts_with(&b) && !b.starts_with(&a), "{a} {b}");
+        let label = |argv: &[String]| {
+            argv.iter()
+                .find_map(|x| x.strip_prefix(&format!("{MP_CONTEXT_LABEL}=")))
+                .unwrap()
+                .to_string()
+        };
+        assert_eq!(label(&runs[0]), "buyer-a");
+        assert_eq!(label(&runs[1]), "buyer-b");
+        let listed = rig.pool.list().unwrap();
+        assert_eq!(listed.len(), 2);
+    }
+
+    #[test]
+    fn one_buyer_context_has_one_sandbox() {
+        let rig = rig();
+        rig.pool.start(&rig.spec("buyer-a", NEST_A)).unwrap();
+        // A second Nest in the same context is refused, and nothing was started for it.
+        let err = rig.pool.start(&rig.spec("buyer-a", NEST_A2)).unwrap_err();
+        assert!(err.contains("already has a sandbox"), "{err}");
+        assert_eq!(rig.runs().len(), 1);
+        // The same Nest restarting is one sandbox, replaced.
+        rig.pool.start(&rig.spec("buyer-a", NEST_A)).unwrap();
+        assert_eq!(rig.pool.list().unwrap().len(), 1);
+        // Once it is gone the context is free again.
+        rig.pool.stop(NEST_A).unwrap();
+        rig.pool.start(&rig.spec("buyer-a", NEST_A2)).unwrap();
+        assert_eq!(rig.pool.list().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_nest_never_moves_between_buyer_contexts() {
+        let rig = rig();
+        rig.pool.start(&rig.spec("buyer-a", NEST_A)).unwrap();
+        let moved = Spec {
+            nest_id: NEST_A.into(),
+            generation: 2,
+            volume: rig.volume("buyer-b", NEST_A),
+            buyer_context: Some("buyer-b".into()),
+        };
+        let err = rig.pool.start(&moved).unwrap_err();
+        assert!(err.contains("another buyer context"), "{err}");
+        assert_eq!(rig.runs().len(), 1);
+    }
+
+    // Uses a symlink, which needs `std::os::unix`.
+    #[cfg(unix)]
+    #[test]
+    fn one_buyer_context_cannot_mount_another_contexts_volume() {
+        let rig = rig();
+        // The other context's directory, an unrelated directory, a path outside the root, an
+        // escape through `..`, and a symlink that points into the other context.
+        let theirs = rig.volume("buyer-b", NEST_B);
+        let other_nest = rig.volume("buyer-a", NEST_B);
+        let outside = rig.root.join("elsewhere");
+        std::fs::create_dir_all(&outside).unwrap();
+        let link = rig.root.join("mp").join("buyer-a").join(NEST_A);
+        std::os::unix::fs::symlink(&theirs, &link).unwrap();
+        for volume in [
+            theirs.clone(),
+            other_nest,
+            outside,
+            rig.root.join("mp/buyer-a/../buyer-b").join(NEST_B),
+            link,
+        ] {
+            let spec = Spec {
+                nest_id: NEST_A.into(),
+                generation: 1,
+                volume: volume.clone(),
+                buyer_context: Some("buyer-a".into()),
+            };
+            assert!(rig.pool.start(&spec).is_err(), "{volume:?} must be refused");
+        }
+        assert!(rig.runs().is_empty(), "nothing may start");
+        // Traversal in the context id itself.
+        for context in ["", "../buyer-b", "Buyer", "a/b", "a.b"] {
+            let spec = Spec {
+                nest_id: NEST_A.into(),
+                generation: 1,
+                volume: rig.root.join("mp"),
+                buyer_context: Some(context.into()),
+            };
+            assert!(rig.pool.start(&spec).is_err(), "{context:?}");
+        }
+    }
+
+    #[test]
+    fn the_pools_do_not_stand_in_for_each_other() {
+        let rig = rig();
+        // Without a buyer context the marketplace pool refuses to start.
+        let mut spec = rig.spec("buyer-a", NEST_A);
+        spec.buyer_context = None;
+        assert!(rig.pool.start(&spec).is_err());
+        // With one, the first-party pool refuses before touching podman.
+        let base = rig.pool.base.clone();
+        let first_party = GvisorPodman::new(base);
+        let marketplace_spec = rig.spec("buyer-a", NEST_A);
+        let err = first_party.start(&marketplace_spec).unwrap_err();
+        assert!(err.contains("marketplace pool"), "{err}");
+        // Their labels and names differ, so neither pool's `list` can see the other's sandboxes.
+        assert_ne!(LABEL, MP_LABEL);
+        assert_ne!(GEN_LABEL, MP_GEN_LABEL);
+        assert!(!mp_container_name(NEST_A).starts_with(&container_name(NEST_A)));
+        assert_eq!(rig.pool.kind(), "gvisor-marketplace");
+        assert!(rig
+            .pool
+            .run_parser(&rig.root, &rig.root, std::time::Duration::from_secs(1))
+            .is_err());
+    }
+
+    /// The firewall that makes "network only to the broker" true. The bridge is separate from the
+    /// first-party one and the policy allows the broker and nothing else, with no postbox path.
+    // Linux podman arguments with host paths; Nests hosts are Linux.
+    #[cfg(unix)]
+    #[test]
+    fn the_marketplace_bridge_is_policed_to_the_broker_only() {
+        let nft = include_str!("../../../deploy/nests/host/nests.nft");
+        let table = nft
+            .split("table inet nests_marketplace {")
+            .nth(1)
+            .expect("the marketplace table is in deploy/nests/host/nests.nft");
+        let table = &table[..table.find("\n}\n").unwrap()];
+        for must in [
+            r#"iifname != "nestsmp0" return"#,
+            "10.67.255.1",
+            "tcp dport 8788",
+            r#"iifname "nestsmp0""#,
+            "counter drop",
+        ] {
+            assert!(table.contains(must), "missing {must}");
+        }
+        for never in ["@postbox_v4", "45.132.181.100", "dport 443"] {
+            assert!(!table.contains(never), "found {never}");
+        }
+        assert!(
+            nft.contains(r#"ibrname "nestsmp0" counter drop"#),
+            "no port-to-port traffic between buyer contexts on the bridge"
+        );
     }
 
     #[test]

@@ -9,7 +9,7 @@ conversation. This folder holds the tracked Nests documents.
 | [../../deploy/nests/README.md](../../deploy/nests/README.md) | Runbook for the Nests host |
 | [phase-b.md](phase-b.md) | Phase B: first-party Nests — packages, purchases, slots (B1), then Products, chat, files, management, data safety, org Nests |
 | [backups.md](backups.md) | Nest backups to raijin's HDD: append-only borg over WireGuard, key escrow, restore |
-| [contracts/README.md](contracts/README.md) | Proposed marketplace core API contracts (OpenAPI 3.1 and JSON Schemas); not implemented |
+| [contracts/README.md](contracts/README.md) | Marketplace core API contracts (OpenAPI 3.1 and JSON Schemas); the M0 routes are implemented behind the `marketplace` flag, the rest proposed; records the owner's deviations from the build plan |
 
 Local planning folder (`docs/planning/`, not tracked):
 

@@ -90,6 +90,34 @@ pub struct SandboxConfig {
     /// Size limit of the sandbox's private /tmp.
     #[serde(default = "default_tmp_mib")]
     pub tmp_mib: u64,
+    /// The marketplace pool (build plan M0): a separate, stricter configuration on this host. Off
+    /// when absent.
+    #[serde(default)]
+    pub marketplace: Option<MarketplacePoolConfig>,
+}
+
+/// `[sandbox.marketplace]`: one sandbox per buyer context, no shared mounts, network only to the
+/// broker. gVisor on this host, because it has no KVM (owner decision 2026-11-09).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MarketplacePoolConfig {
+    /// The publisher image, pinned by digest.
+    pub image: String,
+    /// A podman network of its own: never the first-party one.
+    pub network: String,
+    /// Each buyer context's volumes live under `<volume_root>/<context>/<nest>`. A sibling of
+    /// `storage.mount_root`, never inside it.
+    pub volume_root: PathBuf,
+    /// The broker address reachable from this pool's bridge, on one port.
+    pub broker_ip: String,
+    pub broker_port: u16,
+    pub memory_mib: u64,
+    #[serde(default = "default_cpu_weight")]
+    pub cpu_weight: u64,
+    #[serde(default = "default_cpu_millis")]
+    pub cpu_max_millis: u64,
+    pub pids: u64,
+    pub tmp_mib: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -222,6 +250,9 @@ impl Config {
         if self.sandbox.memory_mib < 128 {
             return Err("sandbox.memory_mib below 128 cannot run the runner".into());
         }
+        if let Some(pool) = &self.sandbox.marketplace {
+            self.check_marketplace(pool)?;
+        }
         if self.storage.default_gib == 0 || self.storage.max_total_gib < self.storage.default_gib {
             return Err("storage sizes are inconsistent".into());
         }
@@ -248,6 +279,57 @@ impl Config {
                     "{bind}: bind a specific private address, not every interface"
                 ));
             }
+        }
+        Ok(())
+    }
+
+    /// The marketplace pool may only be stricter than the first-party one, and may share nothing
+    /// with it that a misconfiguration could turn into a shared mount or a shared network.
+    fn check_marketplace(&self, pool: &MarketplacePoolConfig) -> Result<(), String> {
+        if !pool.image.contains("@sha256:") {
+            return Err(
+                "sandbox.marketplace.image must be pinned by digest (name@sha256:…)".into(),
+            );
+        }
+        if pool.image == self.sandbox.image {
+            return Err("sandbox.marketplace.image must differ from the first-party image".into());
+        }
+        if pool.network == self.sandbox.network {
+            return Err(
+                "sandbox.marketplace.network must differ from the first-party network".into(),
+            );
+        }
+        if !self.sandbox.oci_runtime.starts_with("runsc") && self.sandbox.runtime != "fake" {
+            return Err("the marketplace pool runs under gVisor only".into());
+        }
+        let (root, mounts) = (&pool.volume_root, &self.storage.mount_root);
+        if root == mounts || root.starts_with(mounts) || mounts.starts_with(root) {
+            return Err(
+                "sandbox.marketplace.volume_root must not overlap storage.mount_root".into(),
+            );
+        }
+        if !root.is_absolute() {
+            return Err("sandbox.marketplace.volume_root must be absolute".into());
+        }
+        if !(1..=10_000).contains(&pool.cpu_weight) || pool.cpu_max_millis == 0 {
+            return Err("sandbox.marketplace CPU limits are out of range".into());
+        }
+        if pool.memory_mib == 0 || pool.memory_mib > self.sandbox.memory_mib {
+            return Err(
+                "sandbox.marketplace.memory_mib must be positive and at most the first-party limit"
+                    .into(),
+            );
+        }
+        if pool.pids == 0 || pool.pids > self.sandbox.pids {
+            return Err(
+                "sandbox.marketplace.pids must be positive and at most the first-party limit"
+                    .into(),
+            );
+        }
+        if pool.cpu_max_millis > self.sandbox.cpu_max_millis {
+            return Err(
+                "sandbox.marketplace.cpu_max_millis must be at most the first-party limit".into(),
+            );
         }
         Ok(())
     }
@@ -279,6 +361,22 @@ pub fn read_secret_file(path: &std::path::Path) -> Result<String, String> {
 }
 
 #[cfg(test)]
+pub(crate) fn test_marketplace_pool(dir: &std::path::Path) -> MarketplacePoolConfig {
+    MarketplacePoolConfig {
+        image: "localhost/pigeonpost-marketplace-worker@sha256:11".into(),
+        network: "nests-mp".into(),
+        volume_root: dir.join("mp"),
+        broker_ip: "10.67.255.1".into(),
+        broker_port: 8788,
+        memory_mib: 256,
+        cpu_weight: 100,
+        cpu_max_millis: 500,
+        pids: 64,
+        tmp_mib: 32,
+    }
+}
+
+#[cfg(test)]
 pub(crate) fn test_config(dir: &std::path::Path) -> Config {
     Config {
         db: dir.join("nestd.db"),
@@ -306,6 +404,7 @@ pub(crate) fn test_config(dir: &std::path::Path) -> Config {
             broker_ip: "10.67.255.1".into(),
             broker_port: 8788,
             tmp_mib: 64,
+            marketplace: None,
         },
         storage: StorageConfig {
             backend: "dir".into(),
@@ -350,5 +449,56 @@ mod tests {
         assert!(c.check().is_ok());
         c.control.bind = "0.0.0.0:8790".into();
         assert!(c.check().is_err());
+    }
+
+    #[test]
+    fn the_marketplace_pool_must_be_stricter_and_share_nothing() {
+        let dir = std::env::temp_dir();
+        let ok = || {
+            let mut c = test_config(&dir);
+            c.sandbox.runtime = "gvisor".into();
+            c.sandbox.image = "localhost/x@sha256:ab".into();
+            c.sandbox.marketplace = Some(test_marketplace_pool(&dir));
+            c
+        };
+        assert!(ok().check().is_ok());
+        type Tweak = fn(&mut MarketplacePoolConfig);
+        let cases: Vec<(&str, Tweak)> = vec![
+            ("unpinned image", |p| p.image = "localhost/x:latest".into()),
+            ("first-party image", |p| {
+                p.image = "localhost/x@sha256:ab".into()
+            }),
+            ("first-party network", |p| p.network = "nests".into()),
+            ("relative volume root", |p| {
+                p.volume_root = "mp".into();
+            }),
+            ("memory above first-party", |p| p.memory_mib = 1024),
+            ("pids above first-party", |p| p.pids = 1024),
+            ("cpu above first-party", |p| p.cpu_max_millis = 2000),
+            ("zero memory", |p| p.memory_mib = 0),
+            ("zero pids", |p| p.pids = 0),
+        ];
+        for (what, change) in cases {
+            let mut c = ok();
+            change(c.sandbox.marketplace.as_mut().unwrap());
+            assert!(c.check().is_err(), "{what} must be refused");
+        }
+        // A volume root that overlaps the first-party mounts, either way round.
+        for volume_root in [dir.join("mnt"), dir.join("mnt/mp"), dir.clone()] {
+            let mut c = ok();
+            c.sandbox.marketplace.as_mut().unwrap().volume_root = volume_root;
+            assert!(c.check().is_err());
+        }
+        // A runtime other than gVisor is refused for this pool.
+        let mut c = ok();
+        c.sandbox.oci_runtime = "crun".into();
+        assert!(c.check().is_err());
+    }
+
+    #[test]
+    fn the_pool_is_optional_and_the_shipped_example_still_parses() {
+        let example = include_str!("../../../deploy/nests/host/nestd.toml.example");
+        let parsed: Config = toml::from_str(example).expect("the example parses");
+        assert!(parsed.sandbox.marketplace.is_none());
     }
 }

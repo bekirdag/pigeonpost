@@ -326,6 +326,7 @@ async fn start_locked(ctx: &Ctx, id: &str) -> Result<(), ApiError> {
             nest_id: nest_id.clone(),
             generation,
             volume: root,
+            buyer_context: None,
         })
     })
     .await;

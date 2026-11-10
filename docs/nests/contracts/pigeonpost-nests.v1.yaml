@@ -10,11 +10,14 @@ info:
   version: 0.1.0
   summary: Native Nest jobs, payment authorizations and release review status.
   description: |
-    **Status: proposed design contract. Not implemented and not deployed.** The routes would be
-    served by the postbox under the member API (`/v1`), behind the `nests_marketplace` feature flag,
-    which is off. A route whose phase is not enabled answers `404 feature_disabled`.
+    **Status: mostly a proposed design contract.** Operations marked `x-pigeonpost-status: implemented`
+    are served by the postbox under the member API (`/v1`) behind the `marketplace` feature flag,
+    per account and off by default; none is deployed. The rest are not implemented. A route whose
+    phase is not enabled answers `404 feature_disabled`. Each implemented operation names its
+    policy action in `x-pigeonpost-action`; a postbox test keeps the routes and this file in step.
 
-    Scope: the four core operations of the marketplace build plan. Everything else in the plan
+    Scope: the four core operations of the marketplace build plan, plus the seven M0 routes marked
+    `x-pigeonpost-status: implemented`, which the postbox serves. Everything else in the plan
     (catalog, installations, publisher console, credits, mandates, test environments) needs its
     own operation schemas and policy actions before implementation.
 
@@ -47,6 +50,12 @@ servers:
 security:
   - memberToken: []
 tags:
+  - name: Staff
+    description: Platform staff roles and staff reads. Staff is a principal kind; every action needs a person, a live role and step-up.
+  - name: Publisher applications
+    description: Applying to the publisher programme as an account or an organization.
+  - name: Marketplace listings
+    description: Public metadata of a listing.
   - name: Nest jobs
     description: Native, paid or free invocations of a Nest operation over Pigeonpost.
   - name: Payment authorizations
@@ -291,6 +300,253 @@ paths:
           $ref: '#/components/responses/NotFound'
         '429':
           $ref: '#/components/responses/RateLimited'
+  /v1/staff/roles:
+    get:
+      tags: [Staff]
+      operationId: listStaffRoles
+      summary: List staff roles
+      description: Retrieve a paginated list of all assigned staff roles.
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: StaffRolesManage
+      security:
+        - memberToken: []
+      responses:
+        '200':
+          description: A list of staff roles.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, next_cursor]
+                additionalProperties: false
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/StaffRole'
+                  next_cursor:
+                    type: [string, 'null']
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [Staff]
+      operationId: assignStaffRole
+      summary: Assign a staff role
+      description: Assign a specific role to an account.
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: StaffRolesManage
+      security:
+        - memberToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StaffRoleAssign'
+      responses:
+        '201':
+          description: The newly created staff role.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/StaffRole'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /v1/staff/roles/{role}:
+    delete:
+      tags: [Staff]
+      operationId: revokeStaffRole
+      summary: Revoke a staff role
+      description: Remove an assigned staff role by ID.
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: StaffRolesManage
+      security:
+        - memberToken: []
+      parameters:
+        - name: role
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^stf_[a-z2-7]{26}$'
+      responses:
+        '204':
+          description: Revoked.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/publisher-applications:
+    post:
+      tags: [Publisher applications]
+      operationId: applyPublisher
+      summary: Apply for publisher status
+      description: Submit a new application to become a publisher.
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: PublisherApply
+      security:
+        - memberToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PublisherApplicationCreate'
+      responses:
+        '201':
+          description: The created publisher application.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/PublisherApplication'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /v1/publisher-applications/{application}:
+    get:
+      tags: [Publisher applications]
+      operationId: readPublisherApplication
+      summary: Read publisher application
+      description: Retrieve details of a specific publisher application.
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: PublisherManage
+      security:
+        - memberToken: []
+      parameters:
+        - name: application
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^pub_[a-z2-7]{26}$'
+      responses:
+        '200':
+          description: The publisher application details.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/PublisherApplication'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/staff/publisher-applications/{application}:
+    get:
+      tags: [Staff]
+      operationId: staffReadPublisherApplication
+      summary: Staff read publisher application
+      description: Retrieve details of a publisher application for review purposes.
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: NestReview
+      security:
+        - memberToken: []
+      parameters:
+        - name: application
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^pub_[a-z2-7]{26}$'
+      responses:
+        '200':
+          description: The publisher application details.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/PublisherApplication'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/marketplace/listings/{listing}:
+    get:
+      tags: [Marketplace listings]
+      operationId: readListing
+      summary: Read a marketplace listing
+      description: Retrieve details of a specific marketplace listing.
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: NestDiscover
+      security:
+        - {}
+        - memberToken: []
+        - apiKey: []
+        - capToken: []
+      parameters:
+        - name: listing
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 64
+      responses:
+        '200':
+          description: The marketplace listing details.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Listing'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
 components:
   securitySchemes:
     memberToken:
@@ -370,7 +626,7 @@ components:
         type: integer
   responses:
     BadRequest:
-      description: Malformed request (`bad_request`, `invalid_operation_payload`, `deadline_invalid`).
+      description: Malformed request (`bad_request`, `invalid_json`, `invalid_request`, `invalid_role`, `bad_display_name`, `invalid_operation_payload`, `deadline_invalid`).
       content:
         application/json:
           schema:
@@ -382,19 +638,19 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     Forbidden:
-      description: The credential kind or the caller's authority does not allow this (`credential_not_accepted`, `human_required`, `step_up_required`, `forbidden`, `not_admitted`, `mandate_revoked`, `mandate_limit`).
+      description: The credential kind or the caller's authority does not allow this (`credential_not_accepted`, `human_required`, `step_up_required`, `step_up_unavailable`, `forbidden`, `staff_required`, `staff_conflict`, `not_admitted`, `mandate_revoked`, `mandate_limit`).
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
     NotFound:
-      description: Unknown, or not visible to this caller (`not_found`), or the feature is off (`feature_disabled`).
+      description: Unknown, or not visible to this caller (`not_found`), the feature is off (`feature_disabled`), or a named account does not exist (`account_not_found`).
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
     Conflict:
-      description: State or binding conflict (`idempotency_conflict`, `quote_expired`, `authorization_expired`, `authorization_reused`, `authorization_intent_mismatch`, `environment_mismatch`, `currency_mismatch`, `review_required`, `release_revoked`, `security_quarantined`, `access_expired`, `recovery_window_closed`).
+      description: State or binding conflict (`role_already_held`, `application_exists`, `idempotency_conflict`, `quote_expired`, `authorization_expired`, `authorization_reused`, `authorization_intent_mismatch`, `environment_mismatch`, `currency_mismatch`, `review_required`, `release_revoked`, `security_quarantined`, `access_expired`, `recovery_window_closed`).
       content:
         application/json:
           schema:
@@ -444,6 +700,16 @@ components:
               description: Stable, machine-readable code. Branch on this.
               enum:
                 - bad_request
+                - invalid_json
+                - invalid_request
+                - invalid_role
+                - bad_display_name
+                - step_up_unavailable
+                - staff_required
+                - staff_conflict
+                - account_not_found
+                - role_already_held
+                - application_exists
                 - invalid_operation_payload
                 - deadline_invalid
                 - unauthorized
@@ -824,3 +1090,95 @@ components:
                 enum: [changes_requested, rejected]
           then:
             required: [decision_ref, findings_ref]
+    StaffRole:
+      type: object
+      additionalProperties: false
+      required: [id, account_id, role, granted_by, granted_at]
+      properties:
+        id:
+          type: string
+          pattern: '^stf_[a-z2-7]{26}$'
+        account_id:
+          type: string
+        role:
+          type: string
+          enum: [reviewer, finance]
+        granted_by:
+          type: string
+        granted_at:
+          type: string
+          format: date-time
+
+    StaffRoleAssign:
+      type: object
+      additionalProperties: false
+      required: [account_id, role]
+      properties:
+        account_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        role:
+          type: string
+          enum: [reviewer, finance]
+
+    PublisherApplicationCreate:
+      type: object
+      additionalProperties: false
+      required: [display_name]
+      properties:
+        display_name:
+          type: string
+          minLength: 2
+          maxLength: 80
+        org_id:
+          type: string
+          minLength: 1
+          maxLength: 64
+
+    PublisherApplication:
+      type: object
+      additionalProperties: false
+      required: [id, owner_kind, owner_id, display_name, status, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          pattern: '^pub_[a-z2-7]{26}$'
+        owner_kind:
+          type: string
+          enum: [account, org]
+        owner_id:
+          type: string
+        display_name:
+          type: string
+        status:
+          type: string
+          enum: [applied, approved, rejected, revoked]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Listing:
+      type: object
+      additionalProperties: false
+      required: [id, publisher_id, release_id, title, summary, visibility, status]
+      properties:
+        id:
+          type: string
+        publisher_id:
+          type: string
+        release_id:
+          type: string
+        title:
+          type: string
+        summary:
+          type: string
+        visibility:
+          type: string
+          enum: [public, unlisted, private, invite_only, organization]
+        status:
+          type: string
+          enum: [draft, published, suspended, withdrawn]

@@ -244,6 +244,15 @@ def erase(conn, request_id, blob_root, evidence):
             conn.execute("DELETE FROM nest_files WHERE account_id=?", (account,))
         if has(conn, "nest_approvals"):
             conn.execute("DELETE FROM nest_approvals WHERE account_id=?", (account,))
+        # Marketplace: a staff role ends with the person, keeping an unlinked record that it existed;
+        # a publisher profile is revoked and no longer names them, for buyers and reviewers.
+        if has(conn, "staff_roles"):
+            conn.execute("UPDATE staff_roles SET revoked_at=COALESCE(revoked_at, ?), account_id=? WHERE account_id=?", (now, "erased_" + request_id, account))
+            conn.execute("UPDATE staff_roles SET granted_by=? WHERE granted_by=?", ("erased_" + request_id, account))
+            conn.execute("UPDATE staff_roles SET revoked_by=? WHERE revoked_by=?", ("erased_" + request_id, account))
+        if has(conn, "publisher_profiles"):
+            conn.execute("UPDATE publisher_profiles SET status='revoked', owner_id=?, display_name='erased', updated_at=? WHERE owner_kind='account' AND owner_id=?", ("erased_" + request_id, now, account))
+            conn.execute("UPDATE publisher_profiles SET applied_by=? WHERE applied_by=?", ("erased_" + request_id, account))
         for table in ("apple_handle_plans", "apple_plan_names", "nest_store_purchases", "nest_setups"):
             if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone():
                 conn.execute("UPDATE " + table + " SET account_id=? WHERE account_id=?", ("erased_" + request_id, account))

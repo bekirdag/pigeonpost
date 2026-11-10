@@ -63,6 +63,22 @@ peer and the egress allowance for `10.66.0.2:8790`.
   total: `sqlite3 /var/lib/nests/ledger/nestd.db "select period, sum(input_used+platform_input), sum(output_used+platform_output) from usage group by period"`.
 - Backups: `journalctl -u nests-backup -n 30`, `nests-restore list`; see backups.md.
 
+## Marketplace pool (M0, not set up on any host yet)
+
+The pool is configured in `[sandbox.marketplace]` and runs publisher code under gVisor on this same
+host, because the owner chose no KVM host (2026-11-09; the plan said Firecracker). `nestd` does not
+use it until M1. The nestd ledger stays on SQLite, and OpenBao and SeaweedFS are not used yet (one
+host). See [the deviations](../../docs/nests/contracts/README.md).
+
+When it is enabled, in order:
+
+1. `podman network create --driver bridge --interface-name nestsmp0 --subnet 10.69.0.0/24 --gateway 10.69.0.1 --disable-dns --ipv6=false nests-mp`
+2. `ufw allow in on nestsmp0 proto tcp from 10.69.0.0/24 to 10.67.255.1 port 8788`
+3. Reload the firewall so `nests.nft`'s `inet nests_marketplace` table and the `nestsmp0` bridge rule
+   apply. They do nothing while the bridge does not exist.
+4. Live isolation probes, on the host as root, against the runner image:
+   `NESTS_LIVE_GVISOR=1 NESTS_LIVE_IMAGE=<runner image> cargo test -p pigeonpost-nests --test marketplace_isolation -- --ignored --nocapture`
+
 ## Rotate the control token
 
 1. On the postbox host write a new `nst_…` token (≥ 32 random bytes) to `/opt/pigeonpost-postbox/nests-service-token` and to `POSTBOX_NESTS_TOKEN` in `postbox.env`.

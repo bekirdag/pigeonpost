@@ -297,7 +297,7 @@ pub(crate) fn deny_error(deny: DenyReason, scope_granted: bool, scope: &str) -> 
             "human_required",
             "only a person signed in to Pigeonpost can do this; API keys cannot",
         ),
-        DenyReason::CredentialNotAccepted => {
+        DenyReason::CredentialNotAccepted | DenyReason::StaffRequired => {
             GErr::forbidden("forbidden", "this credential may not perform this action")
         }
     }

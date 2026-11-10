@@ -33,6 +33,19 @@ postbox_url = "https://postbox.pigeonpost.dev"
 broker_ip = "10.67.255.1"
 broker_port = 8788
 
+# The marketplace pool (M0): gVisor, a separate network and volumes, one sandbox per buyer context.
+# Off when this table is absent; nestd does not use it until M1. deploy/nests/README.md has the setup.
+# [sandbox.marketplace]
+# image = "localhost/pigeonpost-marketplace-worker@sha256:REPLACE"
+# network = "nests-mp"
+# volume_root = "/var/lib/nests/mp"
+# broker_ip = "10.67.255.1"
+# broker_port = 8788
+# memory_mib = 256
+# cpu_max_millis = 500
+# pids = 64
+# tmp_mib = 32
+
 [storage]
 backend = "lvm-luks"
 vg = "nests"
