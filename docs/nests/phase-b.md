@@ -117,7 +117,8 @@ Workspace hours are shown, not yet metered (B5).
   (`pigeonpost-nest-parser`):
   - no network, read-only root, uid 10001, no capabilities;
   - the input read-only at `/in`, an empty output directory at `/out`;
-  - 256 MiB memory, 16 processes, 1 CPU, killed after 120 s.
+  - 256 MiB memory, 64 processes (gVisor's own sandbox threads count too; 16 was too few), 1 CPU,
+    killed after 120 s.
 
   It never runs inside the Nest's own sandbox, so a parser exploit cannot reach the Nest's mailbox
   or broker credentials.

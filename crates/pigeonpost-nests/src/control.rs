@@ -1658,7 +1658,7 @@ mod tests {
             "/v/files/quarantine/f:/in:ro,nosuid,nodev,noexec",
             "/v/files/parsed/f.tmp:/out:rw,nosuid,nodev,noexec",
             "--memory 256m",
-            "--pids-limit 16",
+            "--pids-limit 64",
             "--pull never",
         ] {
             assert!(j.contains(must), "missing {must}: {j}");
