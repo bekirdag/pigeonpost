@@ -63,4 +63,21 @@ class CalendarPushTest {
         assertEquals(1, pokes)
         assertTrue(manager.activeNotifications.none { it.tag?.startsWith("calendar:") == true })
     }
+    private fun shown(): Notification {
+        val deadline = android.os.SystemClock.elapsedRealtime() + 5_000
+        while (manager.activeNotifications.none { it.tag?.startsWith("calendar:") == true } && android.os.SystemClock.elapsedRealtime() < deadline) android.os.SystemClock.sleep(20)
+        return manager.activeNotifications.single { it.tag?.startsWith("calendar:") == true }.notification
+    }
+    @Test fun anInvitationOffersAcceptAndDeclineThatOpenTheAppImmutably() = isolated {
+        displayPush(context, payload - "calendar_occurrence_id" + ("message_id" to "cal:evt_review:invite"))
+        val item = shown()
+        assertEquals("New calendar invitation", item.extras.getString(Notification.EXTRA_TEXT))
+        assertEquals(listOf("Accept", "Decline"), item.actions.map { it.title.toString() })
+        item.actions.forEach { assertTrue(it.actionIntent.isImmutable); assertTrue(it.actionIntent.isActivity) }
+        assertNotEquals(item.actions[0].actionIntent, item.actions[1].actionIntent)
+    }
+    @Test fun remindersHaveNoAnswerActions() = isolated {
+        displayPush(context, payload)
+        assertNull(shown().actions)
+    }
 }

@@ -314,3 +314,17 @@ object GroupLinks {
         return id to token
     }
 }
+
+/** One row of the public group directory (`GET /v1/rooms` without an organization). */
+@Serializable
+data class PublicGroup(
+    val id: String, val name: String, val description: String? = null,
+    @SerialName("member_count") val memberCount: Int = 0,
+    @SerialName("join_policy") val joinPolicy: String = "public",
+    @SerialName("my_state") val myState: String? = null,
+) {
+    val valid get() = Regex("grp_[a-z2-7]{26}").matches(id) && name.isNotBlank() && name.length <= 256 && (description?.length ?: 0) <= 2000 && memberCount >= 0
+    val member get() = myState == "active" || myState == "keying"
+}
+@Serializable
+data class PublicGroups(val rooms: List<PublicGroup> = emptyList())

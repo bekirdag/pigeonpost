@@ -81,6 +81,7 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
     val organizationRooms by (model.organizationRooms?.state ?: remember { kotlinx.coroutines.flow.MutableStateFlow(dev.pigeonpost.core.enterprise.OrganizationRoomsState()) }).collectAsStateWithLifecycle()
     val deviceApproval by (model.deviceApproval?.state ?: remember { kotlinx.coroutines.flow.MutableStateFlow(dev.pigeonpost.core.enterprise.DeviceApprovalState()) }).collectAsStateWithLifecycle()
     val meetingLookup by (model.meetingLookup?.state ?: remember { kotlinx.coroutines.flow.MutableStateFlow(dev.pigeonpost.core.calendar.CalendarMeetingLookupState()) }).collectAsStateWithLifecycle()
+    val presence = rememberOrganizationPresence(model)
     var sheet by rememberSaveable { mutableStateOf<String?>(null) }
     var plansSeen by rememberSaveable { mutableStateOf(0) }
     LaunchedEffect(plansRequests) { if (plansRequests > plansSeen) { plansSeen = plansRequests; sheet = "plans" } }
@@ -172,7 +173,7 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
                         !session.termsAccepted -> TermsConsentScreen(session, model::acceptTerms, model::signOut, openLink)
                         state.accountLoading && !state.accountLoaded -> Loading("Opening your inboxes…")
                         state.acting == null -> FirstInbox(state, store, model::signOut, openLink)
-                        wide && state.leftView == LeftView.CALENDAR && calendarStore != null -> CalendarPane(calendarStore, calendar, { store.showView(LeftView.INBOX) }, if (model.calls == null) null else model::joinCalendar)
+                        wide && state.leftView == LeftView.CALENDAR && calendarStore != null -> CalendarPane(calendarStore, calendar, { store.showView(LeftView.INBOX) }, if (model.calls == null) null else model::joinCalendar, wide = true)
                         wide -> TabletInbox(state, store, model, session.username, callMode,
                             newConversation = { sheet = "new" }, settings = { sheet = "settings" },
                             info = { sheet = "peer" }, newSubject = { sheet = "subject" },
@@ -194,8 +195,10 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
             }
         }
         when (sheet) {
-            "mailbox" -> MailboxDialog(state, { store.switchMailbox(it); sheet = null }, { sheet = null }, session.username)
-            "new" -> NewConversationDialog(state, { model.startConversation(it); sheet = null }, { sheet = null })
+            "mailbox" -> MailboxDialog(state, { store.switchMailbox(it); sheet = null }, { sheet = null }, session.username, presence.badges)
+            "new" -> NewConversationDialog(state, { model.startConversation(it); sheet = null; model.organizationPresence?.clearSearch() },
+                { sheet = null; model.organizationPresence?.clearSearch() }, presence.badges[state.acting?.address], presence.directory,
+                { text -> model.organizationPresence?.search(text) })
             "subject" -> SubjectDialog(state.actionBusy, { store.openThread(it) { sheet = null } }, { sheet = null })
             "settings", "plans" -> SettingsDialog(state, session, model.graph.fixtures, handleState, model.handles,
                 paidHandles = model.paidHandles,
@@ -210,7 +213,8 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
             "contact" -> ContactDialog(state, editContact, { store.saveContact(it) { sheet = "contacts" } },
                 { peer -> store.removeContact(peer) { sheet = "contacts" } }, { sheet = "contacts" })
             "peer" -> PeerDialog(state, store, { sheet = null }, { contact -> editContact = contact; sheet = "contact" })
-            "newGroup" -> if (groupStore != null) NewGroupDialog(state, groups, groupStore, opened = { model.groupCreated() }) { sheet = null }
+            "newGroup" -> if (groupStore != null) NewGroupDialog(state, groups, groupStore, opened = { model.groupCreated() }, browse = { sheet = "publicGroups" }) { sheet = null }
+            "publicGroups" -> if (groupStore != null) PublicGroupsDialog(groups, groupStore, model::openGroup) { sheet = null }
             "groupInfo" -> if (groupStore != null) GroupInfoDialog(groups, state, groupStore) { sheet = null }
             "signout" -> Confirm("Sign out?", "Your session and local drafts will be removed from this device.", "Sign out",
                 { sheet = null; model.signOut() }, { sheet = "settings" })
@@ -347,6 +351,7 @@ private fun InboxList(state: InboxState, store: InboxStore, model: InboxViewMode
     val p = Pp.colors
     var compose by remember { mutableStateOf(false) }
     var invitesOpen by rememberSaveable { mutableStateOf(true) }
+    val orgPresence = rememberOrganizationPresence(model)
     Column(modifier) {
         Row(Modifier.fillMaxWidth().padding(start = 8.dp, end = 4.dp, top = 6.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
             if (state.viewingArchive) ActionIcon("Back to inbox", Icons.AutoMirrored.Outlined.ArrowBack, tint = p.accent) { store.showArchive(false) }
@@ -383,7 +388,8 @@ private fun InboxList(state: InboxState, store: InboxStore, model: InboxViewMode
             EmptyPane(if (state.filter.isNotEmpty()) "No matches" else if (state.viewingArchive) "Archive is empty" else "No conversations yet",
                 if (state.filter.isNotEmpty()) "Try a name or address." else "Your conversations will appear here.", Modifier.weight(1f))
         } else LazyColumn(Modifier.weight(1f)) {
-            model.groups?.let { gs -> groupRows(groups, state, gs, phone = true, invitesOpen = invitesOpen, toggleInvites = { invitesOpen = !invitesOpen }, open = model::openGroup) }
+            model.groups?.let { gs -> groupRows(groups, state, gs, phone = true, invitesOpen = invitesOpen, toggleInvites = { invitesOpen = !invitesOpen }, open = model::openGroup,
+                company = orgPresence.badges[state.acting?.address], browseRooms = model::openOrganizationRooms.takeIf { "orgs" in state.features && model.organizationRooms != null }) }
             items(state.visible, key = { it.peer }) { conversation ->
                 ConversationRow(conversation, false, phone = true) { openPeer(conversation.peer) }
             }

@@ -19,7 +19,7 @@ interface OrganizationRoomApi {
 }
 
 /** Reuses the existing accepted-login transport and MLS routes, without weaker encryption. */
-class OrganizationRoomClient(private val transport: GroupTransport) : OrganizationRoomApi {
+class OrganizationRoomClient(private val transport: GroupTransport) : OrganizationRoomApi, OrganizationDirectoryApi {
     private fun bad(): Nothing = throw ApiException(200, "bad_response")
     private fun checked(value: String): String { require(OrganizationRoomInput.identifier(value)) { "Invalid room or organization." }; return value }
     private fun path(group: String, suffix: String = "") = "/v1/groups/" + checked(group) + suffix
@@ -48,6 +48,15 @@ class OrganizationRoomClient(private val transport: GroupTransport) : Organizati
         return accepted {
             val result = decode<OrganizationRoomDirectory>(json(mailbox, "GET", "/v1/rooms?org_id=$org&q=" + URLEncoder.encode(search, "UTF-8"))).rooms
             if (result.size > 50 || result.any { !it.valid } || result.map { it.id }.distinct().size != result.size) bad()
+            result
+        }
+    }
+    override suspend fun directory(mailbox: String, organizationId: String, query: String): List<OrganizationDirectoryEntry> {
+        val org = checked(organizationId)
+        require(OrganizationRoomInput.text(query, 80)) { "Use at most 80 characters to search." }
+        return accepted {
+            val result = decode<OrganizationDirectoryAnswer>(json(mailbox, "GET", "/v1/orgs/$org/directory?q=" + URLEncoder.encode(query, "UTF-8") + "&limit=20")).entries
+            if (result.size > 50 || result.any { !it.valid }) bad()
             result
         }
     }

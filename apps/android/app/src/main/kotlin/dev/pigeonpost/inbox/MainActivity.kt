@@ -177,9 +177,18 @@ class MainActivity : ComponentActivity() {
             intent.getStringExtra("push_identity")?.let { put("identity", it) }
             intent.getStringExtra("push_type")?.let { put("type", it) }
             for (key in listOf("calendar_event_id", "calendar_occurrence_id")) intent.getStringExtra(key)?.let { put(key, it) }
+            // An answer is sent once, from the tap itself; reopening the app from Recents never repeats it.
+            if (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY == 0)
+                intent.getStringExtra(dev.pigeonpost.core.calendar.CalendarNotice.ANSWER)?.let { put(dev.pigeonpost.core.calendar.CalendarNotice.ANSWER, it) }
             val legacy = intent.data?.takeIf { it.scheme == "pigeonpost-notification" }?.lastPathSegment
             (intent.getStringExtra("push_message_id") ?: legacy)?.let { put("message_id", it) }
         }
+        // An action button does not dismiss its notification by itself.
+        intent.getStringExtra("calendar_notification")?.takeIf { it.startsWith("calendar:") && it.length <= 80 }?.let {
+            androidx.core.app.NotificationManagerCompat.from(this).cancel(it, 1)
+        }
+        if (intent.hasExtra(dev.pigeonpost.core.calendar.CalendarNotice.ANSWER) && intent === this.intent)
+            setIntent(Intent(intent).apply { removeExtra(dev.pigeonpost.core.calendar.CalendarNotice.ANSWER) })
         if (dev.pigeonpost.core.calendar.CalendarNotice.matches(payload)) model.openCalendarNotice(payload)
         else model.openNotification(intent.getStringExtra("push_identity"), intent.getStringExtra("push_peer"))
     }

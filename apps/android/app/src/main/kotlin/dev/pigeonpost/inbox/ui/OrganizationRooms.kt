@@ -7,6 +7,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.material.icons.outlined.Business
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.pigeonpost.core.InboxState
 import dev.pigeonpost.core.enterprise.*
@@ -188,3 +190,16 @@ internal fun OrganizationRoomsDialog(model: InboxViewModel, inbox: InboxState, s
         }
     }
 }
+
+/** SDS §5.4: the org name and the member's role, shown on an org mailbox and on the profile. */
+@Composable
+internal fun OrganizationBadgeLine(badge: OrganizationBadge, address: String, modifier: Modifier = Modifier) {
+    Row(modifier.testTag("orgBadge:$address"), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Outlined.Business, null, Modifier.size(13.dp), tint = Pp.colors.secondary)
+        Text(badge.label, style = geist(12.sp), color = Pp.colors.secondary, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+    }
+}
+
+@Composable
+internal fun rememberOrganizationPresence(model: InboxViewModel?): OrganizationPresenceState =
+    (model?.organizationPresence?.state ?: remember { MutableStateFlow(OrganizationPresenceState()) }).collectAsStateWithLifecycle().value

@@ -38,6 +38,7 @@ import dev.pigeonpost.core.calendar.CalendarAttemptStorage
 import dev.pigeonpost.core.calendar.CalendarStore
 import dev.pigeonpost.core.calendar.CalendarTransport
 import dev.pigeonpost.core.calendar.CalendarNotice
+import dev.pigeonpost.core.calendar.CalendarAnswerScope
 import dev.pigeonpost.core.calendar.CalendarEventKey
 import dev.pigeonpost.core.calendar.CalendarMeetingApi
 import dev.pigeonpost.core.calendar.CalendarMeetingCode
@@ -51,6 +52,8 @@ import dev.pigeonpost.core.enterprise.OrganizationRoomClient
 import dev.pigeonpost.core.enterprise.OrganizationRoomIdentity
 import dev.pigeonpost.core.enterprise.OrganizationRoomOpening
 import dev.pigeonpost.core.enterprise.OrganizationRoomStore
+import dev.pigeonpost.core.enterprise.OrganizationPresenceStore
+import dev.pigeonpost.core.enterprise.OrganizationDirectoryApi
 import dev.pigeonpost.core.contacts.PeopleApi
 import dev.pigeonpost.core.contacts.PeopleClient
 import dev.pigeonpost.core.contacts.PeopleIdentity
@@ -175,6 +178,14 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
             "orgs" in inboxState.features && "groups" in inboxState.features && groups?.state?.value?.unavailable != true)
             OrganizationRoomIdentity(subject, grant, mailbox) else null
     }, onSessionExpired = { expected -> viewModelScope.launch { if (session.authorizationLease === expected) signOut() } }) }
+    /** §5.4: the org name on an org mailbox, the member's role, and org addresses while composing. */
+    val organizationPresence = graph.organizationRoomApi?.let { api -> OrganizationPresenceStore(api, api as? OrganizationDirectoryApi, viewModelScope, identity = {
+        val state = session.state.value; val grant = session.authorizationLease; val inboxState = inbox.state.value
+        val subject = state.subject; val mailbox = inboxState.acting?.address
+        if (!state.loading && state.signedIn && state.termsAccepted && !subject.isNullOrEmpty() && mailbox != null &&
+            grant?.isValid == true && grant.id == state.authorizationId && activation.value?.authorizationId == state.authorizationId && "orgs" in inboxState.features)
+            OrganizationRoomIdentity(subject, grant, mailbox) else null
+    }) }
     val handles = HandleStore(graph.api, storeScope,
         onRegistered = { inbox.loadAccount(); accountHandles?.refresh() }, onSessionExpired = { signOut() })
     val accountHandles = (graph.api as? AccountHandleApi)?.let { AccountHandleStore(it, storeScope, onSessionExpired = { signOut() }) }
@@ -204,7 +215,7 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
     val crop = cropping.asStateFlow()
     init {
         graph.start(viewModelScope)
-        viewModelScope.launch { session.state.collect { deviceApproval?.synchronize(); organizationRooms?.synchronize(); people?.synchronize() } }
+        viewModelScope.launch { session.state.collect { deviceApproval?.synchronize(); organizationRooms?.synchronize(); organizationPresence?.synchronize(); people?.synchronize() } }
         dev.pigeonpost.inbox.push.PushNotifications.groupPoke = { groups?.poke() }
         PushNotifications.calendarPoke = { viewModelScope.launch { calendar?.refresh() } }
         viewModelScope.launch {
@@ -219,6 +230,7 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
                 if (meetingNotes?.state?.value?.enabled != true) notesPage.value = false
                 meetingLookup?.onMailbox(target?.address)
                 organizationRooms?.synchronize()
+                organizationPresence?.synchronize()
                 people?.synchronize()
                 if (roomPage.value && organizationRooms?.isCurrent() == true && organizationRooms.state.value.catalog == null)
                     organizationRooms.loadOrganizations()
@@ -486,6 +498,9 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
                 if (!current() || actor.mailbox != notice.mailbox || inbox.state.value.acting?.address != notice.mailbox ||
                     calendar.state.value.contextId != actor.contextId) return@launch
                 openCalendar(); calendar.refresh(); notice.event?.let(calendar::openEvent)
+                // Accept or Decline tapped on the invitation's notification: send it now, under this sign-in.
+                val answer = notice.answer; val event = notice.event
+                if (answer != null && event != null) calendar.rsvp(event, answer, CalendarAnswerScope.ALL, actor.contextId)
             } finally { if (visit == calendarNoticeId) calendar.noticeWaiting(false) }
         }
     }

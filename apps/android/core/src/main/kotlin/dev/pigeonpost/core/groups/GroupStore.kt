@@ -659,6 +659,21 @@ class GroupStore(
         refresh()
     }
 
+    /** `DELETE /v1/groups/{id}/bans/{address}` (admins): the person may be invited or join again. Nobody is added. */
+    fun unban(gid: String, member: GroupMember) = act { c ->
+        c.transport.groupJson(c.mailbox, "DELETE", gpath(gid, "/bans/" + enc(member.address)))
+        note("Unbanned. They can be invited or join again.")
+        loadMembers(gid)
+    }
+
+    /** `GET /v1/rooms`: listed public groups, outside any organization. Joining still goes through the preview. */
+    suspend fun publicGroups(query: String): List<PublicGroup> {
+        val c = client ?: return emptyList()
+        val q = query.trim().take(80)
+        val rows = WireJson.decodeFromString<PublicGroups>(c.transport.groupJson(c.mailbox, "GET", "/v1/rooms?q=" + enc(q))).rooms
+        return rows.filter { it.valid }.take(50)
+    }
+
     fun invite(gid: String, raw: String) = act { c ->
         val list = raw.split(Regex("[\\s,]+")).filter { it.isNotBlank() }.map { if (it.startsWith('/')) it else "/$it" }.filter { validAddress(it) }
         if (list.isEmpty()) { note("Enter an address such as /alp/main."); return@act }

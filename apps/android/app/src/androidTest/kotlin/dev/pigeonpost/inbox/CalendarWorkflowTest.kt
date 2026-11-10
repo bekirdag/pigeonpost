@@ -24,6 +24,9 @@ class CalendarWorkflowTest {
             shown("Inbox")
             ui.waitUntil(10_000) { ui.onAllNodes(hasTestTag("tab:calendar") or hasTestTag("sidebar:calendar")).fetchSemanticsNodes().isNotEmpty() }
             ui.onNode(hasTestTag("tab:calendar") or hasTestTag("sidebar:calendar")).performClick()
+            // Tablets open on the week grid; these workflows use the day list.
+            ui.waitUntil(10_000) { ui.onAllNodesWithTag("calendar:view:agenda").fetchSemanticsNodes().isNotEmpty() }
+            ui.onNodeWithTag("calendar:view:agenda").performClick()
             shown("Planning review")
             return scenario
         } catch (failure: Throwable) { scenario.close(); throw failure }
@@ -168,6 +171,31 @@ class CalendarWorkflowTest {
             ui.onNodeWithContentDescription("Close New event").performClick()
             shown("Discard this draft?"); ui.onNodeWithText("Discard draft").performClick()
             shown("/k/demoagent"); shown("No events on this day.")
+        }
+    }
+    @Test fun dayAndWeekGridsPlaceTodaysEventsAndShowTheCurrentTime() {
+        launch().use {
+            ui.onNodeWithTag("calendar:view:day").performClick()
+            ui.onNodeWithTag("calendar:grid").assertExists()
+            ui.onNodeWithTag("calendar:now").assertExists()
+            ui.onNodeWithTag("calendar:block:evt_review").performScrollTo().performClick(); shown("A native calendar workflow")
+            ui.onNodeWithContentDescription("Close Event").performClick()
+            ui.onNodeWithTag("calendar:view:week").performClick()
+            ui.onAllNodes(hasTestTag("calendar:column:" + java.time.LocalDate.now(java.time.ZoneId.of("Europe/Istanbul")))).assertCountEquals(1)
+            ui.onNodeWithTag("calendar:now").assertExists()
+            ui.onNodeWithTag("calendar:block:evt_review").performScrollTo().assertIsDisplayed()
+            ui.onNodeWithContentDescription("Next week").performClick()
+            ui.waitUntil(10_000) { ui.onAllNodesWithTag("calendar:now").fetchSemanticsNodes().isEmpty() }
+            ui.onAllNodesWithTag("calendar:block:evt_review").assertCountEquals(0)
+            ui.onNode(hasText("Today") and hasClickAction()).performClick()
+            ui.waitUntil(10_000) { ui.onAllNodesWithTag("calendar:block:evt_review").fetchSemanticsNodes().isNotEmpty() }
+        }
+    }
+    @Test fun anAcceptTappedOnTheInvitationNotificationAnswersAndOpensTheEvent() {
+        launch().use { scenario ->
+            scenario.onActivity { it.startActivity(notice(event = "evt_invited").putExtra("calendar_occurrence_id", null as String?)
+                .putExtra("push_message_id", "cal:evt_invited:invite").putExtra("calendar_answer", "accepted")) }
+            shown("Your answer: accepted")
         }
     }
 }

@@ -37,6 +37,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -83,7 +84,8 @@ private fun previewOf(history: List<HistoryItem>, me: String?, name: (String?) -
 }
 
 /** Groups sit beside direct conversations: pending invitations first, then the groups themselves. */
-fun LazyListScope.groupRows(groups: GroupsState, inbox: InboxState, store: GroupStore, phone: Boolean, invitesOpen: Boolean, toggleInvites: () -> Unit, open: (String) -> Unit) {
+fun LazyListScope.groupRows(groups: GroupsState, inbox: InboxState, store: GroupStore, phone: Boolean, invitesOpen: Boolean, toggleInvites: () -> Unit, open: (String) -> Unit,
+    company: dev.pigeonpost.core.enterprise.OrganizationBadge? = null, browseRooms: (() -> Unit)? = null) {
     if (!groups.enabled) return
     val filter = inbox.filter.trim()
     val invitations = groups.invitations
@@ -100,7 +102,24 @@ fun LazyListScope.groupRows(groups: GroupsState, inbox: InboxState, store: Group
         if (invitesOpen) items(invitations, key = { "invite:" + it.id }) { g -> InvitationCard(g, groups, inbox, store) }
     }
     val rows = groups.joined.filter { !inbox.viewingArchive && (filter.isEmpty() || it.name.contains(filter, true)) }
-    items(rows, key = { "group:" + it.id }) { g -> GroupRow(g, groups, inbox, phone) { open(g.id) } }
+    // SDS §5.4: org rooms sit under a Company section with a way to browse the rest.
+    val (rooms, personal) = rows.partition { it.orgId != null }
+    items(personal, key = { "group:" + it.id }) { g -> GroupRow(g, groups, inbox, phone) { open(g.id) } }
+    if (!inbox.viewingArchive && (rooms.isNotEmpty() || company != null && browseRooms != null && filter.isEmpty())) {
+        item(key = "company-section") { CompanyHeader(company?.name, phone, browseRooms) }
+        items(rooms, key = { "group:" + it.id }) { g -> GroupRow(g, groups, inbox, phone) { open(g.id) } }
+    }
+}
+
+@Composable
+private fun CompanyHeader(organization: String?, phone: Boolean, browse: (() -> Unit)?) {
+    val p = Pp.colors
+    Row(Modifier.fillMaxWidth().padding(start = if (phone) 16.dp else 18.dp, end = 8.dp, top = 10.dp).testTag("section:company"),
+        verticalAlignment = Alignment.CenterVertically) {
+        Text("COMPANY", Modifier.weight(1f).semantics { heading(); contentDescription = organization?.let { "Company, $it" } ?: "Company" }, style = geist(11.sp, FontWeight.SemiBold).copy(letterSpacing = 0.6.sp),
+            color = p.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (browse != null) TextButton(browse, modifier = Modifier.testTag("company:browse")) { Text("Browse rooms", style = geist(13.sp, FontWeight.Medium)) }
+    }
 }
 
 @Composable
@@ -156,7 +175,7 @@ private fun GroupRow(g: Group, groups: GroupsState, inbox: InboxState, phone: Bo
 
 /** New group: who, name, and settings with sensible defaults (SDS §4.2). */
 @Composable
-fun NewGroupDialog(inbox: InboxState, groups: GroupsState, store: GroupStore, opened: (String) -> Unit = {}, dismiss: () -> Unit) {
+fun NewGroupDialog(inbox: InboxState, groups: GroupsState, store: GroupStore, opened: (String) -> Unit = {}, browse: (() -> Unit)? = null, dismiss: () -> Unit) {
     val p = Pp.colors
     var who by rememberSaveable { mutableStateOf("") }
     var chips by rememberSaveable { mutableStateOf(listOf<String>()) }
@@ -176,6 +195,9 @@ fun NewGroupDialog(inbox: InboxState, groups: GroupsState, store: GroupStore, op
     }
     PageDialog("New group", dismiss) {
         Text("Sending as ${inbox.acting?.name ?: ""}", style = geist(13.sp), color = p.secondary)
+        if (browse != null) TextButton(browse, Modifier.testTag("groups:browsePublic")) {
+            Icon(Icons.Outlined.TravelExplore, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Browse public groups")
+        }
         Text("Who", style = geist(14.5.sp, FontWeight.Medium), color = p.ink)
         if (chips.isNotEmpty()) FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             chips.forEach { chip -> InputChip(false, { chips = chips - chip }, { Text(chip, style = geistMono(12.5.sp)) },
@@ -554,6 +576,17 @@ fun GroupInfoDialog(groups: GroupsState, inbox: InboxState, store: GroupStore, d
             }
             if (g.admin && members.any { it.state == "invited" }) Text("Invited people appear here until they answer. Revoke takes the invitation back.", style = geist(12.sp), color = p.muted)
         }
+        val banned = members.filter { it.state == "banned" }
+        if (g.admin && banned.isNotEmpty()) Section("Banned (${banned.size})") {
+            banned.forEach { m ->
+                Row(Modifier.fillMaxWidth().testTag("banned:" + m.address), verticalAlignment = Alignment.CenterVertically) {
+                    Text(name(m.address), Modifier.weight(1f), style = geist(14.sp), color = p.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    TextButton({ confirm = "Unban ${name(m.address)}? They are not added back; they can be invited again, or join a public group." to { store.unban(g.id, m) } },
+                        enabled = !groups.busy, modifier = Modifier.testTag("unban:" + m.address)) { Text("Unban") }
+                }
+            }
+            Text("Banned people cannot join, even with a link, until an admin unbans them.", style = geist(12.sp), color = p.muted)
+        }
         if (g.admin && g.joinPolicy == "public") Section("Invite link") {
             Text(if (g.hasLink) "Anyone with the current link can join. Resetting makes the old link stop working." else "Create a link anyone can use to join this public group.",
                 style = geist(13.sp), color = p.secondary)
@@ -572,6 +605,9 @@ fun GroupInfoDialog(groups: GroupsState, inbox: InboxState, store: GroupStore, d
             Choice(listOf("private" to "Private — invite only", "public" to "Public — anyone with the link"), g.joinPolicy) { store.patch(g.id, mapOf("join_policy" to JsonPrimitive(it))) }
             Text("Who can post", style = geist(13.5.sp, FontWeight.Medium), color = p.ink)
             Choice(listOf("everyone" to "Everyone", "admins" to "Only admins"), g.postPolicy) { store.patch(g.id, mapOf("post_policy" to JsonPrimitive(it))) }
+            if (g.joinPolicy == "public" && g.orgId == null) SwitchRow("List in public groups", g.visibility == "listed") {
+                store.patch(g.id, mapOf("visibility" to JsonPrimitive(if (it) "listed" else "unlisted")))
+            }
             SwitchRow("Members can add people", g.membersCanInvite) { store.patch(g.id, mapOf("members_can_invite" to JsonPrimitive(it))) }
             if (groups.disappearing) SwitchRow("Members can change the timer", g.membersCanChangeTimer) { store.patch(g.id, mapOf("members_can_change_timer" to JsonPrimitive(it))) }
             if (Features.STREAMING in groups.features) {
@@ -725,4 +761,35 @@ fun GoLiveDialog(groupName: String, dismiss: () -> Unit, start: (String) -> Unit
         },
         confirmButton = { TextButton({ clean?.let(start) }, enabled = clean != null, modifier = Modifier.testTag("goLiveStart")) { Text("Go live") } },
         dismissButton = { TextButton(dismiss) { Text("Cancel") } })
+}
+
+/** Listed public groups (`GET /v1/rooms`). Choosing one opens the same preview as an invite link; nothing is joined from the list. */
+@Composable
+fun PublicGroupsDialog(groups: GroupsState, store: GroupStore, openGroup: (String) -> Unit, dismiss: () -> Unit) {
+    val p = Pp.colors
+    var query by rememberSaveable { mutableStateOf("") }
+    var rows by remember { mutableStateOf<List<dev.pigeonpost.core.groups.PublicGroup>?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(query, groups.contextId) {
+        kotlinx.coroutines.delay(if (query.isEmpty()) 0 else 300)
+        try { rows = store.publicGroups(query); error = null }
+        catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+        catch (failure: Exception) { error = dev.pigeonpost.core.groups.explainGroupError(failure); rows = emptyList() }
+    }
+    PageDialog("Public groups", dismiss) {
+        OutlinedTextField(query, { query = it.take(80) }, Modifier.fillMaxWidth().testTag("publicGroups:search"), singleLine = true, label = { Text("Search") })
+        error?.let { Text(it, color = p.heldText, style = geist(13.sp)) }
+        val list = rows
+        when {
+            list == null -> CircularProgressIndicator(Modifier.size(24.dp))
+            list.isEmpty() && error == null -> Text(if (query.isBlank()) "No public groups are listed yet." else "No public groups match.", color = p.secondary)
+            else -> list.forEach { g ->
+                ListItem(headlineContent = { Text(g.name) }, supportingContent = {
+                    Text(listOfNotNull(g.description?.takeIf { it.isNotBlank() }, "${g.memberCount} ${if (g.memberCount == 1) "member" else "members"}", "Joined".takeIf { g.member }).joinToString(" · "), maxLines = 2)
+                }, leadingContent = { GroupAvatar(g.id, g.name, 38.dp) },
+                    modifier = Modifier.testTag("publicGroup:" + g.id).clickable { if (g.member) openGroup(g.id) else store.resolveJoin(g.id, null); dismiss() })
+            }
+        }
+        Text("Listed groups are public. Anyone signed in can find them and join.", style = geist(12.sp), color = p.muted)
+    }
 }

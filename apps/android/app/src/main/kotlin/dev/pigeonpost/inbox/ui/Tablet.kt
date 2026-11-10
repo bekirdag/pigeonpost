@@ -101,6 +101,7 @@ private fun Sidebar(state: InboxState, store: InboxStore, model: InboxViewModel,
     val p = Pp.colors
     var searching by rememberSaveable { mutableStateOf(false) }
     var invitesOpen by rememberSaveable { mutableStateOf(true) }
+    val orgPresence = rememberOrganizationPresence(model)
     if (state.leftView == LeftView.CALLS) {
         CallsPane(state, store, modifier, phone = false, open = openPeer, callBack = { key, video -> openPeer(key); model.calls?.call(key, video) },
             back = { store.showView(LeftView.INBOX) })
@@ -123,7 +124,7 @@ private fun Sidebar(state: InboxState, store: InboxStore, model: InboxViewModel,
             ActionIcon("Settings", Icons.Outlined.Settings, action = settings)
         }
         Seam(Modifier.fillMaxWidth().height(1.dp))
-        MailboxSwitcher(state, username, switching, { switching = !switching }) { mailbox -> switching = false; if (mailbox.address != state.acting?.address) store.switchMailbox(mailbox) }
+        MailboxSwitcher(state, username, switching, { switching = !switching }, orgPresence.badges) { mailbox -> switching = false; if (mailbox.address != state.acting?.address) store.switchMailbox(mailbox) }
         if (groups.enabled && "orgs" in state.features && model.organizationRooms != null) Row(Modifier.padding(horizontal = 8.dp).fillMaxWidth().clip(RoundedCornerShape(9.dp))
             .clickable(onClick = model::openOrganizationRooms).padding(horizontal = 10.dp, vertical = 12.dp).testTag("sidebar:organizationRooms"),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -162,7 +163,8 @@ private fun Sidebar(state: InboxState, store: InboxStore, model: InboxViewModel,
         if (state.visible.isEmpty() && !hasGroups && filtered == 0) EmptyPane(if (state.filter.isNotEmpty()) "No matches" else if (state.viewingArchive) "Archive is empty" else "No conversations yet",
             if (state.filter.isNotEmpty()) "Try a name or address." else "Your conversations will appear here.", Modifier.weight(1f))
         else LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(vertical = 2.dp)) {
-            model.groups?.let { gs -> groupRows(groups, state, gs, phone = false, invitesOpen = invitesOpen, toggleInvites = { invitesOpen = !invitesOpen }, open = model::openGroup) }
+            model.groups?.let { gs -> groupRows(groups, state, gs, phone = false, invitesOpen = invitesOpen, toggleInvites = { invitesOpen = !invitesOpen }, open = model::openGroup,
+                company = orgPresence.badges[state.acting?.address], browseRooms = model::openOrganizationRooms.takeIf { "orgs" in state.features && model.organizationRooms != null }) }
             items(state.visible, key = { it.peer }) { conversation ->
                 ConversationRow(conversation, conversation.peer == state.selectedPeer && groups.open == null, phone = false) { openPeer(conversation.peer) }
             }
@@ -178,7 +180,8 @@ private fun Sidebar(state: InboxState, store: InboxStore, model: InboxViewModel,
 
 /** Which mailbox is being read, and the way to change it: a card that opens a list inside the column. */
 @Composable
-private fun MailboxSwitcher(state: InboxState, username: String?, open: Boolean, toggle: () -> Unit, select: (Mailbox) -> Unit) {
+private fun MailboxSwitcher(state: InboxState, username: String?, open: Boolean, toggle: () -> Unit,
+    badges: Map<String, dev.pigeonpost.core.enterprise.OrganizationBadge> = emptyMap(), select: (Mailbox) -> Unit) {
     val p = Pp.colors
     val acting = state.acting ?: return
     val many = state.mailboxes.size > 1
@@ -190,6 +193,7 @@ private fun MailboxSwitcher(state: InboxState, username: String?, open: Boolean,
         Column(Modifier.weight(1f)) {
             Text("MAILBOX", style = geist(10.5.sp, FontWeight.Medium).copy(letterSpacing = 0.6.sp), color = p.muted)
             Text(acting.name, style = geistMono(13.sp, FontWeight.Medium), color = p.ink, maxLines = 1, overflow = TextOverflow.MiddleEllipsis)
+            badges[acting.address]?.let { OrganizationBadgeLine(it, acting.address) }
         }
         if (many) Icon(Icons.Outlined.ExpandMore, null, Modifier.size(20.dp).rotate(if (open) 180f else 0f), tint = p.secondary)
     }
@@ -201,7 +205,10 @@ private fun MailboxSwitcher(state: InboxState, username: String?, open: Boolean,
                     .clickable { select(mailbox) }.semantics { selected = current }.testTag("mailbox:" + mailbox.address)
                     .padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Avatar(mailbox.key, mailbox.name, 24.dp)
-                    Text(mailbox.name, Modifier.weight(1f), style = geistMono(12.5.sp), color = p.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Column(Modifier.weight(1f)) {
+                        Text(mailbox.name, style = geistMono(12.5.sp), color = p.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        badges[mailbox.address]?.let { OrganizationBadgeLine(it, mailbox.address) }
+                    }
                     if (current) Icon(Icons.Outlined.Check, "Selected", Modifier.size(14.dp), tint = p.accent)
                 }
                 CopyAddressButton(mailbox.key)

@@ -147,4 +147,38 @@ class GroupsUiTest {
             assertTrue(ui.onAllNodesWithText("Gone in an hour").fetchSemanticsNodes().isNotEmpty())
         }
     }
+
+    /** Audit P3-6: an admin sees whom they banned and can unban them; a public group can be listed and found. */
+    @Test fun anAdminUnbansAMemberAndListsThePublicGroup() {
+        launch().use {
+            text("Garden club")
+            newGroup()
+            ui.onNodeWithTag("groupWho").performTextInput("/bob/main")
+            ui.onNodeWithText("Add").performClick()
+            ui.onNodeWithTag("groupName").performTextInput("Ban review")
+            ui.onNodeWithText("Public — anyone with the link").performScrollTo().performClick()
+            ui.onNodeWithTag("createGroup").performScrollTo().performClick()
+            tag("groupPane")
+            text(" joined", 60_000)
+            ui.onNodeWithContentDescription("Group info").performClick()
+            text("Members (2)")
+            ui.onAllNodesWithContentDescription("Actions for ", substring = true).filter(hasContentDescription("bob", substring = true, ignoreCase = true))[0].performScrollTo().performClick()
+            ui.onNodeWithText("Remove and ban").performClick(); ui.onNodeWithText("Confirm").performClick()
+            dumped { ui.waitUntil(30_000) { ui.onAllNodes(hasTestTagPrefix("unban:")).fetchSemanticsNodes().isNotEmpty() } }
+            text("Banned (1)")
+            ui.onAllNodes(hasTestTagPrefix("unban:"))[0].performScrollTo().performClick(); ui.onNodeWithText("Confirm").performClick()
+            dumped { ui.waitUntil(30_000) { ui.onAllNodes(hasTestTagPrefix("unban:")).fetchSemanticsNodes().isEmpty() } }
+            ui.onAllNodesWithText("Banned (", substring = true).assertCountEquals(0)
+
+            ui.onNodeWithText("List in public groups").performScrollTo().performClick()
+            text("Saved.")
+            ui.onNodeWithContentDescription("Close Group info").performClick()
+            if (!wideLayout()) ui.onNodeWithContentDescription("Back to conversations").performClick()
+            newGroup()
+            ui.onNodeWithTag("groups:browsePublic").performClick()
+            ui.onNodeWithTag("publicGroups:search").performTextInput("ban rev")
+            dumped { ui.waitUntil(30_000) { ui.onAllNodes(hasTestTagPrefix("publicGroup:")).fetchSemanticsNodes().isNotEmpty() } }
+            ui.onNode(hasTestTagPrefix("publicGroup:")).assert(hasText("Joined", substring = true))
+        }
+    }
 }

@@ -1,9 +1,11 @@
 package dev.pigeonpost.core.calendar
 
 /** Untrusted FCM locators only. No title, token, organizer or role grants member authority. */
-class CalendarNotice private constructor(val mailbox: String, val event: CalendarEventKey?) {
-    override fun toString() = "CalendarNotice(hasEvent=${event != null})"
+class CalendarNotice private constructor(val mailbox: String, val event: CalendarEventKey?, val invitation: Boolean, val answer: CalendarAnswer?) {
+    override fun toString() = "CalendarNotice(hasEvent=${event != null}, invitation=$invitation, answer=${answer != null})"
     companion object {
+        /** The extra a notification action sets on the intent it opens. */
+        const val ANSWER = "calendar_answer"
         fun matches(data: Map<String, String>) = data["type"] == "calendar" || data["message_id"]?.startsWith("cal:") == true
         private fun ascii(value: String) = Regex("[A-Za-z0-9_]+").matches(value)
         private fun locator(value: String?, prefix: String) = value != null && value.startsWith(prefix) && value.length in (prefix.length + 1)..80 && ascii(value)
@@ -16,7 +18,11 @@ class CalendarNotice private constructor(val mailbox: String, val event: Calenda
             val occurrence = data["calendar_occurrence_id"]
             val key = if (locator(event, "evt_") && (occurrence == null || locator(occurrence, "occ_"))) CalendarEventKey(event!!, occurrence) else null
             // A malformed or legacy locator opens Calendar, never guesses an event from message_id.
-            return CalendarNotice(mailbox, key)
+            // Invitations (`cal:<event>:invite`) offer Accept and Decline. The answer comes from the person's
+            // tap on this device's own notification action, never from the push itself.
+            val invitation = key != null && key.occurrenceId == null && data["message_id"] == "cal:${key.eventId}:invite"
+            val answer = data[ANSWER]?.takeIf { invitation }?.let { wire -> CalendarAnswer.entries.firstOrNull { it.wire == wire && it != CalendarAnswer.TENTATIVE } }
+            return CalendarNotice(mailbox, key, invitation, answer)
         }
     }
 }

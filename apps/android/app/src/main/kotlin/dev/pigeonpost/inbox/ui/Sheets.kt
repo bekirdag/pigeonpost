@@ -54,10 +54,16 @@ fun Confirm(title: String, detail: String, action: String, confirm: () -> Unit, 
 }
 
 @Composable
-fun MailboxDialog(state: InboxState, select: (Mailbox) -> Unit, dismiss: () -> Unit, username: String? = null) {
+fun MailboxDialog(state: InboxState, select: (Mailbox) -> Unit, dismiss: () -> Unit, username: String? = null,
+    badges: Map<String, dev.pigeonpost.core.enterprise.OrganizationBadge> = emptyMap()) {
     PageDialog("Your inboxes", dismiss) {
         orderedMailboxes(state.mailboxes, username).forEach { mailbox ->
-            ListItem(headlineContent = { Text(mailbox.name, style = geistMono(14.sp, FontWeight.Medium)) }, supportingContent = { Text(mailbox.key, style = geistMono(12.sp)) }, leadingContent = { Avatar(mailbox.key, mailbox.name) },
+            ListItem(headlineContent = { Text(mailbox.name, style = geistMono(14.sp, FontWeight.Medium)) }, supportingContent = {
+                Column {
+                    Text(mailbox.key, style = geistMono(12.sp))
+                    badges[mailbox.address]?.let { OrganizationBadgeLine(it, mailbox.address) }
+                }
+            }, leadingContent = { Avatar(mailbox.key, mailbox.name) },
                 colors = ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent),
                 trailingContent = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -69,12 +75,22 @@ fun MailboxDialog(state: InboxState, select: (Mailbox) -> Unit, dismiss: () -> U
     }
 }
 @Composable
-fun NewConversationDialog(state: InboxState, select: (String) -> Unit, dismiss: () -> Unit) {
+fun NewConversationDialog(state: InboxState, select: (String) -> Unit, dismiss: () -> Unit,
+    organization: dev.pigeonpost.core.enterprise.OrganizationBadge? = null,
+    directory: List<dev.pigeonpost.core.enterprise.OrganizationDirectoryEntry> = emptyList(), search: (String) -> Unit = {}) {
     var address by rememberSaveable { mutableStateOf("/") }
     PageDialog("New conversation", dismiss) {
-        OutlinedTextField(address, { address = conversationAddressInput(it).take(512) }, Modifier.fillMaxWidth().testTag("newConversationAddress"), label = { Text("Pigeonpost address") }, placeholder = { Text("/your-team/agent") }, singleLine = true,
+        OutlinedTextField(address, { address = conversationAddressInput(it).take(512); search(address) }, Modifier.fillMaxWidth().testTag("newConversationAddress"), label = { Text("Pigeonpost address") }, placeholder = { Text("/your-team/agent") }, singleLine = true,
             isError = address.length > 1 && !validAddress(address), supportingText = { Text("Enter a handle or an inbox address, such as /bekir.") })
         Button({ select(address) }, enabled = validAddress(address), modifier = Modifier.fillMaxWidth()) { Text("Open conversation") }
+        // SDS §5.4: org addresses autocomplete while an org mailbox is in use.
+        if (organization != null && directory.isNotEmpty()) {
+            Text("In ${organization.name}", style = MaterialTheme.typography.titleSmall)
+            directory.forEach { entry ->
+                ListItem(headlineContent = { Text(entry.title) }, supportingContent = { Text(if (entry.kind == "agent") entry.handle + " · Agent" else entry.handle) },
+                    leadingContent = { Avatar(entry.handle, entry.title) }, modifier = Modifier.testTag("directory:" + entry.handle).clickable { select(entry.handle) })
+            }
+        }
         val own = state.mailboxes.filter { it.address != state.acting?.address }
         if (own.isNotEmpty()) {
             Text("Your agents", style = MaterialTheme.typography.titleSmall)
@@ -165,6 +181,8 @@ fun SettingsDialog(state: InboxState, session: SessionState, fixtures: Boolean, 
                 Text(session.username ?: "Your account", style = MaterialTheme.typography.titleLarge)
                 Text("Current inbox", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 state.acting?.let { PostAddressRow(it.key) }
+                val presence = rememberOrganizationPresence(model)
+                state.acting?.let { acting -> presence.badges[acting.address]?.let { OrganizationBadgeLine(it, acting.address) } }
                 HorizontalDivider()
                 OutlinedButton(signOut, Modifier.fillMaxWidth()) { Text("Sign out") }
                 TextButton({ openLink("https://pigeonpost.dev/delete-account.html") }) { Text("Delete account", color = MaterialTheme.colorScheme.error) }

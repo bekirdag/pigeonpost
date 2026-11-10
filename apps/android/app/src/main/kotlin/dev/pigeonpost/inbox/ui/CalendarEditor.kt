@@ -66,7 +66,7 @@ internal fun CalendarEventEditor(session: CalendarEditorSession, s: CalendarStat
                 if (m.admit == "delegated") CalendarField("Admitters (one handle or attendee ID per line)", m.admitters.joinToString("\n"), enabled, singleLine = false) { draft = draft.copy(meeting = m.copy(admitters = it.lines().map(String::trim).filter(String::isNotEmpty))) }
                 CalendarToggle("Allow people with the link to knock", m.allowKnock, enabled) { draft = draft.copy(meeting = m.copy(allowKnock = it)) }
                 CalendarToggle("Guests can see the participant list", m.guestsSeeList, enabled) { draft = draft.copy(meeting = m.copy(guestsSeeList = it)) }
-                CalendarChoice("Open before the start", m.joinBeforeMinutes.toString(), (0..10).map { it.toString() to "$it minutes" }, enabled) { draft = draft.copy(meeting = m.copy(joinBeforeMinutes = it.toInt())) }
+                CalendarChoice("Open before the start", m.joinBeforeMinutes.toString(), (listOf(0, 5, 10, 15, 20, 25, 30) + m.joinBeforeMinutes).distinct().sorted().map { it.toString() to if (it == 0) "At the start" else "$it minutes" }, enabled) { draft = draft.copy(meeting = m.copy(joinBeforeMinutes = it.toInt())) }
             }
             if (draft.target == null) {
                 CalendarField("Invitees (one handle or email per line)", draft.invitees.joinToString("\n") { it.destination }, enabled, singleLine = false) { draft = draft.copy(invitees = it.lines().map { line -> CalendarInviteeDraft(line) }) }

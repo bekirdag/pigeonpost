@@ -148,4 +148,40 @@ class OrganizationRoomsWorkflowTest {
             shown("Design room"); assertEquals(fixture.me, model.inbox.state.value.acting?.address); noDecisions()
         }
     }
+    /** SDS §5.4: the org shows inside the normal inbox: role on the profile, a Company section and org addresses. */
+    @Test fun theInboxShowsTheOrganizationRoleCompanySectionAndDirectory() {
+        launch().use {
+            ui.waitUntil(15_000) { model.organizationPresence!!.state.value.badges.containsKey(fixture.me) }
+            ui.onNodeWithContentDescription("Settings").performClick(); shown("Account")
+            ui.onNode(hasText("Account") and hasAnyAncestor(isDialog())).performClick()
+            shown("Example · People admin"); ui.onNodeWithTag("orgBadge:" + fixture.me).assertExists()
+            ui.onNodeWithContentDescription("Close Account").performClick()
+
+            ui.onNodeWithContentDescription("New conversation").performClick()
+            if (ui.onAllNodes(hasText("New conversation") and hasAnyAncestor(isPopup())).fetchSemanticsNodes().isNotEmpty())
+                ui.onNode(hasText("New conversation") and hasAnyAncestor(isPopup())).performClick()
+            ui.onNodeWithTag("newConversationAddress").performTextReplacement("/ay")
+            ui.waitUntil(10_000) { ui.onAllNodesWithTag("directory:/demo/ayla").fetchSemanticsNodes().isNotEmpty() }
+            shown("In Example"); ui.onNodeWithTag("directory:/demo/main").assertDoesNotExist() // never yourself
+            ui.onNodeWithTag("directory:/demo/ayla").performClick()
+            ui.waitUntil(10_000) { ui.onAllNodesWithTag("newConversationAddress").fetchSemanticsNodes().isEmpty() }
+            ui.waitUntil(10_000) { model.inbox.state.value.selectedPeer == "/demo/ayla" }
+            noDecisions()
+        }
+    }
+    @Test fun theCompanySectionBrowsesTheOrganizationRooms() {
+        launch().use {
+            ui.waitUntil(15_000) { model.organizationPresence!!.state.value.badges.containsKey(fixture.me) }
+            ui.waitUntil(10_000) { ui.onAllNodesWithTag("company:browse").fetchSemanticsNodes().isNotEmpty() }
+            ui.onNodeWithTag("section:company").assertExists()
+            ui.onNodeWithTag("company:browse").performClick()
+            ui.waitUntil(10_000) { model.organizationRoomsOpen.value }; shown("Design room"); noDecisions()
+        }
+    }
+    @Test fun withoutOrganizationsThereIsNoBadgeOrCompanySection() {
+        launch("org-rooms-off").use {
+            ui.onNodeWithTag("section:company").assertDoesNotExist(); ui.onAllNodesWithTag("orgBadge:" + fixture.me).assertCountEquals(0)
+            assertEquals(0, fixture.catalogGets.get())
+        }
+    }
 }

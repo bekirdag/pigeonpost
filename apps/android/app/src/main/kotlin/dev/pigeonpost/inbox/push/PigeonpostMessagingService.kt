@@ -80,14 +80,24 @@ private fun displayCalendarPush(context: Context, data: Map<String, String>) {
         .putExtra("calendar_occurrence_id", notice.event?.occurrenceId)
         .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
     val pending = PendingIntent.getActivity(context, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+    // Invitations answer from the notification (SDS §14B.13). Each action opens the app, which sends the
+    // answer with the signed-in session for this mailbox and shows the event.
+    fun answer(value: dev.pigeonpost.core.calendar.CalendarAnswer, code: Int) = PendingIntent.getActivity(context, code,
+        Intent(intent).putExtra(dev.pigeonpost.core.calendar.CalendarNotice.ANSWER, value.wire).putExtra("calendar_notification", "calendar:$reference")
+            .setData(Uri.Builder().scheme("pigeonpost-notification").authority("calendar").appendPath(reference).appendPath(value.wire).build()),
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
     val public = NotificationCompat.Builder(context, PushNotifications.CHANNEL)
         .setSmallIcon(R.drawable.ic_notification).setContentTitle("Pigeonpost").setContentText("Calendar update").build()
     val title = data["title"]?.filter { !it.isISOControl() }?.take(100)?.ifBlank { null } ?: "Calendar"
     val notification = NotificationCompat.Builder(context, PushNotifications.CHANNEL)
         .setSmallIcon(R.drawable.ic_notification).setContentTitle(title)
-        .setContentText(if (notice.event?.occurrenceId != null) "Calendar reminder" else "Calendar update")
+        .setContentText(if (notice.invitation) "New calendar invitation" else if (notice.event?.occurrenceId != null) "Calendar reminder" else "Calendar update")
         .setCategory(NotificationCompat.CATEGORY_EVENT).setPriority(NotificationCompat.PRIORITY_HIGH)
         .setVisibility(NotificationCompat.VISIBILITY_PRIVATE).setPublicVersion(public)
+        .apply { if (notice.invitation) {
+            addAction(0, "Accept", answer(dev.pigeonpost.core.calendar.CalendarAnswer.ACCEPTED, 1))
+            addAction(0, "Decline", answer(dev.pigeonpost.core.calendar.CalendarAnswer.DECLINED, 2))
+        } }
         .setContentIntent(pending).setAutoCancel(true).setOnlyAlertOnce(true).build()
     try { NotificationManagerCompat.from(context).notify("calendar:$reference", 1, notification) }
     catch (_: SecurityException) { /* The device owner may revoke permission while this is built. */ }

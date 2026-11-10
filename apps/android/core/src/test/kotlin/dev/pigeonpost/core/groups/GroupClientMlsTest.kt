@@ -483,4 +483,31 @@ class GroupClientMlsTest {
         val again = GroupClient(crypto, w.fake.transport, storage, a, sleep = {}, jitter = { 0 })
         assertNotEquals(first, again.init())
     }
+
+    @Test fun anAdminUnbansAMemberWhoCanThenJoinAListedGroupWithoutALink() = kotlinx.coroutines.test.runTest {
+        val w = world(); val a = w.fake.mailbox(); val b = w.fake.mailbox()
+        val (owner, gid) = actionStore(w, a)
+        val g = w.fake.groups.getValue(gid)
+        g.joinPolicy = "public"; g.members[b] = FakeGroupPostbox.Member("member", "banned")
+        owner.loadMembers(gid)
+        val banned = owner.state.value.members.getValue(gid).single { it.address == b }
+        assertEquals("banned", banned.state)
+        owner.unban(gid, banned); advanceUntilIdle()
+        assertTrue(owner.state.value.members.getValue(gid).none { it.address == b })
+        assertTrue(w.fake.calls.any { it.second == "DELETE" && it.third == "/v1/groups/$gid/bans/" + java.net.URLEncoder.encode(b, "UTF-8") })
+
+        // Not listed: the public directory does not show it and nobody can join without a link.
+        val other = GroupStore(w.fake.transport, { crypto }, MemoryGroupStorage(), this)
+        other.onMailbox(b, null, setOf("groups")); advanceUntilIdle()
+        assertTrue(other.publicGroups("").isEmpty())
+        owner.patch(gid, mapOf("visibility" to kotlinx.serialization.json.JsonPrimitive("listed"))); advanceUntilIdle()
+        assertEquals("listed", g.visibility)
+        val found = other.publicGroups("act")
+        assertEquals(listOf(gid), found.map { it.id }); assertFalse(found.single().member)
+        assertTrue(other.publicGroups("nothing-like-it").isEmpty())
+        other.resolveJoin(gid, null); advanceUntilIdle()
+        assertEquals("Actions", other.state.value.join?.preview?.name)
+        other.confirmJoin(); advanceUntilIdle()
+        assertEquals("keying", g.members.getValue(b).state)
+    }
 }

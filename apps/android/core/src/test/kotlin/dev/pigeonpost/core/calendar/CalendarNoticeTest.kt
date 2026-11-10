@@ -39,4 +39,18 @@ class CalendarNoticeTest {
         assertFalse(notice.toString().contains("private", ignoreCase = true))
         assertFalse(notice.toString().contains("organizer"))
     }
+    @Test fun onlyAnInvitationOffersAnswersAndOnlyAcceptOrDecline() {
+        val invite = base - "calendar_occurrence_id" + ("message_id" to "cal:evt_one:invite")
+        val plain = CalendarNotice.parse(invite)!!
+        assertTrue(plain.invitation); assertNull(plain.answer)
+        assertEquals(CalendarAnswer.ACCEPTED, CalendarNotice.parse(invite + (CalendarNotice.ANSWER to "accepted"))!!.answer)
+        assertEquals(CalendarAnswer.DECLINED, CalendarNotice.parse(invite + (CalendarNotice.ANSWER to "declined"))!!.answer)
+        assertNull(CalendarNotice.parse(invite + (CalendarNotice.ANSWER to "tentative"))!!.answer)
+        assertNull(CalendarNotice.parse(invite + (CalendarNotice.ANSWER to "ACCEPTED"))!!.answer)
+        // A reminder, an invitation naming another event, or an occurrence locator: no answers.
+        assertFalse(CalendarNotice.parse(base)!!.invitation)
+        assertNull(CalendarNotice.parse(base + (CalendarNotice.ANSWER to "accepted"))!!.answer)
+        assertFalse(CalendarNotice.parse(invite + ("message_id" to "cal:evt_other:invite"))!!.invitation)
+        assertFalse(CalendarNotice.parse(invite + ("calendar_occurrence_id" to "occ_x"))!!.invitation)
+    }
 }

@@ -22,12 +22,15 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 @Composable
-fun CalendarPane(store: CalendarStore, state: CalendarState, back: () -> Unit, joinMeeting: ((CalendarEventKey, Boolean, String) -> Unit)? = null) {
-    key(state.contextId) { CalendarContents(store, state, back, joinMeeting) }
+fun CalendarPane(store: CalendarStore, state: CalendarState, back: () -> Unit, joinMeeting: ((CalendarEventKey, Boolean, String) -> Unit)? = null, wide: Boolean = false) {
+    // Tablets open on the week grid (SDS §14B.13); phones on the day list. The choice survives rotation.
+    var view by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(if (wide) CalendarView.WEEK else CalendarView.AGENDA) }
+    key(state.contextId) { CalendarContents(store, state, back, joinMeeting, view) { view = it } }
 }
 
 @Composable
-private fun CalendarContents(store: CalendarStore, s: CalendarState, back: () -> Unit, joinMeeting: ((CalendarEventKey, Boolean, String) -> Unit)?) {
+private fun CalendarContents(store: CalendarStore, s: CalendarState, back: () -> Unit, joinMeeting: ((CalendarEventKey, Boolean, String) -> Unit)?,
+    view: CalendarView, chooseView: (CalendarView) -> Unit) {
     val p = Pp.colors
     val editor = s.editor
     var tools by remember { mutableStateOf(false) }
@@ -47,7 +50,16 @@ private fun CalendarContents(store: CalendarStore, s: CalendarState, back: () ->
         }
         if (s.loading) LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp)) else Seam(Modifier.fillMaxWidth().height(1.dp))
         if (!s.enabled) { EmptyPane("Calendar is unavailable", "Open an inbox with calendar access.", Modifier.weight(1f)); return@Column }
-        LazyColumn(Modifier.weight(1f).testTag("calendar:agenda"), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Box(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) { CalendarViewPicker(view, chooseView) }
+        if (view != CalendarView.AGENDA) {
+            CalendarPeriodBar(view, s, store)
+            s.error?.let { message -> Box(Modifier.padding(horizontal = 16.dp)) { CalendarError(message, store::clearError) } }
+            if (s.pending.isNotEmpty() || s.invitations.isNotEmpty()) TextButton({ chooseView(CalendarView.AGENDA) }, Modifier.padding(horizontal = 8.dp).testTag("calendar:toAgenda")) {
+                Text(listOfNotNull(s.invitations.size.takeIf { it > 0 }?.let { "$it ${if (it == 1) "invitation" else "invitations"}" },
+                    s.pending.size.takeIf { it > 0 }?.let { "$it unconfirmed" }).joinToString(" · ") + " — show in Agenda")
+            }
+            CalendarTimeGrid(view, s, store, Modifier.weight(1f))
+        } else LazyColumn(Modifier.weight(1f).testTag("calendar:agenda"), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item { MonthPicker(s, store) }
             s.error?.let { message -> item { CalendarError(message, store::clearError) } }
             if (s.attemptsUnreadable) item {

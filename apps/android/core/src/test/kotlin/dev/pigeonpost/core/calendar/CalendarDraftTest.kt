@@ -111,7 +111,10 @@ class CalendarDraftTest {
     }
     @Test fun meetingRequiresATimedEventAndSupportedPolicies() {
         fails { new().copy(allDay = true, meeting = CalendarMeetingDraft(enabled = true)).fields() }
-        fails { new().copy(meeting = CalendarMeetingDraft(enabled = true, joinBeforeMinutes = 11)).fields() }
+        // The postbox accepts 0–30 minutes (events.rs: "meeting.join_before_minutes must be 0–30").
+        fails { new().copy(meeting = CalendarMeetingDraft(enabled = true, joinBeforeMinutes = 31)).fields() }
+        fails { new().copy(meeting = CalendarMeetingDraft(enabled = true, joinBeforeMinutes = -1)).fields() }
+        for (minutes in listOf(0, 11, 30)) assertEquals(minutes, new().copy(meeting = CalendarMeetingDraft(enabled = true, joinBeforeMinutes = minutes)).fields()["meeting"]!!.jsonObject["join_before_minutes"]!!.jsonPrimitive.content.toInt())
         assertEquals("sfu", new().copy(meeting = CalendarMeetingDraft(enabled = true, transport = "sfu")).fields()["meeting"]!!.jsonObject["transport"]!!.jsonPrimitive.content)
     }
     @Test fun handleCohostAndContactGuestInputsStayDistinct() {

@@ -53,7 +53,7 @@ data class CalendarMeetingDraft(
     fun fields(validate: Boolean = true): JsonObject {
         if (!enabled) return buildJsonObject { put("enabled", false) }
         if (validate) require(waiting in setOf("guests", "everyone_except_hosts", "none") &&
-            admit in setOf("organizer", "hosts", "delegated") && transport in setOf("mesh", "sfu") && joinBeforeMinutes in 0..10) {
+            admit in setOf("organizer", "hosts", "delegated") && transport in setOf("mesh", "sfu") && joinBeforeMinutes in 0..30) {
             "Review this meeting's lobby and admission settings."
         }
         // Preserve opaque policy fields, but never echo response-only codes or capability URLs.

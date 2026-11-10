@@ -64,8 +64,17 @@ internal class OrganizationRoomsFixture private constructor(val mode: String, va
         if (route == "/v1/orgs") {
             catalogGets.incrementAndGet()
             val catalog = RoomOrganizations(if (mode == "org-rooms-no-membership") emptyList() else listOf(RoomOrganization("org_fixture", "Example", if (mode == "org-rooms-readonly") "read_only" else "active", "member_fixture",
-                namespace = "demo", settings = RoomOrganizationSettings("everyone"), mailbox = RoomMailbox(me, "/demo/main"))))
+                namespace = "demo", settings = RoomOrganizationSettings("everyone"), mailbox = RoomMailbox(me, "/demo/main"), roles = listOf("people_admin"))))
             return WireJson.encodeToString(RoomOrganizations.serializer(), catalog)
+        }
+        if (route == "/v1/orgs/org_fixture/directory") {
+            if (mode == "org-rooms-no-membership") throw ApiException(404, "not_found")
+            val q = java.net.URI("http://fixture.invalid$path").rawQuery.orEmpty().split('&').firstOrNull { it.startsWith("q=") }
+                ?.substringAfter('=')?.let { java.net.URLDecoder.decode(it, "UTF-8") }.orEmpty()
+            val people = listOf(Triple("/demo/main", me, "Demo Person"), Triple("/demo/ayla", bob, "Ayla Kaya"))
+            val entries = people.filter { (handle, _, name) -> handle.contains(q, true) || name.contains(q, true) }.map { (handle, address, name) ->
+                buildJsonObject { put("handle", handle); put("address", address); put("kind", "member"); put("name", name) } }
+            return buildJsonObject { put("entries", JsonArray(entries)) }.toString()
         }
         if (route == "/v1/rooms") {
             directoryGets.incrementAndGet()

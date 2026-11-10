@@ -32,7 +32,7 @@ class FakeGroupPostbox {
         var revision = 1L; var epoch = 0L; var activation = "provisioning"; var lastSeq = 0L
         var postPolicy = "everyone"; var ephemeral = 0L
         var description: String? = null; var joinPolicy = "private"; var membersCanInvite = false; var membersCanChangeTimer = false
-        var linkToken: String? = null; var deleted: Long? = null; var lastAt = 0L
+        var linkToken: String? = null; var deleted: Long? = null; var lastAt = 0L; var visibility = "unlisted"; var orgId: String? = null
         val items = mutableListOf<JsonObject>()
         val members = linkedMapOf<String, Member>()
         val leaves = mutableSetOf<String>()
@@ -154,7 +154,7 @@ class FakeGroupPostbox {
             put("id", g.id); put("name", g.name); g.description?.let { put("description", it) }; put("join_policy", g.joinPolicy)
             put("member_count", g.members.values.count { it.state == "active" })
             if (!invitedOnly) {
-                put("post_policy", g.postPolicy); put("visibility", "unlisted"); put("members_can_invite", g.membersCanInvite)
+                put("post_policy", g.postPolicy); put("visibility", g.visibility); put("members_can_invite", g.membersCanInvite)
                 put("members_can_change_timer", g.membersCanChangeTimer); put("ephemeral_secs", if (g.ephemeral > 0) JsonPrimitive(g.ephemeral) else JsonNull)
                 put("revision", g.revision); put("epoch", g.epoch); put("activation_state", g.activation); put("created_by", g.creator)
                 put("last_at", g.lastAt); put("last_seq", g.lastSeq); put("has_link", g.linkToken != null)
@@ -183,10 +183,17 @@ class FakeGroupPostbox {
             val token = s("link_token")
             val mine = g.members[me]?.state
             val viaLink = token != null && token == g.linkToken
-            if (mine == null && !viaLink) throw ApiException(404, "not_found")
+            val listed = g.joinPolicy == "public" && g.visibility == "listed" && g.orgId == null
+            if (mine == null && !viaLink && !listed) throw ApiException(404, "not_found")
             return buildJsonObject { put("id", g.id); put("name", g.name); g.description?.let { put("description", it) }
-                put("member_count", g.members.values.count { it.state == "active" }); put("join_policy", g.joinPolicy); put("visibility", "unlisted")
-                mine?.let { put("my_state", it) }; put("can_join", viaLink && g.joinPolicy == "public" && mine !in setOf("active", "keying")); put("needs", if (mine == "invited") "invitation" else "link") }
+                put("member_count", g.members.values.count { it.state == "active" }); put("join_policy", g.joinPolicy); put("visibility", g.visibility)
+                mine?.let { put("my_state", it) }; put("can_join", (viaLink || listed) && g.joinPolicy == "public" && mine !in setOf("active", "keying")); put("needs", if (mine == "invited") "invitation" else "link") }
+        }
+        if (path == "/v1/rooms" && method == "GET" && query["org_id"] == null) {
+            val q = java.net.URLDecoder.decode(query["q"].orEmpty(), "UTF-8")
+            return buildJsonObject { put("rooms", JsonArray(groups.values.filter { it.deleted == null && it.orgId == null && it.joinPolicy == "public" && it.visibility == "listed" && it.name.contains(q, true) }
+                .map { g -> buildJsonObject { put("id", g.id); put("name", g.name); g.description?.let { put("description", it) }
+                    put("member_count", g.members.values.count { it.state == "active" }); g.members[me]?.let { put("my_state", it.state) }; put("join_policy", g.joinPolicy) } })) }
         }
         val m = Regex("^/v1/groups/([^/]+)(/.*)?$").find(path) ?: return null
         val g = groups[java.net.URLDecoder.decode(m.groupValues[1], "UTF-8")] ?: throw ApiException(404, "not_found")
@@ -203,6 +210,7 @@ class FakeGroupPostbox {
                 if ("description" in body) { g.description = s("description"); changed += "description" }
                 s("join_policy")?.let { g.joinPolicy = it; changed += "join_policy" }
                 s("post_policy")?.let { g.postPolicy = it; changed += "post_policy" }
+                s("visibility")?.let { g.visibility = it; changed += "visibility" }
                 (body["members_can_invite"] as? JsonPrimitive)?.booleanOrNull?.let { g.membersCanInvite = it; changed += "members_can_invite" }
                 (body["members_can_change_timer"] as? JsonPrimitive)?.booleanOrNull?.let { g.membersCanChangeTimer = it; changed += "members_can_change_timer" }
                 if ("ephemeral_secs" in body) {
@@ -251,8 +259,17 @@ class FakeGroupPostbox {
                 if ((body["accept"] as? JsonPrimitive)?.booleanOrNull == true) mine.state = "keying" else g.members.remove(me)
                 return buildJsonObject { put("ok", true) }
             }
+            rest.startsWith("/bans/") && method == "DELETE" -> {
+                if (!admin(g, me)) throw ApiException(403, "not_admin")
+                val target = java.net.URLDecoder.decode(rest.removePrefix("/bans/"), "UTF-8")
+                val was = g.members[target]?.state == "banned"
+                if (was) g.members.remove(target)
+                return buildJsonObject { put("unbanned", was) }
+            }
             rest == "/join" -> {
-                if (g.joinPolicy != "public" || s("link_token") != g.linkToken) throw ApiException(403, "invalid_link")
+                if (g.members[me]?.state == "banned") throw ApiException(403, "banned")
+                val listed = g.visibility == "listed" && g.orgId == null
+                if (g.joinPolicy != "public" || !(listed || s("link_token") != null && s("link_token") == g.linkToken)) throw ApiException(403, "invalid_link")
                 g.members[me] = Member("member", "keying")
                 return buildJsonObject { put("ok", true) }
             }
