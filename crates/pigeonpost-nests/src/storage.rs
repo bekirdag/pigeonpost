@@ -25,6 +25,12 @@ pub trait Volumes: Send + Sync {
     fn destroy(&self, nest_id: &str) -> Result<(), String>;
     /// Nest ids that have a volume on this host.
     fn list(&self) -> Result<Vec<String>, String>;
+    /// Nest ids with anything left on this host, a volume or a key file. Tombstone replay
+    /// destroys these even when the ledger already records the Nest as deleted, which is the
+    /// state after `nests-restore volume` brings a deleted Nest's volume and key back.
+    fn stored(&self) -> Result<Vec<String>, String> {
+        self.list()
+    }
     /// (used bytes, size bytes) of a mounted volume.
     fn usage(&self, nest_id: &str) -> Option<(u64, u64)>;
 }
@@ -313,6 +319,24 @@ impl Volumes for LvmLuks {
             .filter(|id| valid_nest_id(id))
             .map(str::to_string)
             .collect())
+    }
+    fn stored(&self) -> Result<Vec<String>, String> {
+        let mut ids = self.list()?;
+        if let Ok(entries) = std::fs::read_dir(&self.cfg.key_dir) {
+            for e in entries.flatten() {
+                if let Some(id) = e
+                    .file_name()
+                    .to_str()
+                    .and_then(|n| n.strip_suffix(".key"))
+                    .filter(|id| valid_nest_id(id))
+                {
+                    if !ids.iter().any(|x| x == id) {
+                        ids.push(id.to_string());
+                    }
+                }
+            }
+        }
+        Ok(ids)
     }
 
     fn usage(&self, nest_id: &str) -> Option<(u64, u64)> {

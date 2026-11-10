@@ -210,8 +210,10 @@ impl GvisorPodman {
             "256m".into(),
             "--cpus".into(),
             "1.000".into(),
+            // gVisor's sandbox threads count against this limit too: at 16 the sandbox dies before
+            // the parser starts (podman exit 126, seen on nests-1 2026-11-10); 64 leaves room.
             "--pids-limit".into(),
-            "16".into(),
+            "64".into(),
             "--log-driver".into(),
             "none".into(),
             "--entrypoint".into(),
