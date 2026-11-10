@@ -129,3 +129,4 @@
 .mp-evidence dd { margin: 0; overflow-wrap: anywhere; }
 .mp-secret-state { font-size: 13px; }
 .ac-form textarea { border: 1px solid var(--rule); border-radius: 8px; padding: 9px 11px; font: 15px var(--sans); color: var(--ink); background: var(--ground); }
+.pp-operators-panel { flex-basis: 100%; margin-top: .5rem; }

@@ -9078,6 +9078,165 @@
         }
       }
     },
+    "/v1/orgs/{org}/nests/{nest}/operators": {
+      "parameters": [
+        {
+          "name": "org",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "nest",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "nests"
+        ],
+        "operationId": "listOrgNestOperators",
+        "summary": "The members who operate a company Nest (ManageAgents)",
+        "description": "Members with a live `operate_nest` delegation on the Nest's mailbox. Nest admins (owner, admin, agent_admin) always have access and are never listed.",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The operators.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrgNestOperators"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "description": "`feature_disabled` or the role does not allow it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found` (organization) or `no_nest`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "nests"
+        ],
+        "operationId": "setOrgNestOperators",
+        "summary": "Replace who operates a company Nest (ManageAgents)",
+        "description": "The listed active members get the `operate_nest` delegation; members left out lose it at once, for chat, files and approvals alike (other capabilities on the same delegation are kept). Nest admins named in the list are skipped. Sending the current set again changes nothing. Adding operators is refused while the organization is read-only or suspended; removing them never is.",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "operators"
+                ],
+                "properties": {
+                  "operators": {
+                    "type": "array",
+                    "maxItems": 50,
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The operators after the change.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrgNestOperators"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid_member`, `too_many_operators`, `invalid_json` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "description": "`feature_disabled` or the role does not allow it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found` (organization) or `no_nest`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`org_read_only` or `org_inactive` when the change adds an operator",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/nests/enroll": {
       "post": {
         "tags": [
@@ -22924,6 +23083,46 @@
               },
               "duplicate": {
                 "type": "boolean"
+              }
+            }
+          }
+        }
+      },
+      "OrgNestOperators": {
+        "type": "object",
+        "required": [
+          "operators"
+        ],
+        "properties": {
+          "operators": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "member_id"
+              ],
+              "properties": {
+                "member_id": {
+                  "type": "string"
+                },
+                "handle": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "first_name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "last_name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
               }
             }
           }
