@@ -1,0 +1,13 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "signature": {
+      "type": "string",
+      "maxLength": 200,
+      "default": "The support team",
+      "description": "The line the reply is signed with."
+    }
+  },
+  "required": []
+}

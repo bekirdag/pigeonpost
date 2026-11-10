@@ -16,6 +16,7 @@ mod install_cmd;
 mod loft_cmd;
 mod loft_key;
 mod login_cmd;
+mod nest_dev_cmd;
 mod onboard_cmd;
 mod output;
 mod panel;
@@ -309,6 +310,9 @@ enum Command {
 
     /// A hosted mailbox's calendar: list occurrences, create handle-only events, answer invitations.
     Calendar(calendar_cmd::CalendarArgs),
+
+    /// Build Nest apps for the marketplace: start one from a template and run it locally.
+    Nest(nest_dev_cmd::NestArgs),
 }
 
 #[derive(Subcommand)]
@@ -1229,6 +1233,11 @@ fn pigeonpost_log_directives(configured: Option<&str>) -> String {
 
 async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     validate_preopen_confirmations(&cli.command)?;
+
+    // Nest app development is offline and needs no identity, home or network.
+    if let Command::Nest(args) = &cli.command {
+        return nest_dev_cmd::run(args, cli.json).await;
+    }
 
     // `loft serve` is the one command that is not about an agent identity, so it runs before any
     // identity is created — a node operator need not be an agent.
@@ -2315,6 +2324,7 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         | Command::Postbox { .. }
         | Command::Group(_)
         | Command::Calendar(_)
+        | Command::Nest(_)
         | Command::Login { .. }
         | Command::Whoami
         | Command::Ssh { .. }

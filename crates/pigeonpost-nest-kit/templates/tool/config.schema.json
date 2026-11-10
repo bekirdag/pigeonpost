@@ -1,0 +1,14 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "decimal_places": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 6,
+      "default": 2,
+      "description": "Totals are rounded to this many decimal places."
+    }
+  },
+  "required": []
+}

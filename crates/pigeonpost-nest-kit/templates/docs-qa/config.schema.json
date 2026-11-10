@@ -1,0 +1,20 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "answer_style": {
+      "type": "string",
+      "enum": ["short", "detailed"],
+      "default": "short",
+      "description": "Short answers are one or two sentences; detailed answers may quote the section."
+    },
+    "sections_per_answer": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4,
+      "default": 2,
+      "description": "How many matching sections are given to the model."
+    }
+  },
+  "required": []
+}

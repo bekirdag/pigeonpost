@@ -1,0 +1,9 @@
+# Runner image for a Node Nest app. The base image is pinned by digest: review refuses a FROM that
+# is not. No package install step: the app and its SDK copy have no dependencies.
+ARG BASE_IMAGE=docker.io/library/node:22.21.1-bookworm-slim@sha256:25b3eb23a00590b7499f2a2ce939322727fcce1b15fdd69754fcd09536a3ae2c
+
+FROM ${BASE_IMAGE}
+WORKDIR /app
+COPY . /app
+USER 10001:10001
+ENTRYPOINT ["/usr/local/bin/node", "/app/app.mjs"]

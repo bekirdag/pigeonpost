@@ -1,0 +1,32 @@
+# Release manifest (nest-release.toml). What the release is and may do is stated here and nowhere
+# else; review refuses anything beyond it. Reference: https://developers.pigeonpost.dev/nest-manifest
+
+name = "docs-qa"
+version = "0.1.0"
+title = "Docs Q&A"
+summary = "Answers questions from the documents bundled with the release. Uses the model broker only."
+licence = "MIT"
+# The program the image runs (the Containerfile's ENTRYPOINT).
+entrypoint = "/usr/local/bin/node"
+# The address buyers reach the listing at; `init --publisher` sets the first part.
+listing_address = "/your-publisher/docs-qa"
+
+# The only destination a marketplace release can reach is the model broker.
+egress = ["broker"]
+capabilities = []
+syscalls = []
+# Writes nothing outside the Nest.
+external_writes = false
+
+[[operations]]
+name = "docs.ask"
+version = "1.0"
+
+[[operations.fields]]
+name = "question"
+max_chars = 2000
+required = true
+
+# The SPDX licence of the release and of every dependency it ships. This template ships none.
+[licences]
+docs-qa = "MIT"

@@ -56,3 +56,5 @@ unsafe_code = "forbid"
 
 [dev-dependencies]
 tempfile = "3"
+# The starter templates are tested against the build plane's parser and the scan rules.
+pigeonpost-nest-kit = { path = "../pigeonpost-nest-kit" }

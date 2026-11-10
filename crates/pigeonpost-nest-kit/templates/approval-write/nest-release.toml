@@ -1,0 +1,41 @@
+# Release manifest (nest-release.toml). What the release is and may do is stated here and nowhere
+# else; review refuses anything beyond it. Reference: https://developers.pigeonpost.dev/nest-manifest
+#
+# This template performs an external write (posting a reply to the buyer's helpdesk), so it says
+# `external_writes = true`. The Nest still has no route to the outside: it asks the broker to
+# perform the write, the buyer approves it, and the platform performs it once per idempotency key.
+# External writes are not offered at launch, and review blocks this manifest until they are; the
+# template is here so you can build and test the flow locally now.
+
+name = "helpdesk-reply"
+version = "0.1.0"
+title = "Helpdesk reply"
+summary = "Drafts a reply to a support ticket and posts it to the buyer's helpdesk after the buyer approves."
+licence = "MIT"
+# The program the image runs (the Containerfile's ENTRYPOINT).
+entrypoint = "/usr/local/bin/node"
+# The address buyers reach the listing at; `init --publisher` sets the first part.
+listing_address = "/your-publisher/helpdesk-reply"
+
+egress = ["broker"]
+capabilities = []
+syscalls = []
+external_writes = true
+
+[[operations]]
+name = "helpdesk.reply.send"
+version = "1.0"
+
+[[operations.fields]]
+name = "ticket_id"
+max_chars = 64
+required = true
+
+[[operations.fields]]
+name = "notes"
+max_chars = 4000
+required = true
+
+# The SPDX licence of the release and of every dependency it ships. This template ships none.
+[licences]
+helpdesk-reply = "MIT"

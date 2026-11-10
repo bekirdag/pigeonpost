@@ -1,0 +1,36 @@
+# Release manifest (nest-release.toml). What the release is and may do is stated here and nowhere
+# else; review refuses anything beyond it. Reference: https://developers.pigeonpost.dev/nest-manifest
+
+name = "csv-summary"
+version = "0.1.0"
+title = "CSV summary"
+summary = "Counts rows and columns of a CSV table and totals its numeric columns. No AI, no network."
+licence = "MIT"
+# The program the image runs (the Containerfile's ENTRYPOINT).
+entrypoint = "/usr/local/bin/node"
+# The address buyers reach the listing at; `init --publisher` sets the first part.
+listing_address = "/your-publisher/csv-summary"
+
+# A no-AI tool needs no destination at all.
+egress = []
+capabilities = []
+syscalls = []
+external_writes = false
+
+[[operations]]
+name = "csv.summarize"
+version = "1.0"
+
+[[operations.fields]]
+name = "csv"
+max_chars = 20000
+required = true
+
+[[operations.fields]]
+name = "delimiter"
+max_chars = 1
+required = false
+
+# The SPDX licence of the release and of every dependency it ships. This template ships none.
+[licences]
+csv-summary = "MIT"
