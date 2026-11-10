@@ -187,6 +187,30 @@ jobs:
           case "$BUILD_NUMBER" in
             ''|*[!0-9]*) echo "::error::build_number must be a whole number; got '$BUILD_NUMBER'." ; exit 1 ;;
           esac
+          # Manual signing on the app target alone. As xcodebuild settings these would reach every
+          # target, and a Swift package's resource bundle refuses a provisioning profile.
+          python3 - <<'PATCH'
+          import re
+          path = "Pigeonpost.xcodeproj/project.pbxproj"
+          text = open(path, encoding="utf-8").read()
+          block = re.compile(r"(isa = XCBuildConfiguration;\s*buildSettings = \{)((?:(?!\n\s*\};\s*name = ).)*)(\n\s*\};\s*name = Release;)", re.S)
+          app = re.compile(r'PRODUCT_BUNDLE_IDENTIFIER = "?dev\.pigeonpost\.inbox"?;')
+          count = 0
+          def sign(match):
+              global count
+              body = match.group(2)
+              if not app.search(body) or "SDKROOT = macosx" in body:
+                  return match.group(0)
+              count += 1
+              body = re.sub(r"\n\s*CODE_SIGN_STYLE = \w+;", "", body)
+              body = re.sub(r"\n\s*(\"?CODE_SIGN_IDENTITY[^=]*\"?|PROVISIONING_PROFILE_SPECIFIER) = [^;]*;", "", body)
+              extra = ['CODE_SIGN_STYLE = Manual;', '"CODE_SIGN_IDENTITY" = "Apple Distribution";', 'PROVISIONING_PROFILE_SPECIFIER = "Pigeonpost Inbox App Store";']
+              return match.group(1) + "".join("\n\t\t\t\t" + line for line in extra) + body + match.group(3)
+          text = block.sub(sign, text)
+          if count != 1:
+              raise SystemExit(f"expected one Release configuration for the app target, found {count}")
+          open(path, "w", encoding="utf-8").write(text)
+          PATCH
           xcodebuild \
             -project Pigeonpost.xcodeproj \
             -scheme Pigeonpost \
@@ -194,9 +218,6 @@ jobs:
             -destination 'generic/platform=iOS' \
             -archivePath "$RUNNER_TEMP/Pigeonpost.xcarchive" \
             CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
-            CODE_SIGN_STYLE=Manual \
-            CODE_SIGN_IDENTITY="Apple Distribution" \
-            PROVISIONING_PROFILE_SPECIFIER="Pigeonpost Inbox App Store" \
             DEVELOPMENT_TEAM=AH277897AV \
             archive
 

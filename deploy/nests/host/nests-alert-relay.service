@@ -1,5 +1,5 @@
 [Unit]
-Description=Nests alert relay (Alertmanager -> Pigeonpost message)
+Description=Nests alert relay (Alertmanager -> Pigeonpost message, Postmark fallback)
 After=network-online.target
 Wants=network-online.target
 
@@ -17,6 +17,9 @@ ProtectKernelModules=yes
 ProtectControlGroups=yes
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 LoadCredential=alerts.token:/etc/nests/alerts.token
+# Optional Postmark fallback ([alerts.postmark]). No path on purpose: systemd looks the name up in
+# /etc/credstore/ and starts the relay without it when /etc/credstore/postmark.token is missing.
+LoadCredential=postmark.token
 Restart=on-failure
 MemoryMax=64M
 

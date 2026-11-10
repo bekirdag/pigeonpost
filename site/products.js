@@ -34,6 +34,10 @@
   };
   // The org roles that may create and manage company Nests (nest_access.rs, Perm::ManageAgents).
   const NEST_ADMIN_ROLES = ["owner", "admin", "agent_admin"];
+  // The org roles that may buy and manage the company's package (org.rs, Perm::ManageBilling). The
+  // bridge checks this again with the postbox; this only decides what to show.
+  const BILLING_ROLES = ["owner", "billing_admin"];
+  const ORG_ID = /^org_[a-z0-9]{6,64}$/;
   const RAIL = { apple: "the App Store", google: "Google Play", iyzico: "Pigeonpost (web)", grant: "a Pigeonpost grant", test: "a test grant" };
 
   function el(tag, attrs, ...children) {
@@ -65,8 +69,14 @@
   }
 
   function mount(root, deps) {
-    const state = { tab: "nests", context: "personal", currency: null, data: null, gen: 0 };
+    // Back from a company checkout (`?nest_org=`), the page opens in that company's context.
+    const returnOrg = new URLSearchParams(deps.search || "").get("nest_org");
+    // Back from a marketplace checkout (`?mp_purchase=`), the Services tab finishes the install.
+    const returnPurchase = /[?&](mp_purchase|mp_checkout)=[a-f0-9]{32}\b/.test(deps.search || "");
+    const state = { tab: returnPurchase ? "services" : "nests", context: ORG_ID.test(returnOrg || "") ? returnOrg : "personal", currency: null, data: null, gen: 0 };
     const nestsOn = () => Boolean(deps.features && deps.features.has("nests"));
+    const catalog = deps.features && deps.features.has("marketplace") && window.PPMarketplace && window.PPMarketplace.catalog
+      ? window.PPMarketplace.catalog(deps) : null;
 
     function tabs() {
       const order = [["inbox", "Buy an Inbox"], ["nests", "Buy Nests"], ["services", "Services"]];
@@ -107,10 +117,18 @@
     }
 
     function servicesPanel() {
+      const builtins = el("ul", { class: "pp-services" }, SERVICES.map(([name, what]) =>
+        el("li", { class: "pp-service" }, el("strong", { text: name }), el("span", { text: what }), el("span", { class: "pp-soon", text: "Coming soon" }))));
+      // With the `marketplace` feature on, marketplace-catalog.js owns this tab (OD-8: listings live
+      // here, with a publisher badge and a Marketplace filter) and shows these under "All services".
+      if (catalog) {
+        const box = el("div", { id: "pp-marketplace" });
+        catalog.render(box, builtins);
+        return panel("services", box);
+      }
       return panel("services",
         el("p", { class: "muted", text: "Ready-made assistants that run on a Nest. They are not available yet." }),
-        el("ul", { class: "pp-services" }, SERVICES.map(([name, what]) =>
-          el("li", { class: "pp-service" }, el("strong", { text: name }), el("span", { text: what }), el("span", { class: "pp-soon", text: "Coming soon" })))));
+        builtins);
     }
 
     function nestsPanel() {
@@ -199,7 +217,7 @@
       return { plans, currencies };
     }
 
-    function packagesBlock(d) {
+    function packagesBlock(d, orgId) {
       const { plans, currencies } = pricesFor(d);
       const box = el("div", { class: "pp-packages" });
       if (currencies.length > 1) {
@@ -213,18 +231,24 @@
           el("h4", { text: p.name }),
           el("ul", {}, packageLines(p).map((l) => el("li", { text: l }))),
           plan ? el("p", { class: "pp-price", text: `${money(plan.amount, plan.currency)} a month` }) : el("p", { class: "muted", text: "Not available to buy here yet." }),
-          plan ? el("button", { type: "button", class: "btn btn-primary", "data-buy": plan.code, "aria-label": `Buy ${p.name}`, onclick: () => buy(plan.code) }, "Buy") : null));
+          plan ? el("button", { type: "button", class: "btn btn-primary", "data-buy": plan.code, "aria-label": `Buy ${p.name}`, onclick: () => buy(plan.code, orgId) }, "Buy") : null));
       }
       box.append(cards);
       box.append(el("p", { class: "ac-note", text: "Sold by Piyote Bilişim and billed monthly through iyzico. Cancel any time; your Nests keep running until the end of the paid month, then you have 30 days to export before they are deleted." }));
       return box;
     }
 
-    function subscriptionBlock(sub, d) {
+    function subscriptionBlock(sub, d, orgId) {
       const { plans } = pricesFor(d);
       const others = plans.filter((pl) => pl.currency === sub.currency && pl.code !== sub.plan_code);
+      const title = `${orgId ? "Company" : "Your"} web Nest package · ${sub.currency}${sub.recurring_price ? " · " + money(sub.recurring_price.amount, sub.recurring_price.currency) + " a month" : ""}`;
+      // saas_be lets only the buyer change a subscription; another billing admin sees it, read-only.
+      if (orgId && sub.buyer === false) {
+        return el("div", { class: "pp-sub", "data-sub": sub.id }, el("p", { text: title }),
+          el("p", { class: "muted", id: "pp-not-buyer", text: "Another billing admin bought this package. Only they can change or cancel it." }));
+      }
       return el("div", { class: "pp-sub", "data-sub": sub.id },
-        el("p", { text: `Your web Nest package · ${sub.currency}${sub.recurring_price ? " · " + money(sub.recurring_price.amount, sub.recurring_price.currency) + " a month" : ""}` }),
+        el("p", { text: title }),
         others.length ? el("label", {}, "Change to ", el("select", { id: "pp-change" }, others.map((pl) => el("option", { value: pl.code, text: d.packages.packages.find((p) => p.code === pl.package)?.name || pl.code })))) : null,
         others.length ? el("button", { type: "button", class: "btn btn-small", id: "pp-change-go", onclick: () => change(sub.id, root.querySelector("#pp-change").value) }, "Change package") : null,
         sub.provider_status === "CANCELED" ? el("span", { class: "muted", text: " Canceled — no renewal." })
@@ -244,12 +268,23 @@
       (async () => {
         const v = await deps.pb(`${path}/nests`);
         const rows = await orgRows(v.nests || []);
-        // Only people admins may list members. Anyone else creates the Nest and adds operators later.
+        // Only people admins may list members. Other Nest admins create the Nest without a picker and
+        // can only remove operators later (each row's "Manage operators" lists the current ones).
         const members = org.admin ? await deps.pb(`${path}/members?status=active`).then((m) => (m.members || []).filter((x) => x.id !== org.memberId)).catch(() => []) : [];
+        // The owner and billing admins see the company's web package and prices from the bridge.
+        const bridge = org.billing ? await deps.bridgeGet(`/v1/nests?org_id=${encodeURIComponent(orgId)}`).catch(() => null) : null;
         box.textContent = "";
         const a = v.allowance || { slots: 0, used: 0 };
-        box.append(el("p", { text: v.package ? `Company package: ${a.used} of ${a.slots} Nests in use.` : "This company has no Nest package yet. Its billing admin can buy one." }));
-        if (rows.length) box.append(el("ul", { class: "pp-nests", "aria-label": "Company Nests" }, rows.map(nestRow)));
+        box.append(el("p", { text: v.package ? `Company package: ${a.used} of ${a.slots} Nests in use.`
+          : bridge ? "This company has no Nest package yet. Buy one below." : "This company has no Nest package yet. Its billing admin can buy one." }));
+        if (rows.length) box.append(el("ul", { class: "pp-nests", "aria-label": "Company Nests" }, rows.map((n) => (org.admin ? withOperators(nestRow(n), orgId, n, members) : nestRow(n)))));
+        if (bridge) {
+          const d = { packages: state.data.packages, bridge };
+          const subs = bridge.subscriptions || [];
+          // A package funded another way (a grant, another rail) is not offered a second time.
+          if (subs.length) box.append(subscriptionBlock(subs[0], d, orgId));
+          else if (!v.package) box.append(packagesBlock(d, orgId));
+        }
         if (!org.admin) return;
         const handle = el("input", { id: "pp-org-handle", required: true, autocomplete: "off" });
         const label = el("input", { id: "pp-org-label", required: true, maxlength: "64" });
@@ -269,12 +304,74 @@
       return [m.first_name, m.last_name].filter(Boolean).join(" ") || m.handle || "Member";
     }
 
+    // "Manage operators" on a company Nest row, for Nest admins (GET/PUT
+    // /v1/orgs/{org}/nests/{nest}/operators). The choices are the member list (people admins only)
+    // plus whoever operates the Nest now, so any Nest admin can at least remove operators. Admins
+    // always have access and are never offered; the server skips them anyway.
+    function withOperators(li, orgId, nest, members) {
+      const key = String(nest.nest_id).replace(/[^A-Za-z0-9_-]/g, "");
+      const url = `/v1/orgs/${encodeURIComponent(orgId)}/nests/${encodeURIComponent(nest.nest_id)}/operators`;
+      const panel = el("div", { class: "pp-operators-panel", id: `pp-ops-${key}`, hidden: true });
+      const status = el("p", { class: "muted", role: "status", "aria-live": "polite" });
+      const toggle = el("button", { type: "button", class: "btn btn-small", "aria-expanded": "false", "aria-controls": panel.id, "data-manage-operators": nest.nest_id }, "Manage operators");
+      const people = members.filter((m) => !(m.roles || []).some((r) => NEST_ADMIN_ROLES.includes(r)));
+      const errors = { invalid_member: "Someone you picked is no longer an active member. Reload and try again.", too_many_operators: "A Nest can have at most 50 operators.", org_read_only: "The company is read-only until its payment is settled; you can only remove operators.", org_inactive: "The company is suspended." };
+
+      function draw(current) {
+        const held = new Set(current.map((o) => o.member_id));
+        const choices = [...people.map((m) => ({ id: m.id, name: memberName(m) }))];
+        for (const o of current) if (!choices.some((c) => c.id === o.member_id)) choices.push({ id: o.member_id, name: memberName(o) });
+        panel.textContent = "";
+        if (!choices.length) {
+          panel.append(el("p", { class: "muted", text: "No one operates this Nest. Only admins can use it." }), status);
+          return;
+        }
+        const boxes = choices.map((c) => el("input", { type: "checkbox", value: c.id, id: `pp-op-${key}-${c.id}`, "data-nest-operator": c.id, checked: held.has(c.id) }));
+        const save = el("button", { type: "submit", class: "btn btn-secondary" }, "Save operators");
+        panel.append(el("form", { class: "ac-form", onsubmit: async (e) => {
+          e.preventDefault();
+          save.disabled = true;
+          status.textContent = "Saving…";
+          try {
+            const r = await deps.pb(url, { method: "PUT", body: JSON.stringify({ operators: boxes.filter((b) => b.checked).map((b) => b.value) }) });
+            const n = (r.operators || []).length;
+            draw(r.operators || []);
+            const again = panel.querySelector('button[type="submit"]');
+            if (again) again.focus();
+            status.textContent = `Saved. ${n === 0 ? "No one else" : n === 1 ? "1 person" : `${n} people`} can use this Nest besides admins.`;
+          } catch (err) {
+            save.disabled = false;
+            status.textContent = errors[err.code] || `Couldn't save: ${err.message}`;
+          }
+        } },
+          el("fieldset", { class: "pp-operators" }, el("legend", { text: `Who can use ${nest.label} (admins always can)` }),
+            boxes.map((b, i) => el("label", { class: "pp-operator", for: b.id }, b, ` ${choices[i].name}`))),
+          people.length ? null : el("p", { class: "muted", text: "Only people admins can see the member list, so you can remove operators here but not add them." }),
+          save), status);
+      }
+
+      toggle.addEventListener("click", async () => {
+        const open = toggle.getAttribute("aria-expanded") === "true";
+        toggle.setAttribute("aria-expanded", String(!open));
+        panel.hidden = open;
+        if (open) return;
+        panel.textContent = "";
+        status.textContent = "Loading operators…";
+        panel.append(status);
+        try { draw((await deps.pb(url)).operators || []); }
+        catch (_) { status.textContent = "Couldn't load who operates this Nest."; }
+      });
+      li.append(toggle, panel);
+      return li;
+    }
+
     // ---- actions ----------------------------------------------------------------------------
 
-    async function buy(planCode) {
+    async function buy(planCode, orgId) {
       const profile = await deps.billingProfileId();
       if (!profile) { deps.toast("Add your billing details first, then buy a Nest package."); deps.goBilling && deps.goBilling(); return; }
-      deps.startCheckout({ kind: "nest", intent_id: deps.randomHex32(), plan_code: planCode, billing_profile_id: profile, locale: deps.locale || "en" });
+      deps.startCheckout({ kind: "nest", intent_id: deps.randomHex32(), plan_code: planCode, billing_profile_id: profile, locale: deps.locale || "en",
+        ...(orgId ? { org_id: orgId } : {}) });
     }
 
     async function retry(setupId) {
@@ -323,13 +420,18 @@
     async function confirmReturn() {
       const params = new URLSearchParams(deps.search || "");
       const intent = params.get("nest_checkout");
+      const company = ORG_ID.test(params.get("nest_org") || "");
+      if (params.has("nest_org")) deps.clearReturn && deps.clearReturn("nest_org");
       if (!intent || !/^[a-f0-9]{32}$/.test(intent)) return;
       deps.clearReturn && deps.clearReturn("nest_checkout");
       deps.toast("Confirming your payment…");
       for (let i = 0; i < (deps.confirmAttempts || 20); i++) {
         try {
           const r = await deps.bridgeGet(`/v1/nests/checkout/${intent}`);
-          if (["active", "canceled"].includes(r.status)) { deps.toast("Your Nest package is active. Your first Nest is being set up."); load(); return; }
+          if (["active", "canceled"].includes(r.status)) {
+            deps.toast(company ? "The company's Nest package is active. Its admins can create company Nests now." : "Your Nest package is active. Your first Nest is being set up.");
+            load(); return;
+          }
           if (r.status === "failed") { deps.toast("The payment did not go through. Nothing was charged."); return; }
         } catch (e) { if (e.status === 401) return; }
         await new Promise((r) => setTimeout(r, deps.confirmDelayMs ?? 3000));
@@ -345,7 +447,7 @@
           deps.pb("/v1/nest-packages"),
           deps.pb("/v1/nests"),
           deps.bridgeGet("/v1/nests").catch(() => null),
-          deps.pb("/v1/orgs").then((v) => (v.orgs || []).map((o) => ({ id: o.id, name: o.name, memberId: o.my_member_id, admin: (o.my_roles || []).some((r) => NEST_ADMIN_ROLES.includes(r)) }))).catch(() => []),
+          deps.pb("/v1/orgs").then((v) => (v.orgs || []).map((o) => ({ id: o.id, name: o.name, memberId: o.my_member_id, admin: (o.my_roles || []).some((r) => NEST_ADMIN_ROLES.includes(r)), billing: (o.my_roles || []).some((r) => BILLING_ROLES.includes(r)) }))).catch(() => []),
         ]);
         if (gen !== state.gen) return;
         state.data = { packages, nests, bridge, orgs };

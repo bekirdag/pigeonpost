@@ -30,6 +30,8 @@ mod groups;
 mod lifecycle;
 mod limits;
 mod listing;
+pub(crate) mod marketplace;
+pub(crate) mod marketplace_pay;
 pub(crate) mod meetings;
 mod msgactions;
 pub(crate) mod nest_funding;
@@ -1010,6 +1012,15 @@ impl Store {
         // Nests Phase B4: file metadata (the bytes live on the Nest's volume).
         conn.execute_batch(crate::nest_files::SCHEMA)?;
         conn.execute_batch(crate::nest_approvals::SCHEMA)?;
+        // Marketplace foundations (M0): staff roles, publishers and the catalog.
+        conn.execute_batch(marketplace::SCHEMA)?;
+        // Marketplace hardening (W1): signatures, quotas, kills, source builds, worker tombstones.
+        conn.execute_batch(crate::marketplace_hardening::SCHEMA)?;
+        // Progress and effects marketplace workers report through the broker.
+        conn.execute_batch(crate::marketplace_worker::SCHEMA)?;
+        // Marketplace M2b: visibility grants, source connections, hosted test Nests.
+        conn.execute_batch(marketplace::SCHEMA_M2B)?;
+        conn.execute_batch(marketplace_pay::SCHEMA)?;
         for stmt in MIGRATIONS
             .iter()
             .chain(filtering::MIGRATIONS)

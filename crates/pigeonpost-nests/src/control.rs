@@ -29,6 +29,10 @@ pub struct Ctx {
     pub holder: Arc<String>,
     /// The off-host KEK, once the postbox released it (Phase B6).
     pub vault: Arc<crate::keywrap::Vault>,
+    /// Unix time of the last successful `POST /v1/unlock` (0 = none since start), exported as
+    /// `nests_postbox_last_unlock_seconds`: the postbox calls every minute, so silence means the
+    /// postbox (or the tunnel to it) is down.
+    pub postbox_last_unlock: Arc<std::sync::atomic::AtomicI64>,
     locks: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
 }
 
@@ -49,6 +53,7 @@ impl Ctx {
             token_sha256: Arc::new(token_sha256),
             holder: Arc::new(holder),
             vault: Arc::new(crate::keywrap::Vault::new()),
+            postbox_last_unlock: Arc::new(std::sync::atomic::AtomicI64::new(0)),
             locks: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -326,6 +331,8 @@ async fn start_locked(ctx: &Ctx, id: &str) -> Result<(), ApiError> {
             nest_id: nest_id.clone(),
             generation,
             volume: root,
+            buyer_context: None,
+            image: None,
         })
     })
     .await;
@@ -577,7 +584,15 @@ pub async fn reconcile(ctx: &Ctx) -> Result<(), String> {
         tracing::warn!("locked: waiting for the postbox to release the host key");
         return Ok(());
     }
-    let nests = ctx.db.nests(true)?;
+    // Marketplace workers belong to the dispatcher and its pool (M1): never started, stopped or
+    // adopted here.
+    let workers = ctx.db.mp_worker_ids()?;
+    let nests: Vec<_> = ctx
+        .db
+        .nests(true)?
+        .into_iter()
+        .filter(|n| !workers.contains(&n.id))
+        .collect();
     let present = {
         let s = ctx.sandbox.clone();
         blocking(move || s.list()).await?
@@ -711,8 +726,14 @@ pub async fn idle_stop(ctx: &Ctx) {
     let Ok(nests) = ctx.db.nests(false) else {
         return;
     };
+    let Ok(workers) = ctx.db.mp_worker_ids() else {
+        return;
+    };
     let t = now();
-    for nest in nests.into_iter().filter(|n| n.state == "running") {
+    for nest in nests
+        .into_iter()
+        .filter(|n| n.state == "running" && !workers.contains(&n.id))
+    {
         let last = nest
             .last_active_at
             .unwrap_or(0)
@@ -817,6 +838,18 @@ pub async fn unlock(ctx: &Ctx, req: UnlockReq) -> ApiResult {
         crate::storage::write_private(&path, fpr.as_bytes()).map_err(ApiError::internal)?;
     }
     let mut destroyed = Vec::new();
+    // What is on disk, read once: a restored volume or key of a Nest the ledger already
+    // records as deleted (or does not know at all) is destroyed too.
+    let stored: std::collections::HashSet<String> = {
+        let volumes = ctx.volumes.clone();
+        match blocking(move || volumes.stored()).await {
+            Ok(ids) => ids.into_iter().collect(),
+            Err(e) => {
+                tracing::warn!(error = %e, "tombstone replay could not list stored volumes");
+                Default::default()
+            }
+        }
+    };
     for id in req.tombstones.iter().take(10_000) {
         if !valid_nest_id(id) {
             continue;
@@ -826,6 +859,32 @@ pub async fn unlock(ctx: &Ctx, req: UnlockReq) -> ApiResult {
             .nest(id)
             .map_err(ApiError::internal)?
             .is_some_and(|n| n.state != "deleted");
+        if !present && stored.contains(id) {
+            let lock = ctx.lock_for(id);
+            let _guard = lock.lock().await;
+            let sandbox = ctx.sandbox.clone();
+            let volumes = ctx.volumes.clone();
+            let nest_id = id.clone();
+            match blocking(move || {
+                sandbox.stop(&nest_id)?;
+                volumes.destroy(&nest_id)
+            })
+            .await
+            {
+                Ok(()) => {
+                    ctx.db.event(
+                        Some(id),
+                        "tombstone",
+                        "deleted by the postbox; a restored volume or key was destroyed here",
+                    );
+                    destroyed.push(id.clone());
+                }
+                Err(e) => {
+                    tracing::warn!(nest = %id, error = %e, "tombstone replay failed; will retry")
+                }
+            }
+            continue;
+        }
         if present {
             match delete(ctx, id).await {
                 Ok(_) => {
@@ -842,6 +901,8 @@ pub async fn unlock(ctx: &Ctx, req: UnlockReq) -> ApiResult {
             }
         }
     }
+    ctx.postbox_last_unlock
+        .store(crate::util::now(), std::sync::atomic::Ordering::Relaxed);
     Ok(Json(
         json!({ "locked": ctx.locked(), "fingerprint": fpr, "tombstoned": destroyed }),
     ))
@@ -1266,9 +1327,14 @@ async fn http_create(
 
 async fn http_list(State(ctx): State<Ctx>, headers: HeaderMap) -> ApiResult {
     authorized(&ctx, &headers)?;
+    let workers = ctx.db.mp_worker_ids().map_err(ApiError::internal)?;
     let nests = ctx.db.nests(false).map_err(ApiError::internal)?;
     Ok(Json(json!({
-        "nests": nests.iter().map(|n| status_json(&ctx, n)).collect::<Vec<_>>()
+        "nests": nests
+            .iter()
+            .filter(|n| !workers.contains(&n.id))
+            .map(|n| status_json(&ctx, n))
+            .collect::<Vec<_>>()
     })))
 }
 
@@ -1344,6 +1410,71 @@ mod tests {
         }
     }
 
+    /// Marketplace workers (M1) live in the `nests` ledger so the broker meters them, but the
+    /// first-party lifecycle never starts, stops or lists them: they belong to the dispatcher.
+    #[tokio::test]
+    async fn the_first_party_lifecycle_leaves_marketplace_workers_alone() {
+        let (c, fake) = ctx();
+        let worker = crate::db::MpWorker {
+            nest_id: "nst_00000000000000e1".into(),
+            listing_id: "lst_1".into(),
+            buyer_context: "ctx-a".into(),
+            release_id: "rel_1".into(),
+        };
+        c.db.mp_admit("rel_1", "x@sha256:00", "sha256:00", "sha256:00")
+            .unwrap();
+        c.db.mp_insert_worker(&worker, 10, 10).unwrap();
+        c.db.set_state(&worker.nest_id, "running", "running", None, None)
+            .unwrap();
+        reconcile(&c).await.unwrap();
+        assert_eq!(fake.state(&worker.nest_id).unwrap(), RuntimeState::Absent);
+        let row = c.db.nest(&worker.nest_id).unwrap().unwrap();
+        assert_eq!((row.state.as_str(), row.generation), ("running", 0));
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            "Bearer nst_secret_token".parse().unwrap(),
+        );
+        let listed = http_list(State(c.clone()), headers).await.unwrap().0;
+        assert_eq!(listed["nests"], json!([]), "{listed}");
+    }
+
+    #[tokio::test]
+    async fn a_restored_volume_of_a_deleted_nest_is_destroyed_on_unlock() {
+        let (c, _fake) = ctx();
+        let id = "nst_00000000000000d2";
+        let _ = create(&c, req(id)).await.unwrap();
+        let _ = delete(&c, id).await.unwrap();
+        assert_eq!(c.db.nest(id).unwrap().unwrap().state, "deleted");
+        // `nests-restore volume` brings the volume back; the ledger still says deleted.
+        c.volumes.create(id, 1).unwrap();
+        assert!(c.volumes.list().unwrap().contains(&id.to_string()));
+        let v = unlock(
+            &c,
+            UnlockReq {
+                kek: "22".repeat(32),
+                tombstones: vec![id.into()],
+            },
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(v["tombstoned"], json!([id]));
+        assert!(!c.volumes.list().unwrap().contains(&id.to_string()));
+        // A tombstone for something that is not on disk destroys nothing.
+        let again = unlock(
+            &c,
+            UnlockReq {
+                kek: "22".repeat(32),
+                tombstones: vec![id.into()],
+            },
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(again["tombstoned"], json!([]));
+    }
+
     #[tokio::test]
     async fn unlock_records_the_kek_refuses_another_and_replays_tombstones() {
         let (c, fake) = ctx();
@@ -1408,6 +1539,47 @@ mod tests {
         )
         .await
         .is_ok());
+    }
+
+    #[tokio::test]
+    async fn metrics_export_the_last_successful_postbox_unlock() {
+        let (c, _fake) = ctx();
+        let m = crate::metrics::render(&c);
+        assert!(m.contains("\nnests_postbox_last_unlock_seconds 0\n"), "{m}");
+        // A refused key is not a successful call.
+        let _ = unlock(
+            &c,
+            UnlockReq {
+                kek: "zz".into(),
+                tombstones: vec![],
+            },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            c.postbox_last_unlock
+                .load(std::sync::atomic::Ordering::Relaxed),
+            0
+        );
+        let before = crate::util::now();
+        let _ = unlock(
+            &c,
+            UnlockReq {
+                kek: "33".repeat(32),
+                tombstones: vec![],
+            },
+        )
+        .await
+        .unwrap();
+        let t = c
+            .postbox_last_unlock
+            .load(std::sync::atomic::Ordering::Relaxed);
+        assert!(t >= before && t <= crate::util::now(), "{t}");
+        let m = crate::metrics::render(&c);
+        assert!(
+            m.contains(&format!("\nnests_postbox_last_unlock_seconds {t}\n")),
+            "{m}"
+        );
     }
 
     #[tokio::test]
@@ -1584,7 +1756,7 @@ mod tests {
             "/v/files/quarantine/f:/in:ro,nosuid,nodev,noexec",
             "/v/files/parsed/f.tmp:/out:rw,nosuid,nodev,noexec",
             "--memory 256m",
-            "--pids-limit 16",
+            "--pids-limit 64",
             "--pull never",
         ] {
             assert!(j.contains(must), "missing {must}: {j}");

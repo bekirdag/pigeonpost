@@ -60,6 +60,10 @@ final class Account {
         return store
     }
 
+    /// Holds the account's `NestStore` (see `Account.nests` in Nests/NestStore+Account.swift).
+    /// Untyped so this file does not depend on the Nests module of the app.
+    @ObservationIgnored var nestStoreBox: AnyObject?
+
     private let rememberedKey = "ppi_identity"
 
     init(session: Session, base: URL = Config.postbox, defaults: UserDefaults = .standard) {

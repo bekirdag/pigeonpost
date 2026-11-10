@@ -1,0 +1,29 @@
+#!/bin/sh
+# /usr/local/bin/runsc-buildd — gVisor for the build plane's rootless podman (user nestbuild).
+# Mapped as the runtime named "runsc" in ~nestbuild/.config/containers/containers.conf, so the
+# build plane's `--runtime=runsc` always gets this reviewed profile:
+#   --platform=systrap   no KVM needed (KVM is not used for this)
+#   --network=sandbox    gVisor's own network stack, not the host's
+#   --host-uds=none      no host Unix sockets from inside (no podman, docker or systemd socket)
+#   --host-fifo=none     no host FIFOs
+#   --ignore-cgroups     rootless podman already runs runsc inside the user's namespace; runsc's
+#                        --rootless only works for `runsc do` ("Rootless mode not supported with
+#                        create"). The limits in 50-nestbuild-limits.conf cap memory, CPU and tasks.
+#
+# The root overlay stays at gVisor's default (in the sandbox, never written back to the host).
+# Every build-plane container runs with a read-only root and writes only to its bind mounts (git
+# into the source dir, the fetch step into vendor/, the compile step into its copy of the tree,
+# the behaviour test into its volume); those go through the gofer to the host. Do not add
+# --overlay2=none: it is not needed, and it sends root writes to the host too.
+#
+# Publisher code never runs under `podman build` (the Containerfile is an assembly with no RUN
+# step), so buildah should not call this runtime at all. If anything does, buildah passes
+# `--no-new-keyring` to `create`, which runsc rejects; it is dropped here.
+n=$#
+while [ "$n" -gt 0 ]; do
+  a=$1
+  shift
+  n=$((n - 1))
+  [ "$a" = "--no-new-keyring" ] || set -- "$@" "$a"
+done
+exec /usr/local/bin/runsc --ignore-cgroups --platform=systrap --network=sandbox --host-uds=none --host-fifo=none "$@"

@@ -1,0 +1,8 @@
+[Unit]
+Description=Refresh the build plane's egress allowlist (nftables set inet nestbuild fetch_v4)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/nestbuild-allowlist

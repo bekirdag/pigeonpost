@@ -2824,6 +2824,7 @@ dependencies = [
  "pigeonpost-groupcrypto",
  "pigeonpost-loft",
  "pigeonpost-mcp",
+ "pigeonpost-nest-kit",
  "pigeonpost-registry",
  "pigeonpost-unix-custody",
  "pty-process",
@@ -3050,6 +3051,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "pigeonpost-nest-kit"
+version = "0.7.18"
+
+[[package]]
 name = "pigeonpost-nests"
 version = "0.7.19"
 dependencies = [
@@ -3057,6 +3062,8 @@ dependencies = [
  "chacha20poly1305",
  "ed25519-dalek 2.2.0",
  "flate2",
+ "pigeonpost-core",
+ "pigeonpost-nest-kit",
  "rand_core 0.6.4",
  "reqwest",
  "rusqlite",

@@ -1,0 +1,11 @@
+# Runner image for a Node Nest app. The base image is pinned by digest: review refuses a FROM that
+# is not. No install step runs here: the build plane vendors `node_modules/` from
+# package-lock.json (`npm ci --ignore-scripts`) before this build, which has no network.
+ARG BASE_IMAGE=docker.io/library/node:22.21.1-bookworm-slim@sha256:25b3eb23a00590b7499f2a2ce939322727fcce1b15fdd69754fcd09536a3ae2c
+
+FROM ${BASE_IMAGE}
+ENV NODE_ENV=production
+WORKDIR /app
+COPY . /app
+USER 10001:10001
+ENTRYPOINT ["/usr/local/bin/node", "/app/app.mjs"]

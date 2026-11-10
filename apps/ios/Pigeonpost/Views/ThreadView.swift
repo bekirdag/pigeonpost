@@ -103,6 +103,9 @@ struct ThreadView: View {
 
     private var conversation: Conversation? { inbox.conversation(with: peer) }
     private var subthreads: [Subthread] { inbox.subthreads(of: peer) }
+    private var peerAddresses: [String] {
+        Array(Set((conversation?.messages ?? []).filter { $0.kind == .incoming }.compactMap(\.address))).sorted()
+    }
 
     private var shown: [ThreadMessage] {
         guard let conversation else { return [] }
@@ -138,7 +141,13 @@ struct ThreadView: View {
         // Always, even for a peer with one conversation. The strip is where a second subject is
         // started, so hiding it until a second subject exists means there is no way to make one —
         // and the layout no longer changes shape underneath somebody the moment they do.
-        .safeAreaInset(edge: .top, spacing: 0) { if !embedded { subjects } }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            VStack(spacing: 0) {
+                // A Nest's conversation says what the Nest is doing (Nests Phase B3).
+                NestConversationHeader(peer: peer, addresses: peerAddresses)
+                if !embedded { subjects }
+            }
+        }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             // A blocked conversation says so where the composer would be, with the way back.
             if let conversation, conversation.isBlocked {

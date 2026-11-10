@@ -1,0 +1,45 @@
+# Release manifest of the marketplace reference release (build plan M1). Read by the build plane
+# (`pigeonpost_nests::release`) and checked by the static scans (`pigeonpost_nests::analysis`).
+# What the release may do is stated here and nowhere else; the scans refuse anything beyond it.
+
+name = "hr-policy-qa"
+version = "1.0.0"
+title = "HR policy Q&A"
+summary = "Answers questions from a bundled, synthetic HR policy handbook. Uses the model broker only."
+licence = "MIT"
+# The binary the image runs, and the shared listing address the dispatcher serves.
+entrypoint = "/usr/local/bin/hr-policy-qa"
+listing_address = "/pigeonpost/hr-policy-qa"
+
+# The only destination: the model broker. No postbox, no internet, no other Nest.
+egress = ["broker"]
+# No Linux capabilities and no syscalls beyond the pool's default gVisor profile.
+capabilities = []
+syscalls = []
+# Writes nothing outside its own job outbox, and nothing to the outside world.
+external_writes = false
+
+[[operations]]
+name = "hr.policy.ask"
+version = "1.0"
+
+[[operations.fields]]
+name = "question"
+max_chars = 2000
+required = true
+
+# The SPDX licence each locked package declares in its own manifest. Every package in Cargo.lock
+# must be listed, and each expression must be satisfiable from the build plane's allowlist.
+[licences]
+hr-policy-qa = "MIT"
+itoa = "MIT OR Apache-2.0"
+memchr = "Unlicense OR MIT"
+proc-macro2 = "MIT OR Apache-2.0"
+quote = "MIT OR Apache-2.0"
+serde = "MIT OR Apache-2.0"
+serde_core = "MIT OR Apache-2.0"
+serde_derive = "MIT OR Apache-2.0"
+serde_json = "MIT OR Apache-2.0"
+syn = "MIT OR Apache-2.0"
+unicode-ident = "(MIT OR Apache-2.0) AND Unicode-3.0"
+zmij = "MIT"

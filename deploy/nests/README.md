@@ -18,6 +18,7 @@ peer and the egress allowance for `10.66.0.2:8790`.
 | `host/nestd.toml.example` | `/etc/nests/nestd.toml` |
 | `host/nestd-control.service`, `nestd-broker.service`, `nestd-mock-upstream.service` | `/etc/systemd/system/` (the mock only for tests without mswarm) |
 | `host/journald-nests.conf` | `/etc/systemd/journald.conf.d/nests.conf` |
+| `host/nests-postbox-probe`, `nests-postbox-probe.service`, `.timer` | `/usr/local/sbin/`, `/etc/systemd/system/` — every minute, the postbox's public `/health` into node_exporter's textfile directory |
 | `host/nests-backup`, `nests-restore`, `nests-backup.service`, `.timer` | `/usr/local/sbin/`, `/etc/systemd/system/` — nightly ledger copy + borg archive (ledger, LUKS keys, Nest volume images) to raijin's HDD; [docs/nests/backups.md](../../docs/nests/backups.md) |
 | `host/backup.env.example`, `host/wg-backup.conf.example` | `/etc/nests/backup.env`, `/etc/wireguard/wg-backup.conf` — the backup tunnel (`10.68.0.1` nests-1 ↔ `10.68.0.2` raijin) |
 | `backup-target/*` | raijin only: `wg-nestsbak`, the dedicated borg sshd and the `inet nestsbak` table; see backups.md |
@@ -63,6 +64,47 @@ peer and the egress allowance for `10.66.0.2:8790`.
   total: `sqlite3 /var/lib/nests/ledger/nestd.db "select period, sum(input_used+platform_input), sum(output_used+platform_output) from usage group by period"`.
 - Backups: `journalctl -u nests-backup -n 30`, `nests-restore list`; see backups.md.
 
+## Marketplace pool (M0, not set up on any host yet)
+
+The pool is configured in `[sandbox.marketplace]` and runs publisher code under gVisor on this same
+host, because the owner chose no KVM host (2026-11-09; the plan said Firecracker). Since M1 the
+shared Nest dispatcher runs its workers there (below). The nestd ledger stays on SQLite, and OpenBao and SeaweedFS are not used yet (one
+host). See [the deviations](../../docs/nests/contracts/README.md).
+
+When it is enabled, in order:
+
+1. `podman network create --driver bridge --interface-name nestsmp0 --subnet 10.69.0.0/24 --gateway 10.69.0.1 --disable-dns --ipv6=false nests-mp`
+2. `ufw allow in on nestsmp0 proto tcp from 10.69.0.0/24 to 10.67.255.1 port 8788`
+3. Reload the firewall so `nests.nft`'s `inet nests_marketplace` table and the `nestsmp0` bridge rule
+   apply. They do nothing while the bridge does not exist.
+4. Live isolation probes, on the host as root, against the runner image:
+   `NESTS_LIVE_GVISOR=1 NESTS_LIVE_IMAGE=<runner image> cargo test -p pigeonpost-nests --test marketplace_isolation -- --ignored --nocapture`
+
+## Marketplace M1: build, analysis and the shared Nest dispatcher (not set up on any host yet)
+
+With `[sandbox.marketplace]` configured, `pigeonpost-nestd control` also serves the dispatcher
+(`/v1/mp/jobs`, `/v1/mp/jobs/{job}`, `/v1/mp/releases/{release}/quarantine`) behind the same
+control token. It runs only releases whose staff attestation the postbox sends with each job, one
+worker per listing and buyer context under `<volume_root>/<context>/<worker>`, and the first-party
+reconcile, idle stop and list leave those workers alone. Design, routes and deviations:
+[docs/nests/contracts/README.md](../../docs/nests/contracts/README.md) ("Marketplace M1").
+
+The build and analysis planes are `pigeonpost-nest-release`, run by an unprivileged user (the build
+refuses rootful podman). The reference release's source tree is `reference/hr-policy-qa/`.
+
+1. A fetch-only podman network for `cargo vendor` (the compile step and the image assembly have
+   `--network=none`), and the toolchain image `nest-build.toml` names and the base image the
+   Containerfile pins, pulled by digest beforehand (`--pull=never`).
+2. `pigeonpost-nest-release build --config build.toml --src reference/hr-policy-qa --work <empty dir>`
+   with `runtime`, `fetch_network`, `fetch_image` (pinned) and `image_name`; prints the build record
+   for `POST /internal/v1/marketplace/builds`.
+3. `pigeonpost-nest-release scan --src …` and `ai-review --route review.toml --src …` (model
+   `qwen-latest-flash-next` on the self-hosted route only); each prints a stage record for
+   `POST /internal/v1/marketplace/reviews/{review}/stages`. The behaviour test under gVisor:
+   `NESTS_LIVE_GVISOR=1 NESTS_LIVE_RELEASE_IMAGE=<image> cargo test -p pigeonpost-nests --test marketplace_m1 -- --ignored live_behaviour`.
+4. A staff reviewer approves in the postbox (`POST /v1/staff/reviews/{review}/decisions`), which
+   attests the release digest and publishes the listing.
+
 ## Rotate the control token
 
 1. On the postbox host write a new `nst_…` token (≥ 32 random bytes) to `/opt/pigeonpost-postbox/nests-service-token` and to `POSTBOX_NESTS_TOKEN` in `postbox.env`.
@@ -104,11 +146,24 @@ credential was revoked at delete time anyway.
 - Prometheus (`127.0.0.1:9090`, 15 days) scrapes nestd's metrics (`127.0.0.1:9790`, no ids or
   content) and node_exporter (`127.0.0.1:9100`).
 - `nests-rules.yml` covers: nestd down, locked, failed Nests, admission limit, thin pool, volume
-  allocation, stale or missing backups, memory (the VMware balloon), root disk, and
-  platform-error tokens.
+  allocation, stale or missing backups, memory (the VMware balloon), root disk,
+  platform-error tokens, and the postbox itself (silent, publicly down, probe stale).
 - Alertmanager (`127.0.0.1:9093`) posts to `pigeonpost-nestd alert-relay` (`127.0.0.1:9796`).
   The relay sends one Pigeonpost message per notification from a dedicated alerts mailbox.
   Its token is `/etc/nests/alerts.token`, root 0400, passed with `LoadCredential`.
 - The backup writes `/var/lib/nests/backup-last-success` after each archive.
 - Packages: Debian `prometheus`, `prometheus-alertmanager`, `prometheus-node-exporter`
   (Apache-2.0). Bind each to loopback in `/etc/default/*`.
+
+**Postbox down (alerts that do not depend on the postbox).**
+- nestd exports `nests_postbox_last_unlock_seconds` (0 until the first unlock after a start); `PostboxSilent` fires when the postbox has not called for more than 5 minutes.
+- `nests-postbox-probe` (timer, every minute) curls https://postbox.pigeonpost.dev/health with a 10 s timeout and writes `nests_postbox_public_up` / `nests_postbox_public_probe_seconds` to node_exporter's textfile directory `/var/lib/prometheus/node-exporter` (Debian's default; check `ARGS` in `/etc/default/prometheus-node-exporter` contains `--collector.textfile.directory=/var/lib/prometheus/node-exporter`, add it if not and restart prometheus-node-exporter). Rules `PostboxPublicDown`, `PostboxProbeStale`.
+- Postmark fallback: `[alerts.postmark]` in nestd.toml. The relay sends through Postmark when the postbox send fails (connection error, timeout, 5xx) and always for `Postbox*` alerts. The Postmark server token is never logged.
+
+Deploy:
+1. Install `host/nests-postbox-probe` to `/usr/local/sbin/` (0755), `nests-postbox-probe.service` and `.timer` to `/etc/systemd/system/`; `systemctl daemon-reload && systemctl enable --now nests-postbox-probe.timer`; check `cat /var/lib/prometheus/node-exporter/nests_postbox_probe.prom`.
+2. Postmark token: `install -d -m 0700 -o root -g root /etc/credstore`, then write the token from its source without echoing it: `umask 077; <source> > /etc/credstore/postmark.token; chmod 0400 /etc/credstore/postmark.token` (root:root). The relay unit has `LoadCredential=postmark.token` with no path: systemd looks it up in /etc/credstore and starts the relay without it when it is missing, so the line is harmless when no fallback is configured.
+3. Add `[alerts.postmark]` (see nestd.toml.example), install the new `nests-alert-relay.service`, `systemctl daemon-reload && systemctl restart nests-alert-relay`. With `[alerts.postmark]` set but no token, the relay refuses to start (by design).
+4. Copy `monitoring/nests-rules.yml` to `/etc/nests/monitoring/`, `promtool check rules /etc/nests/monitoring/nests-rules.yml`, `systemctl reload prometheus`.
+5. Install the new `pigeonpost-nestd` and restart `nestd-control` (it is locked until the next unlock, about a minute).
+6. Test: `curl -s 127.0.0.1:9790/metrics | grep nests_postbox_last_unlock_seconds`; send a test alert: `curl -s -XPOST 127.0.0.1:9796/alert -H 'content-type: application/json' -d '{"status":"firing","alerts":[{"status":"firing","labels":{"alertname":"PostboxTest"},"annotations":{"summary":"test"}}]}'` should give a Pigeonpost message and a Postmark message.

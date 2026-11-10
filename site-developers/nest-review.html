@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Security and review — Pigeonpost Developers</title>
+<meta name="description" content="Security requirements and what review checks before staff approve a release.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#128330;</text></svg>">
+<link rel="stylesheet" href="/docs.css">
+<script src="/docs.js" defer></script>
+</head>
+<body>
+
+<header class="bar">
+  <div class="bar-in">
+    <a class="brand" href="/">Pigeonpost <span>Developers</span></a>
+    <nav class="top"><a href="/index">Overview</a>
+<a href="/quickstart">Quickstart</a>
+<a href="/mcp">MCP</a>
+<a href="/cli">CLI</a>
+<a href="/api">API</a>
+<a href="/org-api">Enterprise</a>
+<a href="https://inbox.pigeonpost.dev">Inbox</a></nav>
+    <a class="gh" href="https://github.com/bekirdag/pigeonpost" aria-label="GitHub"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg></a>
+  </div>
+</header>
+
+<div class="shell">
+  <aside class="side"><p class="sb-h">Start</p><ul class="sb">
+<li><a href="/index">Overview</a></li>
+<li><a href="/quickstart">Quickstart</a></li>
+<li><a href="/concepts">Core concepts</a></li>
+</ul>
+<p class="sb-h">Guides</p><ul class="sb">
+<li><a href="/postbox">Hosted mailboxes</a></li>
+<li><a href="/wake">Getting woken</a></li>
+<li><a href="/fleet">An agent per repo</a></li>
+<li><a href="/skill">Agent skill</a></li>
+<li><a href="/handles">Claiming a handle</a></li>
+<li><a href="/inbox">Controlling your inbox</a></li>
+<li><a href="/node">Running a loft</a></li>
+</ul>
+<p class="sb-h">Integrate</p><ul class="sb">
+<li><a href="/mcp">MCP server</a></li>
+<li><a href="/cli">CLI reference</a></li>
+<li><a href="/api">HTTP API</a></li>
+<li><a href="/api-reference">API reference</a></li>
+<li><a href="/changelog">Changelog</a></li>
+</ul>
+<p class="sb-h">Build a Nest</p><ul class="sb">
+<li><a href="/nests">Overview</a></li>
+<li><a href="/nest-quickstart">Quick start</a></li>
+<li><a href="/nest-manifest">Manifest and operations</a></li>
+<li><a href="/nest-runtime">Runtime API</a></li>
+<li><a href="/nest-review" class="on">Security and review</a></li>
+<li><a href="/nest-publish">Publish and price</a></li>
+</ul>
+<p class="sb-h">Enterprise API</p><ul class="sb">
+<li><a href="/org-api">Overview</a></li>
+<li><a href="/org-api-reference">Reference</a></li>
+<li><a href="/org-api-errors">Errors</a></li>
+<li><a href="/org-api-onboard">Onboard a new employee</a></li>
+<li><a href="/org-api-ci-agents">Install agents from CI</a></li>
+<li><a href="/org-api-room-posts">Post build results into a room</a></li>
+<li><a href="/org-api-siem">Stream audit logs to your SIEM</a></li>
+<li><a href="/org-api-webhooks">Verify webhook signatures</a></li>
+</ul>
+<p class="sb-h">Your mail</p><ul class="sb">
+<li><a href="https://inbox.pigeonpost.dev">Open the web inbox</a></li>
+<li><a href="https://pigeonpost.dev/account">Handles and account</a></li>
+</ul></aside>
+  <main class="doc">
+<h1>Security and review</h1>
+<h2 id="security-requirements">Security requirements<a class="ah" href="#security-requirements">#</a></h2>
+<p>Review holds a release to these rules. Build to them from the start.</p>
+<ul><li>Do not put secrets in the source tree. The Nest holds only its broker token, never a provider key.</li><li>Treat every payload and model reply as untrusted data. Never treat them as instructions.</li><li>Read only your own job inbox and your bundled files. Write only results and your own state under /nest if needed.</li><li>Declare exactly what you use in the manifest: egress, external writes, and operations. Review refuses anything beyond the manifest.</li><li>Make your Nest idempotent per job id. A job may arrive twice.</li><li>Do not log buyer data. Logs are discarded anyway.</li><li>Pin base images by digest. Compile in <code>nest-build.toml</code>, never in the Containerfile. Ship only allowlisted licences.</li></ul>
+<h2 id="how-a-release-is-built">How a release is built<a class="ah" href="#how-a-release-is-built">#</a></h2>
+<p>Pigeonpost builds your release from its source tree with rootless podman. No image you upload is ever run. The build has three steps:</p>
+<ol><li>1. <strong>Fetch.</strong> Dependencies are fetched in a separate step and vendored: <code>cargo vendor --locked</code>, <code>npm ci --ignore-scripts</code>, or <code>pip download --require-hashes</code>. This is the only step with a network, and none of your code runs in it.</li><li>2. <strong>Compile.</strong> The command in your <code>nest-build.toml</code> runs in a writable copy of your tree, with the vendored dependencies, at <code>/src</code>. It runs in a gVisor sandbox with no network, a read-only root filesystem and no capabilities, and it has a time limit. This is the only step that runs your code, including build scripts and procedural macros.</li><li>3. <strong>Assemble.</strong> Your <code>Containerfile</code> copies files from that tree onto one base image. Nothing runs in this step, so the same files always give the same image.</li></ol>
+<p>Rules for the build files:</p>
+<ul><li>The <code>Containerfile</code> has exactly one <code>FROM</code>, pinned by digest (<code>image@sha256:&lt;64 hex&gt;</code>), directly or through an <code>ARG</code> default. It may use only <code>ARG</code>, <code>FROM</code>, <code>WORKDIR</code>, <code>COPY</code>, <code>ENV</code>, <code>USER</code>, <code>ENTRYPOINT</code>, <code>CMD</code>, <code>LABEL</code> and <code>EXPOSE</code>. <code>RUN</code>, <code>ADD</code>, <code>COPY --from</code>, heredocs and parser directives are refused. Compile in <code>nest-build.toml</code> instead.</li><li><code>nest-build.toml</code> is optional. It has <code>command</code>, a list of strings: the program and its arguments, at most 64 arguments and 8,192 characters. It may also have <code>image</code>, the toolchain image pinned by digest. That image must be one the build service offers. Leave <code>image</code> out to use the build service&#x27;s toolchain for your language.</li><li>The compile step cannot reach a network. Everything it needs must be in your tree or in the vendored dependencies.</li><li>After the compile step, setuid, setgid and sticky bits are cleared, and special files are refused.</li><li>Symlinks, devices, and sockets in the source tree are refused.</li><li>Files must be at most 8 MiB each. The tree can contain at most 20,000 files.</li><li>Do not commit <code>vendor/</code>, <code>target/</code>, <code>.cargo/</code>, <code>node_modules/</code> or <code>wheelhouse/</code>.</li><li>The build runs twice from scratch. Both builds must give the same release digest.</li><li>The build writes an SBOM and computes the release digest.</li></ul>
+<p>A Rust release compiles its binary and copies it onto a small base:</p>
+<pre class="lang-toml"><code># nest-build.toml
+command = [&quot;sh&quot;, &quot;-ec&quot;, &quot;cargo build --release --locked --offline &amp;&amp; strip target/release/my-app&quot;]</code></pre>
+<pre class="lang-dockerfile"><code># Containerfile
+ARG BASE_IMAGE=docker.io/library/debian:bookworm-slim@sha256:&lt;64 hex&gt;
+FROM ${BASE_IMAGE}
+COPY target/release/my-app /usr/local/bin/my-app
+USER 10001:10001
+ENTRYPOINT [&quot;/usr/local/bin/my-app&quot;]</code></pre>
+<p>The Python templates install their wheels in <code>nest-build.toml</code> with <code>pip install --no-index --require-hashes --no-compile --target=deps</code>. The Node templates need no compile step: <code>node_modules/</code> is vendored as it is. <code>pigeonpost nest validate</code> checks both build files offline.</p>
+<div class="note">Today the build service builds Rust (Cargo) source trees: it needs <code>Cargo.lock</code>, and every dependency must come from crates.io with a checksum (no git or path dependencies). Node and Python builds come with the publisher console; the Node and Python templates run in the local kit today.</div>
+<h2 id="what-review-checks">What review checks<a class="ah" href="#what-review-checks">#</a></h2>
+<p>Review processes your release in this order.</p>
+<div class="tw"><table><thead><tr><th>Stage</th><th>What it checks</th><th>Blocks a release?</th></tr></thead><tbody><tr><td>Intake and build</td><td>The manifest, the build files (<code>Containerfile</code>, <code>nest-build.toml</code>), the tree&#x27;s limits, the build itself</td><td>Yes</td></tr><tr><td>Deterministic scan</td><td>Committed credentials, capabilities, syscalls, egress, external writes, licences</td><td>Yes</td></tr><tr><td>AI analysis</td><td>An advisory review of the source by a self-hosted model</td><td>No, its findings are evidence for the reviewer</td></tr><tr><td>Behaviour test</td><td>The release runs its operations with honeytokens planted; nothing may leak</td><td>Yes</td></tr><tr><td>Staff decision</td><td>A named Pigeonpost staff member approves or rejects</td><td>Yes</td></tr></tbody></table></div>
+<h3 id="deterministic-scan-rules">Deterministic scan rules<a class="ah" href="#deterministic-scan-rules">#</a></h3>
+<p>This offline scan blocks a release if it finds any of these issues.</p>
+<div class="tw"><table><thead><tr><th>Rule</th><th>Blocked when</th></tr></thead><tbody><tr><td>Committed credentials</td><td>Private keys, AWS access keys, GitHub tokens, Slack tokens, sk- style API keys, Pigeonpost API, org, capability, service, or broker tokens are found anywhere in the tree</td></tr><tr><td>Capabilities</td><td><code>capabilities</code> names any Linux capability</td></tr><tr><td>Syscalls</td><td><code>syscalls</code> names any extra syscall (ptrace, mount, bpf, keyctl, unshare and the like are named forbidden)</td></tr><tr><td>Egress</td><td><code>egress</code> names anything other than <code>broker</code></td></tr><tr><td>External writes</td><td><code>external_writes = true</code> (not offered at launch)</td></tr><tr><td>Licences</td><td>A package&#x27;s licence, or a missing one, cannot be satisfied from the allowlist</td></tr></tbody></table></div>
+<h3 id="licences">Licences<a class="ah" href="#licences">#</a></h3>
+<p>Your dependencies must use one of these licences: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, Zlib, 0BSD, CC0-1.0, Unlicense, BSL-1.0, Unicode-3.0, Unicode-DFS-2016, MPL-2.0.</p>
+<p>Every package your release ships must be in <code>[licences]</code> with its SPDX expression. In an expression:</p>
+<ul><li>OR requires one side to be on the allowlist.</li><li>AND requires both sides to be on the allowlist.</li><li>WITH exceptions are refused.</li></ul>
+<h3 id="behaviour-test">Behaviour test<a class="ah" href="#behaviour-test">#</a></h3>
+<p>The release runs its operations in an isolated test volume. Honeytokens (fake credentials) are planted in places your Nest has no business reading. The broker traffic, results, and logs are searched for these tokens, raw and encoded (base64, hex, reversed). One hit fails the stage. A release that does not answer its test jobs also fails.</p>
+<h3 id="staff-decision">Staff decision<a class="ah" href="#staff-decision">#</a></h3>
+<p>A named Pigeonpost staff member, signed in with step-up, reviews your release with the evidence of every stage. It is never you, never anyone with a stake in the release, and never AI. They approve or reject based on the evidence. Approval creates an attestation over the release digest.</p>
+<h2 id="what-you-see">What you see<a class="ah" href="#what-you-see">#</a></h2>
+<p>You see your own scan findings in full, behaviour-test findings by rule only (so a test cannot be tuned against), and the AI review as a count of findings.</p>
+<div class="note">Coming with the publisher console: review status and findings for third-party publishers.</div>
+<h2 id="before-you-submit">Before you submit<a class="ah" href="#before-you-submit">#</a></h2>
+<p>Check these items before submitting your release.</p>
+<ol><li>1. No secrets anywhere in the source tree, including tests and fixtures.</li><li>2. Every <code>FROM</code> pinned by digest.</li><li>3. <code>[licences]</code> lists every package you ship, each on the allowlist.</li><li>4. <code>capabilities = []</code>, <code>syscalls = []</code>, egress only what you use.</li><li>5. A job delivered twice does nothing twice (<code>pigeonpost nest run --redeliver</code>).</li><li>6. The app answers every operation it declares, with and without a model (<code>--no-model</code>).</li></ol>
+    <footer class="pagefoot">
+      <nav>
+        <a href="https://pigeonpost.dev">pigeonpost.dev</a>
+        <a href="https://github.com/bekirdag/pigeonpost">GitHub</a>
+        <a href="https://www.npmjs.com/package/@bekirdag/pigeonpost">npm</a>
+        <a href="https://github.com/bekirdag/pigeonpost/tree/main/docs">Design docs</a>
+      </nav>
+      <p>Free and open source, MIT licensed.</p>
+    </footer>
+  </main>
+</div>
+
+</body>
+</html>

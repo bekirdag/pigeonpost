@@ -20,6 +20,7 @@
 		PP000000000000000000C2 /* PigeonpostGroupCrypto.swift in Sources (iOS) */ = {isa = PBXBuildFile; fileRef = PP000000000000000000C1; };
 		PP000000000000000000C3 /* PigeonpostGroupCrypto.swift in Sources (Mac) */ = {isa = PBXBuildFile; fileRef = PP000000000000000000C1; };
 		PP000000000000000000D1 = {isa = PBXBuildFile; productRef = PP000000000000000000D3; };
+		PP000000000000000000E1 = {isa = PBXBuildFile; productRef = PP000000000000000000E3; };
 		PP000000000000000000D2 = {isa = PBXBuildFile; productRef = PP000000000000000000D4; };
 		PP000000000000000000D5 = {isa = PBXBuildFile; fileRef = PP000000000000000000D6; };
 /* End PBXBuildFile section */
@@ -82,6 +83,7 @@
 			buildActionMask = 2147483647;
 			files = (
                 PP000000000000000000D1,
+                PP000000000000000000E1,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -150,7 +152,7 @@
 				PP0000000000000000005A /* Shared */,
 			);
 			name = Pigeonpost;
-            packageProductDependencies = (PP000000000000000000D3);
+            packageProductDependencies = (PP000000000000000000D3, PP000000000000000000E3);
 			productName = Pigeonpost;
 			productReference = PP0000000000000000000B /* Pigeonpost.app */;
 			productType = "com.apple.product-type.application";
@@ -193,10 +195,12 @@
 
 /* Begin XCRemoteSwiftPackageReference section */
         PP000000000000000000D0 = {isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/PhoneNumberKit/PhoneNumberKit"; requirement = {kind = exactVersion; version = 5.0.9; }; };
+        PP000000000000000000E0 = {isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/stasel/WebRTC"; requirement = {kind = exactVersion; version = 156.0.0; }; };
 /* End XCRemoteSwiftPackageReference section */
 /* Begin XCSwiftPackageProductDependency section */
         PP000000000000000000D3 = {isa = XCSwiftPackageProductDependency; package = PP000000000000000000D0; productName = PhoneNumberKit; };
         PP000000000000000000D4 = {isa = XCSwiftPackageProductDependency; package = PP000000000000000000D0; productName = PhoneNumberKit; };
+        PP000000000000000000E3 = {isa = XCSwiftPackageProductDependency; package = PP000000000000000000E0; productName = WebRTC; };
 /* End XCSwiftPackageProductDependency section */
 
 /* Begin PBXProject section */
@@ -228,7 +232,7 @@
 			productRefGroup = PP0000000000000000000E /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
-            packageReferences = (PP000000000000000000D0);
+            packageReferences = (PP000000000000000000D0, PP000000000000000000E0);
 			targets = (
 				PP0000000000000000000F /* Pigeonpost */,
 				PP0000000000000000006F /* PigeonpostMac */,

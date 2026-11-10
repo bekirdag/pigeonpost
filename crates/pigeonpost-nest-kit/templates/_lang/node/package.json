@@ -1,0 +1,10 @@
+{
+  "name": "nest-app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A Pigeonpost Nest app. Add dependencies with npm install; commit package-lock.json.",
+  "scripts": {
+    "test": "node --test"
+  }
+}

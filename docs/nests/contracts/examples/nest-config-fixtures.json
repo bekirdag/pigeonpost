@@ -1,0 +1,102 @@
+{
+  "description": "Shared fixtures for the Nest configuration-schema subset (marketplace M2). pigeonpost-core, the CLI (`pigeonpost nest validate`) and the postbox installation routes all run these and must agree. `schema_issues` / `config_issues` list the [path, code] pairs expected, in any order; an empty list means valid. Synthetic values only.",
+  "schemas": [
+    {
+      "name": "minimal",
+      "schema": {"type": "object", "additionalProperties": false, "properties": {}},
+      "schema_issues": [],
+      "configs": [
+        {"name": "empty", "config": {}, "config_issues": []},
+        {"name": "unknown key", "config": {"x": 1}, "config_issues": [["/x", "unknown_field"]]},
+        {"name": "not an object", "config": [], "config_issues": [["", "wrong_type"]]}
+      ]
+    },
+    {
+      "name": "team settings with a secret",
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "title": "Team settings",
+        "required": ["team_name", "api_token"],
+        "properties": {
+          "team_name": {"type": "string", "minLength": 2, "maxLength": 40, "title": "Team name"},
+          "tone": {"type": "string", "enum": ["formal", "casual"], "default": "formal"},
+          "max_answers": {"type": "integer", "minimum": 1, "maximum": 20, "default": 5},
+          "temperature": {"type": "number", "minimum": 0, "maximum": 1},
+          "cite_sources": {"type": "boolean", "default": true},
+          "api_token": {"type": "string", "maxLength": 200, "writeOnly": true, "description": "Synthetic token for the test fixture."}
+        }
+      },
+      "schema_issues": [],
+      "configs": [
+        {"name": "full", "config": {"team_name": "Ops", "tone": "casual", "max_answers": 3, "temperature": 0.5, "cite_sources": false, "api_token": "synthetic-token-1"}, "config_issues": []},
+        {"name": "required only", "config": {"team_name": "Ops", "api_token": "synthetic-token-1"}, "config_issues": []},
+        {"name": "missing secret", "config": {"team_name": "Ops"}, "config_issues": [["/api_token", "required"]]},
+        {"name": "too short", "config": {"team_name": "O", "api_token": "t"}, "config_issues": [["/team_name", "too_short"]]},
+        {"name": "too long", "config": {"team_name": "OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO", "api_token": "t"}, "config_issues": [["/team_name", "too_long"]]},
+        {"name": "not in enum", "config": {"team_name": "Ops", "tone": "loud", "api_token": "t"}, "config_issues": [["/tone", "not_in_enum"]]},
+        {"name": "integer bounds", "config": {"team_name": "Ops", "max_answers": 21, "api_token": "t"}, "config_issues": [["/max_answers", "above_maximum"]]},
+        {"name": "integer below", "config": {"team_name": "Ops", "max_answers": 0, "api_token": "t"}, "config_issues": [["/max_answers", "below_minimum"]]},
+        {"name": "fraction for integer", "config": {"team_name": "Ops", "max_answers": 2.5, "api_token": "t"}, "config_issues": [["/max_answers", "wrong_type"]]},
+        {"name": "string for boolean", "config": {"team_name": "Ops", "cite_sources": "yes", "api_token": "t"}, "config_issues": [["/cite_sources", "wrong_type"]]},
+        {"name": "number above", "config": {"team_name": "Ops", "temperature": 1.5, "api_token": "t"}, "config_issues": [["/temperature", "above_maximum"]]},
+        {"name": "unknown key", "config": {"team_name": "Ops", "api_token": "t", "debug": true}, "config_issues": [["/debug", "unknown_field"]]}
+      ]
+    },
+    {
+      "name": "unsupported keywords",
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "contact": {"type": "string", "maxLength": 100, "format": "uri"},
+          "code": {"type": "string", "maxLength": 10, "pattern": "^[A-Z]+$"},
+          "nested": {"type": "object"},
+          "list": {"type": "array"}
+        }
+      },
+      "schema_issues": [
+        ["/properties/contact/format", "unsupported_keyword"],
+        ["/properties/code/pattern", "unsupported_keyword"],
+        ["/properties/nested/type", "unsupported_keyword"],
+        ["/properties/list/type", "unsupported_keyword"]
+      ],
+      "configs": []
+    },
+    {
+      "name": "loose root and unbounded string",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "Name": {"type": "string"},
+          "secret_with_default": {"type": "string", "maxLength": 10, "writeOnly": true, "default": "x"},
+          "range": {"type": "integer", "minimum": 5, "maximum": 1}
+        },
+        "required": ["missing_one"],
+        "oneOf": []
+      },
+      "schema_issues": [
+        ["/additionalProperties", "bad_value"],
+        ["/oneOf", "unsupported_keyword"],
+        ["/properties/Name", "bad_value"],
+        ["/properties/Name/maxLength", "missing"],
+        ["/properties/secret_with_default/default", "bad_value"],
+        ["/properties/range/minimum", "bad_value"],
+        ["/required/0", "bad_value"]
+      ],
+      "configs": []
+    },
+    {
+      "name": "default that breaks its own bounds",
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "size": {"type": "integer", "minimum": 1, "maximum": 3, "default": 9}
+        }
+      },
+      "schema_issues": [["/properties/size/default", "above_maximum"]],
+      "configs": []
+    }
+  ]
+}

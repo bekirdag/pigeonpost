@@ -23,12 +23,12 @@ const PRICES = { plans: [
   { code: "nest-ai-starter-monthly-eur", package: "nest.ai.starter.monthly", currency: "EUR", amount: "9.00", available: true },
 ] };
 
-function productsPage(t, { features = ["nests"], nests = { allowance: { slots: 0, used: 0, duplicates: [] }, nests: [], setups: [] }, profile = "00000000-0000-4000-8000-000000000042", prices = PRICES, orgs = [], orgNests = null, members = null } = {}) {
+function productsPage(t, { features = ["nests"], nests = { allowance: { slots: 0, used: 0, duplicates: [] }, nests: [], setups: [] }, profile = "00000000-0000-4000-8000-000000000042", prices = PRICES, orgs = [], orgNests = null, members = null, bridgeFor = null, search = "", operators = null } = {}) {
   const dom = new JSDOM('<div id="root"></div>', { url: "https://pigeonpost.dev/account", runScripts: "outside-only", virtualConsole: new VirtualConsole() });
   t.after(() => dom.window.close());
   const { window } = dom;
   window.eval(products);
-  const calls = [], checkouts = [], toasts = [];
+  const calls = [], checkouts = [], toasts = [], cleared = [];
   let wentToBilling = false;
   const deps = {
     features: new Set(features),
@@ -38,6 +38,7 @@ function productsPage(t, { features = ["nests"], nests = { allowance: { slots: 0
       if (path === "/v1/nests") return nests;
       if (path === "/v1/orgs") return { orgs };
       if (orgNests && /^\/v1\/orgs\/[^/]+\/nests$/.test(path)) return orgNests;
+      if (operators && /^\/v1\/orgs\/[^/]+\/nests\/[^/]+\/operators$/.test(path)) return operators(path, init);
       if (/^\/v1\/orgs\/[^/]+\/members\?status=active$/.test(path)) {
         if (!members) throw Object.assign(new Error("forbidden"), { status: 403, code: "forbidden" });
         return { members };
@@ -46,19 +47,25 @@ function productsPage(t, { features = ["nests"], nests = { allowance: { slots: 0
       if (path.startsWith("/v1/nest-setups/")) return { setups: [] };
       throw Object.assign(new Error("unexpected " + path), { status: 404 });
     },
-    bridgeGet: async (path) => { calls.push({ path, bridge: true }); return { subscriptions: [], prices }; },
-    bridgeAction: async () => ({}),
+    bridgeGet: async (path) => {
+      calls.push({ path, bridge: true });
+      const answer = bridgeFor ? await bridgeFor(path) : undefined;
+      return answer !== undefined ? answer : { subscriptions: [], prices };
+    },
+    bridgeAction: async (path, body) => { calls.push({ path, bridge: true, method: "POST", body }); return {}; },
     startCheckout: (p) => checkouts.push(p),
     billingProfileId: async () => profile,
     goBilling: () => { wentToBilling = true; },
     toast: (m) => toasts.push(m),
     randomHex32: () => "ab".repeat(16),
-    search: "",
+    search,
+    clearReturn: (key) => cleared.push(key),
+    confirmDelayMs: 0,
     preferredCurrency: "USD",
     locale: "en",
   };
   window.PPProducts.mount(window.document.querySelector("#root"), deps);
-  return { window, doc: window.document, calls, checkouts, toasts, billing: () => wentToBilling };
+  return { window, doc: window.document, calls, checkouts, toasts, cleared, billing: () => wentToBilling };
 }
 
 test("three accessible tabs switch by click and by arrow keys", async (t) => {
@@ -445,8 +452,203 @@ test("a company operator sees its Nests but no create form; no member list means
   assert.equal(q.doc.querySelector(".pp-operators"), null);
 });
 
+// ---- buying a company package ---------------------------------------------------------------------
+
+const ACME = "org_acme0123";
+const NO_PACKAGE = { allowance: { slots: 0, used: 0 }, package: null, nests: [] };
+const company = async (p) => {
+  await tick();
+  const ctx = p.doc.querySelector("#pp-context");
+  ctx.value = ACME; ctx.dispatchEvent(new p.window.Event("change"));
+  await tick();
+};
+const orgBridge = (subscriptions = []) => (path) => (path === `/v1/nests?org_id=${ACME}` ? { org_id: ACME, subscriptions, prices: PRICES } : undefined);
+
+test("a company's billing admin buys a package in company context", async (t) => {
+  const p = productsPage(t, { orgs: [{ id: ACME, name: "Acme", my_roles: ["billing_admin"], my_member_id: "m_me" }], orgNests: NO_PACKAGE, bridgeFor: orgBridge() });
+  await company(p);
+  assert.ok(p.calls.some((c) => c.bridge && c.path === `/v1/nests?org_id=${ACME}`));
+  assert.match(p.doc.querySelector("#pp-org").textContent, /no Nest package yet\. Buy one below\./);
+  assert.deepEqual([...p.doc.querySelectorAll("#pp-org .pp-card")].map((c) => c.getAttribute("data-package")), ["nest.ai.starter.monthly", "nest.host.starter.monthly"]);
+  assert.equal(p.doc.querySelector("#pp-org-create"), null, "a billing admin alone does not create Nests");
+  p.doc.querySelector('#pp-org [data-buy="nest-host-starter-monthly-usd"]').click();
+  await tick();
+  assert.deepEqual(JSON.parse(JSON.stringify(p.checkouts)), [{ kind: "nest", intent_id: "ab".repeat(16), plan_code: "nest-host-starter-monthly-usd",
+    billing_profile_id: "00000000-0000-4000-8000-000000000042", locale: "en", org_id: ACME }]);
+});
+
+test("members who don't manage billing keep the message and see no prices", async (t) => {
+  for (const roles of [["member"], ["agent_admin"], ["admin"]]) {
+    const p = productsPage(t, { orgs: [{ id: ACME, name: "Acme", my_roles: roles, my_member_id: "m_me" }], orgNests: NO_PACKAGE, bridgeFor: orgBridge() });
+    await company(p);
+    assert.match(p.doc.querySelector("#pp-org").textContent, /Its billing admin can buy one\./, roles.join());
+    assert.equal(p.doc.querySelectorAll("#pp-org [data-buy]").length, 0, roles.join());
+    assert.ok(!p.calls.some((c) => c.bridge && /org_id=/.test(c.path)), roles.join());
+  }
+});
+
+test("the company's web package can be changed or canceled by its buyer, and only seen by another admin", async (t) => {
+  const SUB = { id: "00000000-0000-4000-8000-000000000077", plan_code: "nest-ai-starter-monthly-usd", currency: "USD", package: "nest.ai.starter.monthly", slots: 1, provider_status: "ACTIVE", recurring_price: { amount: "10.00", currency: "USD" }, buyer: true };
+  const funded = { allowance: { slots: 1, used: 0 }, package: { code: "nest.ai.starter.monthly", slots: 1 }, nests: [] };
+  const p = productsPage(t, { orgs: [{ id: ACME, name: "Acme", my_roles: ["owner"], my_member_id: "m_me" }], orgNests: funded, bridgeFor: orgBridge([SUB]) });
+  await company(p);
+  assert.match(p.doc.querySelector("#pp-org .pp-sub").textContent, /Company web Nest package · USD/);
+  assert.equal(p.doc.querySelectorAll("#pp-org [data-buy]").length, 0, "no second package");
+  p.doc.querySelector("#pp-cancel").click();
+  await tick();
+  assert.ok(p.calls.some((c) => c.method === "POST" && c.path === `/v1/nests/subscriptions/${SUB.id}/cancel`));
+  const q = productsPage(t, { orgs: [{ id: ACME, name: "Acme", my_roles: ["billing_admin"], my_member_id: "m_me" }], orgNests: funded, bridgeFor: orgBridge([{ ...SUB, buyer: false, provider_status: null }]) });
+  await company(q);
+  assert.ok(q.doc.querySelector("#pp-not-buyer"));
+  assert.equal(q.doc.querySelector("#pp-cancel"), null);
+  assert.equal(q.doc.querySelector("#pp-change-go"), null);
+  // Funded another way (a grant or a store): nothing to buy or manage here.
+  const r = productsPage(t, { orgs: [{ id: ACME, name: "Acme", my_roles: ["owner"], my_member_id: "m_me" }], orgNests: funded, bridgeFor: orgBridge([]) });
+  await company(r);
+  assert.equal(r.doc.querySelectorAll("#pp-org [data-buy]").length, 0);
+  assert.equal(r.doc.querySelector("#pp-org .pp-sub"), null);
+});
+
+test("back from a company checkout the page opens in that company and confirms it", async (t) => {
+  const id = "cd".repeat(16);
+  const p = productsPage(t, {
+    orgs: [{ id: ACME, name: "Acme", my_roles: ["billing_admin"], my_member_id: "m_me" }], orgNests: NO_PACKAGE,
+    search: `?nest_checkout=${id}&nest_org=${ACME}`,
+    bridgeFor: (path) => (path === `/v1/nests/checkout/${id}` ? { status: "active", org_id: ACME } : orgBridge()(path)),
+  });
+  await tick(40);
+  assert.equal(p.doc.querySelector("#pp-context").value, ACME);
+  assert.ok(p.doc.querySelector("#pp-org"));
+  assert.deepEqual(p.cleared.sort(), ["nest_checkout", "nest_org"]);
+  assert.ok(p.toasts.some((m) => /company's Nest package is active/.test(m)), JSON.stringify(p.toasts));
+  // A malformed org in the return is ignored.
+  const q = productsPage(t, { orgs: [{ id: ACME, name: "Acme", my_roles: ["owner"] }], orgNests: NO_PACKAGE, search: "?nest_org=../x" });
+  await tick();
+  assert.equal(q.doc.querySelector("#pp-context").value, "personal");
+});
+
 test("a Nest awaiting payment says when it will be deleted", async (t) => {
   const p = productsPage(t, { nests: { ...FUNDED(1), nests: [{ nest_id: "nst_a", label: "A", status: "needs_you", status_reason: "payment", delete_after: 1900000000 }] } });
   await tick();
   assert.match(p.doc.querySelector('[data-nest="nst_a"] .pp-warn').textContent, /Deleted on/);
+});
+
+test("a company admin manages a Nest's operators", async (t) => {
+  const p = productsPage(t, {
+    orgs: [{ id: "org1", name: "Acme", my_roles: ["agent_admin"], my_member_id: "m_me" }],
+    orgNests: { allowance: { slots: 3, used: 1 }, package: { code: "x", slots: 3 }, nests: [{ nest_id: "nst_a", address: "/k/a", label: "Ops", state: "running", role: "owner" }] },
+    members: [
+      { id: "m_me", first_name: "Me" },
+      { id: "m_2", first_name: "Ada", last_name: "L" },
+      { id: "m_3", first_name: "Bo" },
+      { id: "m_4", first_name: "Cy", roles: ["admin"] }
+    ],
+    operators: (path, init) => {
+      if (init.method === "PUT") {
+        return { operators: JSON.parse(init.body).operators.map(id => ({ member_id: id })) };
+      }
+      return { operators: [{ member_id: "m_3", first_name: "Bo" }] };
+    }
+  });
+
+  await tick();
+  const ctx = p.doc.querySelector("#pp-context");
+  ctx.value = "org1";
+  ctx.dispatchEvent(new p.window.Event("change"));
+  await tick();
+
+  const toggle = p.doc.querySelector('[data-manage-operators="nst_a"]');
+  assert.ok(toggle, "toggle button exists");
+  assert.equal(toggle.getAttribute("aria-expanded"), "false");
+
+  const panel = p.doc.querySelector("#pp-ops-nst_a");
+  assert.ok(panel, "panel exists");
+  assert.ok(panel.hidden, "panel is hidden initially");
+
+  toggle.click();
+  await tick();
+
+  assert.equal(toggle.getAttribute("aria-expanded"), "true");
+  assert.ok(!panel.hidden, "panel is visible after click");
+
+  const checkboxes = panel.querySelectorAll("[data-nest-operator]");
+  assert.equal(checkboxes.length, 2, "exactly two checkboxes offered (m_2 and m_3)");
+  
+  const ids = Array.from(checkboxes).map(cb => cb.getAttribute("data-nest-operator")).sort();
+  assert.deepEqual(ids, ["m_2", "m_3"], "checkboxes are for m_2 and m_3");
+
+  const cbM3 = panel.querySelector('[data-nest-operator="m_3"]');
+  const cbM2 = panel.querySelector('[data-nest-operator="m_2"]');
+  
+  assert.ok(cbM3.checked, "m_3 is checked");
+  assert.ok(!cbM2.checked, "m_2 is not checked");
+  for (const cb of checkboxes) assert.match(panel.querySelector(`label[for="${cb.id}"]`).textContent, /\S/, "every checkbox is labelled");
+
+  const fieldset = panel.querySelector("fieldset.pp-operators");
+  assert.ok(fieldset, "fieldset exists");
+  const legend = fieldset.querySelector("legend");
+  assert.ok(legend.textContent.includes("Ops"), "legend contains 'Ops'");
+
+  cbM2.checked = true;
+  cbM3.checked = false;
+
+  const form = panel.querySelector("form");
+  assert.ok(form, "form exists in panel");
+  form.dispatchEvent(new p.window.Event("submit", { cancelable: true }));
+  
+  await tick();
+
+  const putCall = p.calls.find(c => c.path === "/v1/orgs/org1/nests/nst_a/operators" && c.method === "PUT");
+  assert.ok(putCall, "PUT call was made");
+  assert.deepEqual(JSON.parse(putCall.body), { operators: ["m_2"] });
+
+  const status = panel.querySelector('[role="status"]');
+  assert.ok(status, "status element exists");
+  assert.match(status.textContent, /Saved\. 1 person/);
+});
+
+test("without the member list an admin can only remove operators; errors are announced", async (t) => {
+  const p = productsPage(t, {
+    orgs: [{ id: "org1", name: "Acme", my_roles: ["agent_admin"], my_member_id: "m_me" }],
+    orgNests: { allowance: { slots: 3, used: 1 }, package: { code: "x", slots: 3 }, nests: [{ nest_id: "nst_a", address: "/k/a", label: "Ops", state: "running", role: "owner" }] },
+    members: null, // member list fetch fails
+    operators: (path, init) => {
+      if (init.method === "PUT") {
+        throw Object.assign(new Error("x"), { status: 409, code: "org_read_only" });
+      }
+      return { operators: [{ member_id: "m_3", first_name: "Bo" }] };
+    }
+  });
+
+  await tick();
+  const ctx = p.doc.querySelector("#pp-context");
+  ctx.value = "org1";
+  ctx.dispatchEvent(new p.window.Event("change"));
+  await tick();
+
+  const toggle = p.doc.querySelector('[data-manage-operators="nst_a"]');
+  assert.ok(toggle, "toggle button exists");
+  
+  toggle.click();
+  await tick();
+
+  const panel = p.doc.querySelector("#pp-ops-nst_a");
+  assert.ok(panel, "panel exists");
+  assert.ok(!panel.hidden, "panel is visible after click");
+
+  const checkboxes = panel.querySelectorAll("[data-nest-operator]");
+  assert.equal(checkboxes.length, 1, "only one checkbox offered (m_3)");
+  assert.equal(checkboxes[0].getAttribute("data-nest-operator"), "m_3");
+
+  assert.match(panel.textContent, /remove operators here but not add/);
+
+  const form = panel.querySelector("form");
+  assert.ok(form, "form exists in panel");
+  form.dispatchEvent(new p.window.Event("submit", { cancelable: true }));
+  
+  await tick();
+
+  const status = panel.querySelector('[role="status"]');
+  assert.ok(status, "status element exists");
+  assert.match(status.textContent, /read-only/);
 });

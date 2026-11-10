@@ -1,0 +1,13 @@
+{
+  "name": "@pigeonpost/nest-sdk",
+  "version": "0.1.0",
+  "description": "Pigeonpost Nest runtime helper: jobs, the model broker, progress and effects. No dependencies; copied into apps by `pigeonpost nest init`.",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "main": "pigeonpost-nest.mjs",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "test": "node --test test/sdk.test.mjs"
+  }
+}

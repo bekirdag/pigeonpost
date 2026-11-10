@@ -1,0 +1,12 @@
+# Runner image for a Python Nest app: the image ASSEMBLY only. The base image is pinned by
+# digest; review refuses a FROM that is not. Nothing runs here (RUN, ADD and COPY --from are
+# refused): the build plane downloaded the wheels requirements.txt pins into `wheelhouse/`, and
+# the compile step in nest-build.toml installed them, offline and hash-checked, into deps/.
+ARG BASE_IMAGE=docker.io/library/python:3.12.12-slim-bookworm@sha256:593bd06efe90efa80dc4eee3948be7c0fde4134606dd40d8dd8dbcade98e669c
+
+FROM ${BASE_IMAGE}
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYTHONPATH=/app/deps
+WORKDIR /app
+COPY . /app
+USER 10001:10001
+ENTRYPOINT ["/usr/local/bin/python3", "/app/app.py"]

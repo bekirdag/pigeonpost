@@ -1,0 +1,21 @@
+{
+  "operation": "docs.ask",
+  "version": "1.0",
+  "summary": "Answer one question from the bundled documents, citing the sections used.",
+  "input": {
+    "fields": [
+      { "name": "question", "max_chars": 2000, "required": true }
+    ]
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "answer": { "type": "string" },
+      "sources": { "type": "array", "items": { "type": "string" } },
+      "model_used": { "type": "boolean" }
+    },
+    "required": ["answer", "sources", "model_used"]
+  },
+  "uses_model": true,
+  "effects": []
+}

@@ -63,7 +63,9 @@ struct MacInboxView: View {
         SettingsSheet(openOn: "plans").frame(width: 520, height: 620)
     }
 
-    var body: some View {
+    /// The window's content with its group and announcement wiring. Separate from `body` because
+    /// one modifier chain of this length is more than the compiler can type-check in time.
+    private var inboxContent: some View {
         @Bindable var inbox = inbox
 
         return DesktopInboxView(
@@ -108,6 +110,11 @@ struct MacInboxView: View {
         // screen has closed ("You were removed from this group…"), which `CallHost` hands over as
         // `inbox.toast`. The iPhone and iPad show it from `ConversationsView`; the Mac never did.
         .toast($inbox.toast)
+    }
+
+    /// The content plus its loading, badge and notification wiring; `body` adds the links and sheets.
+    private var liveContent: some View {
+        inboxContent
         .task {
             if let staged = Fixtures.openPeer, peer == nil { peer = staged }
             switch Fixtures.sheet {
@@ -177,10 +184,15 @@ struct MacInboxView: View {
             push.pendingPeer = nil
             NSApplication.shared.activate(ignoringOtherApps: true)
         }
+    }
+
+    var body: some View {
+        liveContent
         .calendarNotices(canPresent: sheet == nil || sheet?.id == "calendar", open: {
             sheet = .calendar
             NSApplication.shared.activate(ignoringOtherApps: true)
         }, visit: visit)
+        .nestPurchaseRecovery()
         .calendarMeetingLinks(canPresent: sheet == nil) { request in
             sheet = .meetingLink(request)
             NSApplication.shared.activate(ignoringOtherApps: true)
@@ -226,59 +238,64 @@ struct MacInboxView: View {
                people?.state.promptSeen == false, Fixtures.sheet == nil, sheet == nil, calls.mode == .hidden { sheet = .freeName }
         }
         .sheet(item: $sheet, onDismiss: finishMailboxVisit) { which in
-            switch which {
-            case .freeName: NavigationStack { DisplayNamePage(onboarding: true).id(people?.scope) }.frame(width: 520, height: 560).interactiveDismissDisabled()
-            case .settings:
-                // The phone's, now shared. A Mac sheet takes its size from its content, and a Form
-                // with no width asks for the narrowest one that fits its longest label.
-                SettingsSheet()
-                    .frame(width: 520, height: 620)
-            case .plans: plansSheet
-            case .deviceApproval(let request):
-                if account.features.orgs { DeviceApprovalScreen(session: account.session, code: request.code).id(request.id) }
-            case .calendar:
-                if let calendar {
-                    CalendarDashboard(store: calendar, joinMeeting: { request in
-                        guard calendar.mailbox == request.mailbox, account.me?.address == request.mailbox else { return }
-                        pendingMeeting = (request, calendar.scopeId)
-                        sheet = nil
-                    }).id(calendar.scopeId)
-                }
-            case .meetingLink(let link):
-                CalendarLinkEntry(request: link, visit: visit) { request in
-                    guard let calendar, calendar.mailbox == request.mailbox, account.me?.address == request.mailbox else { return }
+            sheetContent(which)
+        }
+    }
+
+    @ViewBuilder
+    private func sheetContent(_ which: Sheet) -> some View {
+        switch which {
+        case .freeName: NavigationStack { DisplayNamePage(onboarding: true).id(people?.scope) }.frame(width: 520, height: 560).interactiveDismissDisabled()
+        case .settings:
+            // The phone's, now shared. A Mac sheet takes its size from its content, and a Form
+            // with no width asks for the narrowest one that fits its longest label.
+            SettingsSheet()
+                .frame(width: 520, height: 620)
+        case .plans: plansSheet
+        case .deviceApproval(let request):
+            if account.features.orgs { DeviceApprovalScreen(session: account.session, code: request.code).id(request.id) }
+        case .calendar:
+            if let calendar {
+                CalendarDashboard(store: calendar, joinMeeting: { request in
+                    guard calendar.mailbox == request.mailbox, account.me?.address == request.mailbox else { return }
                     pendingMeeting = (request, calendar.scopeId)
                     sheet = nil
-                }
-            case .newGroup:
-                NewGroupSheet { id in peer = id; subthread = nil }
-                    .frame(width: 480, height: 600)
-            case .organizationRooms:
-                if account.features.orgs && account.features.groups {
-                    OrganizationRoomsScreen(account: account, visit: visit) { id in peer = id; subthread = nil }
-                }
-            case .meetingNotes:
-                if account.features.meetingSummaries { MeetingNotesScreen() }
-            case .joinLink:
-                JoinLinkSheet { link in sheet = .join(link) }
-                    .frame(width: 460, height: 240)
-            case .join(let link):
-                JoinGroupSheet(link: link) { id in peer = id; subthread = nil }
-                    .frame(width: 460, height: 360)
-            case .filtered:
-                if let filtered {
-                    FilteredSheet(filtered: filtered)
-                        .frame(width: 520, height: 620)
-                }
-            case .peer(let conversation):
-                // Keep the presented content alive independently of inbox selection. Removing
-                // its conversation while the sheet is open must not leave an empty modal panel.
-                PeerInfoSheet(conversation: conversation) { mailbox in
-                    pendingMailbox = mailbox
-                    sheet = nil
-                }
-                .frame(width: 520, height: 620)
+                }).id(calendar.scopeId)
             }
+        case .meetingLink(let link):
+            CalendarLinkEntry(request: link, visit: visit) { request in
+                guard let calendar, calendar.mailbox == request.mailbox, account.me?.address == request.mailbox else { return }
+                pendingMeeting = (request, calendar.scopeId)
+                sheet = nil
+            }
+        case .newGroup:
+            NewGroupSheet { id in peer = id; subthread = nil }
+                .frame(width: 480, height: 600)
+        case .organizationRooms:
+            if account.features.orgs && account.features.groups {
+                OrganizationRoomsScreen(account: account, visit: visit) { id in peer = id; subthread = nil }
+            }
+        case .meetingNotes:
+            if account.features.meetingSummaries { MeetingNotesScreen() }
+        case .joinLink:
+            JoinLinkSheet { link in sheet = .join(link) }
+                .frame(width: 460, height: 240)
+        case .join(let link):
+            JoinGroupSheet(link: link) { id in peer = id; subthread = nil }
+                .frame(width: 460, height: 360)
+        case .filtered:
+            if let filtered {
+                FilteredSheet(filtered: filtered)
+                    .frame(width: 520, height: 620)
+            }
+        case .peer(let conversation):
+            // Keep the presented content alive independently of inbox selection. Removing
+            // its conversation while the sheet is open must not leave an empty modal panel.
+            PeerInfoSheet(conversation: conversation) { mailbox in
+                pendingMailbox = mailbox
+                sheet = nil
+            }
+            .frame(width: 520, height: 620)
         }
     }
 

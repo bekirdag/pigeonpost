@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Manifest, operations and configuration — Pigeonpost Developers</title>
+<meta name="description" content="nest-release.toml, operation descriptors and the configuration schema.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#128330;</text></svg>">
+<link rel="stylesheet" href="/docs.css">
+<script src="/docs.js" defer></script>
+</head>
+<body>
+
+<header class="bar">
+  <div class="bar-in">
+    <a class="brand" href="/">Pigeonpost <span>Developers</span></a>
+    <nav class="top"><a href="/index">Overview</a>
+<a href="/quickstart">Quickstart</a>
+<a href="/mcp">MCP</a>
+<a href="/cli">CLI</a>
+<a href="/api">API</a>
+<a href="/org-api">Enterprise</a>
+<a href="https://inbox.pigeonpost.dev">Inbox</a></nav>
+    <a class="gh" href="https://github.com/bekirdag/pigeonpost" aria-label="GitHub"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg></a>
+  </div>
+</header>
+
+<div class="shell">
+  <aside class="side"><p class="sb-h">Start</p><ul class="sb">
+<li><a href="/index">Overview</a></li>
+<li><a href="/quickstart">Quickstart</a></li>
+<li><a href="/concepts">Core concepts</a></li>
+</ul>
+<p class="sb-h">Guides</p><ul class="sb">
+<li><a href="/postbox">Hosted mailboxes</a></li>
+<li><a href="/wake">Getting woken</a></li>
+<li><a href="/fleet">An agent per repo</a></li>
+<li><a href="/skill">Agent skill</a></li>
+<li><a href="/handles">Claiming a handle</a></li>
+<li><a href="/inbox">Controlling your inbox</a></li>
+<li><a href="/node">Running a loft</a></li>
+</ul>
+<p class="sb-h">Integrate</p><ul class="sb">
+<li><a href="/mcp">MCP server</a></li>
+<li><a href="/cli">CLI reference</a></li>
+<li><a href="/api">HTTP API</a></li>
+<li><a href="/api-reference">API reference</a></li>
+<li><a href="/changelog">Changelog</a></li>
+</ul>
+<p class="sb-h">Build a Nest</p><ul class="sb">
+<li><a href="/nests">Overview</a></li>
+<li><a href="/nest-quickstart">Quick start</a></li>
+<li><a href="/nest-manifest" class="on">Manifest and operations</a></li>
+<li><a href="/nest-runtime">Runtime API</a></li>
+<li><a href="/nest-review">Security and review</a></li>
+<li><a href="/nest-publish">Publish and price</a></li>
+</ul>
+<p class="sb-h">Enterprise API</p><ul class="sb">
+<li><a href="/org-api">Overview</a></li>
+<li><a href="/org-api-reference">Reference</a></li>
+<li><a href="/org-api-errors">Errors</a></li>
+<li><a href="/org-api-onboard">Onboard a new employee</a></li>
+<li><a href="/org-api-ci-agents">Install agents from CI</a></li>
+<li><a href="/org-api-room-posts">Post build results into a room</a></li>
+<li><a href="/org-api-siem">Stream audit logs to your SIEM</a></li>
+<li><a href="/org-api-webhooks">Verify webhook signatures</a></li>
+</ul>
+<p class="sb-h">Your mail</p><ul class="sb">
+<li><a href="https://inbox.pigeonpost.dev">Open the web inbox</a></li>
+<li><a href="https://pigeonpost.dev/account">Handles and account</a></li>
+</ul></aside>
+  <main class="doc">
+<h1>Manifest, operations and configuration</h1>
+<h2 id="nest-release-toml">nest-release.toml<a class="ah" href="#nest-release-toml">#</a></h2>
+<p>The release manifest is a TOML file named <code>nest-release.toml</code>. Every key is required. Unknown keys are refused.</p>
+<pre class="lang-toml"><code>name = &quot;docs-qa&quot;
+version = &quot;0.1.0&quot;
+title = &quot;Docs Q&amp;A&quot;
+summary = &quot;Answers questions from the documents bundled with the release.&quot;
+licence = &quot;MIT&quot;
+entrypoint = &quot;/usr/local/bin/node&quot;
+listing_address = &quot;/acme/docs-qa&quot;
+egress = [&quot;broker&quot;]
+capabilities = []
+syscalls = []
+external_writes = false
+
+[[operations]]
+name = &quot;docs.ask&quot;
+version = &quot;1.0&quot;
+
+[[operations.fields]]
+name = &quot;question&quot;
+max_chars = 2000
+required = true
+
+[licences]
+docs-qa = &quot;MIT&quot;</code></pre>
+<div class="tw"><table><thead><tr><th>Key</th><th>Type</th><th>Rules</th></tr></thead><tbody><tr><td><code>name</code></td><td>string</td><td>1 to 64 characters. Lowercase a-z, digits 0-9, hyphen -.</td></tr><tr><td><code>version</code></td><td>string</td><td>major.minor.patch format. Digits only.</td></tr><tr><td><code>title</code></td><td>string</td><td>Text.</td></tr><tr><td><code>summary</code></td><td>string</td><td>Text.</td></tr><tr><td><code>licence</code></td><td>string</td><td>SPDX expression for the release.</td></tr><tr><td><code>entrypoint</code></td><td>string</td><td>The program the image runs (e.g. /usr/local/bin/node).</td></tr><tr><td><code>listing_address</code></td><td>string</td><td>Absolute address starting with /. Max 128 characters. Addresses starting with /pigeonpost/ are reserved for Pigeonpost.</td></tr><tr><td><code>egress</code></td><td>array</td><td>List of strings. Only <code>&quot;broker&quot;</code>; <code>[]</code> for no network at all.</td></tr><tr><td><code>capabilities</code></td><td>array</td><td>Must be []. No Linux capabilities.</td></tr><tr><td><code>syscalls</code></td><td>array</td><td>Must be []. Nothing beyond the pool&#x27;s default gVisor profile.</td></tr><tr><td><code>external_writes</code></td><td>boolean</td><td><code>true</code> is blocked at launch</td></tr><tr><td><code>[[operations]]</code></td><td>tables</td><td>At least one; see below</td></tr><tr><td><code>[licences]</code></td><td>table</td><td>Package name to SPDX expression; see below</td></tr></tbody></table></div>
+<h2 id="operations-and-fields">Operations and fields<a class="ah" href="#operations-and-fields">#</a></h2>
+<p>Each <code>[[operations]]</code> table has a <code>name</code> (lower-case dotted words of a-z, 0-9 and <code>_</code>, each starting with a letter; at most 80 characters) and a <code>version</code> (<code>major.minor</code> or <code>major.minor.patch</code>). Define input fields in <code>[[operations.fields]]</code> blocks. Every input field is a string. You must define at least one operation. Each operation needs at least one field.</p>
+<div class="tw"><table><thead><tr><th>Field key</th><th>Rules</th></tr></thead><tbody><tr><td><code>name</code></td><td>The payload key</td></tr><tr><td><code>max_chars</code></td><td>A positive integer: the longest value, in characters</td></tr><tr><td><code>required</code></td><td><code>true</code> or <code>false</code></td></tr></tbody></table></div>
+<p>Admission checks payloads against these fields. The check ensures:</p>
+<ul><li>Only declared fields are present.</li><li>Each value is a string.</li><li>No value exceeds its max_chars.</li><li>Required fields are present and not blank.</li></ul>
+<p>If a payload fails this check, the error is <code>invalid_operation_payload</code>.</p>
+<h2 id="licences">Licences<a class="ah" href="#licences">#</a></h2>
+<p>The <code>[licences]</code> table maps package names to SPDX expressions. It covers the release itself and every dependency it ships, and each expression must be satisfiable from the <a href="/nest-review">licence allowlist</a>.</p>
+<h2 id="operation-descriptors">Operation descriptors<a class="ah" href="#operation-descriptors">#</a></h2>
+<p>Create one JSON file per operation in <code>operations/&lt;name&gt;.json</code>. This descriptor documents the operation for the listing and for review. Its input fields must match the manifest exactly.</p>
+<div class="tw"><table><thead><tr><th>Key</th><th>What</th></tr></thead><tbody><tr><td><code>operation</code>, <code>version</code></td><td>As in the manifest</td></tr><tr><td><code>summary</code></td><td>One sentence for the listing</td></tr><tr><td><code>input.fields</code></td><td>The same fields as the manifest, in the same order</td></tr><tr><td><code>output</code></td><td>JSON Schema of the result: <code>answer</code>, <code>sources</code>, <code>model_used</code></td></tr><tr><td><code>uses_model</code></td><td>Whether the operation calls the model broker</td></tr><tr><td><code>effects</code></td><td>Each external effect it may ask for: <code>kind</code>, <code>requires_approval</code>, <code>summary</code>, <code>idempotency</code> (how its key is derived)</td></tr></tbody></table></div>
+<pre class="lang-json"><code>{
+  &quot;operation&quot;: &quot;docs.ask&quot;,
+  &quot;version&quot;: &quot;1.0&quot;,
+  &quot;summary&quot;: &quot;Answers a question using bundled documents.&quot;,
+  &quot;input&quot;: {
+    &quot;fields&quot;: [
+      {
+        &quot;name&quot;: &quot;question&quot;,
+        &quot;max_chars&quot;: 2000,
+        &quot;required&quot;: true
+      }
+    ]
+  },
+  &quot;output&quot;: {
+    &quot;type&quot;: &quot;object&quot;,
+    &quot;properties&quot;: {
+      &quot;answer&quot;: { &quot;type&quot;: &quot;string&quot; },
+      &quot;sources&quot;: { &quot;type&quot;: &quot;array&quot; },
+      &quot;model_used&quot;: { &quot;type&quot;: &quot;boolean&quot; }
+    }
+  },
+  &quot;uses_model&quot;: true,
+  &quot;effects&quot;: []
+}</code></pre>
+<h2 id="configuration-schema">Configuration schema<a class="ah" href="#configuration-schema">#</a></h2>
+<p>Define what a buyer sets at install in the manifest&#x27;s <code>[config_schema]</code> table. It is a small subset of JSON Schema 2020-12: one flat object with <code>additionalProperties = false</code> and at most 32 properties of type string, integer, number or boolean. The keywords are <code>type</code>, <code>title</code>, <code>description</code>, <code>default</code>, <code>enum</code>, <code>minLength</code>, <code>maxLength</code> (at most 4096), <code>minimum</code>, <code>maximum</code>, <code>writeOnly</code> and, at the root, <code>required</code>, <code>title</code>, <code>description</code> and <code>$schema</code>. Strings need <code>maxLength</code> or <code>enum</code>. Any other keyword is refused by name. <code>pigeonpost nest validate</code> applies the same rules as the platform.</p>
+<pre class="lang-toml"><code>[config_schema]
+type = &quot;object&quot;
+additionalProperties = false
+required = []
+
+[config_schema.properties.decimal_places]
+type = &quot;integer&quot;
+minimum = 0
+maximum = 6
+default = 2</code></pre>
+<p>The app reads configuration from the job as <code>job.config</code>. It is read-only, has the schema&#x27;s defaults filled in, and is <code>{}</code> when nothing is set. A property with <code>writeOnly = true</code> is a secret: it is never in <code>job.config</code> or the environment. The app asks the broker for it at run time (<code>secret()</code> in the SDKs).</p>
+<pre class="lang-json"><code>{
+  &quot;type&quot;: &quot;object&quot;,
+  &quot;additionalProperties&quot;: false,
+  &quot;properties&quot;: {
+    &quot;answer_style&quot;: {
+      &quot;type&quot;: &quot;string&quot;,
+      &quot;enum&quot;: [&quot;short&quot;, &quot;detailed&quot;],
+      &quot;default&quot;: &quot;short&quot;
+    }
+  },
+  &quot;required&quot;: []
+}</code></pre>
+<h2 id="checklist">Checklist<a class="ah" href="#checklist">#</a></h2>
+<ul><li>Every key present, no unknown ones; <code>version</code> bumped for this submission.</li><li>Check that <code>egress</code> only contains &quot;broker&quot; or is empty.</li><li>Confirm <code>capabilities</code> and <code>syscalls</code> are empty arrays.</li><li><code>external_writes = false</code> unless you are building for external writes ahead of launch.</li><li>Define at least one operation with at least one field.</li><li>Ensure all input fields in descriptors match the manifest.</li><li>Set <code>additionalProperties</code> to false in the configuration schema.</li></ul>
+    <footer class="pagefoot">
+      <nav>
+        <a href="https://pigeonpost.dev">pigeonpost.dev</a>
+        <a href="https://github.com/bekirdag/pigeonpost">GitHub</a>
+        <a href="https://www.npmjs.com/package/@bekirdag/pigeonpost">npm</a>
+        <a href="https://github.com/bekirdag/pigeonpost/tree/main/docs">Design docs</a>
+      </nav>
+      <p>Free and open source, MIT licensed.</p>
+    </footer>
+  </main>
+</div>
+
+</body>
+</html>

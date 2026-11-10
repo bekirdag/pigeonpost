@@ -55,6 +55,16 @@ enum Fixtures {
             .map { String($0.dropFirst("-handle=".count)) }
     }
 
+    /// `-nests=sale|owned|setup` stages the Products page's Buy Nests tab and the Nest screens.
+    /// The purchase screen needs a live product to look at, and the product cannot be reviewed
+    /// without a screenshot of it: this is the same way out as `-handle=sale`.
+    static var nestState: String? {
+        guard enabled else { return nil }
+        return CommandLine.arguments
+            .first { $0.hasPrefix("-nests=") }
+            .map { String($0.dropFirst("-nests=".count)) }
+    }
+
     /// `-empty` is a brand-new account: signed in, owning nothing. The one state a real account can
     /// only be in once, and the one that used to leave the app on a spinner for ever.
     static var emptyAccount: Bool {

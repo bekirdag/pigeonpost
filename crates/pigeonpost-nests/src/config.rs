@@ -30,6 +30,35 @@ pub struct AlertsConfig {
     pub token_file: PathBuf,
     /// The operator's Pigeonpost address.
     pub to: String,
+    /// Optional Postmark fallback (Postmark). Used when the postbox send fails (connection error,
+    /// timeout, 5xx) and always for alerts named `Postbox*`, which a postbox outage would
+    /// otherwise swallow.
+    #[serde(default)]
+    pub postmark: Option<PostmarkFallbackConfig>,
+}
+
+/// `[alerts.postmark]`: Postmark's HTTP API, one Postmark message per undeliverable (or postbox) notification.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PostmarkFallbackConfig {
+    /// File holding the Postmark server token (sent as `X-Postmark-Server-Token`; never logged).
+    pub token_file: PathBuf,
+    /// A sender signature verified in Postmark.
+    pub from: String,
+    /// The operator's address for the Postmark fallback.
+    pub to: String,
+    #[serde(default = "default_message_stream")]
+    pub message_stream: String,
+    /// Postmark's send endpoint; only tests change it.
+    #[serde(default = "default_postmark_url")]
+    pub api_url: String,
+}
+
+fn default_message_stream() -> String {
+    "outbound".into()
+}
+fn default_postmark_url() -> String {
+    "https://api.postmarkapp.com/email".into()
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -90,6 +119,95 @@ pub struct SandboxConfig {
     /// Size limit of the sandbox's private /tmp.
     #[serde(default = "default_tmp_mib")]
     pub tmp_mib: u64,
+    /// The marketplace pool (build plan M0): a separate, stricter configuration on this host. Off
+    /// when absent.
+    #[serde(default)]
+    pub marketplace: Option<MarketplacePoolConfig>,
+}
+
+/// `[sandbox.marketplace]`: one sandbox per buyer context, no shared mounts, network only to the
+/// broker. gVisor on this host, because it has no KVM (owner decision 2026-11-09).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MarketplacePoolConfig {
+    /// The publisher image, pinned by digest.
+    pub image: String,
+    /// A podman network of its own: never the first-party one.
+    pub network: String,
+    /// Each buyer context's volumes live under `<volume_root>/<context>/<nest>`. A sibling of
+    /// `storage.mount_root`, never inside it.
+    pub volume_root: PathBuf,
+    /// The broker address reachable from this pool's bridge, on one port.
+    pub broker_ip: String,
+    pub broker_port: u16,
+    pub memory_mib: u64,
+    #[serde(default = "default_cpu_weight")]
+    pub cpu_weight: u64,
+    #[serde(default = "default_cpu_millis")]
+    pub cpu_max_millis: u64,
+    pub pids: u64,
+    pub tmp_mib: u64,
+    /// Hardening (W1.1): the postbox attestation public keys this host trusts, 64 hex digits
+    /// each. Every admission and every dispatch must verify under one of them; more than one is
+    /// a key rotation in progress. Required outside tests.
+    #[serde(default)]
+    pub attestation_keys: Vec<String>,
+    /// Hardening (W1.2): size of each worker's encrypted volume. Workers count against
+    /// `storage.max_total_gib` like any Nest.
+    #[serde(default = "default_worker_gib")]
+    pub worker_gib: u64,
+    /// Hardening (W1.3): where release images this host does not have are pulled from (the
+    /// build plane's artifact API). Unset: images must already be on the host.
+    #[serde(default)]
+    pub artifacts: Option<ArtifactsConfig>,
+    /// Marketplace M2b: a staging postbox's **test pool** for hosted test Nests. It admits only
+    /// test statements (`pigeonpost.nest.release.test.v1`) and refuses production attestations;
+    /// a production pool (the default) does the opposite.
+    #[serde(default)]
+    pub test_pool: bool,
+}
+
+/// `[sandbox.marketplace.artifacts]`: the build plane's read-only artifact API over WireGuard.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ArtifactsConfig {
+    /// `http://<build host WireGuard address>:<port>`: plain HTTP only to a private address.
+    pub url: String,
+    /// File holding the artifact-read token (0400 root). It can read images and nothing else.
+    pub token_file: PathBuf,
+    /// Scratch directory for downloaded archives, root-only; each is removed after loading.
+    pub cache_dir: PathBuf,
+    /// Largest image archive accepted.
+    #[serde(default = "default_artifact_bytes")]
+    pub max_bytes: u64,
+}
+
+fn default_worker_gib() -> u64 {
+    1
+}
+
+fn default_artifact_bytes() -> u64 {
+    4 * 1024 * 1024 * 1024
+}
+
+/// `https://…`, or plain `http://` only to loopback or an RFC 1918 IPv4 literal (a WireGuard
+/// address: the tunnel encrypts the hop).
+pub fn private_url_ok(url: &str) -> bool {
+    if let Some(rest) = url.strip_prefix("https://") {
+        return !rest.is_empty();
+    }
+    let Some(rest) = url.strip_prefix("http://") else {
+        return false;
+    };
+    let host = rest
+        .split('/')
+        .next()
+        .unwrap_or("")
+        .split(':')
+        .next()
+        .unwrap_or("");
+    host.parse::<std::net::Ipv4Addr>()
+        .is_ok_and(|ip| ip.is_loopback() || ip.is_private())
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -222,6 +340,9 @@ impl Config {
         if self.sandbox.memory_mib < 128 {
             return Err("sandbox.memory_mib below 128 cannot run the runner".into());
         }
+        if let Some(pool) = &self.sandbox.marketplace {
+            self.check_marketplace(pool)?;
+        }
         if self.storage.default_gib == 0 || self.storage.max_total_gib < self.storage.default_gib {
             return Err("storage sizes are inconsistent".into());
         }
@@ -247,6 +368,83 @@ impl Config {
                 return Err(format!(
                     "{bind}: bind a specific private address, not every interface"
                 ));
+            }
+        }
+        Ok(())
+    }
+
+    /// The marketplace pool may only be stricter than the first-party one, and may share nothing
+    /// with it that a misconfiguration could turn into a shared mount or a shared network.
+    fn check_marketplace(&self, pool: &MarketplacePoolConfig) -> Result<(), String> {
+        if !pool.image.contains("@sha256:") {
+            return Err(
+                "sandbox.marketplace.image must be pinned by digest (name@sha256:…)".into(),
+            );
+        }
+        if pool.image == self.sandbox.image {
+            return Err("sandbox.marketplace.image must differ from the first-party image".into());
+        }
+        if pool.network == self.sandbox.network {
+            return Err(
+                "sandbox.marketplace.network must differ from the first-party network".into(),
+            );
+        }
+        if !self.sandbox.oci_runtime.starts_with("runsc") && self.sandbox.runtime != "fake" {
+            return Err("the marketplace pool runs under gVisor only".into());
+        }
+        let (root, mounts) = (&pool.volume_root, &self.storage.mount_root);
+        if root == mounts || root.starts_with(mounts) || mounts.starts_with(root) {
+            return Err(
+                "sandbox.marketplace.volume_root must not overlap storage.mount_root".into(),
+            );
+        }
+        if !root.is_absolute() {
+            return Err("sandbox.marketplace.volume_root must be absolute".into());
+        }
+        if !(1..=10_000).contains(&pool.cpu_weight) || pool.cpu_max_millis == 0 {
+            return Err("sandbox.marketplace CPU limits are out of range".into());
+        }
+        if pool.memory_mib == 0 || pool.memory_mib > self.sandbox.memory_mib {
+            return Err(
+                "sandbox.marketplace.memory_mib must be positive and at most the first-party limit"
+                    .into(),
+            );
+        }
+        if pool.pids == 0 || pool.pids > self.sandbox.pids {
+            return Err(
+                "sandbox.marketplace.pids must be positive and at most the first-party limit"
+                    .into(),
+            );
+        }
+        if pool.cpu_max_millis > self.sandbox.cpu_max_millis {
+            return Err(
+                "sandbox.marketplace.cpu_max_millis must be at most the first-party limit".into(),
+            );
+        }
+        // Hardening: a production pool runs only signed attestations, from encrypted volumes.
+        crate::attest::TrustedKeys::from_hex(&pool.attestation_keys)
+            .map_err(|e| format!("sandbox.marketplace.attestation_keys: {e}"))?;
+        if self.sandbox.runtime != "fake" {
+            if pool.attestation_keys.is_empty() {
+                return Err("sandbox.marketplace.attestation_keys: at least one key".into());
+            }
+            if self.storage.backend != "lvm-luks" {
+                return Err("the marketplace pool needs storage.backend = \"lvm-luks\"".into());
+            }
+        }
+        if pool.worker_gib == 0 || pool.worker_gib > 64 {
+            return Err("sandbox.marketplace.worker_gib must be 1-64".into());
+        }
+        if let Some(a) = &pool.artifacts {
+            if !private_url_ok(&a.url) {
+                return Err(
+                    "sandbox.marketplace.artifacts.url: https, or http to a private address".into(),
+                );
+            }
+            if !a.cache_dir.is_absolute() || a.max_bytes == 0 {
+                return Err(
+                    "sandbox.marketplace.artifacts: absolute cache_dir, positive max_bytes".into(),
+                );
             }
         }
         Ok(())
@@ -279,6 +477,28 @@ pub fn read_secret_file(path: &std::path::Path) -> Result<String, String> {
 }
 
 #[cfg(test)]
+pub(crate) fn test_marketplace_pool(dir: &std::path::Path) -> MarketplacePoolConfig {
+    MarketplacePoolConfig {
+        image: "localhost/pigeonpost-marketplace-worker@sha256:11".into(),
+        network: "nests-mp".into(),
+        volume_root: dir.join("mp"),
+        broker_ip: "10.67.255.1".into(),
+        broker_port: 8788,
+        memory_mib: 256,
+        cpu_weight: 100,
+        cpu_max_millis: 500,
+        pids: 64,
+        tmp_mib: 32,
+        attestation_keys: vec![crate::util::hex(
+            crate::attest::test_key().verifying_key().as_bytes(),
+        )],
+        worker_gib: 1,
+        artifacts: None,
+        test_pool: false,
+    }
+}
+
+#[cfg(test)]
 pub(crate) fn test_config(dir: &std::path::Path) -> Config {
     Config {
         db: dir.join("nestd.db"),
@@ -306,6 +526,7 @@ pub(crate) fn test_config(dir: &std::path::Path) -> Config {
             broker_ip: "10.67.255.1".into(),
             broker_port: 8788,
             tmp_mib: 64,
+            marketplace: None,
         },
         storage: StorageConfig {
             backend: "dir".into(),
@@ -340,6 +561,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_example_config_parses_with_the_email_fallback() {
+        let c: Config = toml::from_str(include_str!(
+            "../../../deploy/nests/host/nestd.toml.example"
+        ))
+        .unwrap();
+        let e = c.alerts.unwrap().postmark.unwrap();
+        assert_eq!(e.message_stream, "outbound");
+        assert_eq!(e.api_url, "https://api.postmarkapp.com/email");
+        let minimal: PostmarkFallbackConfig =
+            toml::from_str("token_file = \"/t\"\nfrom = \"a@x\"\nto = \"b@x\"").unwrap();
+        assert_eq!(minimal.message_stream, "outbound");
+    }
+
+    #[test]
     fn unpinned_images_and_wildcard_binds_are_refused() {
         let dir = std::env::temp_dir();
         let mut c = test_config(&dir);
@@ -350,5 +585,85 @@ mod tests {
         assert!(c.check().is_ok());
         c.control.bind = "0.0.0.0:8790".into();
         assert!(c.check().is_err());
+    }
+
+    // Linux-only daemon: the checks require absolute Unix paths (`/tmp`, `/etc/...`).
+    #[cfg(unix)]
+    #[test]
+    fn the_marketplace_pool_must_be_stricter_and_share_nothing() {
+        let dir = std::env::temp_dir();
+        let ok = || {
+            let mut c = test_config(&dir);
+            c.sandbox.runtime = "gvisor".into();
+            c.sandbox.image = "localhost/x@sha256:ab".into();
+            c.storage.backend = "lvm-luks".into();
+            c.sandbox.marketplace = Some(test_marketplace_pool(&dir));
+            c
+        };
+        assert!(ok().check().is_ok());
+        type Tweak = fn(&mut MarketplacePoolConfig);
+        let cases: Vec<(&str, Tweak)> = vec![
+            ("unpinned image", |p| p.image = "localhost/x:latest".into()),
+            ("first-party image", |p| {
+                p.image = "localhost/x@sha256:ab".into()
+            }),
+            ("first-party network", |p| p.network = "nests".into()),
+            ("relative volume root", |p| {
+                p.volume_root = "mp".into();
+            }),
+            ("memory above first-party", |p| p.memory_mib = 1024),
+            ("pids above first-party", |p| p.pids = 1024),
+            ("cpu above first-party", |p| p.cpu_max_millis = 2000),
+            ("zero memory", |p| p.memory_mib = 0),
+            ("zero pids", |p| p.pids = 0),
+            ("no attestation key", |p| p.attestation_keys.clear()),
+            ("a malformed attestation key", |p| {
+                p.attestation_keys.push("not-a-key".into())
+            }),
+            ("a zero worker volume", |p| p.worker_gib = 0),
+            ("a public plain-HTTP artifact source", |p| {
+                p.artifacts = Some(ArtifactsConfig {
+                    url: "http://203.0.113.9:8795".into(),
+                    token_file: "/etc/nests/artifacts.token".into(),
+                    cache_dir: "/var/lib/nests/artifacts".into(),
+                    max_bytes: 1,
+                })
+            }),
+        ];
+        for (what, change) in cases {
+            let mut c = ok();
+            change(c.sandbox.marketplace.as_mut().unwrap());
+            assert!(c.check().is_err(), "{what} must be refused");
+        }
+        // A volume root that overlaps the first-party mounts, either way round.
+        for volume_root in [dir.join("mnt"), dir.join("mnt/mp"), dir.clone()] {
+            let mut c = ok();
+            c.sandbox.marketplace.as_mut().unwrap().volume_root = volume_root;
+            assert!(c.check().is_err());
+        }
+        // A runtime other than gVisor is refused for this pool.
+        let mut c = ok();
+        c.sandbox.oci_runtime = "crun".into();
+        assert!(c.check().is_err());
+        // Worker volumes are encrypted in production: plain directories are refused.
+        let mut c = ok();
+        c.storage.backend = "dir".into();
+        assert!(c.check().is_err());
+        // A WireGuard artifact source is fine.
+        let mut c = ok();
+        c.sandbox.marketplace.as_mut().unwrap().artifacts = Some(ArtifactsConfig {
+            url: "http://10.68.0.2:8795".into(),
+            token_file: "/etc/nests/artifacts.token".into(),
+            cache_dir: "/var/lib/nests/artifacts".into(),
+            max_bytes: 1 << 30,
+        });
+        assert!(c.check().is_ok());
+    }
+
+    #[test]
+    fn the_pool_is_optional_and_the_shipped_example_still_parses() {
+        let example = include_str!("../../../deploy/nests/host/nestd.toml.example");
+        let parsed: Config = toml::from_str(example).expect("the example parses");
+        assert!(parsed.sandbox.marketplace.is_none());
     }
 }

@@ -18,6 +18,7 @@ import { createBilling } from "./billing.js";
 import { createNotifier, createSales, sourceOf } from "./sales.js";
 import * as tax from "./tax.js";
 import { createLimiter } from "./limits.js";
+import { createMarketplace } from "./marketplace.js";
 
 const state = new State(config.stateDir);
 const billing = createBilling(state);
@@ -26,6 +27,7 @@ const sales = createSales(config.stateDir, { notifier: createNotifier({
   to: process.env.SALES_NOTIFY_TO || "info@pigeonpost.dev", from: process.env.SALES_NOTIFY_FROM || "no-reply@pigeonpost.dev",
   delays: (process.env.SALES_NOTIFY_DELAYS_MS || "0,30000,120000,600000").split(",").map(Number).filter((n) => Number.isFinite(n) && n >= 0),
 }) });
+const marketplace = createMarketplace(config.stateDir);
 const publicLimiter = createLimiter({ perMinute: config.publicRequestsPerMinute });
 const MAX_BODY = 64 * 1024;
 
@@ -121,6 +123,22 @@ const server = http.createServer(async (req, res) => {
       return send(res, 202, sales.record(sourceOf(req), await readJson(req)), origin);
     }
 
+    // ---- postbox -> bridge (marketplace), its own service token ------------------------------
+    // Never through the public reverse proxy (it forwards only `/api/*`): the postbox calls these on
+    // the private link, without the `/api` prefix.
+    if (path.startsWith("/internal/marketplace/")) {
+      if (url.pathname.startsWith("/api/")) return send(res, 404, { error: "not found" }, origin);
+      if (!config.marketplace.enabled) return send(res, 404, { error: "not found" }, origin);
+      if (!marketplace.internalOk(req)) return send(res, 401, { error: "invalid service token", code: "invalid_service_token" }, origin);
+      if (method === "PUT" && (match = /^\/internal\/marketplace\/offers\/([^/]+)$/.exec(path))) {
+        return send(res, 200, await marketplace.putOffer(decodePart(match[1]), await readJson(req)), origin);
+      }
+      if (method === "POST" && path === "/internal/marketplace/authorizations/consume") {
+        return send(res, 200, await marketplace.consume(await readJson(req)), origin);
+      }
+      return send(res, 404, { error: "not found" }, origin);
+    }
+
     // ---- everything below needs the customer's token ---------------------------------------
     const token = bearer(req);
     if (!token) return send(res, 401, { error: "sign in required" }, origin);
@@ -164,7 +182,11 @@ const server = http.createServer(async (req, res) => {
     // ---- individual Cloud plans -------------------------------------------------------------
     if (method === "GET" && path === "/v1/cloud") return send(res, 200, await billing.cloudOverview(token), origin);
     // Nest packages (Nests Phase B1): the same individual flow, behind the postbox's `nests` flag.
-    if (method === "GET" && path === "/v1/nests") return send(res, 200, await billing.nestOverview(token), origin);
+    // `?org_id=` shows a company's Nest package instead, to its owner and billing admins only.
+    if (method === "GET" && path === "/v1/nests") {
+      const orgId = url.searchParams.has("org_id") ? url.searchParams.get("org_id") : null;
+      return send(res, 200, await billing.nestOverview(token, { orgId }), origin);
+    }
     if (method === "POST" && path === "/v1/nests/checkout") {
       return send(res, 200, await billing.nestCheckout(token, await readJson(req), { ipCountry: tax.ipCountry(req.headers) }), origin);
     }
@@ -194,6 +216,24 @@ const server = http.createServer(async (req, res) => {
       const { namespace } = await readJson(req);
       if (typeof namespace !== "string" || !namespace.trim() || namespace.length > 64) return send(res, 400, { error: "namespace required" }, origin);
       return send(res, 200, await postbox.claimName(token, namespace.trim()), origin);
+    }
+
+    // ---- marketplace purchases (paid third-party listings) ---------------------------------
+    if (method === "POST" && path === "/v1/marketplace/checkout") {
+      return send(res, 200, await marketplace.checkout(token, await readJson(req),
+        { ipCountry: tax.ipCountry(req.headers), buyerIp: sourceOf(req) }), origin);
+    }
+    if (method === "GET" && (match = /^\/v1\/marketplace\/checkout\/([a-f0-9]{32})$/.exec(path))) {
+      return send(res, 200, await marketplace.checkoutStatus(token, match[1]), origin);
+    }
+    if (method === "GET" && path === "/v1/marketplace/licences") {
+      return send(res, 200, await marketplace.licences(token, url.searchParams), origin);
+    }
+    if (method === "GET" && (match = /^\/v1\/marketplace\/installations\/([^/]+)$/.exec(path))) {
+      return send(res, 200, await marketplace.installation(token, decodePart(match[1])), origin);
+    }
+    if (method === "POST" && (match = /^\/v1\/marketplace\/installations\/([^/]+)\/cancel$/.exec(path))) {
+      return send(res, 200, await marketplace.cancel(token, decodePart(match[1])), origin);
     }
 
     // ---- enterprise (the Phase 4 portal calls these) ---------------------------------------
@@ -232,6 +272,13 @@ async function reconcileOnce() {
     if (report.activated || report.renewed || report.expired || report.errors) console.log(`reconcile ${JSON.stringify(report)}`);
   } catch (error) {
     console.error(`reconcile failed: ${error.code || error.status || "error"}`);
+  }
+  try {
+    // Marketplace licences onto installations: pause, resume, cancel, deletion boundary.
+    const mp = await marketplace.reconcile();
+    if (mp.pushed || mp.closed || mp.errors) console.log(`marketplace reconcile ${JSON.stringify(mp)}`);
+  } catch (error) {
+    console.error(`marketplace reconcile failed: ${error.code || error.status || "error"}`);
   } finally {
     reconciling = false;
   }

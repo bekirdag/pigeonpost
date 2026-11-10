@@ -93,6 +93,30 @@ mod inbox_paging_tests;
 mod internal_api;
 mod limits;
 mod mail_layout;
+mod marketplace;
+mod marketplace_env;
+mod marketplace_grants;
+mod marketplace_hardening;
+#[cfg(test)]
+mod marketplace_hardening_tests;
+mod marketplace_listings;
+mod marketplace_m1;
+#[cfg(test)]
+mod marketplace_m1_tests;
+mod marketplace_m2;
+#[cfg(test)]
+mod marketplace_m2_tests;
+#[cfg(test)]
+mod marketplace_m2b_tests;
+mod marketplace_org;
+mod marketplace_pay;
+#[cfg(test)]
+mod marketplace_pay_tests;
+mod marketplace_sources;
+mod marketplace_test_nests;
+#[cfg(test)]
+mod marketplace_tests;
+mod marketplace_worker;
 mod mcp;
 mod meetings;
 #[cfg(test)]
@@ -219,6 +243,9 @@ struct AppState {
     auditor: Arc<audit::Auditor>,
     /// Which `acr` values count as a strong sign-in, and for how long (SDS §3.4).
     step_up: Arc<principal::StepUpPolicy>,
+    /// The account allowed to assign staff roles (`POSTBOX_PLATFORM_OWNER_ACCOUNT`). `None` means
+    /// nobody can.
+    platform_owner: Option<Arc<str>>,
     /// Per-service bearer tokens for the internal API.
     service_tokens: Arc<internal_api::ServiceTokens>,
     /// Per-account wakeups for open `/v1/events` streams.
@@ -241,6 +268,8 @@ struct AppState {
     summaries_policy: meetings::SummariesPolicy,
     /// Nests Phase A: the client for nestd on the worker host, and the per-account limits.
     nests: Arc<nests::Runtime>,
+    /// Marketplace payments: the billing bridge's internal routes (`POSTBOX_BRIDGE_URL`).
+    mp_bridge: Arc<marketplace_pay::Bridge>,
 }
 
 /// Namespaces where a name is authorised by proving control of it at an identity provider, rather
@@ -528,6 +557,12 @@ async fn serve(cfg: Config) {
     appstore_routes::start_reconciliation(state.clone());
     nest_commerce::start_reconciliation(state.clone());
     nests::start_unlocker(state.clone());
+    // Marketplace M1: hand admitted jobs to nestd and collect their results.
+    marketplace_m1::start_dispatcher(state.clone());
+    // Marketplace M2b: expire hosted test Nests (staging postbox only).
+    marketplace_test_nests::start_sweeper(state.clone());
+    // Marketplace payments: retry offer mirrors, enforce licence deletion boundaries.
+    marketplace_pay::start_sweeper(state.clone());
     start_internal_listener(&state).await;
     // Disappearing-message expiry and group maintenance (SDS §17.2, §4.3), every 30 s.
     ephemeral::start_worker(state.clone());
@@ -661,6 +696,11 @@ fn build_state(cfg: &Config, master_key: [u8; 32]) -> Result<AppState, store::St
         public_url: cfg.public_url.trim_end_matches('/').to_string(),
         auditor: Arc::new(audit::Auditor::new(audit_ip_key)),
         step_up: Arc::new(principal::StepUpPolicy::from_env()),
+        platform_owner: std::env::var("POSTBOX_PLATFORM_OWNER_ACCOUNT")
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .map(Arc::from),
         service_tokens: Arc::new(internal_api::ServiceTokens::from_env()),
         event_hub: Arc::new(account_events::EventHub::from_env()),
         avatar_blobs: avatar_blobs.map(Arc::new),
@@ -672,6 +712,7 @@ fn build_state(cfg: &Config, master_key: [u8; 32]) -> Result<AppState, store::St
         contacts: Arc::new(contacts::Runtime::from_env()),
         summaries_policy: meetings::SummariesPolicy::from_env(),
         nests: Arc::new(nests::Runtime::from_env()),
+        mp_bridge: Arc::new(marketplace_pay::Bridge::from_env()),
     })
 }
 
@@ -1038,6 +1079,23 @@ fn build_router(state: AppState) -> Router {
         .merge(nest_approvals::router())
         .merge(nest_manage::router())
         .merge(nest_org::router())
+        // Marketplace foundations (build plan M0), behind the `marketplace` flag.
+        .merge(marketplace::router())
+        // Marketplace M1: native jobs, staff review and quarantine, behind the same flag.
+        .merge(marketplace_m1::router())
+        // Marketplace M2: publishers, listings and installations, behind the same flag.
+        .merge(marketplace_m2::router())
+        // Marketplace hardening (W1): kill switch, publisher quotas, remote source builds.
+        .merge(marketplace_hardening::router())
+        // Marketplace M2b: visibility grants, org installations, source connections, and hosted
+        // test Nests (staging postbox only).
+        .merge(marketplace_grants::router())
+        .merge(marketplace_listings::router())
+        .merge(marketplace_org::router())
+        .merge(marketplace_sources::router())
+        .merge(marketplace_test_nests::router())
+        // Marketplace payments (M3): prices, purchases and licences, behind the same flag.
+        .merge(marketplace_pay::router())
         // Phase 3B: calendar and scheduled meetings (SDS §14B.5, docs/calendar.md).
         .route(
             "/v1/calendars",
@@ -1134,6 +1192,11 @@ fn build_router(state: AppState) -> Router {
         .layer(middleware::from_fn_with_state(
             overload::limits(),
             overload::admission,
+        ))
+        // Staging postbox (M2b): payment routes refused, every response marked. Inside `cors`.
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            marketplace_env::staging_layer,
         ))
         .layer(middleware::from_fn(cors))
         // Outermost of the two, so every handler (and `cors`) sees a resolved `ClientIp`.
@@ -7346,6 +7409,7 @@ mod tests {
             github: None,
             auditor: Arc::new(audit::Auditor::new([0u8; 32])),
             step_up: Arc::new(principal::StepUpPolicy::default()),
+            platform_owner: None,
             service_tokens: Arc::new(internal_api::ServiceTokens::default()),
             event_hub: Arc::new(account_events::EventHub::default()),
             avatar_blobs: None,
@@ -7357,6 +7421,7 @@ mod tests {
             contacts: Arc::new(contacts::Runtime::for_test()),
             summaries_policy: meetings::SummariesPolicy::All,
             nests: Arc::new(nests::Runtime::default()),
+            mp_bridge: Arc::new(marketplace_pay::Bridge::default()),
         }
     }
 
@@ -10178,6 +10243,7 @@ mod tests {
             github: None,
             auditor: Arc::new(audit::Auditor::new([0u8; 32])),
             step_up: Arc::new(principal::StepUpPolicy::default()),
+            platform_owner: None,
             service_tokens: Arc::new(internal_api::ServiceTokens::default()),
             event_hub: Arc::new(account_events::EventHub::default()),
             avatar_blobs: None,
@@ -10189,6 +10255,7 @@ mod tests {
             contacts: Arc::new(contacts::Runtime::for_test()),
             summaries_policy: meetings::SummariesPolicy::All,
             nests: Arc::new(nests::Runtime::default()),
+            mp_bridge: Arc::new(marketplace_pay::Bridge::default()),
         };
         let _ = build_router(state);
     }

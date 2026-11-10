@@ -34,6 +34,8 @@ pigeonpost-compliance-format = { path = "../pigeonpost-compliance-format", versi
 pigeonpost-compliance-seal = { path = "../pigeonpost-compliance-seal", version = "0.7.19" }
 # Group end-to-end encryption (OpenMLS), linked directly: `pigeonpost group …`.
 pigeonpost-groupcrypto = { path = "../pigeonpost-groupcrypto" }
+# The Nest developer kit (`pigeonpost nest init`): SDK and template files, no dependencies.
+pigeonpost-nest-kit = { path = "../pigeonpost-nest-kit" }
 axum = "0.8"
 ed25519-dalek.workspace = true
 fs2 = "0.4"

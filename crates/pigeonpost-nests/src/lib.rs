@@ -19,15 +19,27 @@
 //! LUKS2 keys, because this host has no KVM. A Firecracker/KVM implementation replaces
 //! [`sandbox::GvisorPodman`] on future hardware without changing the control plane or the ledger.
 
+//!
+//! Marketplace M1 adds the build plane ([`release`]), the analysis plane ([`analysis`]) and the
+//! shared Nest dispatcher ([`dispatch`]), which runs attested releases in the marketplace pool.
+
+pub mod analysis;
+pub mod artifacts;
+pub mod attest;
 pub mod broker;
+pub mod buildd;
 pub mod config;
 pub mod control;
 pub mod db;
+pub mod dispatch;
+pub mod ecosystem;
 pub mod files;
 pub mod keywrap;
 pub mod metrics;
 pub mod mock_upstream;
 pub mod parse;
+pub mod release;
 pub mod sandbox;
 pub mod storage;
 pub mod util;
+pub mod worker_api;

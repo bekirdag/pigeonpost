@@ -48,6 +48,10 @@ swiftc -O -parse-as-library -o "$out/organization-room-store" Tests/Organization
   Shared/Groups/GroupModels.swift Shared/Groups/GroupAPI.swift \
   Shared/Enterprise/OrganizationRoomModels.swift Shared/Enterprise/OrganizationRoomAPI.swift Shared/Enterprise/OrganizationRoomStore.swift
 "$out/organization-room-store"
+cp Tests/NativeCallProtocolTests.swift "$out/main.swift"
+swiftc -O -o "$out/native-call-protocol" "$out/main.swift" Pigeonpost/Calls/NativeCallProtocol.swift
+rm "$out/main.swift"
+"$out/native-call-protocol"
 swiftc -O -o "$out/thread-model" \
   Tests/main.swift \
   Shared/API/Models.swift \
@@ -60,6 +64,12 @@ swiftc -O -o "$out/handles" \
   Tests/HandleStoreTests.swift Shared/API/Models.swift Shared/API/APIError.swift \
   Shared/Store/HandlePurchases.swift Shared/Store/HandleStore.swift
 "$out/handles"
+swiftc -O -parse-as-library -o "$out/nests" Tests/NestStoreTests.swift Shared/API/APIError.swift \
+  Shared/Store/HandlePurchases.swift Shared/Nests/NestModels.swift Shared/Nests/NestPurchases.swift Shared/Nests/NestStore.swift
+"$out/nests"
+swiftc -O -parse-as-library -o "$out/nest-detail" Tests/NestDetailStoreTests.swift Shared/API/APIError.swift \
+  Shared/Nests/NestModels.swift Shared/Nests/NestDetailStore.swift
+"$out/nest-detail"
 swiftc -O -parse-as-library -o "$out/inbox-loading" \
   Tests/InboxLoadingTests.swift Shared/Config.swift \
   Shared/Auth/AuthorizationLease.swift \

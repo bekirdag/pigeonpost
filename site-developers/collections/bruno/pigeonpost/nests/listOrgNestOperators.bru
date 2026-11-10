@@ -1,0 +1,24 @@
+meta {
+  name: The members who operate a company Nest (ManageAgents)
+  type: http
+  seq: 19
+}
+
+get {
+  url: {{baseUrl}}/v1/orgs/:org/nests/:nest/operators
+  body: none
+  auth: bearer
+}
+
+params:path {
+  org: 
+  nest: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  Members with a live `operate_nest` delegation on the Nest's mailbox. Nest admins (owner, admin, agent_admin) always have access and are never listed.
+}

@@ -86,6 +86,29 @@ The pushed entitlement has the web plan code and no names. The postbox maps it t
 slots, storage and model allowance. The reconciler activates `pp-nest:` references from the access
 list, as it does for Cloud.
 
+**Company Nest packages** (an org buys the package that funds its company Nests)
+
+- `POST /v1/nests/checkout` also takes an optional `org_id` (`org_[a-z0-9]{6,64}`). The caller must
+  manage that org's billing: owner or billing admin, per the postbox's `/v1/orgs/<org>/billing`
+  `can_manage`. The `nests` flag must also be on for the caller. Otherwise it answers `403`, or
+  `404` for someone outside the org. The bridge checks this again on every replay.
+- One package per org. The bridge refuses with `409 already_subscribed` when it already knows a live
+  web package for the org. It refuses with `409 nest_package_active` when the postbox's
+  `/v1/orgs/<org>/nests` shows a package from any rail. The personal
+  `/v1/nest-purchases/intents` check is not used for an org.
+- The checkout runs with `client_reference_id: pp-nest-org:<org>:<intent>`. It returns to
+  `/account?nest_checkout=<intent>&nest_org=<org>`, and the Products page reopens in that company.
+  The pushed entitlement has `subject: {kind:"org", id:<org>}` and no `subject_check`. The
+  reconciler activates `pp-nest-org:` references for the org the same way.
+- `GET /v1/nests?org_id=<org>` shows the org's web Nest packages, the postbox's company Nest view and
+  the prices. Only its owner and billing admins see it. A package the caller bought comes from
+  saas_be (`buyer: true`). One another billing admin bought shows what the bridge knows
+  (`buyer: false`).
+- `/v1/nests/subscriptions/<id>[/op]` reach a company package only for that org's billing managers.
+  Everyone else gets `404`, the same as for an unknown id. saas_be answers the buyer only, so another
+  billing admin can read the subscription but gets `403 not_buyer` on an operation. Company packages
+  never show up in, or block, the buyer's personal `GET /v1/nests` and personal checkout.
+
 **Enterprise** (the Phase 4 portal calls these; exercised by tests now)
 
 - `POST /ent/billing-profile` creates the profile.
@@ -109,6 +132,61 @@ list, as it does for Cloud.
     `https://enterprise.pigeonpost.dev/checkout/return?card=<org>`;
   - `retry {intent_id, order_reference_code}` — a failed order of this subscription only.
 
+**Marketplace purchases** (paid third-party listings; behind the postbox's `marketplace` flag;
+`src/marketplace.js`)
+
+Launch terms are one-off and monthly only: no wallet, credits or per-job prices. saas_be's
+marketplace finance module is the money authority (offers, quotes, the hosted iyzico form, single-use
+payment authorizations, licences, invoices, journal), reached at
+`/v1/internal/tenants/<tenant>/marketplace` with a `marketplace:bridge` token. The postbox owns
+listings, publisher prices and installations.
+
+- Offers: the postbox calls `PUT /internal/marketplace/offers/{offer_id}` here (private link,
+  `BRIDGE_INTERNAL_TOKEN`) with `listing_id, publisher_id, release_line, title, term, currency,
+  price_minor, status`. The bridge forwards it to saas_be `PUT /offers/{id}` and provisions an active
+  monthly offer once (`POST /offers/{id}/provision`). saas_be's 422 becomes
+  `422 price_not_invoiceable` with `nearest` (read from `details.nearest`); a currency outside
+  `OPEN_CURRENCIES` is `409 currency_unavailable`. The postbox derives offer ids from the immutable
+  fields, so any price, term, currency or release-line change is a new id, and re-sends the old one
+  with `status: retired`.
+- Buy: `POST /v1/marketplace/checkout {intent_id, listing_id, owner?: {kind: account|org, id},
+  billing_profile_id, locale}`:
+  1. owner check: the caller's own account, or an org whose billing the caller manages (`can_manage`
+     from the postbox's `GET /v1/orgs/{org}/billing`, as for the enterprise plan);
+  2. the postbox's `POST /v1/marketplace/purchases` with the member's token: listing checks, the
+     installation id the payment admits, the offer and the exact intent;
+  3. the EU/UK VAT rule (`src/tax.js`, D-34), exactly as for Nest checkouts;
+  4. saas_be `GET /v1/profile` (the buyer's `user_id`), `POST /quotes`, then
+     `POST /quotes/{id}/checkout` with `return_url: https://pigeonpost.dev/account?mp_purchase=<intent>`
+     and `buyer_ip` (one-off). saas_be's callback returns there with `&mp_checkout=<checkout id>`.
+
+  Same 5-per-hour budget as other checkouts. A replay of the intent returns the same checkout (the
+  form is kept in memory only, never on disk).
+- `GET /v1/marketplace/checkout/{intent}`: the authorization read with `refresh=true`; `status` is
+  `pending`, `paid`, `installed`, `failed`, `expired` or `revoked`, with `licence_id` and the receipt
+  wording.
+- Install: the web calls the postbox's `POST /v1/nest-installations` with `purchase_id`. The postbox
+  calls `POST /internal/marketplace/authorizations/consume {purchase_id, intent, consumer_reference}`
+  here. The bridge refuses an intent or reference other than the one the payment was bound to
+  (`409 intent_mismatch`), keeps the single-use `mpa_` token itself, reissues it once when a paid
+  authorization's window lapsed, and maps unpaid states to `402 payment_pending`, `payment_failed`,
+  `payment_expired`, `payment_revoked`. saas_be's consumption is idempotent by the reference (the
+  installation id): a replay answers `replay: true`.
+- Buyer routes (member token): `GET /v1/marketplace/licences?owner_kind&owner_id&listing_id`;
+  `GET /v1/marketplace/installations/{installation}` (licence, payments with `invoice_id` for
+  `GET /v1/billing/invoices/{id}/download`, receipt); `POST /v1/marketplace/installations/{installation}/cancel`
+  (monthly only; cancels at period end and projects at once).
+- Reconciler: on every pass, for each installed purchase, saas_be `GET /licences/{id}`; when it
+  changed, or a deletion boundary is due, `PUT /internal/v1/marketplace/licences/{id}` on the postbox
+  (`POSTBOX_SERVICE_TOKEN`, increasing `reconciliation_version`). The postbox stops the worker without
+  access, lets it resume with access, and uninstalls and removes the worker and its data at
+  `deletion_due_at`.
+- Subscriptions whose `external_reference` is `mp-checkout:<id>` (or whose plan is named
+  `marketplace:…`) are hidden from the Cloud, Nest and enterprise plan logic and from the access list.
+- Finance routes (payouts, refunds, chargebacks, statements, journal; scope `marketplace:finance`) are
+  staff tools. The bridge holds no finance token and calls none of them.
+- The `/internal/marketplace/*` routes answer 404 under the public `/api` prefix.
+
 **Missed returns.** Every 60 s the reconciler reads saas_be's internal access list:
 `GET /v1/internal/tenants/pigeonpost/subscription-packages`, using `SAAS_INTERNAL_TOKEN`. It
 activates and renews `pp-cloud:` and `pp-org:` subscriptions from that list, and passes the Keycloak
@@ -118,7 +196,9 @@ marked expired once that passes. Nothing here ever extends a paid period.
 ## Security
 
 - No card data, checkout token or form content is stored. `STORE_STATE_DIR/billing-state.json`
-  (mode 600) holds only intents and the last pushed entitlement.
+  (mode 600) holds only intents and the last pushed entitlement. `marketplace-state.json` (mode 600)
+  holds marketplace purchases, their ids and the single-use payment-authorization token the postbox
+  consumes through this service.
 - Every saas_be response is validated: ids, statuses, mode, amounts, dates and plausible periods.
   Every mutation sends an idempotency key.
 - Limit: 5 new checkouts per account per hour. Replays of an intent do not count.
@@ -146,6 +226,9 @@ marked expired once that passes. Nothing here ever extends a paid period.
 | `SALES_NOTIFY_URL`, `SALES_NOTIFY_KEY` | saas_be base URL and the platform notification key (the postbox's `POSTBOX_NOTIFY_KEY`). With both set, each enterprise "Talk to sales" request is emailed through saas_be's `pigeonpost-notice` workflow (Novu → Postmark server "Pigeonpost", no tracking). `https://`, or `http://` to loopback only. Unset: requests are only appended to `sales-requests.jsonl`, which stays the durable record either way. Sending is in the background, up to 4 attempts (`SALES_NOTIFY_DELAYS_MS`, default `0,30000,120000,600000`); `/api/healthz` shows `sales_notify` counters. |
 | `SALES_NOTIFY_TO`, `SALES_NOTIFY_FROM` | Recipient (default `info@pigeonpost.dev`) and sender (default `no-reply@pigeonpost.dev`) of the sales notification sent through saas_be. |
 | `TAX_EU_UK_GATE`, `TAX_B2C_OPEN_REGIONS`, `TAX_IP_COUNTRY_HEADER`, `HMRC_CLIENT_ID`/`HMRC_CLIENT_SECRET` | EU/UK VAT rule for web sales (`src/tax.js`): EU/UK consumers are refused until a region is opened; EU/UK businesses need a VIES/HMRC-valid VAT number (reverse charge). Defaults: gate on, no region open, `cf-ipcountry`, no HMRC credentials (UK businesses refused). See `docs/billing-tax.md`. |
+| `SAAS_MARKETPLACE_TOKEN` / `SAAS_MARKETPLACE_TOKEN_FILE` | saas_be tenant service token for `MASAAS_TENANT_ID`, scope `marketplace:bridge` only (its SHA-256 goes in saas_be's `INTERNAL_TENANT_SERVICE_TOKENS`). Never the `marketplace:finance` token. |
+| `BRIDGE_INTERNAL_TOKEN` / `BRIDGE_INTERNAL_TOKEN_FILE` | What the postbox presents on `/internal/marketplace/*` (`POSTBOX_BRIDGE_TOKEN` there), at least 32 characters. The marketplace routes answer 404 until both marketplace tokens are set. |
+| `MARKETPLACE_PROVISION_MONTHLY` | `on` (default) provisions monthly offers in saas_be right after mirroring; `off` leaves them unsellable. |
 
 `/healthz` reports `configured:true` when these are present and well formed. It checks local
 configuration only, not whether the upstreams are reachable.

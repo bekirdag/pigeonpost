@@ -72,6 +72,11 @@ pub(crate) enum Endpoint {
     ShellBroker,
     /// `/internal/v1/nests*` (Nests Phase A): hosted agent lifecycle and entitlement (ops only).
     Nests,
+    /// `/internal/v1/marketplace/*` (marketplace M1): build and analysis records (ops only).
+    Marketplace,
+    /// `PUT /internal/v1/marketplace/licences/{id}` (marketplace payments): the billing bridge
+    /// projects a licence onto its installation.
+    MarketplaceLicences,
 }
 
 /// The services this postbox knows, the variable each one's token lives in, and what each may
@@ -102,7 +107,12 @@ const SERVICES: &[(&str, &str, &[Endpoint])] = &[
     (
         "billing",
         "POSTBOX_SVC_TOKEN_BILLING",
-        &[Endpoint::Health, Endpoint::Entitlements, Endpoint::Orgs],
+        &[
+            Endpoint::Health,
+            Endpoint::Entitlements,
+            Endpoint::Orgs,
+            Endpoint::MarketplaceLicences,
+        ],
     ),
     (
         "meeting_intel",
@@ -121,6 +131,7 @@ const SERVICES: &[(&str, &str, &[Endpoint])] = &[
             Endpoint::AccountErasure,
             Endpoint::Namespaces,
             Endpoint::Nests,
+            Endpoint::Marketplace,
         ],
     ),
 ];
@@ -258,6 +269,10 @@ pub(crate) fn router(state: AppState) -> Router {
         .merge(crate::meetings::internal_router())
         // Nests Phase A: hosted agents on the worker host (docs/nests/phase-a-plan.md).
         .merge(crate::nests::internal_router())
+        .merge(crate::marketplace_m1::internal_router())
+        .merge(crate::marketplace_m2::internal_router())
+        .merge(crate::marketplace_sources::internal_router())
+        .merge(crate::marketplace_pay::internal_router())
         .route(
             "/internal/v1/entitlements/{provider}/{environment}/{reference}",
             put(billing_internal::put_entitlement),
@@ -328,6 +343,10 @@ pub(crate) fn router(state: AppState) -> Router {
             post(crate::call_alerts::cancel),
         )
         .fallback(|| async { err_response(StatusCode::NOT_FOUND, "not_found", None) })
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::marketplace_env::staging_layer,
+        ))
         .with_state(state)
 }
 

@@ -1,0 +1,8 @@
+# Dependencies of this Nest app, in pip's hash-checking mode: every line pinned exactly and
+# hashed, for example
+#
+#   requests==2.32.3 --hash=sha256:<64 hex digits>
+#
+# (`pip-compile --generate-hashes` writes this form). The build plane downloads binary wheels
+# only, checks every hash, and the image installs them offline. The template uses the standard
+# library only, so the list is empty.

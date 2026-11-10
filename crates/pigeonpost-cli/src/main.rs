@@ -16,6 +16,9 @@ mod install_cmd;
 mod loft_cmd;
 mod loft_key;
 mod login_cmd;
+mod nest_cmd;
+mod nest_dev_cmd;
+mod nest_publish_cmd;
 mod onboard_cmd;
 mod output;
 mod panel;
@@ -309,6 +312,10 @@ enum Command {
 
     /// A hosted mailbox's calendar: list occurrences, create handle-only events, answer invitations.
     Calendar(calendar_cmd::CalendarArgs),
+
+    /// Build Nest apps for the marketplace: start one from a template, run it locally, check a
+    /// package against the marketplace's rules.
+    Nest(nest_dev_cmd::NestArgs),
 }
 
 #[derive(Subcommand)]
@@ -1230,6 +1237,13 @@ fn pigeonpost_log_directives(configured: Option<&str>) -> String {
 async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     validate_preopen_confirmations(&cli.command)?;
 
+    // Nest app development is offline and needs no identity, home or network.
+    if let Command::Nest(args) = &cli.command {
+        if args.action.offline() {
+            return nest_dev_cmd::run(args, cli.json).await;
+        }
+    }
+
     // `loft serve` is the one command that is not about an agent identity, so it runs before any
     // identity is created — a node operator need not be an agent.
     if let Command::Install {
@@ -1544,6 +1558,10 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     }
     if let Command::Calendar(args) = &cli.command {
         return calendar_cmd::run(&home, args, cli.json).await;
+    }
+    // A publisher's review pipeline acts as the signed-in account, never as a local identity.
+    if let Command::Nest(args) = &cli.command {
+        return nest_dev_cmd::run_online(&home, args, cli.json).await;
     }
 
     // Hosted mailboxes are independent of the local agent key, so — like the read-only commands
@@ -2315,6 +2333,7 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         | Command::Postbox { .. }
         | Command::Group(_)
         | Command::Calendar(_)
+        | Command::Nest(_)
         | Command::Login { .. }
         | Command::Whoami
         | Command::Ssh { .. }
