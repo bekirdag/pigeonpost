@@ -76,21 +76,28 @@ table inet nestbuild {
 
 	chain output {
 		type filter hook output priority -10; policy accept;
-		meta skuid != "nestbuild" return
+		# Only sockets owned by nestbuild enter the build-plane rules. Kernel-generated packets
+		# (WireGuard UDP, ICMP, RSTs, IPv6 neighbour discovery) have no socket; a negated test
+		# ("meta skuid != nestbuild return") lets them fall into the default deny below.
+		meta skuid "nestbuild" jump nestbuild_out
+	}
+
+	chain nestbuild_out {
 		meta nfproto ipv6 counter drop comment "nestbuild: no IPv6"
 		ct state established,related return
-		oifname "wg-nestbuild" ip daddr @credential_v4 tcp dport @credential_ports ct state new return
-		oifname "wg-nestbuild" ct state new counter drop comment "nestbuild initiates nothing else on the tunnel"
+		oifname "wg-nestbuild" ct state new counter drop comment "nestbuild never initiates on the tunnel"
 		ip daddr @resolver_v4 udp dport 53 return
 		ip daddr @resolver_v4 tcp dport 53 return
-		ip daddr @fetch_v4 tcp dport { 22, 443 } ct state new return
+		ip daddr @fetch_v4 tcp dport 443 ct state new return
 		ip daddr @model_v4 tcp dport @model_ports ct state new return
 		counter drop comment "nestbuild egress default deny"
 	}
 
 	chain input {
 		type filter hook input priority -10; policy accept;
-		tcp dport 8795 iifname != "wg-nestbuild" counter drop comment "build API: tunnel only"
-		tcp dport 8795 ip saddr != @callers_v4 counter drop comment "build API: postbox and nests-1 only"
+		# Scoped to the build API's own address: other services may use TCP 8795 on this host (raijin
+		# runs the calls signaling server on 127.0.0.1:8795; an unscoped rule dropped it).
+		ip daddr <BUILD_WG_ADDR> tcp dport 8795 iifname != "wg-nestbuild" counter drop comment "build API: tunnel only"
+		ip daddr <BUILD_WG_ADDR> tcp dport 8795 ip saddr != @callers_v4 counter drop comment "build API: postbox and nests-1 only"
 	}
 }

@@ -1,7 +1,9 @@
 # WireGuard for the build plane: the build host listens; the postbox host and nests-1 connect.
 # Its own tunnel and its own addresses, separate from wg-nests (postbox <-> nests-1) and
 # wg-backup. Keys are generated on each host (wg genkey) and never leave it.
-# Addresses below are placeholders: pick a /29 that no other tunnel on these hosts uses.
+# Addresses below are placeholders: pick a /29 that no other tunnel or network on these hosts uses.
+# Not 10.69.0.0/24: that is the marketplace pool's podman network (nests-mp) on nests-1. The live
+# setup uses 10.71.0.0/29 (build host .1, postbox host .2, nests-1 .3).
 #
 # --- build host: /etc/wireguard/wg-nestbuild.conf
 [Interface]

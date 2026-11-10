@@ -701,8 +701,13 @@ test("a decision refused for a stake reads as a conflict", async (t) => {
 // ---- the account page ---------------------------------------------------------------------------
 
 async function accountPage(t, { features, nested = false }) {
-  const dom = new JSDOM('<main id="account-root"></main>', { url: "https://pigeonpost.dev/account", runScripts: "outside-only", virtualConsole: new VirtualConsole() });
-  t.after(() => dom.window.close());
+  // jsdom does not navigate: a sign-in redirect only reports "Not implemented: navigation" here.
+  const navigations = [];
+  const virtualConsole = new VirtualConsole();
+  virtualConsole.on("jsdomError", (e) => { if (/navigation/i.test(String(e && e.message))) navigations.push(e.message); });
+  const dom = new JSDOM('<main id="account-root"></main>', { url: "https://pigeonpost.dev/account", runScripts: "outside-only", virtualConsole });
+  // Let any pending page work (the step-up's PKCE digest, late fetches) finish before closing.
+  t.after(async () => { for (let i = 0; i < 20; i++) await tick(1); dom.window.close(); });
   const { window } = dom;
   window.eval(accountConfig);
   window.sessionStorage.setItem("pp_session", "member-fixture");
@@ -731,7 +736,7 @@ async function accountPage(t, { features, nested = false }) {
   for (const s of [core, catalogJs, publisherJs, staffJs, products]) window.eval(s);
   window.eval(accountJs);
   for (let i = 0; i < 40; i++) await tick(1);
-  return { window, doc: window.document, calls };
+  return { window, doc: window.document, calls, navigations };
 }
 
 test("the account page mounts the publisher console only with the marketplace feature, and staff only for staff", async (t) => {
@@ -754,7 +759,10 @@ test("a step-up refusal on the account page does not burn a token refresh and ke
   const btn = p.doc.querySelector('#mp-pub-status [data-stepup="publisher"]');
   assert.ok(btn, "the console offers the strong sign-in");
   btn.click();
-  for (let i = 0; i < 10; i++) await tick(1);
+  // Wait for the sign-in redirect itself (after the async PKCE digest), not a fixed number of ticks:
+  // on a slow runner the digest outlived ten ticks and finished after the window was closed.
+  for (let i = 0; i < 400 && !p.navigations.length; i++) await tick(1);
+  assert.ok(p.navigations.length, "the strong sign-in redirect was attempted");
   assert.equal(p.window.localStorage.getItem("pp_mp_return"), "publisher", "the page comes back to the publisher card");
 });
 

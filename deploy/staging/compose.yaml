@@ -33,7 +33,9 @@ services:
       context: ../..
       dockerfile: deploy/postbox/Dockerfile
     restart: unless-stopped
-    env_file: [${STAGING_ENV_FILE:-./staging.env}]
+    # A block list: inside [..] the `{` of ${...} would start a YAML flow mapping.
+    env_file:
+      - ${STAGING_ENV_FILE:-./staging.env}
     environment:
       POSTBOX_STAGING_MODE: "1"
       POSTBOX_BIND: 0.0.0.0:8480
