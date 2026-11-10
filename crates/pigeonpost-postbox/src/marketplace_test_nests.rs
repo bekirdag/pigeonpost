@@ -390,8 +390,9 @@ fn live_in(
     Ok((release, context, generation, expires))
 }
 
-/// Ask the test pool to delete one worker and its volume. A pool that cannot be reached is
-/// reported, not hidden.
+/// Ask the test pool to destroy one worker and erase its volume (hardening's destroy route; the
+/// test pool's ids are not production tombstones). A pool that cannot be reached is reported, not
+/// hidden.
 async fn remove_worker(state: &AppState, test_nest: &str, context: &str) -> bool {
     let Some(pool) = state.nests.mp.test_pool.clone() else {
         return false;
@@ -399,7 +400,7 @@ async fn remove_worker(state: &AppState, test_nest: &str, context: &str) -> bool
     matches!(
         pool.call(
             reqwest::Method::POST,
-            "/v1/mp/workers/remove",
+            "/v1/mp/workers/destroy",
             Some(json!({ "listing_id": test_nest, "buyer_context": context })),
         )
         .await,

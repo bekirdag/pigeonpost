@@ -608,6 +608,11 @@ async fn read_listing(
                         },
                     )
                     .optional()?;
+                // The one price model: the publisher's price, or zero with the free terms (M2b).
+                let mut found = found;
+                if let Some(row) = found.as_mut() {
+                    row.body["price"] = crate::marketplace_pay::price_json_in(c, &lid)?;
+                }
                 Ok(found)
             })
             .await?;

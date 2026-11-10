@@ -705,6 +705,25 @@ impl Dispatcher {
         Ok(json!({ "job_id": job_id, "state": state, "result": kept }))
     }
 
+    /// A paused licence (marketplace payments): the buyer context's worker stops, its broker token
+    /// is fenced, its running jobs stop and its volume is closed but kept. The next admitted job
+    /// (after the licence is paid again) starts it on a new generation. Idempotent.
+    pub fn stop(&self, listing_id: &str, context: &str) -> Result<Value, DispatchError> {
+        if !valid_ref(listing_id) || !valid_buyer_context(context) {
+            return Err(DispatchError::new("invalid", "malformed worker reference"));
+        }
+        let _one = self.lock.lock().map_err(|_| internal("dispatch lock"))?;
+        let Some(w) = self
+            .db
+            .mp_worker_for(listing_id, context)
+            .map_err(internal)?
+        else {
+            return Ok(json!({ "stopped": false }));
+        };
+        self.stop_worker(&w, "licence_paused")?;
+        Ok(json!({ "stopped": true, "worker": w.nest_id }))
+    }
+
     /// Lift a quarantine: the release takes jobs again, on fresh workers. A revoked release stays
     /// revoked; one this host never saw has nothing to lift.
     pub fn lift(&self, release_id: &str) -> Result<Value, DispatchError> {
@@ -945,8 +964,20 @@ async fn http_destroy_worker(
     .await
 }
 
+async fn http_stop(
+    State(h): State<Http>,
+    headers: HeaderMap,
+    Json(req): Json<DestroyReq>,
+) -> Reply {
+    on_blocking(&h, &headers, move |d| {
+        d.stop(&req.listing_id, &req.buyer_context)
+    })
+    .await
+}
+
 /// `POST /v1/mp/jobs`, `GET /v1/mp/jobs/{job}`, `POST /v1/mp/releases/{release}/quarantine`,
-/// `POST /v1/mp/listings/{listing}/stop` (the kill switch), `POST /v1/mp/workers/destroy`.
+/// `POST /v1/mp/listings/{listing}/stop` (the kill switch), `POST /v1/mp/workers/destroy` (an
+/// uninstall), `POST /v1/mp/workers/stop` (a paused licence).
 pub fn router(h: Http) -> Router {
     Router::new()
         .route("/v1/mp/jobs", post(http_submit))
@@ -957,6 +988,7 @@ pub fn router(h: Http) -> Router {
         )
         .route("/v1/mp/listings/{listing}/stop", post(http_stop_listing))
         .route("/v1/mp/workers/destroy", post(http_destroy_worker))
+        .route("/v1/mp/workers/stop", post(http_stop))
         .layer(axum::extract::DefaultBodyLimit::max(300 * 1024))
         .with_state(h)
 }

@@ -3,7 +3,7 @@
 //! | Route | Who | What |
 //! |---|---|---|
 //! | `GET /v1/orgs/{org}/nest-installations` | an active member | all of the org's installations for its Nest admins; those they operate for everyone else |
-//! | `POST /v1/orgs/{org}/nest-installations {listing_id, handle, label?, configuration?, operators?}` | a Nest admin (`ManageAgents`) | install a listing for the org, on a new org agent address |
+//! | `POST /v1/orgs/{org}/nest-installations {listing_id, handle, label?, configuration?, operators?, purchase_id?}` | a Nest admin (`ManageAgents`) | install a listing for the org, on a new org agent address; a priced listing needs the org's paid purchase |
 //! | `PUT\|DELETE /v1/orgs/{org}/nest-installations/{installation}/operators/{member}` | a Nest admin | give or take a member's `operate_nest` delegation |
 //!
 //! The rest of an org installation's life is the M2 routes (`/v1/nest-installations/{id}` read,
@@ -187,6 +187,9 @@ struct InstallReq {
     /// Members given `operate_nest` on it.
     #[serde(default)]
     operators: Vec<String>,
+    /// A priced listing: the org's paid purchase this install consumes (`marketplace_pay`).
+    #[serde(default)]
+    purchase_id: Option<String>,
 }
 
 /// `POST /v1/orgs/{org}/nest-installations`
@@ -269,11 +272,43 @@ async fn install(
         if !attested {
             return Err(not_runnable(&rel));
         }
-        let installation = new_id("ins");
+        // Marketplace payments: a priced listing installs only under the org's paid purchase.
+        let pending = match crate::marketplace_pay::admit_install(
+            &state,
+            &req.listing_id,
+            &ctx.account,
+            Some(&ctx.org.id),
+            req.purchase_id.as_deref(),
+        )
+        .await?
+        {
+            crate::marketplace_pay::Admission::Free => None,
+            crate::marketplace_pay::Admission::Pending(p) => Some(p),
+            crate::marketplace_pay::Admission::Replay(id) => {
+                let v = state
+                    .store
+                    .group_read(move |c| -> GResult<Value> {
+                        let mut v = inst_json_in(c, &id)?;
+                        org_fields_in(c, &mut v, &id)?;
+                        Ok(v)
+                    })
+                    .await?;
+                return Ok((StatusCode::OK, Json(json!({ "data": v }))));
+            }
+        };
+        let installation = pending
+            .as_ref()
+            .map(|p| p.installation_id.clone())
+            .unwrap_or_else(|| new_id("ins"));
         let schema = schema_of(&rel.manifest);
         let config = req.configuration.clone().unwrap_or_else(|| json!({}));
         let (plain, sealed) =
             prepare_config(&state, &schema, &config, &installation, &BTreeSet::new())?;
+        // Every check passed: consume the org's payment for this installation (idempotent).
+        let paid = match pending {
+            Some(p) => Some(crate::marketplace_pay::consume(&state, p).await?),
+            None => None,
+        };
         let now = now_unix();
         let vault = state.vault.clone();
         let auditor = state.auditor.clone();
@@ -320,6 +355,9 @@ async fn install(
                     params![iid, listing, o_id, context, release, plain, account, now as i64, address],
                 )?;
                 store_secrets_in(tx, &iid, &sealed, now as i64)?;
+                if let Some(paid) = &paid {
+                    crate::marketplace_pay::record_in(tx, paid, now as i64)?;
+                }
                 inst_event_in(tx, &iid, "installed", None, Some(&release), &account, now as i64)?;
                 crate::org::audit_in(
                     tx,

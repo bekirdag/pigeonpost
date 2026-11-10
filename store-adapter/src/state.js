@@ -12,15 +12,16 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync, openSync, fsyncSync
 import { join } from "node:path";
 
 export class State {
-  constructor(dir) {
+  /// `name` and `empty` let a second file (the marketplace's) share the same write discipline.
+  constructor(dir, name = "billing-state.json", empty = { version: 1, intents: {}, refs: {} }) {
     this.dir = dir;
-    this.file = join(dir, "billing-state.json");
+    this.file = join(dir, name);
     this.queue = Promise.resolve();
-    this.data = { version: 1, intents: {}, refs: {} };
+    this.data = structuredClone(empty);
     try {
       mkdirSync(dir, { recursive: true, mode: 0o700 });
       const parsed = JSON.parse(readFileSync(this.file, "utf8"));
-      if (parsed?.version === 1 && parsed.intents && parsed.refs) this.data = parsed;
+      if (parsed?.version === empty.version && Object.keys(empty).every((k) => parsed[k] !== undefined)) this.data = parsed;
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
     }

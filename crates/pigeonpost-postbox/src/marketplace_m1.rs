@@ -476,6 +476,8 @@ struct Offer {
     /// An `invite_only` or `organization` listing whose grant no longer lets this installation
     /// invoke it (M2b).
     grant_denied: bool,
+    /// A paid installation whose licence gives no access now (marketplace payments).
+    licence_inactive: bool,
 }
 
 /// `x-pigeonpost-installation`: the org installation a member invokes a listing through (M2b).
@@ -527,6 +529,7 @@ fn load_offer_in(
                     installation_id: None,
                     scope: account.to_string(),
                     grant_denied: false,
+                    licence_inactive: false,
                 })
                 .map(|o| (o, r.get::<_, String>(8)))
             },
@@ -629,6 +632,7 @@ fn load_offer_in(
     }
     match pinned {
         Some((release, digest, image, security, manifest, iid, scope)) => {
+            offer.licence_inactive = crate::marketplace_pay::licence_inactive_in(c, &iid)?;
             offer.installation_id = Some(iid);
             offer.scope = scope;
             offer.input_schema = manifest
@@ -692,6 +696,13 @@ fn admit<'a>(
         return Err(GErr::forbidden(
             "grant_required",
             "your access to this listing does not include invoking it",
+        ));
+    }
+    if o.licence_inactive {
+        return Err(GErr::new(
+            StatusCode::PAYMENT_REQUIRED,
+            "licence_inactive",
+            "this installation's licence is paused or has ended",
         ));
     }
     match o.security_state.as_str() {

@@ -52,8 +52,11 @@ pub(crate) fn router() -> Router<AppState> {
 }
 
 /// `{amount_minor, currency, term}` as listing reads show it.
+/// A free listing's price: zero, test credits, the preferred terms. A priced one is
+/// `marketplace_pay::price_json_in`.
 pub(crate) fn price_json(currency: String, term: String) -> Value {
-    json!({ "amount_minor": 0, "currency": currency, "term": term, "funding": "test_credits" })
+    json!({ "amount_minor": 0, "currency": currency, "term": term, "funding": "test_credits",
+            "on_sale": false })
 }
 
 #[derive(Deserialize, Default)]
@@ -77,7 +80,7 @@ pub(crate) fn price_terms(
     if p.amount_minor.is_some_and(|a| a != 0) {
         return Err(GErr::bad(
             "price_not_available",
-            "priced listings arrive with payments; price.amount_minor must be 0",
+            "set a price with PUT /v1/publishers/{publisher}/listings/{listing}/price (step-up); here price.amount_minor must be 0",
         ));
     }
     let currency = match &p.currency {
@@ -353,7 +356,9 @@ async fn staff_reports(
                         }))
                     })?
                     .collect::<rusqlite::Result<Vec<_>>>()?;
-                Ok(rows)
+                rows.into_iter()
+                    .map(|v| Ok(crate::marketplace_pay::with_price_in(c, v)?))
+                    .collect()
             })
             .await?;
         let next = (rows.len() > PAGE).then(|| (offset + PAGE).to_string());

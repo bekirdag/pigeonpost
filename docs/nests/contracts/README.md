@@ -419,6 +419,46 @@ New tables include nest_listing_grants, publisher_sources (private key sealed wi
 6. Prices stay zero; price.currency and price.term are stored for saas_be offers to mirror.
 7. Tables changed in place again (not merged or deployed).
 
+## Marketplace payments: paid listings (server)
+
+Served by `crates/pigeonpost-postbox/src/marketplace_pay.rs` behind the same flag; the money is the
+financial authority's (saas_be marketplace finance), reached only through the billing bridge
+(`store-adapter/src/marketplace.js`, see its README). Launch terms: `one_off` and `monthly`. No
+wallet, no credits, no per-job prices.
+
+| Route | Action | Who |
+|---|---|---|
+| `GET /v1/publishers/{publisher}/listings/{listing}/price` | `PublisherManage` | the publisher's team |
+| `PUT\|DELETE …/price` | `NestPublish` | a certified publisher's admin, with step-up |
+| `POST /v1/marketplace/purchases` | `NestInstall` | a person for their own account (the bridge, with the buyer's token) |
+| `POST /v1/nest-installations` with `purchase_id` | `NestInstall` | as before; a priced listing needs a paid purchase |
+| `PUT /internal/v1/marketplace/licences/{licence}` | `ManageBilling` | the billing service token (not in this contract) |
+
+1. **Prices and offers.** A price stands only once the financial authority holds it as an offer. The
+   offer id derives from listing, publisher, release line (the release's major version, `v1`),
+   term, currency and amount, so any change is a new offer and the previous one is retired.
+   `422 price_not_invoiceable` carries `details.nearest`. Publishing on a new major mirrors a new
+   offer; a mirror that failed is retried every minute.
+2. **Purchases** reserve the installation id the payment admits and fix the intent `{action:
+   install, listing_id, release_line, owner_kind, owner_id, installation_id}`. An org buys through
+   someone who is one of its Nest admins and manages its billing (`ManageAgents` and
+   `ManageBilling`; the bridge checks billing again), and M2b's org install
+   (`POST /v1/orgs/{org}/nest-installations` with `purchase_id`) consumes it.
+3. **Admission.** A priced listing installs only with the caller's own paid purchase: after every
+   other install check, the authorization is consumed through the bridge for exactly that intent,
+   with the installation id as the single-use reference; a replay answers `200` with the
+   installation. A zero-priced listing keeps the M1/M2 path.
+4. **Licences.** The bridge's reconciler projects each licence (status, access, `paid_through`,
+   `deletion_due_at`) with an increasing version. Without access: open jobs are cancelled, the worker
+   is stopped on nestd (`POST /v1/mp/workers/stop`, volume kept) and jobs answer
+   `402 licence_inactive`. With access again: the worker restarts with the next job. At
+   `deletion_due_at` (terminated, revoked, or paused/expired past it): uninstalled as by its owner and
+   the worker and data removed (`POST /v1/mp/workers/remove`); a sweep enforces the boundary without
+   a new projection.
+5. **Data model:** `nest_listing_prices`, `nest_listing_offers`, `nest_mp_purchases`,
+   `nest_installation_licences` (additive). `Installation.funding` is `licence` for a paid one, with
+   its `licence`.
+
 ## Validation (2026-11-03)
 
 - `check_openapi.py` with the hash-pinned validator from `.github/scripts/openapi/requirements.txt`:

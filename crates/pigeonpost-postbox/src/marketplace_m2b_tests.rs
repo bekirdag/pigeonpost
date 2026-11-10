@@ -891,7 +891,7 @@ async fn test_nests_run_intake_passed_releases_in_the_test_pool_until_they_expir
     assert!(pool
         .calls()
         .iter()
-        .any(|c| c.path == "/v1/mp/workers/remove"
+        .any(|c| c.path == "/v1/mp/workers/destroy"
             && c.body.as_ref().unwrap()["buyer_context"] == first_context.as_str()));
     srv.post(&format!("{one}/jobs"), &ann.token, json!({ "operation": "team.digest.ask", "operation_version": "1.0", "payload": { "question": "again?" } }))
         .await;
@@ -932,7 +932,7 @@ async fn test_nests_run_intake_passed_releases_in_the_test_pool_until_they_expir
     let removed_before = pool
         .calls()
         .iter()
-        .filter(|c| c.path == "/v1/mp/workers/remove")
+        .filter(|c| c.path == "/v1/mp/workers/destroy")
         .count();
     assert_eq!(
         crate::marketplace_test_nests::sweep_once(&srv.state, now + 7_200).await,
@@ -941,7 +941,7 @@ async fn test_nests_run_intake_passed_releases_in_the_test_pool_until_they_expir
     assert_eq!(
         pool.calls()
             .iter()
-            .filter(|c| c.path == "/v1/mp/workers/remove")
+            .filter(|c| c.path == "/v1/mp/workers/destroy")
             .count(),
         removed_before + 1
     );
@@ -1161,7 +1161,7 @@ async fn install_counts_reports_staff_listings_price_terms_and_roles_by_member()
         .await;
     assert_eq!(
         v["data"]["price"],
-        json!({ "amount_minor": 0, "currency": "TRY", "term": "one_off", "funding": "test_credits" })
+        json!({ "amount_minor": 0, "currency": "TRY", "term": "one_off", "funding": "test_credits", "on_sale": false })
     );
     let lpath = format!("/v1/publishers/{p}/listings/{l}");
     let (s, v) = srv

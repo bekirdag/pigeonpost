@@ -533,7 +533,9 @@ fn the_routes_and_the_contract_match() {
         include_str!("marketplace_test_nests.rs"),
         include_str!("marketplace_listings.rs"),
     ];
-    let source = format!("{m0}\n{m1}\n{m2}\n{}", m2b.join("\n"));
+    // Marketplace payments' member routes (`marketplace_pay.rs`) too.
+    let pay = include_str!("marketplace_pay.rs");
+    let source = format!("{m0}\n{m1}\n{m2}\n{pay}\n{}", m2b.join("\n"));
     let served: BTreeSet<(String, String)> =
         crate::foundations_tests::routes_in(m0, "pub(crate) fn router(")
             .into_iter()
@@ -549,6 +551,10 @@ fn the_routes_and_the_contract_match() {
                 m2b.iter()
                     .flat_map(|m| crate::foundations_tests::routes_in(m, "pub(crate) fn router(")),
             )
+            .chain(crate::foundations_tests::routes_in(
+                pay,
+                "pub(crate) fn router(",
+            ))
             .collect();
     let spec: Value = serde_json::from_str(include_str!(
         "../../../docs/nests/contracts/pigeonpost-nests.v1.json"

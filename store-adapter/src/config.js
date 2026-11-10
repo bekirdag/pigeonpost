@@ -5,7 +5,17 @@
 // service credentials exist: the postbox internal-API token (entitlement writes) and saas_be's
 // internal adapter token (the subscription-access list the reconciler reads).
 
+import { readFileSync } from "node:fs";
+
 const trimSlash = (s) => String(s || "").replace(/\/+$/, "");
+/// A credential from the file named by `<name>_FILE`, else from `<name>`; "" when neither is set.
+function secret(name) {
+  const file = process.env[`${name}_FILE`];
+  if (file) {
+    try { return readFileSync(file, "utf8").trim(); } catch { return ""; }
+  }
+  return String(process.env[name] || "").trim();
+}
 
 export const config = {
   port: Number(process.env.PORT || 8787),
@@ -90,6 +100,19 @@ export const config = {
       clientSecret: process.env.HMRC_CLIENT_SECRET || "",
     },
     checkTimeoutMs: Number(process.env.VAT_CHECK_TIMEOUT_MS || 10000),
+  },
+
+  // Paid marketplace purchases (saas_be marketplace finance, docs in store-adapter/README.md).
+  // Off until both tokens are present. Each token is read from `<NAME>_FILE` (preferred) or
+  // `<NAME>`. `bridgeToken`: saas_be tenant service token with scope `marketplace:bridge` only
+  // (never `marketplace:finance`). `internalToken`: what the postbox presents on this service's
+  // `/internal/marketplace/*` routes (`POSTBOX_BRIDGE_TOKEN` on the postbox side).
+  marketplace: {
+    bridgeToken: secret("SAAS_MARKETPLACE_TOKEN"),
+    internalToken: secret("BRIDGE_INTERNAL_TOKEN"),
+    // Monthly offers are provisioned in saas_be (iyzico pricing plan) right after they are mirrored.
+    provisionMonthly: (process.env.MARKETPLACE_PROVISION_MONTHLY || "on").toLowerCase() !== "off",
+    get enabled() { return Boolean(this.bridgeToken && this.internalToken); },
   },
 
   requestTimeoutMs: Number(process.env.MASAAS_TIMEOUT_MS || 15000),

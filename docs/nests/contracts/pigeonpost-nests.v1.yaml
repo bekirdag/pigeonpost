@@ -1530,7 +1530,7 @@ paths:
       - Nest installations
       operationId: install
       summary: Install a listing
-      description: 'A person installs a listing they can see (published; public, unlisted, or private to their own publisher team) for their own account, on the listing''s current attested release. The installation pins that release: its jobs run it, with this configuration, in the account''s own worker. Free: `funding` is `test_credits` and no money moves (M2). `400 invalid_configuration` with `details.issues`, `409 already_installed`, `review_required`, `release_revoked`, `security_quarantined`.'
+      description: 'A person installs a listing they can see (published; public, unlisted, or private to their own publisher team) for their own account, on the listing''s current attested release. The installation pins that release: its jobs run it, with this configuration, in the account''s own worker. A free listing: `funding` is `test_credits` and no money moves. A priced listing needs `purchase_id`, the caller''s paid purchase: after every other check its payment authorization is consumed through the billing bridge for exactly the purchase''s intent (single use; the installation takes the purchase''s id), and `funding` is `licence`. A replay with the same `purchase_id` answers `200` with that installation and consumes nothing. `400 invalid_configuration` with `details.issues`, `402 payment_required` (with `details.price`) / `payment_pending` / `payment_failed` / `payment_expired` / `payment_revoked`, `409 already_installed`, `intent_mismatch`, `authorization_used`, `review_required`, `release_revoked`, `security_quarantined`, `503 billing_unavailable`.'
       x-pigeonpost-status: implemented
       x-pigeonpost-action: NestInstall
       security:
@@ -1542,6 +1542,18 @@ paths:
             schema:
               $ref: '#/components/schemas/InstallationCreate'
       responses:
+        '200':
+          description: A replay of a paid install; the existing installation.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Installation'
         '201':
           description: The installation.
           content:
@@ -1558,12 +1570,179 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '402':
+          $ref: '#/components/responses/PaymentRequired'
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/BillingUnavailable'
+  /v1/marketplace/purchases:
+    post:
+      tags:
+      - Nest installations
+      operationId: createPurchase
+      summary: Start buying a priced listing
+      description: 'Called by the billing bridge with the buyer''s own token when a checkout starts (`POST /v1/marketplace/checkout` on the bridge). Checks, as an install would, that the listing is published, visible to the caller, from a certified publisher, on an attested release and not already installed, and that it is on sale; then reserves the installation id the payment will admit and returns the exact intent the payment is bound to. One purchase per caller and `intent_id`: a replay answers `200` with the same purchase. An organization buys through someone who is both one of its Nest admins (`ManageAgents`) and a billing manager (`ManageBilling`); the org install consumes the purchase. `403 forbidden` for another account or an org the caller may not buy for, `409 not_on_sale`, `intent_conflict`, `already_installed`.'
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: NestInstall
+      security:
+      - memberToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PurchaseCreate'
+      responses:
+        '200':
+          description: The same purchase (a replay).
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Purchase'
+        '201':
+          description: The purchase.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Purchase'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v1/publishers/{publisher}/listings/{listing}/price:
+    get:
+      tags:
+      - Publisher console
+      operationId: getListingPrice
+      summary: Read a listing's price and offer
+      description: The publisher's team. The price as set, and the offer the financial authority holds for it on the listing's current release line (`on_sale`, `error` when a mirror failed and is being retried).
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: PublisherManage
+      security:
+      - memberToken: []
+      parameters:
+      - $ref: '#/components/parameters/Publisher'
+      - $ref: '#/components/parameters/Listing'
+      responses:
+        '200':
+          description: The price.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ListingPriceState'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags:
+      - Publisher console
+      operationId: setListingPrice
+      summary: Price a listing
+      description: 'A **certified** publisher''s admin, with **step-up**. Sets the tax-inclusive price (minor units), currency and term (`one_off` or `monthly`; no wallet, no per-job terms). The price is mirrored to the financial authority through the billing bridge before it stands: as an immutable offer whose id derives from listing, publisher, release line, term, currency and amount, so any change is a new offer and the previous one is retired. Monthly offers are provisioned there. Publishing on a new major version mirrors a new offer for that release line. Licences already bought keep their terms. `422 price_not_invoiceable` with `details.nearest`, `409 currency_unavailable`, `503 billing_unavailable`.'
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: NestPublish
+      security:
+      - memberToken: []
+      parameters:
+      - $ref: '#/components/parameters/Publisher'
+      - $ref: '#/components/parameters/Listing'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ListingPriceSet'
+      responses:
+        '200':
+          description: The price and its offer.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ListingPriceState'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/PriceNotInvoiceable'
+        '503':
+          $ref: '#/components/responses/BillingUnavailable'
+    delete:
+      tags:
+      - Publisher console
+      operationId: clearListingPrice
+      summary: Make a listing free
+      description: A **certified** publisher's admin, with **step-up**. Removes the price; the listing's offers are retired at the financial authority. Licences already bought keep their terms.
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: NestPublish
+      security:
+      - memberToken: []
+      parameters:
+      - $ref: '#/components/parameters/Publisher'
+      - $ref: '#/components/parameters/Listing'
+      responses:
+        '200':
+          description: The listing's (now empty) price.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ListingPriceState'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /v1/nest-installations/{installation}:
     get:
       tags:
@@ -2282,7 +2461,7 @@ paths:
         - "Org installations"
       operationId: "installForOrg"
       summary: "Install a listing for an organization"
-      description: "A Nest admin (`ManageAgents`). The installation takes one of the org's agent addresses (`handle`, in the org's namespace; `409 agent_limit`), and `operators` (member ids) get a live `operate_nest` delegation on it. Visibility: public and unlisted listings; private ones of a publisher the admin acts for; `organization` listings with an organization grant to this org that allows install (`403 grant_required` when it only allows discovery). Members invoke it by sending `x-pigeonpost-installation` with a quote and a job; its jobs run in one worker per listing and org. Removing a member, revoking the delegation or deleting the agent ends that person's use at once; uninstalling deletes the agent address and every delegation on it."
+      description: "A Nest admin (`ManageAgents`). The installation takes one of the org's agent addresses (`handle`, in the org's namespace; `409 agent_limit`), and `operators` (member ids) get a live `operate_nest` delegation on it. Visibility: public and unlisted listings; private ones of a publisher the admin acts for; `organization` listings with an organization grant to this org that allows install (`403 grant_required` when it only allows discovery). Members invoke it by sending `x-pigeonpost-installation` with a quote and a job; its jobs run in one worker per listing and org. Removing a member, revoking the delegation or deleting the agent ends that person's use at once; uninstalling deletes the agent address and every delegation on it. A priced listing needs the org's paid purchase (`purchase_id`, from `POST /v1/marketplace/purchases` with `owner_kind: org`; `402 payment_required` without one); it is consumed for exactly that intent and a replay answers `200` with the installation."
       x-pigeonpost-status: "implemented"
       x-pigeonpost-action: "NestInstall"
       security:
@@ -2314,7 +2493,21 @@ paths:
                   maxItems: 50
                   items:
                     type: "string"
+                purchase_id:
+                  type: "string"
+                  description: "A priced listing: the org's paid purchase (its reserved installation id)."
       responses:
+        '200':
+          description: "A replay of an install under the same purchase."
+          content:
+            "application/json":
+              schema:
+                type: "object"
+                required:
+                  - "data"
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Installation"
         '201':
           description: "OK."
           content:
@@ -3392,7 +3585,25 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     Conflict:
-      description: State or binding conflict (`role_already_held`, `application_exists`, `idempotency_conflict`, `quote_expired`, `authorization_expired`, `authorization_reused`, `authorization_intent_mismatch`, `environment_mismatch`, `currency_mismatch`, `review_required`, `release_revoked`, `security_quarantined`, `access_expired`, `recovery_window_closed`, `review_closed`, `stages_incomplete`, `release_digest_mismatch`, `invalid_request` for a security action that does not apply, `template_exists`, `version_exists`, `listing_address_taken`, `listing_address_changed`, `listing_suspended`, `listing_not_suspended`, `configuration_invalid_for_release`, `already_installed`, `installation_removed`, `installation_changed`, `installation_required`, `not_newer`, `up_to_date`, `no_previous_release`, `application_decided`).
+      description: State or binding conflict (`role_already_held`, `application_exists`, `idempotency_conflict`, `quote_expired`, `authorization_expired`, `authorization_reused`, `authorization_intent_mismatch`, `environment_mismatch`, `currency_mismatch`, `review_required`, `release_revoked`, `security_quarantined`, `access_expired`, `recovery_window_closed`, `review_closed`, `stages_incomplete`, `release_digest_mismatch`, `invalid_request` for a security action that does not apply, `template_exists`, `version_exists`, `listing_address_taken`, `listing_address_changed`, `listing_suspended`, `listing_not_suspended`, `configuration_invalid_for_release`, `already_installed`, `installation_removed`, `installation_changed`, `installation_required`, `not_newer`, `up_to_date`, `no_previous_release`, `application_decided`, `not_on_sale`, `intent_conflict`, `intent_mismatch`, `authorization_used`, `owner_not_supported`, `currency_unavailable`).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    PaymentRequired:
+      description: 'A priced listing without a paid purchase (`payment_required`, with `details.price`), a payment not confirmed or not usable (`payment_pending`, `payment_failed`, `payment_expired`, `payment_revoked`), or a paid installation whose licence gives no access now (`licence_inactive`).'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    PriceNotInvoiceable:
+      description: 'The financial authority cannot invoice this tax-inclusive price exactly (`price_not_invoiceable`); `details.nearest` lists the nearest prices it can. Nothing changed.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    BillingUnavailable:
+      description: The billing bridge or the financial authority is not answering, or payments are not configured (`billing_unavailable`). Nothing changed.
       content:
         application/json:
           schema:
@@ -3455,11 +3666,11 @@ components:
         - "currency"
         - "term"
         - "funding"
-      description: "Price terms (M2b). Launch terms are `one_off` and `monthly`; the amount is 0 until payments land."
+      description: "A listing's price. Free: `amount_minor` 0 and `funding: test_credits`, with the listing's preferred `currency` and `term` (M2b). Priced (payments): the publisher's tax-inclusive price in minor units, `funding: card`, and `on_sale` once the financial authority holds the offer."
       properties:
         amount_minor:
           type: "integer"
-          const: 0
+          minimum: 0
         currency:
           type: "string"
           enum:
@@ -3473,7 +3684,11 @@ components:
             - "monthly"
         funding:
           type: "string"
-          const: "test_credits"
+          enum:
+            - "test_credits"
+            - "card"
+        on_sale:
+          type: "boolean"
     ListingGrant:
       type: "object"
       additionalProperties: false
@@ -4881,6 +5096,222 @@ components:
         configuration:
           type: object
           description: Validated against the release's `config_schema`; default `{}`.
+        purchase_id:
+          type: string
+          pattern: ^ins_[a-z2-7]{26}$
+          description: A priced listing only. The caller's paid purchase (`POST /v1/marketplace/purchases`, paid through the billing bridge); the installation takes its id.
+    InstallationLicence:
+      type: object
+      description: The licence a paid installation runs under, as the financial authority last reported it. Without `access` the installation takes no jobs and its worker is stopped (data kept); past `deletion_due_at` it is uninstalled and its worker and data removed.
+      additionalProperties: false
+      required:
+      - licence_id
+      - term
+      - status
+      - access
+      - runtime
+      properties:
+        licence_id:
+          type: string
+        term:
+          type: string
+          enum:
+          - one_off
+          - monthly
+        status:
+          type: string
+          enum:
+          - active
+          - canceling
+          - paused
+          - expired
+          - terminated
+          - revoked
+        access:
+          type: boolean
+        paid_through:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        cancel_at_period_end:
+          type: boolean
+        deletion_due_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        runtime:
+          type: string
+          enum:
+          - running
+          - stopped
+          - removed
+    ListingPriceSet:
+      type: object
+      additionalProperties: false
+      required:
+      - amount_minor
+      - currency
+      - term
+      properties:
+        amount_minor:
+          type: integer
+          minimum: 1
+          maximum: 100000000
+          description: Tax-inclusive, in minor units.
+        currency:
+          type: string
+          enum:
+          - TRY
+          - USD
+          - EUR
+        term:
+          type: string
+          enum:
+          - one_off
+          - monthly
+    ListingPriceState:
+      type: object
+      additionalProperties: false
+      required:
+      - listing_id
+      - price
+      - offer
+      properties:
+        listing_id:
+          type: string
+        price:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/ListingPriceSet'
+        offer:
+          oneOf:
+          - type: 'null'
+          - type: object
+            additionalProperties: false
+            required:
+            - offer_id
+            - state
+            - on_sale
+            - release_line
+            properties:
+              offer_id:
+                type: string
+                pattern: ^mpo_[0-9a-f]{32}$
+              state:
+                type: string
+                enum:
+                - pending
+                - active
+                - retiring
+                - retired
+              on_sale:
+                type: boolean
+              release_line:
+                type: string
+              error:
+                type:
+                - string
+                - 'null'
+    PurchaseCreate:
+      type: object
+      additionalProperties: false
+      required:
+      - listing_id
+      - owner_kind
+      - owner_id
+      - intent_id
+      properties:
+        listing_id:
+          type: string
+        owner_kind:
+          type: string
+          enum:
+          - account
+          - org
+        owner_id:
+          type: string
+        intent_id:
+          type: string
+          pattern: ^[0-9a-f]{32}$
+    Purchase:
+      type: object
+      additionalProperties: false
+      required:
+      - purchase_id
+      - installation_id
+      - listing_id
+      - owner_kind
+      - owner_id
+      - status
+      - offer
+      - intent
+      properties:
+        purchase_id:
+          type: string
+        installation_id:
+          type: string
+          pattern: ^ins_[a-z2-7]{26}$
+        listing_id:
+          type: string
+        owner_kind:
+          type: string
+        owner_id:
+          type: string
+        status:
+          type: string
+          enum:
+          - open
+          - installed
+        offer:
+          type: object
+          additionalProperties: false
+          required:
+          - offer_id
+          - term
+          - currency
+          - amount_minor
+          - release_line
+          - title
+          properties:
+            offer_id:
+              type: string
+            term:
+              type: string
+            currency:
+              type: string
+            amount_minor:
+              type: integer
+            release_line:
+              type: string
+            title:
+              type: string
+        intent:
+          type: object
+          description: What the payment admits, exactly as the financial authority binds it.
+          additionalProperties: false
+          required:
+          - action
+          - listing_id
+          - release_line
+          - owner_kind
+          - owner_id
+          - installation_id
+          properties:
+            action:
+              type: string
+              const: install
+            listing_id:
+              type: string
+            release_line:
+              type: string
+            owner_kind:
+              type: string
+            owner_id:
+              type: string
+            installation_id:
+              type: string
     InstallationConfiguration:
       type: object
       additionalProperties: false
@@ -4974,7 +5405,14 @@ components:
           - uninstalled
         funding:
           type: string
-          const: test_credits
+          description: '`test_credits` for a free listing; `licence` for a paid one, whose `licence` says what was bought.'
+          enum:
+          - test_credits
+          - licence
+        licence:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/InstallationLicence'
         update_available:
           type:
           - object

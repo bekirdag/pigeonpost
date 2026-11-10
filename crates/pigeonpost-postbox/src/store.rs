@@ -31,6 +31,7 @@ mod lifecycle;
 mod limits;
 mod listing;
 pub(crate) mod marketplace;
+pub(crate) mod marketplace_pay;
 pub(crate) mod meetings;
 mod msgactions;
 pub(crate) mod nest_funding;
@@ -1017,6 +1018,7 @@ impl Store {
         conn.execute_batch(crate::marketplace_hardening::SCHEMA)?;
         // Marketplace M2b: visibility grants, source connections, hosted test Nests.
         conn.execute_batch(marketplace::SCHEMA_M2B)?;
+        conn.execute_batch(marketplace_pay::SCHEMA)?;
         for stmt in MIGRATIONS
             .iter()
             .chain(filtering::MIGRATIONS)
