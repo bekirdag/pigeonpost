@@ -819,6 +819,7 @@ fn copy_tree(from: &Path, files: &[SourceFile], to: &Path) -> Result<(), String>
 }
 
 /// Most entries the compile step may leave in the tree the image is assembled from.
+#[cfg(unix)]
 const MAX_COMPILED_ENTRIES: usize = 500_000;
 
 /// After the compile step: no special files, and no setuid, setgid or sticky bits, in what the
