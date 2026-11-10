@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Publish on Pigeonpost — Pigeonpost</title>
+<meta name="description" content="Build a Nest app with the Pigeonpost dev kit, apply as a publisher, pass review and sell it in the Pigeonpost Marketplace.">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" media="(prefers-color-scheme: light)">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" media="(prefers-color-scheme: light)">
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16-dark.png" media="(prefers-color-scheme: dark)">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32-dark.png" media="(prefers-color-scheme: dark)">
+<link rel="apple-touch-icon" sizes="180x180" href="/favicon-180.png">
+<link rel="stylesheet" href="/style.css">
+<meta property="og:title" content="Publish on Pigeonpost">
+<meta property="og:description" content="Build a Nest app, pass review and sell it in the Pigeonpost Marketplace.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://pigeonpost.dev/publish.html">
+</head>
+<body>
+
+<div class="wrap legal">
+
+  <a class="back" href="/">← Pigeonpost</a>
+
+  <main>
+  <h1>Publish on Pigeonpost</h1>
+  <p class="updated">For developers who want to sell apps that run in a Nest</p>
+
+  <p>
+    A Nest app is code you publish and Pigeonpost runs for buyers in the
+    <a href="/marketplace.html">Marketplace</a>. Pigeonpost builds it from your source, reviews it, and
+    runs a separate, isolated copy for each buyer. The full guide is in the
+    <a href="https://developers.pigeonpost.dev/nests.html">developer docs</a>.
+  </p>
+
+  <h2>1. Build with the dev kit</h2>
+  <p>The dev kit is part of the Pigeonpost CLI. Start from a template, run it on your own machine against a mock model broker, and check it against the platform's rules:</p>
+<pre class="hl"><code><span class="t-cmd">pigeonpost</span> <span class="t-sub">nest init</span>       <span class="c"># start an app from a template</span>
+<span class="t-cmd">pigeonpost</span> <span class="t-sub">nest run</span>        <span class="c"># run it locally</span>
+<span class="t-cmd">pigeonpost</span> <span class="t-sub">nest validate</span>   <span class="c"># check the package</span>
+<span class="t-cmd">pigeonpost</span> <span class="t-sub">nest submit</span>     <span class="c"># ask Pigeonpost to build a pinned commit for review</span></code></pre>
+  <p>Read more in the developer docs:</p>
+  <ul>
+    <li><a href="https://developers.pigeonpost.dev/nests.html">Build a Nest</a>: what an app is and how a job flows</li>
+    <li><a href="https://developers.pigeonpost.dev/nest-quickstart">Quick start</a>: a working app in five commands</li>
+    <li><a href="https://developers.pigeonpost.dev/nest-manifest">Manifest, operations and configuration</a></li>
+    <li><a href="https://developers.pigeonpost.dev/nest-runtime">Runtime API</a>: jobs, the model broker, limits and the SDKs</li>
+    <li><a href="https://developers.pigeonpost.dev/nest-review">Security and review</a>: what review checks</li>
+    <li><a href="https://developers.pigeonpost.dev/nest-publish">Publish, update and price</a></li>
+  </ul>
+
+  <h2>2. Test on staging</h2>
+  <p>
+    Besides the local kit, you can try a release in hosted test Nests on our test environment,
+    staging.pigeonpost.dev, before buyers see it.
+  </p>
+
+  <h2>3. Apply as a publisher</h2>
+  <p>
+    Sign in at <a href="/account">pigeonpost.dev/account</a> and apply in the publisher console. You
+    can publish as yourself or for an organization you administer. Pigeonpost staff certify
+    publishers before they can submit releases.
+  </p>
+
+  <h2>4. Review and approval</h2>
+  <p>
+    Pigeonpost builds each release from your source tree, with no network access during the build.
+    It is scanned, then behaviour-tested, and a named Pigeonpost staff member approves or rejects it.
+    You see the findings in the publisher console. When a release is approved, you decide when its
+    listing goes live. Every new version is reviewed again.
+  </p>
+
+  <h2>5. Earnings</h2>
+  <p>
+    You set a one-off or monthly price for each listing. Pigeonpost keeps a commission and pays
+    publishers monthly, in Turkish lira, by bank transfer to a bank account in Türkiye. The
+    commission and payout terms are shown when you apply.
+  </p>
+  </main>
+
+  <footer>
+    <nav>
+      <a href="/">Home</a>
+      <a href="/nests.html">Nests</a>
+      <a href="/marketplace.html">Marketplace</a>
+      <a href="/publish.html">Publish on Pigeonpost</a>
+      <a href="https://developers.pigeonpost.dev">Developer docs</a>
+      <a href="/privacy">Privacy Policy</a>
+      <a href="/terms">Terms of Service</a>
+    </nav>
+  </footer>
+
+</div>
+
+</body>
+</html>
