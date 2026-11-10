@@ -471,3 +471,71 @@ wallet, no credits, no per-job prices.
   undeclared approval flag and a `deploy` hint.
 
 These are document checks, not a security review or implementation evidence.
+
+## Integration follow-ups (2026-11-10)
+
+Built on the integration branch after M2, hardening, the developer kit, the web console, M2b and
+payments were merged.
+
+### Build plane languages
+
+`release.rs` and `pigeonpost-nest-buildd` build Rust, Node and Python releases
+(`pigeonpost_nests::ecosystem`). A release has exactly one lockfile:
+
+| Ecosystem | Lockfile | Fetch (fetch network) | Build (no network) |
+|---|---|---|---|
+| Rust | `Cargo.lock`, crates.io with checksums | `cargo vendor --locked` | offline from `vendor/` |
+| Node | `package.json` + `package-lock.json` v2/v3, registry.npmjs.org, sha512 integrity | `npm ci --ignore-scripts --omit=dev` | the vendored `node_modules/`, no install step |
+| Python | `requirements.txt`, every line `name==version --hash=sha256:…` | `pip download --require-hashes --only-binary=:all: --no-deps` | `pip install --no-index --require-hashes` from `wheelhouse/` |
+
+Both builds of the reproducibility rule must agree. The fetched tree is checked against the lock
+(each package where the lock says at its version; each wheel against its hash) and hashed into
+`vendor_digest`. The SBOM carries npm and pypi purls. The deterministic scan checks every
+package's licence against the allowlist, holds npm's published `license` to the manifest's
+declaration (`licence.mismatch`), and reports process spawning, native code and literal network
+endpoints in Node and Python source as advisory findings. Fetch images (pinned by digest):
+`[build] node_fetch_image`, `python_fetch_image`; the developer kit's runner Containerfiles pin
+`node:22.21.1-bookworm-slim@sha256:25b3eb23…` and `python:3.12.12-slim-bookworm@sha256:593bd06e…`.
+
+### Behaviour test on the build plane
+
+After the scan, buildd runs the image it just built with no network, honeytokens on its volume
+and the release's `jobs/*.json` (or one synthetic job per operation), and reports
+`behavioral_test` (`behaviour_test`, `behaviour_timeout_secs` in `buildd.toml`). The postbox
+records stages in M2's order; one that arrives before its predecessor (no AI review configured)
+waits in `marketplace_source_builds.deferred_stages` and is recorded when the AI review is.
+
+### Publisher builds through the build plane
+
+With `POSTBOX_MARKETPLACE_BUILDD_URL` set, `POST /v1/publishers/{p}/builds` goes to buildd
+(builds-per-day quota) instead of the pull list, and registers through M2's third-party intake.
+A deploy-key source (M2b) sends `credential: <build request>`; buildd fetches the key from
+`GET /internal/v1/marketplace/build-requests/{build}/source-credential` with a token scoped to
+that route alone (`POSTBOX_MARKETPLACE_SOURCE_CREDENTIAL_TOKEN_SHA256` on the postbox,
+`[postbox] credential_token_file` on buildd), uses it for the fetch only against pinned host keys
+(`[git] known_hosts`) and removes it. nftables keeps an empty, opt-in rule for that one route.
+
+### Worker routes on the broker
+
+| Route | What |
+|---|---|
+| `POST /v1/progress {job_id, fraction, message}` | the worker's own running job; 100 per job; becomes `nest.job.progress` with the fraction |
+| `POST /v1/effects` (`Idempotency-Key`) | recorded once per key; `403 effect_refused` unless the release declares external writes; otherwise awaiting approval until settled through nestd `POST /v1/mp/jobs/{job}/effects/{key}`; an approved effect whose worker stops is `outcome_unknown`, counted in `effects_outcome_unknown` and announced with `nest.job.reconciling` |
+| `GET /v1/secrets/{name}` | an installation secret, sealed in nestd under the worker's current broker token |
+
+Secrets (W1.6) travel from the postbox to nestd with each job, beside `config`, never in it; they
+are never in the job file, the environment or a log, and a new start of the worker needs them sent
+again.
+
+### Org purchases, price model, web
+
+An org buys through someone with `ManageAgents` and `ManageBilling`; the org install takes
+`purchase_id`. One `ListingPrice` {amount_minor, currency, term, funding, on_sale}; the price
+route's response is `ListingPriceState`. The web Services tab buys, returns from iyzico
+(`?mp_purchase=`), installs with the purchase, and shows licences, payments, receipts and Cancel;
+the publisher console edits prices.
+
+### Not built yet
+
+The platform's effect executor and a buyer approval route for effects; a recording broker for the
+build-plane behaviour test (model calls end in `no_broker` there).

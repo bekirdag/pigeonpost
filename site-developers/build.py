@@ -1647,14 +1647,20 @@ the public registry first and follow the
 
 ## Nest apps
 
-Offline commands for publishers building marketplace Nest apps. They need no identity, no
-home directory and no network. See [Build a Nest](/nests).
+Commands for publishers building marketplace Nest apps. `templates`, `init`, `run` and
+`validate` are offline: no identity, no home directory and no network. `submit`, `status` and
+`logs` act as the signed-in account (`pigeonpost login`) and ask for a fresh two-step sign-in
+when the postbox needs one. See [Build a Nest](/nests).
 
 | Command | Does |
 |---|---|
 | `nest templates` | List the starter templates |
 | `nest init <template> <dir>` | Write a new app. `--lang` (node or python), `--name`, `--publisher` |
 | `nest run <dir>` | Run the app locally against a mock broker. `--job`, `--config`, `--reply`, `--no-model`, `--approve`, `--approve-all`, `--redeliver`, `--timeout`, `--keep`, `-- <command>` |
+| `nest validate <dir>` | Check the package against the platform's rules. `--config` checks an example configuration too |
+| `nest submit` | Ask Pigeonpost to build a pinned commit for review. `--publisher`, `--template`, `--version`, `--commit`, and `--repo` (public https) or `--source` (a connected deploy key) |
+| `nest status` | Your builds, or one build and its review's stages. `--publisher`, `--build` or `--review` |
+| `nest logs` | A hosted test Nest's log on the staging postbox. `--publisher`, `--test-nest` |
 
 ## Environment variables
 
@@ -1831,14 +1837,15 @@ You can build, test and run an app on your own machine today with the local kit:
 | Local kit: `nest init`, `nest run`, Node and Python SDKs, templates | Available |
 | Runtime contract, model broker, one worker per buyer | Built, with a first-party reference release |
 | Builds of Rust (Cargo) source trees, review stages, staff attestation | Built |
-| Builds of Node and Python source trees | Coming |
-| Publisher programme (apply, certification, teams) | Coming |
-| Listings and installations for third-party releases | Coming |
-| Publisher console (web), `pigeonpost nest validate`, submit and status | Coming |
-| Job progress and external effects | Coming (the SDKs and the local kit already speak them) |
-| Hosted test Nests | Coming |
+| Builds of Node (`package-lock.json`) and Python (`requirements.txt` with hashes) source trees | Built |
+| Publisher programme (apply, certification, teams) | Built, behind the marketplace flag |
+| Listings, installations and paid purchases for third-party releases | Built, behind the marketplace flag |
+| Publisher console (web), `pigeonpost nest validate`, `submit`, `status` | Built, behind the marketplace flag |
+| Job progress, secrets through the broker | Built |
+| External effects | Recorded and approval-gated; the marketplace pool offers no external writes yet |
+| Hosted test Nests | Built for the staging postbox |
 
-> Pigeonpost does not take third-party releases yet. Everything marked coming arrives with the publisher console; build against the contract on these pages now.
+> The marketplace is not open to everyone yet: these pieces are switched on per account while it is tested.
 
 ## Where to go next
 
@@ -2377,6 +2384,7 @@ API reference:
 | Budget | `await job.broker.budget()` | `job.broker.budget()` | Gets current token usage and limits. |
 | Progress | `await job.progress(fraction, message)` | `job.progress(fraction, message)` | Best effort. Never fails the job. Max 100 per job. |
 | Effect | `await job.effect({key, kind, summary, body, requiresApproval})` | `job.effect(key=..., kind=..., summary=..., body=..., requires_approval=...)` | Requests an external effect. Returns the outcome, or raises `NestError` with `approval_required`, `effects_unavailable`, `idempotency_conflict`, `effect_refused` or `effect_outcome_unknown`. |
+| Secret | `await job.broker.secret(name)` | `job.broker.secret(name)` | One of the installation's secret settings (`writeOnly` in `config_schema`), from the broker for this start of the Nest. Raises `BrokerError` `secret_not_set`. Never write it to the volume or a log. |
 | Errors | `NestError(code)` | `NestError(code)` | Throw/raise to fail the job with that code. Other exceptions fail with `internal_error`. |
 | Return value | `{answer, sources?, model_used?}` or any other value | Same | A value without `answer` becomes the answer. `model_used` defaults to whether the broker answered during the job. |
 | Testing helpers | `runOnce(handlers, {root, url})` | `run_once(handlers, root=..., url=...)` | Processes waiting jobs once. `NEST_ROOT` overrides `/nest`. |
