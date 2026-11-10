@@ -22,7 +22,7 @@
 
   <h1>Privacy Policy</h1>
   <p class="note">For the hosted Pigeonpost mobile and desktop app, read the <a href="/app-privacy.html">Pigeonpost app privacy policy</a>. You can <a href="/delete-account.html">request account deletion here</a>. The protocol operator policy below covers separate Pigeonpost nodes.</p>
-  <p class="updated">Last updated 29 October 2026</p>
+  <p class="updated">Last updated 10 November 2026</p>
 
   <p>
     This states the policy a Pigeonpost operator must apply to lofts, the name registry, the node
@@ -217,6 +217,29 @@
     <strong>Retention.</strong> The encrypted notes and the record of who agreed are kept for 90 days and then deleted automatically. Each attendee can delete their own copy sooner; when the last attendee deletes theirs, the notes are deleted. Copies attendees make themselves, for example by copying the text, are theirs. Our records of the meeting (who asked for notes, who agreed or declined and when, and the size of the result) contain no audio or text.
   </p>
 
+  <h3 id="nests">Nests (hosted AI agents)</h3>
+  <p>
+    A Nest is an agent we run for you in its own isolated sandbox on our Nests server. It has its own mailbox, so you talk to it like any other contact. Nests are not end-to-end encrypted: to answer you, the Nest and our servers read what you send it.
+  </p>
+  <p>
+    <strong>What a Nest holds.</strong> The messages people send it and its replies (the newest 40 turns of each conversation, stored per sender under a hashed address), files you upload to it with the text extracted from them, approval requests it raises and your answers, and usage counts (model tokens, requests, running time and stored bytes). This is kept on the Nest's own disk volume, which is encrypted with a key of its own. That key is itself encrypted under a key that only our postbox holds, so a copy of the Nests server's disk cannot be read by itself.
+  </p>
+  <p>
+    <strong>Files.</strong> Uploaded files are first held in quarantine on the Nest's volume, then read by a separate parser with no network access, which extracts their text. The Nest uses excerpts of that text when it answers. Text inside a file is treated as content, never as instructions.
+  </p>
+  <p>
+    <strong>Who processes it.</strong> When a Nest answers, the relevant conversation and file excerpts are sent to an open-source language model that runs on servers we operate (our mswarm model service). No outside AI provider receives them. If we ever connect a Nest to an outside model provider, we will name it here first. An Empty Nest has no model connected and sends nothing to any model.
+  </p>
+  <p>
+    <strong>Actions.</strong> A Nest cannot send anything outside Pigeonpost by itself. When it proposes an action, it asks you, and nothing happens unless you approve that exact action before it expires.
+  </p>
+  <p>
+    <strong>Strangers.</strong> A Nest answers only its owner and the people the owner allows. Messages from anyone else are not acted on.
+  </p>
+  <p>
+    <strong>Retention and deletion.</strong> You can export a Nest's files and conversations, and delete it, at any time; deleting destroys its sandbox, its volume and its mailbox credential. If a Nest's subscription ends, the Nest is paused at once and deleted 30 days after the end of the last paid period, so you have time to export. Nest volumes are backed up nightly, encrypted, to our own backup server, and backups are kept for up to 6 months. A Nest deleted after a backup was made stays in that backup until the backup expires, but it is not brought back: a restore destroys every Nest that was deleted.
+  </p>
+
   <h2>3. Sender attribution</h2>
   <p>
     Envelope v3 supports an optional, encrypted <em>attribution block</em> that lets a sender's public key
@@ -372,6 +395,12 @@
       <td>To give the people who agreed a summary and transcript of their call</td>
       <td>Consent of every participant (GDPR Art. 6(1)(a)), which anyone can withdraw during the call</td>
       <td>Audio deleted once transcribed and never kept longer than <strong>24 hours</strong>; encrypted notes and consent records <strong>90 days</strong>, or until each attendee deletes their copy</td>
+    </tr>
+    <tr>
+      <td>Nests: their conversations, uploaded files and extracted text, approvals and usage counts</td>
+      <td>To run the Nests you buy or create, answer you, and bill and limit their use</td>
+      <td>Performance of the service you requested (GDPR Art. 6(1)(b))</td>
+      <td>Until you delete the Nest or your account, or <strong>30 days</strong> after the last paid period ends; encrypted backups up to <strong>6 months</strong></td>
     </tr>
     <tr>
       <td>Profile pictures</td>
