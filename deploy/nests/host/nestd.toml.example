@@ -104,3 +104,12 @@ bind = "127.0.0.1:9796"
 postbox_url = "https://postbox.pigeonpost.dev"
 token_file = "/run/credentials/nests-alert-relay.service/alerts.token"
 to = "/bekir"
+
+# Optional Postmark fallback through Postmark: used when the postbox send fails (connection error,
+# timeout, 5xx) and always for Postbox* alerts. The server token is /etc/credstore/postmark.token
+# (root 0400), handed over by systemd LoadCredential. Remove this section to disable it.
+[alerts.postmark]
+token_file = "/run/credentials/nests-alert-relay.service/postmark.token"
+from = "alerts@pigeonpost.dev"
+to = "REPLACE-operator@example.com"
+message_stream = "outbound"

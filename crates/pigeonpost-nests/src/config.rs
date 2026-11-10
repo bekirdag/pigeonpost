@@ -30,6 +30,35 @@ pub struct AlertsConfig {
     pub token_file: PathBuf,
     /// The operator's Pigeonpost address.
     pub to: String,
+    /// Optional Postmark fallback (Postmark). Used when the postbox send fails (connection error,
+    /// timeout, 5xx) and always for alerts named `Postbox*`, which a postbox outage would
+    /// otherwise swallow.
+    #[serde(default)]
+    pub postmark: Option<PostmarkFallbackConfig>,
+}
+
+/// `[alerts.postmark]`: Postmark's HTTP API, one Postmark message per undeliverable (or postbox) notification.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PostmarkFallbackConfig {
+    /// File holding the Postmark server token (sent as `X-Postmark-Server-Token`; never logged).
+    pub token_file: PathBuf,
+    /// A sender signature verified in Postmark.
+    pub from: String,
+    /// The operator's address for the Postmark fallback.
+    pub to: String,
+    #[serde(default = "default_message_stream")]
+    pub message_stream: String,
+    /// Postmark's send endpoint; only tests change it.
+    #[serde(default = "default_postmark_url")]
+    pub api_url: String,
+}
+
+fn default_message_stream() -> String {
+    "outbound".into()
+}
+fn default_postmark_url() -> String {
+    "https://api.postmarkapp.com/email".into()
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -530,6 +559,20 @@ pub(crate) fn test_config(dir: &std::path::Path) -> Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_example_config_parses_with_the_email_fallback() {
+        let c: Config = toml::from_str(include_str!(
+            "../../../deploy/nests/host/nestd.toml.example"
+        ))
+        .unwrap();
+        let e = c.alerts.unwrap().postmark.unwrap();
+        assert_eq!(e.message_stream, "outbound");
+        assert_eq!(e.api_url, "https://api.postmarkapp.com/email");
+        let minimal: PostmarkFallbackConfig =
+            toml::from_str("token_file = \"/t\"\nfrom = \"a@x\"\nto = \"b@x\"").unwrap();
+        assert_eq!(minimal.message_stream, "outbound");
+    }
 
     #[test]
     fn unpinned_images_and_wildcard_binds_are_refused() {
