@@ -32,6 +32,7 @@ pub mod config;
 pub mod control;
 pub mod db;
 pub mod dispatch;
+pub mod ecosystem;
 pub mod files;
 pub mod keywrap;
 pub mod metrics;

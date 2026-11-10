@@ -26,6 +26,18 @@ keep_days = 14
 # the postbox records the AI stage some other way or the review waits for it.
 # ai_review_route = "/etc/pigeonpost-buildd/review.toml"
 
+# The behaviour test after the scan: the built image runs under gVisor with no network,
+# honeytokens on its volume and its example jobs in the inbox (on by default).
+behaviour_test = true
+behaviour_timeout_secs = 60
+
+# Deploy-key sources (marketplace M2b). Optional: without it, builds of SSH repositories are
+# refused. The token opens the postbox's source-credential route and nothing else
+# (POSTBOX_MARKETPLACE_SOURCE_CREDENTIAL_TOKEN_SHA256 on the postbox side).
+# [postbox]
+# url = "http://<POSTBOX_WG_ADDR>:<PORT>"
+# credential_token_file = "/etc/pigeonpost-buildd/source-credential-token"
+
 [git]
 # An image with git, pinned by digest (for example alpine/git), loaded into the nestbuild user's
 # podman storage; nothing is pulled at build time.
@@ -36,6 +48,9 @@ network = "nestbuild-fetch"
 # Exact git host names a publisher repository may be on. nestbuild-allowlist resolves these into
 # the nftables allowlist; a name here that is not also in allowlist.txt cannot be reached.
 allowed_hosts = ["github.com", "codeberg.org"]
+# Pinned SSH host keys of the allowed hosts, for deploy-key sources (`ssh-keyscan`, then verify
+# the fingerprints against each host's published ones). An unknown host key fails the fetch.
+# known_hosts = "/etc/pigeonpost-buildd/known_hosts"
 
 [build]
 # gVisor. `runsc` is mapped to the runsc-buildd wrapper in the user's containers.conf.
@@ -44,6 +59,12 @@ runtime = "runsc"
 fetch_network = "nestbuild-fetch"
 # The Rust toolchain image for vendoring, pinned by digest.
 fetch_image = "docker.io/library/rust:<VERSION>-slim-bookworm@sha256:<DIGEST>"
+# Node releases (`npm ci --ignore-scripts --omit=dev`) and Python releases
+# (`pip download --require-hashes --only-binary=:all:`), each pinned by digest. Use the same
+# images the runner Containerfiles of the developer kit pin, so node_modules and the wheels match
+# the runtime. Unset: that language is refused.
+node_fetch_image = "docker.io/library/node:22.21.1-bookworm-slim@sha256:25b3eb23a00590b7499f2a2ce939322727fcce1b15fdd69754fcd09536a3ae2c"
+python_fetch_image = "docker.io/library/python:3.12.12-slim-bookworm@sha256:593bd06efe90efa80dc4eee3948be7c0fde4134606dd40d8dd8dbcade98e669c"
 # Local name the release images are tagged with.
 image_name = "localhost/pigeonpost-release"
 # Per-container limits (the nestbuild slice is the hard cap for everything together).

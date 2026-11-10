@@ -2678,7 +2678,11 @@ async fn record_stage(
         let (id, replayed) = state
             .store
             .group_tx(move |tx| -> GResult<(String, bool)> {
-                record_stage_in(tx, &review, &s, platform_owner.as_deref(), now)
+                let out = record_stage_in(tx, &review, &s, platform_owner.as_deref(), now)?;
+                if !out.1 {
+                    replay_deferred_in(tx, &review, platform_owner.as_deref(), now)?;
+                }
+                Ok(out)
             })
             .await?;
         if replayed {
@@ -2853,6 +2857,55 @@ fn record_stage_in(
     Ok((id, false))
 }
 
+/// Record the stages a source build left waiting for `review` (see `register_source_build`), in
+/// order, as far as they now go; the rest keep waiting.
+fn replay_deferred_in(
+    tx: &Transaction<'_>,
+    review: &str,
+    platform_owner: Option<&str>,
+    now: i64,
+) -> GResult<()> {
+    let row: Option<(String, String)> = tx
+        .query_row(
+            "SELECT id, deferred_stages FROM marketplace_source_builds
+              WHERE review_id = ?1 AND deferred_stages IS NOT NULL",
+            [review],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    let Some((bid, text)) = row else {
+        return Ok(());
+    };
+    let waiting: Vec<Value> = serde_json::from_str(&text).unwrap_or_default();
+    let mut left = Vec::new();
+    for raw in waiting {
+        if !left.is_empty() {
+            left.push(raw);
+            continue;
+        }
+        let Ok(s) = serde_json::from_value::<StageReq>(raw.clone()) else {
+            continue;
+        };
+        if check_stage(&s).is_err() {
+            continue;
+        }
+        match record_stage_in(tx, review, &s, platform_owner, now) {
+            Ok(_) => {}
+            Err(e) if e.code == "stage_out_of_order" => left.push(raw),
+            // The review moved on (blocked or decided): nothing more is recorded.
+            Err(_) => break,
+        }
+    }
+    tx.execute(
+        "UPDATE marketplace_source_builds SET deferred_stages = ?2 WHERE id = ?1",
+        params![
+            bid,
+            (!left.is_empty()).then(|| Value::Array(left).to_string())
+        ],
+    )?;
+    Ok(())
+}
+
 /// A finished source build from the remote build plane (`marketplace_hardening`): its record is
 /// checked as `POST /internal/v1/marketplace/builds` checks one, registered for `publisher`, and
 /// its analysis stages are recorded on the new review, all in one transaction. Returns
@@ -2871,7 +2924,8 @@ pub(crate) async fn register_source_build(
     b.build_id = nest_build.map(str::to_string);
     check_build(&b)?;
     let mut stages = Vec::new();
-    for st in result["stages"].as_array().cloned().unwrap_or_default() {
+    let raw_stages = result["stages"].as_array().cloned().unwrap_or_default();
+    for st in raw_stages.clone() {
         let s: StageReq =
             serde_json::from_value(st).map_err(|e| GErr::bad("invalid_build", e.to_string()))?;
         check_stage(&s)?;
@@ -2896,9 +2950,29 @@ pub(crate) async fn register_source_build(
             };
             let release = out["release_id"].as_str().unwrap_or_default().to_string();
             let review = out["review_id"].as_str().unwrap_or_default().to_string();
-            for s in &stages {
-                record_stage_in(tx, &review, s, platform_owner.as_deref(), now)?;
+            // Stages in the contract's order. One whose predecessor is not recorded yet (the
+            // behaviour test when the build plane ran no AI review) waits, with those after it.
+            let mut deferred: Vec<Value> = Vec::new();
+            for (s, raw) in stages.iter().zip(&raw_stages) {
+                if !deferred.is_empty() {
+                    deferred.push(raw.clone());
+                    continue;
+                }
+                match record_stage_in(tx, &review, s, platform_owner.as_deref(), now) {
+                    Ok(_) => {}
+                    Err(e) if e.code == "stage_out_of_order" => deferred.push(raw.clone()),
+                    Err(e) => return Err(e),
+                }
             }
+            tx.execute(
+                "UPDATE marketplace_source_builds SET deferred_stages = ?2, review_id = ?3
+                  WHERE id = ?1",
+                params![
+                    bid,
+                    (!deferred.is_empty()).then(|| Value::Array(deferred).to_string()),
+                    review
+                ],
+            )?;
             tracing::info!(build = %bid, %release, "source build registered for review");
             Ok((release, review))
         })

@@ -76,6 +76,19 @@ macro_rules! file {
 pub const NODE_SDK: File = file!("pigeonpost-nest.mjs", "sdk/node/pigeonpost-nest.mjs");
 pub const PYTHON_SDK: File = file!("pigeonpost_nest.py", "sdk/python/pigeonpost_nest.py");
 pub const NODE_CONTAINERFILE: File = file!("Containerfile", "templates/_lang/node/Containerfile");
+/// The language's lockfiles: the build plane refuses a release without one (Node:
+/// `package.json` and `package-lock.json`; Python: `requirements.txt` with hashes).
+pub const NODE_LOCKFILES: &[File] = &[
+    file!("package.json", "templates/_lang/node/package.json"),
+    file!(
+        "package-lock.json",
+        "templates/_lang/node/package-lock.json"
+    ),
+];
+pub const PYTHON_LOCKFILES: &[File] = &[file!(
+    "requirements.txt",
+    "templates/_lang/python/requirements.txt"
+)];
 pub const PYTHON_CONTAINERFILE: File =
     file!("Containerfile", "templates/_lang/python/Containerfile");
 
@@ -189,11 +202,16 @@ pub fn render(
         };
         out.push((f.path.to_string(), contents));
     }
-    let (lang_files, containerfile, sdk) = match lang {
-        Lang::Node => (template.node, NODE_CONTAINERFILE, NODE_SDK),
-        Lang::Python => (template.python, PYTHON_CONTAINERFILE, PYTHON_SDK),
+    let (lang_files, containerfile, sdk, locks) = match lang {
+        Lang::Node => (template.node, NODE_CONTAINERFILE, NODE_SDK, NODE_LOCKFILES),
+        Lang::Python => (
+            template.python,
+            PYTHON_CONTAINERFILE,
+            PYTHON_SDK,
+            PYTHON_LOCKFILES,
+        ),
     };
-    for f in lang_files.iter().chain([&containerfile, &sdk]) {
+    for f in lang_files.iter().chain([&containerfile, &sdk]).chain(locks) {
         out.push((f.path.to_string(), f.contents.to_string()));
     }
     out
@@ -246,12 +264,14 @@ mod tests {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
         let mut files = Vec::new();
         on_disk(&root, &root, &mut files);
-        // Every template's files, plus the two runner Containerfiles.
+        // Every template's files, plus the two runner Containerfiles and the lockfiles.
         let listed: usize = TEMPLATES
             .iter()
             .map(|t| t.shared.len() + t.node.len() + t.python.len())
             .sum::<usize>()
-            + 2;
+            + 2
+            + NODE_LOCKFILES.len()
+            + PYTHON_LOCKFILES.len();
         let files: Vec<String> = files
             .into_iter()
             .filter(|f| !f.contains("__pycache__") && !f.ends_with(".pyc"))

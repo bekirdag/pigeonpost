@@ -54,14 +54,24 @@ async fn serve(cfg: BuilddConfig) -> Result<(), String> {
     for dir in [&cfg.work_root, &cfg.artifact_root] {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
+    // Deploy keys (M2b sources), from the postbox's credential route with its scoped token.
+    let credentials = match &cfg.postbox {
+        None => buildd::Credentials::None,
+        Some(p) => buildd::Credentials::Http {
+            url: p.url.trim_end_matches('/').to_string(),
+            token: zeroize::Zeroizing::new(read_secret_file(&p.credential_token_file)?),
+            client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(20))
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .map_err(|e| e.to_string())?,
+        },
+    };
     let bind = cfg.bind.clone();
-    let b = Arc::new(Buildd::open(
-        cfg,
-        Arc::new(HostPodman),
-        submit,
-        artifact,
-        review,
-    )?);
+    let b = Arc::new(
+        Buildd::open(cfg, Arc::new(HostPodman), submit, artifact, review)?
+            .with_credentials(credentials),
+    );
     buildd::start_worker(b.clone());
     let listener = tokio::net::TcpListener::bind(&bind)
         .await

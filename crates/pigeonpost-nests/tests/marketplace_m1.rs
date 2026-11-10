@@ -1001,6 +1001,8 @@ fn live_build_of_the_reference_release() {
                 .unwrap_or_else(|_| "nests-fetch".into()),
             fetch_image: std::env::var("NESTS_LIVE_FETCH_IMAGE").expect("NESTS_LIVE_FETCH_IMAGE"),
             image_name: "localhost/pigeonpost-release-hr-policy-qa".into(),
+            node_fetch_image: std::env::var("NESTS_LIVE_NODE_FETCH_IMAGE").ok(),
+            python_fetch_image: std::env::var("NESTS_LIVE_PYTHON_FETCH_IMAGE").ok(),
             memory_mib: None,
             cpu_millis: None,
             pids: None,

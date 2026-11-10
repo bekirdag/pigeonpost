@@ -686,6 +686,23 @@ async fn source_connections_seal_deploy_keys_and_feed_builds() {
     );
     let cred = format!("/internal/v1/marketplace/build-requests/{bid}/source-credential");
     assert_eq!(srv.call(Method::GET, &cred, None, None).await.0, 401);
+    // The build plane's scoped token opens this route, and no other internal route.
+    let scoped = crate::marketplace_hardening::TEST_CREDENTIAL_TOKEN;
+    let (s, v) = srv.call(Method::GET, &cred, Some(scoped), None).await;
+    assert_eq!(s, 200, "{v}");
+    assert!(v["data"]["private_key"]
+        .as_str()
+        .unwrap()
+        .contains("OPENSSH"));
+    let (s, _) = srv
+        .call(
+            Method::GET,
+            "/internal/v1/marketplace/build-requests",
+            Some(scoped),
+            None,
+        )
+        .await;
+    assert!(matches!(s, 401 | 403), "{s}");
     let (s, v) = srv.call(Method::GET, &cred, Some(OPS), None).await;
     assert_eq!(s, 200, "{v}");
     let pem = v["data"]["private_key"].as_str().unwrap();

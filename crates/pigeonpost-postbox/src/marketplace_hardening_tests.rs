@@ -752,3 +752,88 @@ async fn destroyed_workers_are_replayed_as_tombstones_on_unlock() {
         "{tombstones}"
     );
 }
+
+/// The build plane reports the scan and the behaviour test, but ran no AI review: the behaviour
+/// stage waits (M2's order) and is recorded as soon as the AI review is.
+#[tokio::test]
+async fn a_behaviour_stage_from_the_build_plane_waits_for_the_ai_review() {
+    let (srv, owner) = setup().await;
+    srv.global_flag("marketplace").await;
+    assign_reviewer(&srv, &owner, &owner.account).await;
+    let acme = srv.person("hdacme9").await;
+    let publisher = third_party_publisher(&srv, &acme).await;
+    let (s, v) = srv
+        .post(
+            "/v1/staff/marketplace/source-builds",
+            &owner.strong,
+            json!({
+                "publisher_id": publisher,
+                "repo_url": "https://git.example.org/acme/x.git",
+                "commit": "e".repeat(40),
+            }),
+        )
+        .await;
+    assert_eq!(s, 202, "{v}");
+    let build = v["data"]["build_id"].as_str().unwrap().to_string();
+    srv.state.nests.marketplace.buildd_answer(
+        200,
+        json!({
+            "state": "succeeded",
+            "record": build_record("3.0.0", 'f'),
+            "stages": [
+                stage_body("deterministic_scan", "passed", None),
+                stage_body("behavioral_test", "passed", None),
+            ],
+            "reproducibility": { "builds": 2, "equal": true },
+        }),
+    );
+    assert_eq!(
+        crate::marketplace_hardening::source_builds_once(&srv.state).await,
+        1
+    );
+    let (_, v) = srv
+        .get(
+            &format!("/v1/staff/marketplace/source-builds/{build}"),
+            &owner.strong,
+        )
+        .await;
+    assert_eq!(v["data"]["state"], "registered", "{v}");
+    let review = v["data"]["review_id"].as_str().unwrap().to_string();
+    assert_eq!(stage_list(&srv, &review).await, "intake,deterministic_scan");
+    let (s, v) = srv
+        .call(
+            reqwest::Method::POST,
+            &format!("/internal/v1/marketplace/reviews/{review}/stages"),
+            Some(crate::org_tests::OPS),
+            Some(stage_body(
+                "ai_analysis",
+                "advisory",
+                Some("qwen-latest-flash-next"),
+            )),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    assert_eq!(
+        stage_list(&srv, &review).await,
+        "intake,deterministic_scan,ai_analysis,behavioral_test"
+    );
+    let left = scalar(
+        &srv,
+        &format!(
+            "SELECT COALESCE(deferred_stages, 'none') FROM marketplace_source_builds WHERE id = '{build}'"
+        ),
+    )
+    .await;
+    assert_eq!(left, "none");
+}
+
+async fn stage_list(srv: &Srv, review: &str) -> Value {
+    scalar(
+        srv,
+        &format!(
+            "SELECT group_concat(stage, ',') FROM (SELECT stage FROM review_decisions
+              WHERE case_id = '{review}' ORDER BY created_at, rowid)"
+        ),
+    )
+    .await
+}

@@ -83,7 +83,7 @@ pub(crate) fn host_allowed(state: &AppState, url: &str) -> GResult<String> {
 
 /// An ssh repository the build host can clone with a deploy key: `ssh://git@host/owner/repo[.git]`
 /// or `git@host:owner/repo[.git]`, no port, no options.
-fn ssh_repository_ok(url: &str) -> bool {
+pub(crate) fn ssh_repository_ok(url: &str) -> bool {
     let path = if let Some(rest) = url.strip_prefix("ssh://git@") {
         rest.split_once('/').map(|(_, p)| p)
     } else if let Some(rest) = url.strip_prefix("git@") {
@@ -380,8 +380,13 @@ async fn source_credential(
     headers: HeaderMap,
     Path(build): Path<String>,
 ) -> Response {
-    if let Err(r) = service_gate(&state, &headers) {
-        return *r;
+    // The ops token, or the build plane's token scoped to this route alone (hardening:
+    // `pigeonpost-nest-buildd` holds nothing else that acts on the postbox).
+    let scoped = crate::marketplace_hardening::credential_token_ok(&state, &headers);
+    if !scoped {
+        if let Err(r) = service_gate(&state, &headers) {
+            return *r;
+        }
     }
     let result = async {
         flag_gate(&state).await?;

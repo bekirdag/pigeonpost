@@ -1,10 +1,16 @@
 # Runner image for a Python Nest app. The base image is pinned by digest: review refuses a FROM that
-# is not. No package install step: the app and its SDK copy use the standard library only.
+# is not. The build plane downloads the wheels requirements.txt pins into `wheelhouse/` before
+# this build, which has no network; they are installed offline, hash-checked, into /app/deps.
 ARG BASE_IMAGE=docker.io/library/python:3.12.12-slim-bookworm@sha256:593bd06efe90efa80dc4eee3948be7c0fde4134606dd40d8dd8dbcade98e669c
 
 FROM ${BASE_IMAGE}
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYTHONPATH=/app/deps
 WORKDIR /app
 COPY . /app
+RUN if grep -q '^[A-Za-z0-9]' requirements.txt; then \
+      python3 -m pip install --no-index --no-cache-dir --disable-pip-version-check \
+        --require-hashes --only-binary=:all: --find-links=/app/wheelhouse \
+        --target=/app/deps --requirement=requirements.txt; \
+    fi && rm -rf /app/wheelhouse
 USER 10001:10001
 ENTRYPOINT ["/usr/local/bin/python3", "/app/app.py"]

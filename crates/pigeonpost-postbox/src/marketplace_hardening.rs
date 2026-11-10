@@ -115,7 +115,10 @@ CREATE TABLE IF NOT EXISTS marketplace_source_builds (
     created_at   INTEGER NOT NULL,
     updated_at   INTEGER NOT NULL,
     -- The publisher's build request (M2 `nest_builds`) this source build answers, if any.
-    nest_build_id TEXT UNIQUE
+    nest_build_id TEXT UNIQUE,
+    -- Stages the build plane reported that cannot be recorded yet (the behaviour test before an
+    -- AI review exists), as JSON; recorded in order once the stage before them is.
+    deferred_stages TEXT
 );
 CREATE INDEX IF NOT EXISTS marketplace_source_builds_by_publisher
     ON marketplace_source_builds(publisher_id, created_at);
@@ -186,6 +189,10 @@ pub(crate) struct Hardening {
     /// Publishers' build requests (M2) go to `buildd` rather than waiting for the pull-model build
     /// host. On whenever a real build plane is configured; tests switch it on to cover the path.
     pub(crate) publisher_builds: std::sync::atomic::AtomicBool,
+    /// SHA-256 (hex) of the build plane's source-credential token
+    /// (`POSTBOX_MARKETPLACE_SOURCE_CREDENTIAL_TOKEN_SHA256`): it opens
+    /// `GET /internal/v1/marketplace/build-requests/{build}/source-credential` and nothing else.
+    pub(crate) credential_token_sha256: Option<String>,
     /// The newest typed event already woken for (see [`wake_new_events`]).
     woken_through: AtomicI64,
 }
@@ -198,6 +205,7 @@ impl Default for Hardening {
             quotas: Quotas::default(),
             buildd: Buildd::Disabled,
             publisher_builds: std::sync::atomic::AtomicBool::new(false),
+            credential_token_sha256: None,
             woken_through: AtomicI64::new(0),
         }
     }
@@ -288,6 +296,18 @@ impl Hardening {
                 ),
             }
         }
+        match std::env::var("POSTBOX_MARKETPLACE_SOURCE_CREDENTIAL_TOKEN_SHA256")
+            .ok()
+            .map(|v| v.trim().to_ascii_lowercase())
+        {
+            Some(v) if v.len() == 64 && v.bytes().all(|b| b.is_ascii_hexdigit()) => {
+                h.credential_token_sha256 = Some(v)
+            }
+            Some(_) => tracing::warn!(
+                "POSTBOX_MARKETPLACE_SOURCE_CREDENTIAL_TOKEN_SHA256 is not a SHA-256 hex digest; ignored"
+            ),
+            None => {}
+        }
         let d = Quotas::default();
         h.quotas = Quotas {
             builds_per_day: env_i64("POSTBOX_MARKETPLACE_BUILDS_PER_DAY", d.builds_per_day),
@@ -339,6 +359,9 @@ impl Hardening {
                 calls: Mutex::new(Vec::new()),
                 answers: Mutex::new(std::collections::VecDeque::new()),
             },
+            credential_token_sha256: Some(hex_of(&Sha256::digest(
+                TEST_CREDENTIAL_TOKEN.as_bytes(),
+            ))),
             ..Hardening::default()
         }
     }
@@ -1252,6 +1275,31 @@ pub(crate) async fn request_source_build(
     request_source_build_for(state, publisher_id, repo_url, commit, requested_by, None).await
 }
 
+/// Tests: the build plane's source-credential token.
+#[cfg(test)]
+pub(crate) const TEST_CREDENTIAL_TOKEN: &str = "buildd-source-credential-test-token-0123";
+
+/// Whether the request carries the build plane's source-credential token (constant time).
+pub(crate) fn credential_token_ok(state: &AppState, headers: &HeaderMap) -> bool {
+    let Some(want) = state.nests.marketplace.credential_token_sha256.as_deref() else {
+        return false;
+    };
+    let presented = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .unwrap_or("");
+    if presented.is_empty() {
+        return false;
+    }
+    let got = hex_of(&Sha256::digest(presented.as_bytes()));
+    subtle::ConstantTimeEq::ct_eq(got.as_bytes(), want.as_bytes()).into()
+}
+
+fn hex_of(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
 /// Whether a remote build plane is configured: then a publisher's build request (M2) goes to it
 /// instead of waiting for the pull-model build host.
 pub(crate) fn buildd_enabled(state: &AppState) -> bool {
@@ -1269,8 +1317,33 @@ pub(crate) async fn request_source_build_for(
     requested_by: &str,
     nest_build: Option<&str>,
 ) -> GResult<Value> {
-    source_ok(repo_url, commit)?;
-    let nest_build = nest_build.map(str::to_string);
+    // A deploy-key source (M2b) is an SSH repository; the build plane fetches its key itself.
+    let nb = nest_build.map(str::to_string);
+    let deploy_key = match &nb {
+        None => false,
+        Some(b) => {
+            let b = b.clone();
+            state
+                .store
+                .group_read(move |c| -> GResult<bool> { Ok(deploy_key_build_in(c, &b)?) })
+                .await?
+        }
+    };
+    if deploy_key {
+        let full_hex = (commit.len() == 40 || commit.len() == 64)
+            && commit
+                .bytes()
+                .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
+        if !full_hex || !crate::marketplace_sources::ssh_repository_ok(repo_url) {
+            return Err(GErr::bad(
+                "invalid_request",
+                "a deploy-key source: an ssh repository and a full commit id",
+            ));
+        }
+    } else {
+        source_ok(repo_url, commit)?;
+    }
+    let nest_build = nb;
     let d = state.nests.marketplace.quotas;
     let now = now_unix() as i64;
     let id = format!("sbd_{}", crate::groups::rand_b32(16));
@@ -1432,6 +1505,18 @@ async fn set_build_state(state: &AppState, id: &str, next: &str, error: Option<S
         .await;
 }
 
+/// Whether publisher build request `build` (M2 `nest_builds`) fetches through a deploy key.
+fn deploy_key_build_in(c: &Connection, build: &str) -> rusqlite::Result<bool> {
+    Ok(c.query_row(
+        "SELECT s.kind FROM nest_builds b JOIN publisher_sources s ON s.id = b.source_id
+              WHERE b.id = ?1",
+        [build],
+        |r| r.get::<_, String>(0),
+    )
+    .optional()?
+    .is_some_and(|k| k == "deploy_key"))
+}
+
 /// `(id, publisher, repo_url, commit, state, nest_build_id)` of an unfinished source build.
 type OpenBuild = (String, String, String, String, String, Option<String>);
 
@@ -1478,7 +1563,19 @@ pub(crate) async fn source_builds_once(state: &AppState) -> usize {
     for (id, publisher, url, commit, st, nest_build) in open {
         let nb = nest_build.as_deref();
         if st == "requested" {
-            let body = json!({ "build_id": id, "publisher_id": publisher, "repo_url": url, "commit": commit });
+            let mut body = json!({ "build_id": id, "publisher_id": publisher, "repo_url": url, "commit": commit });
+            // A deploy-key source: buildd fetches the key for this build request itself.
+            if let Some(b) = nb.map(str::to_string) {
+                let probe = b.clone();
+                let keyed = state
+                    .store
+                    .group_read(move |c| -> GResult<bool> { Ok(deploy_key_build_in(c, &probe)?) })
+                    .await
+                    .unwrap_or(false);
+                if keyed {
+                    body["credential"] = json!(b);
+                }
+            }
             match h
                 .buildd_call(reqwest::Method::POST, "/v1/builds", Some(body))
                 .await

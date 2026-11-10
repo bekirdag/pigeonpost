@@ -4,7 +4,11 @@
 //!
 //! - **deterministic_scan**, offline: secrets in the source tree; capabilities, syscalls, egress
 //!   and external writes in the manifest beyond what the pool allows; every locked package's
-//!   licence against [`LICENCE_ALLOWLIST`].
+//!   licence against [`LICENCE_ALLOWLIST`], for Rust (`Cargo.lock`), Node (`package-lock.json`,
+//!   whose own `license` fields must agree with the manifest) and Python (`requirements.txt`).
+//!   Node and Python sources are also read for process spawning, native code loading and literal
+//!   network endpoints: advisory findings for the reviewer (the pool's network and seccomp policy
+//!   is what enforces), never a pass or fail on their own.
 //! - **behavioral_test**: honeytokens are planted where the release has no business looking, the
 //!   release runs its operations, and every channel out of it (the broker, its job results, its
 //!   logs) is searched for the tokens in plain and encoded forms. One hit fails the stage.
@@ -15,8 +19,9 @@
 //! Publisher source and evidence never leave this host except as the redacted report to the
 //! postbox; the model route is self-hosted.
 
+use crate::ecosystem::{self, Ecosystem};
 use crate::release::{
-    canonical_json, digest_of, locked_packages, read_tree, LockedPackage, Manifest, MANIFEST_FILE,
+    canonical_json, digest_of, read_tree, LockedPackage, Manifest, MANIFEST_FILE,
 };
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -95,6 +100,13 @@ impl Finding {
             path: path.map(str::to_string),
             detail: detail.into(),
             blocker: true,
+        }
+    }
+
+    fn advisory(rule: &str, path: Option<&str>, detail: impl Into<String>) -> Finding {
+        Finding {
+            blocker: false,
+            ..Finding::blocker(rule, path, detail)
         }
     }
 }
@@ -313,18 +325,23 @@ fn atom(t: &[&str], pos: &mut usize) -> Result<bool, String> {
 
 /// Every locked package needs a declared licence, and every declaration must be allowed.
 pub fn check_licences(m: &Manifest, packages: &[LockedPackage]) -> Vec<Finding> {
+    check_licences_in(m, packages, ecosystem::CARGO_LOCK)
+}
+
+/// [`check_licences`] for the packages of `lockfile`.
+pub fn check_licences_in(m: &Manifest, packages: &[LockedPackage], lockfile: &str) -> Vec<Finding> {
     let mut out = Vec::new();
     let mut check = |name: &str, expr: Option<&String>| match expr {
         None => out.push(Finding::blocker(
             "licence.undeclared",
-            Some("Cargo.lock"),
+            Some(lockfile),
             format!("{name}: no licence declared in {MANIFEST_FILE}"),
         )),
         Some(expr) => match licence_allowed(expr) {
             Ok(true) => {}
             Ok(false) => out.push(Finding::blocker(
                 "licence.not_allowed",
-                Some("Cargo.lock"),
+                Some(lockfile),
                 format!("{name}: {expr} is not on the allowlist"),
             )),
             Err(e) => out.push(Finding::blocker(
@@ -341,6 +358,96 @@ pub fn check_licences(m: &Manifest, packages: &[LockedPackage]) -> Vec<Finding> 
     out
 }
 
+/// A Node lockfile's own `license` fields against the manifest's declarations: a package whose
+/// published licence is not what the manifest says is a blocker (a declaration cannot launder a
+/// licence).
+pub fn check_npm_declared(m: &Manifest, lock_text: &str) -> Vec<Finding> {
+    let mut out = Vec::new();
+    let Ok(lock) = serde_json::from_str::<Value>(lock_text) else {
+        return out;
+    };
+    for (path, p) in lock["packages"].as_object().into_iter().flatten() {
+        if path.is_empty() || p["dev"] == true {
+            continue;
+        }
+        let name = path.rsplit("node_modules/").next().unwrap_or_default();
+        if let (Some(published), Some(declared)) = (p["license"].as_str(), m.licences.get(name)) {
+            if published != declared {
+                out.push(Finding::blocker(
+                    "licence.mismatch",
+                    Some(ecosystem::NPM_LOCK),
+                    format!("{name}: published as {published}, declared as {declared}"),
+                ));
+            }
+        }
+        if p["hasInstallScript"] == true {
+            out.push(Finding::advisory(
+                "node.install_script",
+                Some(ecosystem::NPM_LOCK),
+                format!("{name} has an install script; the build plane never runs it"),
+            ));
+        }
+    }
+    out
+}
+
+/// What Node and Python source asks of the host beyond computing: spawning processes, loading
+/// native code, and literal network endpoints. Advisory: the pool's seccomp profile and network
+/// policy enforce, these tell the reviewer where to look.
+pub fn source_signals(path: &str, text: &str) -> Vec<Finding> {
+    let lang = if path.ends_with(".js") || path.ends_with(".mjs") || path.ends_with(".cjs") {
+        "node"
+    } else if path.ends_with(".py") {
+        "python"
+    } else {
+        return Vec::new();
+    };
+    let spawn: &[&str] = match lang {
+        "node" => &[
+            "child_process",
+            "worker_threads",
+            "process.dlopen",
+            "node:cluster",
+        ],
+        _ => &[
+            "subprocess",
+            "os.system",
+            "os.popen",
+            "ctypes",
+            "multiprocessing",
+            "os.exec",
+        ],
+    };
+    let mut out = Vec::new();
+    for needle in spawn {
+        if text.contains(needle) {
+            out.push(Finding::advisory(
+                "capability.process_or_native",
+                Some(path),
+                format!("uses {needle}"),
+            ));
+        }
+    }
+    for scheme in ["http://", "https://", "ws://", "wss://"] {
+        for (i, _) in text.match_indices(scheme) {
+            let host: String = text[i + scheme.len()..]
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | ':'))
+                .collect();
+            // The broker's address comes from the environment, never from the source.
+            if !host.is_empty() && !matches!(host.as_str(), "localhost" | "127.0.0.1") {
+                out.push(Finding::advisory(
+                    "egress.literal_endpoint",
+                    Some(path),
+                    format!("names {scheme}{host}; only the broker is reachable"),
+                ));
+                break;
+            }
+        }
+    }
+    out
+}
+
 /// The whole deterministic stage over a source tree.
 pub fn deterministic_scan(src: &Path) -> Result<StageReport, String> {
     let files = read_tree(src)?;
@@ -348,22 +455,30 @@ pub fn deterministic_scan(src: &Path) -> Result<StageReport, String> {
         &std::fs::read_to_string(src.join(MANIFEST_FILE))
             .map_err(|e| format!("{MANIFEST_FILE}: {e}"))?,
     )?;
-    let packages = locked_packages(
-        &std::fs::read_to_string(src.join("Cargo.lock")).map_err(|e| format!("Cargo.lock: {e}"))?,
-    )?;
+    let eco = ecosystem::detect(src)?;
+    let packages = ecosystem::locked(eco, src)?;
     let mut findings = Vec::new();
     for f in &files {
         let bytes = std::fs::read(src.join(&f.path)).map_err(|e| e.to_string())?;
         findings.extend(secrets_in(&f.path, &bytes));
+        if eco != Ecosystem::Rust {
+            findings.extend(source_signals(&f.path, &String::from_utf8_lossy(&bytes)));
+        }
     }
     findings.extend(check_manifest(&manifest));
-    findings.extend(check_licences(&manifest, &packages));
+    findings.extend(check_licences_in(&manifest, &packages, eco.lockfile()));
+    if eco == Ecosystem::Node {
+        let lock =
+            std::fs::read_to_string(src.join(ecosystem::NPM_LOCK)).map_err(|e| e.to_string())?;
+        findings.extend(check_npm_declared(&manifest, &lock));
+    }
     Ok(StageReport::decided(
         "deterministic_scan",
         findings,
         json!({
             "files": files.len(),
             "source_digest": crate::release::tree_digest(&files),
+            "ecosystem": eco.name(),
             "packages": packages.len(),
             "rules": ["secrets", "capabilities", "syscalls", "egress", "external_writes", "licences"],
         }),
@@ -622,6 +737,11 @@ pub async fn ai_review<M: ReviewModel>(
     for f in files.iter().filter(|f| {
         f.path.ends_with(".rs")
             || f.path.ends_with(".toml")
+            || f.path.ends_with(".mjs")
+            || f.path.ends_with(".js")
+            || f.path.ends_with(".py")
+            || f.path == ecosystem::NPM_PACKAGE
+            || f.path == ecosystem::PY_REQUIREMENTS
             || f.path == crate::release::CONTAINERFILE
     }) {
         let text = std::fs::read_to_string(src.join(&f.path)).unwrap_or_default();
@@ -790,7 +910,7 @@ mod tests {
         let mut m = manifest();
         m.licences.remove("serde_json");
         m.licences.insert("zmij".into(), "SSPL-1.0".into());
-        let packages = locked_packages(
+        let packages = crate::release::locked_packages(
             &std::fs::read_to_string(reference_source().join("Cargo.lock")).unwrap(),
         )
         .unwrap();
