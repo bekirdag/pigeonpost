@@ -41,6 +41,8 @@ struct SettingsSheet: View {
         case account = "Account"
         case handles = "Handles"
         case purchases = "Pigeonpost Cloud"
+        /// Nests Phase B2: Buy an Inbox, Buy Nests, Services.
+        case products = "Products"
         case inbox = "Inbox and storage"
         case contacts = "Contacts and permissions"
         case help = "Help and about"
@@ -62,6 +64,7 @@ struct SettingsSheet: View {
             case "privacy": self = .privacy
             case "blocked": self = .blocked
             case "plans": self = .purchases
+            case "products": self = .products
             default: return nil
             }
         }
@@ -101,6 +104,9 @@ struct SettingsSheet: View {
                     #endif
                 }
                 Section {
+                    if account.features.nests {
+                        destination(.products, icon: "square.grid.2x2", detail: "Inboxes, Nests and services")
+                    }
                     #if os(iOS)
                     destination(.purchases, icon: "plus.circle", detail: "Cloud storage and custom names · yearly plan")
                         .disabled(handle == nil)
@@ -196,6 +202,7 @@ struct SettingsSheet: View {
         case .findPeople: FindPeoplePage().id(people?.scope)
         case .privacy: PrivacyPage()
         case .blocked: BlockedPage()
+        case .products: ProductsView(handle: handle, closeSettings: { dismiss() })
         default:
             List { pageContent(page) }
                 .sheetSurface()
@@ -204,7 +211,7 @@ struct SettingsSheet: View {
 
     @ViewBuilder private func pageContent(_ page: Page) -> some View {
         switch page {
-        case .profile, .privacy, .blocked, .name, .phone, .findPeople:
+        case .profile, .privacy, .blocked, .name, .phone, .findPeople, .products:
             EmptyView()
         case .account:
             Section("Your account") {

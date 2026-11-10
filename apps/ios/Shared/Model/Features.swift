@@ -34,6 +34,8 @@ final class Features {
     static let streaming = "streaming"
     /// Phase 7: consented meeting notes (docs/meeting-summaries.md).
     static let meetingSummaries = "meeting_summaries"
+    /// Nests Phase B: hosted agents, the Products page and Nest management (docs/nests/phase-b.md).
+    static let nests = "nests"
 
     private var values: Set<String> = []
     var enabled: Set<String> { visible() ? values : [] }
@@ -60,6 +62,7 @@ final class Features {
     /// Streams ride on groups: a stream is always a group's.
     var streaming: Bool { has(Self.streaming) && has(Self.groups) }
     var meetingSummaries: Bool { has(Self.meetingSummaries) }
+    var nests: Bool { has(Self.nests) }
     /// Settings → Privacy & filtering is worth a row when any of its controls would be shown.
     var privacy: Bool { has(Self.callAdmission) || has(Self.messageFiltering) || has(Self.callHistory) || receipts }
 
@@ -103,7 +106,7 @@ final class Features {
         } else {
             values = [Self.messageFiltering, Self.callAdmission, Self.callHistory, Self.avatars,
                        Self.groups, Self.disappearing, Self.messageEdit, Self.messageReply, Self.receipts, Self.agentStatus,
-                      Self.streaming, Self.meetingSummaries]
+                      Self.streaming, Self.meetingSummaries, Self.nests]
         }
         didLoad = true
     }
