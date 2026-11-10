@@ -108,9 +108,10 @@
       }
       if (pending.kind === "nest") {
         // Nests Phase B2: a monthly Nest package, bought exactly like a Cloud plan.
+        // A company package carries the org; the bridge checks the buyer manages its billing.
         const r = await post("/v1/nests/checkout", { intent_id: pending.intent_id, plan_code: pending.plan_code,
-          billing_profile_id: pending.billing_profile_id, locale: pending.locale });
-        say(`Nest package: ${money(Number(r.amount), r.currency)} per month, renewing monthly until you cancel.`);
+          billing_profile_id: pending.billing_profile_id, locale: pending.locale, ...(pending.org_id ? { org_id: pending.org_id } : {}) });
+        say(`${pending.org_id ? "Company Nest package" : "Nest package"}: ${money(Number(r.amount), r.currency)} per month, renewing monthly until you cancel.`);
         mount(r.checkout_form_content);
         return;
       }

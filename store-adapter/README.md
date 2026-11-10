@@ -86,6 +86,29 @@ The pushed entitlement has the web plan code and no names. The postbox maps it t
 slots, storage and model allowance. The reconciler activates `pp-nest:` references from the access
 list, as it does for Cloud.
 
+**Company Nest packages** (an org buys the package that funds its company Nests)
+
+- `POST /v1/nests/checkout` also takes an optional `org_id` (`org_[a-z0-9]{6,64}`). The caller must
+  manage that org's billing: owner or billing admin, per the postbox's `/v1/orgs/<org>/billing`
+  `can_manage`. The `nests` flag must also be on for the caller. Otherwise it answers `403`, or
+  `404` for someone outside the org. The bridge checks this again on every replay.
+- One package per org. The bridge refuses with `409 already_subscribed` when it already knows a live
+  web package for the org. It refuses with `409 nest_package_active` when the postbox's
+  `/v1/orgs/<org>/nests` shows a package from any rail. The personal
+  `/v1/nest-purchases/intents` check is not used for an org.
+- The checkout runs with `client_reference_id: pp-nest-org:<org>:<intent>`. It returns to
+  `/account?nest_checkout=<intent>&nest_org=<org>`, and the Products page reopens in that company.
+  The pushed entitlement has `subject: {kind:"org", id:<org>}` and no `subject_check`. The
+  reconciler activates `pp-nest-org:` references for the org the same way.
+- `GET /v1/nests?org_id=<org>` shows the org's web Nest packages, the postbox's company Nest view and
+  the prices. Only its owner and billing admins see it. A package the caller bought comes from
+  saas_be (`buyer: true`). One another billing admin bought shows what the bridge knows
+  (`buyer: false`).
+- `/v1/nests/subscriptions/<id>[/op]` reach a company package only for that org's billing managers.
+  Everyone else gets `404`, the same as for an unknown id. saas_be answers the buyer only, so another
+  billing admin can read the subscription but gets `403 not_buyer` on an operation. Company packages
+  never show up in, or block, the buyer's personal `GET /v1/nests` and personal checkout.
+
 **Enterprise** (the Phase 4 portal calls these; exercised by tests now)
 
 - `POST /ent/billing-profile` creates the profile.

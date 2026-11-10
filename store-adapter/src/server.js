@@ -164,7 +164,11 @@ const server = http.createServer(async (req, res) => {
     // ---- individual Cloud plans -------------------------------------------------------------
     if (method === "GET" && path === "/v1/cloud") return send(res, 200, await billing.cloudOverview(token), origin);
     // Nest packages (Nests Phase B1): the same individual flow, behind the postbox's `nests` flag.
-    if (method === "GET" && path === "/v1/nests") return send(res, 200, await billing.nestOverview(token), origin);
+    // `?org_id=` shows a company's Nest package instead, to its owner and billing admins only.
+    if (method === "GET" && path === "/v1/nests") {
+      const orgId = url.searchParams.has("org_id") ? url.searchParams.get("org_id") : null;
+      return send(res, 200, await billing.nestOverview(token, { orgId }), origin);
+    }
     if (method === "POST" && path === "/v1/nests/checkout") {
       return send(res, 200, await billing.nestCheckout(token, await readJson(req), { ipCountry: tax.ipCountry(req.headers) }), origin);
     }
