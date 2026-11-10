@@ -49,14 +49,14 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "email": {"type": "string", "maxLength": 100, "format": "email"},
+          "contact": {"type": "string", "maxLength": 100, "format": "uri"},
           "code": {"type": "string", "maxLength": 10, "pattern": "^[A-Z]+$"},
           "nested": {"type": "object"},
           "list": {"type": "array"}
         }
       },
       "schema_issues": [
-        ["/properties/email/format", "unsupported_keyword"],
+        ["/properties/contact/format", "unsupported_keyword"],
         ["/properties/code/pattern", "unsupported_keyword"],
         ["/properties/nested/type", "unsupported_keyword"],
         ["/properties/list/type", "unsupported_keyword"]

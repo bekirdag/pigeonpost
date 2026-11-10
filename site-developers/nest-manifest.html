@@ -134,9 +134,18 @@ docs-qa = &quot;MIT&quot;</code></pre>
   &quot;effects&quot;: []
 }</code></pre>
 <h2 id="configuration-schema">Configuration schema<a class="ah" href="#configuration-schema">#</a></h2>
-<p>Define what a buyer sets at install in <code>config.schema.json</code>. The schema is a flat JSON object. Set <code>additionalProperties</code> to false. Properties must be of type string, integer, number or boolean. Supported keywords include enum, minimum, maximum, maxLength, default and description. Define a required list if needed. Strings should have maxLength or enum. Secrets are not delivered to a Nest.</p>
-<p>The app reads configuration from the job as <code>job.config</code>. It is read-only. If no configuration is set, it defaults to <code>{}</code>.</p>
-<div class="note">Note: The schema&#x27;s final place in the manifest and the exact keyword list are settled with installations, coming with the publisher console.</div>
+<p>Define what a buyer sets at install in the manifest&#x27;s <code>[config_schema]</code> table. It is a small subset of JSON Schema 2020-12: one flat object with <code>additionalProperties = false</code> and at most 32 properties of type string, integer, number or boolean. The keywords are <code>type</code>, <code>title</code>, <code>description</code>, <code>default</code>, <code>enum</code>, <code>minLength</code>, <code>maxLength</code> (at most 4096), <code>minimum</code>, <code>maximum</code>, <code>writeOnly</code> and, at the root, <code>required</code>, <code>title</code>, <code>description</code> and <code>$schema</code>. Strings need <code>maxLength</code> or <code>enum</code>. Any other keyword is refused by name. <code>pigeonpost nest validate</code> applies the same rules as the platform.</p>
+<pre class="lang-toml"><code>[config_schema]
+type = &quot;object&quot;
+additionalProperties = false
+required = []
+
+[config_schema.properties.decimal_places]
+type = &quot;integer&quot;
+minimum = 0
+maximum = 6
+default = 2</code></pre>
+<p>The app reads configuration from the job as <code>job.config</code>. It is read-only, has the schema&#x27;s defaults filled in, and is <code>{}</code> when nothing is set. A property with <code>writeOnly = true</code> is a secret: it is never in <code>job.config</code> or the environment. The app asks the broker for it at run time (<code>secret()</code> in the SDKs).</p>
 <pre class="lang-json"><code>{
   &quot;type&quot;: &quot;object&quot;,
   &quot;additionalProperties&quot;: false,
