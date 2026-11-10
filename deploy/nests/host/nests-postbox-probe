@@ -1,0 +1,32 @@
+#!/bin/sh
+# nests-postbox-probe: is the postbox reachable from the public internet? Installed as
+# /usr/local/sbin/nests-postbox-probe and run every minute by nests-postbox-probe.timer.
+# Writes nests_postbox_public_up and nests_postbox_public_probe_seconds for node_exporter's
+# textfile collector. The file is written to a temp name in the same directory (ignored by the
+# collector: leading dot, no .prom suffix) and renamed, so a scrape never sees a partial file.
+# Exits 0 when the postbox is down (the metric says so); non-zero only when writing fails.
+
+set -u
+
+URL="${POSTBOX_HEALTH_URL:-https://postbox.pigeonpost.dev/health}"
+DIR="${TEXTFILE_DIR:-/var/lib/prometheus/node-exporter}"
+
+up=0
+if curl -fsS -o /dev/null --connect-timeout 5 --max-time 10 "$URL"; then
+    up=1
+fi
+now=$(date +%s)
+
+tmpfile="$DIR/.nests_postbox_probe.prom.$$"
+trap 'rm -f "$tmpfile"' EXIT
+
+{
+    printf '# HELP nests_postbox_public_up 1 if the postbox public health endpoint answered 2xx within 10 s.\n'
+    printf '# TYPE nests_postbox_public_up gauge\n'
+    printf 'nests_postbox_public_up %s\n' "$up"
+    printf '# HELP nests_postbox_public_probe_seconds Unix time of the last probe run.\n'
+    printf '# TYPE nests_postbox_public_probe_seconds gauge\n'
+    printf 'nests_postbox_public_probe_seconds %s\n' "$now"
+} > "$tmpfile" || exit 1
+chmod 0644 "$tmpfile" || exit 1
+mv -f "$tmpfile" "$DIR/nests_postbox_probe.prom" || exit 1

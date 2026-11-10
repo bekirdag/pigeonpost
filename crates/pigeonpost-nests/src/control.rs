@@ -29,6 +29,10 @@ pub struct Ctx {
     pub holder: Arc<String>,
     /// The off-host KEK, once the postbox released it (Phase B6).
     pub vault: Arc<crate::keywrap::Vault>,
+    /// Unix time of the last successful `POST /v1/unlock` (0 = none since start), exported as
+    /// `nests_postbox_last_unlock_seconds`: the postbox calls every minute, so silence means the
+    /// postbox (or the tunnel to it) is down.
+    pub postbox_last_unlock: Arc<std::sync::atomic::AtomicI64>,
     locks: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
 }
 
@@ -49,6 +53,7 @@ impl Ctx {
             token_sha256: Arc::new(token_sha256),
             holder: Arc::new(holder),
             vault: Arc::new(crate::keywrap::Vault::new()),
+            postbox_last_unlock: Arc::new(std::sync::atomic::AtomicI64::new(0)),
             locks: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -842,6 +847,8 @@ pub async fn unlock(ctx: &Ctx, req: UnlockReq) -> ApiResult {
             }
         }
     }
+    ctx.postbox_last_unlock
+        .store(crate::util::now(), std::sync::atomic::Ordering::Relaxed);
     Ok(Json(
         json!({ "locked": ctx.locked(), "fingerprint": fpr, "tombstoned": destroyed }),
     ))
@@ -1408,6 +1415,47 @@ mod tests {
         )
         .await
         .is_ok());
+    }
+
+    #[tokio::test]
+    async fn metrics_export_the_last_successful_postbox_unlock() {
+        let (c, _fake) = ctx();
+        let m = crate::metrics::render(&c);
+        assert!(m.contains("\nnests_postbox_last_unlock_seconds 0\n"), "{m}");
+        // A refused key is not a successful call.
+        let _ = unlock(
+            &c,
+            UnlockReq {
+                kek: "zz".into(),
+                tombstones: vec![],
+            },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            c.postbox_last_unlock
+                .load(std::sync::atomic::Ordering::Relaxed),
+            0
+        );
+        let before = crate::util::now();
+        let _ = unlock(
+            &c,
+            UnlockReq {
+                kek: "33".repeat(32),
+                tombstones: vec![],
+            },
+        )
+        .await
+        .unwrap();
+        let t = c
+            .postbox_last_unlock
+            .load(std::sync::atomic::Ordering::Relaxed);
+        assert!(t >= before && t <= crate::util::now(), "{t}");
+        let m = crate::metrics::render(&c);
+        assert!(
+            m.contains(&format!("\nnests_postbox_last_unlock_seconds {t}\n")),
+            "{m}"
+        );
     }
 
     #[tokio::test]
