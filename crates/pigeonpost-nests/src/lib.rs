@@ -42,3 +42,4 @@ pub mod release;
 pub mod sandbox;
 pub mod storage;
 pub mod util;
+pub mod worker_api;

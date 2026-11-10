@@ -253,9 +253,20 @@ impl Db {
         conn.pragma_update(None, "synchronous", "NORMAL")
             .map_err(store_err)?;
         conn.execute_batch(SCHEMA).map_err(store_err)?;
+        conn.execute_batch(crate::worker_api::SCHEMA)
+            .map_err(store_err)?;
         Ok(Db {
             conn: Arc::new(Mutex::new(conn)),
         })
+    }
+
+    /// One statement batch on the ledger, for modules that keep their own tables here
+    /// (`worker_api`).
+    pub fn raw<T>(
+        &self,
+        f: impl FnOnce(&mut Connection) -> rusqlite::Result<T>,
+    ) -> Result<T, String> {
+        self.with(f)
     }
 
     fn with<T>(&self, f: impl FnOnce(&mut Connection) -> rusqlite::Result<T>) -> Result<T, String> {
@@ -1113,6 +1124,10 @@ impl Db {
             )?;
             tx.execute(
                 "DELETE FROM broker_tokens WHERE nest_id = ?1",
+                params![nest_id],
+            )?;
+            tx.execute(
+                "DELETE FROM mp_secrets WHERE nest_id = ?1",
                 params![nest_id],
             )?;
             tx.execute(

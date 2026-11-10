@@ -1313,39 +1313,49 @@ async fn read_job(
         let row = state
             .store
             .group_read(move |c| -> GResult<Option<(String, Value)>> {
-                Ok(c.query_row(
-                    "SELECT account_id, id, address, operation, operation_version, admission,
+                let found = c
+                    .query_row(
+                        "SELECT account_id, id, address, operation, operation_version, admission,
                             execution, settlement, revision, result, error_code, created_at,
                             updated_at, deadline_at
                        FROM nest_jobs WHERE id = ?1",
-                    [&jid],
-                    |r| {
-                        let result: Option<String> = r.get(9)?;
-                        Ok((
-                            r.get::<_, String>(0)?,
-                            json!({
-                                "job_id": r.get::<_, String>(1)?,
-                                "to": r.get::<_, String>(2)?,
-                                "operation": r.get::<_, String>(3)?,
-                                "operation_version": r.get::<_, String>(4)?,
-                                "admission": r.get::<_, String>(5)?,
-                                "execution": r.get::<_, String>(6)?,
-                                "settlement": r.get::<_, String>(7)?,
-                                "revision": r.get::<_, i64>(8)?,
-                                "effects_outcome_unknown": 0,
-                                "result_attachments": [],
-                                "result": result
-                                    .and_then(|t| serde_json::from_str::<Value>(&t).ok())
-                                    .unwrap_or(Value::Null),
-                                "error_code": r.get::<_, Option<String>>(10)?,
-                                "created_at": iso(r.get(11)?),
-                                "updated_at": iso(r.get(12)?),
-                                "deadline_at": iso(r.get(13)?),
-                            }),
-                        ))
-                    },
-                )
-                .optional()?)
+                        [&jid],
+                        |r| {
+                            let result: Option<String> = r.get(9)?;
+                            Ok((
+                                r.get::<_, String>(0)?,
+                                json!({
+                                    "job_id": r.get::<_, String>(1)?,
+                                    "to": r.get::<_, String>(2)?,
+                                    "operation": r.get::<_, String>(3)?,
+                                    "operation_version": r.get::<_, String>(4)?,
+                                    "admission": r.get::<_, String>(5)?,
+                                    "execution": r.get::<_, String>(6)?,
+                                    "settlement": r.get::<_, String>(7)?,
+                                    "revision": r.get::<_, i64>(8)?,
+                                    "effects_outcome_unknown": 0,
+                                    "result_attachments": [],
+                                    "result": result
+                                        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+                                        .unwrap_or(Value::Null),
+                                    "error_code": r.get::<_, Option<String>>(10)?,
+                                    "created_at": iso(r.get(11)?),
+                                    "updated_at": iso(r.get(12)?),
+                                    "deadline_at": iso(r.get(13)?),
+                                }),
+                            ))
+                        },
+                    )
+                    .optional()?;
+                Ok(match found {
+                    Some((owner, mut v)) => {
+                        // Effects whose outcome is unknown (worker routes, `marketplace_worker`).
+                        let (unknown, _) = crate::marketplace_worker::activity_in(c, &jid)?;
+                        v["effects_outcome_unknown"] = json!(unknown);
+                        Some((owner, v))
+                    }
+                    None => None,
+                })
             })
             .await?;
         let f = Facts {
@@ -1386,6 +1396,11 @@ struct Queued {
     signature: Option<(String, String)>,
     limits: Option<Value>,
     killed: bool,
+    /// The release's manifest declares external writes (the broker then records effects).
+    external_writes: bool,
+    /// The installation and its sealed secrets (W1.6), opened only to hand them to nestd.
+    installation: Option<String>,
+    sealed: Vec<(String, Vec<u8>)>,
 }
 
 /// Hand queued jobs to nestd's dispatcher (`POST /v1/mp/jobs`). A job whose release is no longer
@@ -1399,7 +1414,7 @@ pub(crate) async fn dispatch_once(state: &AppState) -> usize {
             let mut stmt = c.prepare(
                 "SELECT j.id, j.listing_id, j.buyer_context, j.operation, j.operation_version,
                         j.payload, j.release_id, r.security_state, r.image, r.release_digest,
-                        r.manifest, i.config
+                        r.manifest, i.config, i.id
                    FROM nest_jobs j JOIN nest_releases r ON r.id = j.release_id
                    LEFT JOIN nest_installations i ON i.id = j.installation_id
                         AND i.status = 'active'
@@ -1426,6 +1441,12 @@ pub(crate) async fn dispatch_once(state: &AppState) -> usize {
                         signature: None,
                         limits: None,
                         killed: false,
+                        external_writes: r
+                            .get::<_, Option<String>>(10)?
+                            .and_then(|m| serde_json::from_str::<Value>(&m).ok())
+                            .is_some_and(|m| m["external_writes"] == true),
+                        installation: r.get(12)?,
+                        sealed: Vec::new(),
                     })
                 })?
                 .collect::<rusqlite::Result<Vec<Queued>>>()?;
@@ -1435,6 +1456,9 @@ pub(crate) async fn dispatch_once(state: &AppState) -> usize {
                 q.signature = crate::marketplace_hardening::signature_in(c, &q.release)?;
                 q.limits = crate::marketplace_hardening::limits_in(c, &q.release, quotas)?;
                 q.killed = crate::marketplace_hardening::killed_in(c, &q.listing)?;
+                if let Some(i) = &q.installation {
+                    q.sealed = crate::marketplace_m2::sealed_secrets_in(c, i)?;
+                }
                 out.push(q);
             }
             Ok(out)
@@ -1459,6 +1483,9 @@ pub(crate) async fn dispatch_once(state: &AppState) -> usize {
             signature,
             limits,
             killed,
+            external_writes,
+            installation,
+            sealed,
         } = q;
         let (next, worker, error): (&str, Option<String>, Option<String>) = if security != "normal"
         {
@@ -1497,7 +1524,19 @@ pub(crate) async fn dispatch_once(state: &AppState) -> usize {
                 },
                 "config": config,
                 "limits": limits,
+                "external_writes": external_writes,
             });
+            // Secrets go in the body to nestd only (the private link), never in the job file.
+            let mut job = job;
+            if let Some(i) = installation.as_deref().filter(|_| !sealed.is_empty()) {
+                match crate::marketplace_m2::open_secrets(state, i, &sealed) {
+                    Ok(s) => job["secrets"] = Value::Object(s),
+                    Err(_) => {
+                        tracing::warn!(job = %id, "installation secrets could not be opened");
+                        continue;
+                    }
+                }
+            }
             match state
                 .nests
                 .call(reqwest::Method::POST, "/v1/mp/jobs", Some(job))
@@ -1609,6 +1648,7 @@ pub(crate) async fn poll_once(state: &AppState) -> usize {
             }
             _ => continue,
         };
+        crate::marketplace_worker::record(state, &id, &v).await;
         let next = match v["state"].as_str() {
             Some("succeeded") => "succeeded",
             Some("failed") => "failed",

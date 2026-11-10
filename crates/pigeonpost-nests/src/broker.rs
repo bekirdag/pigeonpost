@@ -17,7 +17,7 @@
 use crate::config::BrokerConfig;
 use crate::db::{Db, Outcome, ReserveError};
 use crate::util::{now, period_of, sha256_hex};
-use axum::extract::State;
+use axum::extract::{Path as UrlPath, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -110,8 +110,94 @@ pub fn router(b: Broker) -> Router {
     Router::new()
         .route("/v1/chat/completions", post(chat))
         .route("/v1/budget", get(budget))
+        // The worker routes (`worker_api`): progress, effects, the installation's secrets.
+        .route("/v1/progress", post(progress))
+        .route("/v1/effects", post(effects))
+        .route("/v1/secrets/{name}", get(secret))
         .layer(axum::extract::DefaultBodyLimit::max(256 * 1024))
         .with_state(b)
+}
+
+fn worker_reply(r: Result<(u16, Value), crate::worker_api::Refusal>) -> Reply {
+    match r {
+        Ok((status, body)) => (
+            StatusCode::from_u16(status).unwrap_or(StatusCode::OK),
+            Json(body),
+        ),
+        Err((status, code, detail)) => refuse(
+            StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+            code,
+            &detail,
+        ),
+    }
+}
+
+async fn on_db<F>(b: &Broker, f: F) -> Reply
+where
+    F: FnOnce(&Db) -> Result<(u16, Value), crate::worker_api::Refusal> + Send + 'static,
+{
+    let db = b.db.clone();
+    match tokio::task::spawn_blocking(move || f(&db)).await {
+        Ok(r) => worker_reply(r),
+        Err(_) => refuse(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            "worker route",
+        ),
+    }
+}
+
+async fn progress(State(b): State<Broker>, headers: HeaderMap, Json(body): Json<Value>) -> Reply {
+    let Some(token) = bearer(&headers) else {
+        return refuse(
+            StatusCode::UNAUTHORIZED,
+            "unauthorized",
+            "broker token required",
+        );
+    };
+    on_db(&b, move |db| {
+        crate::worker_api::progress(db, &token, &body).map(|v| (200, v))
+    })
+    .await
+}
+
+async fn effects(State(b): State<Broker>, headers: HeaderMap, Json(body): Json<Value>) -> Reply {
+    let Some(token) = bearer(&headers) else {
+        return refuse(
+            StatusCode::UNAUTHORIZED,
+            "unauthorized",
+            "broker token required",
+        );
+    };
+    let key = headers
+        .get("idempotency-key")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    on_db(&b, move |db| {
+        crate::worker_api::effect(db, &token, &key, &body)
+    })
+    .await
+}
+
+async fn secret(
+    State(b): State<Broker>,
+    headers: HeaderMap,
+    UrlPath(name): UrlPath<String>,
+) -> Reply {
+    let Some(token) = bearer(&headers) else {
+        return refuse(
+            StatusCode::UNAUTHORIZED,
+            "unauthorized",
+            "broker token required",
+        );
+    };
+    let (status, Json(body)) = on_db(&b, move |db| {
+        crate::worker_api::secret(db, &token, &name).map(|v| (200, v))
+    })
+    .await;
+    // Never cached anywhere on the way.
+    (status, Json(body))
 }
 
 async fn budget(State(b): State<Broker>, headers: HeaderMap) -> Reply {

@@ -207,6 +207,7 @@ pub(crate) const TABLES: &[(&str, Rule)] = &[
         Keep("Build provenance of a publisher's releases; the publisher profile blocks"),
     ),
     ("marketplace_worker_tombstones", Unrelated),
+    ("marketplace_job_activity", Unrelated),
     // Marketplace M2b. An accepted invite only describes the account's access; a report is the
     // account's own words about a listing.
     ("nest_listing_grants", Remove(A, "account_id = ?1")),

@@ -212,6 +212,26 @@ export class Broker {
     if (reply.status !== 200) throw new BrokerError(reply.body?.error ?? "broker_error", "budget refused", reply.status);
     return reply.body;
   }
+
+  /**
+   * One of the installation's secret settings (`writeOnly` in config_schema). Secrets are never
+   * in job.config or the environment; ask the broker when you need one and do not write it to the
+   * volume or a log. Throws BrokerError `secret_not_set` when it is not set.
+   */
+  async secret(name) {
+    if (typeof name !== "string" || !/^[a-z][a-z0-9_]{0,63}$/.test(name)) throw new NestError("invalid_secret_name");
+    let reply;
+    try {
+      reply = await this.call("GET", `/v1/secrets/${name}`);
+    } catch (e) {
+      if (e instanceof BrokerError) throw e;
+      throw new BrokerError("broker_unreachable", String(e.error?.message ?? e));
+    }
+    if (reply.status !== 200 || typeof reply.body?.value !== "string") {
+      throw new BrokerError(reply.body?.error ?? "broker_error", "secret refused", reply.status);
+    }
+    return reply.body.value;
+  }
 }
 
 /** What a handler receives. */

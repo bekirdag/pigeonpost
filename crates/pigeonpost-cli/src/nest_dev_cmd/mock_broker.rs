@@ -8,7 +8,7 @@
 //! (`/v1/progress`, `/v1/effects`), so apps can be built against them now.
 
 use axum::body::Bytes;
-use axum::extract::State;
+use axum::extract::{Path as UrlPath, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -33,6 +33,9 @@ pub struct Config {
     pub external_writes: bool,
     pub approve_all: bool,
     pub approve: BTreeSet<String>,
+    /// The installation's secret settings from `--config` (`writeOnly` properties), served at
+    /// `GET /v1/secrets/{name}` as the platform's broker does.
+    pub secrets: serde_json::Map<String, Value>,
 }
 
 #[derive(Debug, Clone)]
@@ -449,10 +452,36 @@ async fn effects(State(s): State<Shared>, headers: HeaderMap, body: Bytes) -> Re
     )
 }
 
+async fn secret(
+    State(s): State<Shared>,
+    headers: HeaderMap,
+    UrlPath(name): UrlPath<String>,
+) -> Reply {
+    let mut m = s.lock().unwrap_or_else(|e| e.into_inner());
+    if !authorized(&m, &headers) {
+        return refuse(
+            StatusCode::UNAUTHORIZED,
+            "unauthorized",
+            "broker token required",
+        );
+    }
+    // The value is never printed; the report says only that it was asked for.
+    m.events.push(json!({ "type": "secret", "name": name }));
+    match m.cfg.secrets.get(&name).and_then(Value::as_str) {
+        Some(v) => (StatusCode::OK, Json(json!({ "name": name, "value": v }))),
+        None => refuse(
+            StatusCode::NOT_FOUND,
+            "secret_not_set",
+            "this installation has no such secret",
+        ),
+    }
+}
+
 pub fn router(s: Shared) -> Router {
     Router::new()
         .route("/v1/chat/completions", post(chat))
         .route("/v1/budget", get(budget))
+        .route("/v1/secrets/{name}", get(secret))
         .route("/v1/progress", post(progress))
         .route("/v1/effects", post(effects))
         .layer(axum::extract::DefaultBodyLimit::max(256 * 1024))
@@ -480,6 +509,7 @@ mod tests {
             external_writes: false,
             approve_all: false,
             approve: BTreeSet::new(),
+            secrets: Default::default(),
         });
         let m = s.lock().unwrap();
         let msgs = vec![(

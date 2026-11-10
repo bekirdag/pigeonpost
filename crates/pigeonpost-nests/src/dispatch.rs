@@ -89,6 +89,25 @@ pub struct JobIn {
     pub config: Value,
     #[serde(default)]
     pub limits: Option<Limits>,
+    /// The release declares external writes (its manifest): the broker records effects as
+    /// requests instead of refusing them.
+    #[serde(default)]
+    pub external_writes: bool,
+    /// The installation's secret configuration values (W1.6), sealed here for the worker's
+    /// current start and handed out by the broker only; never in the job file.
+    #[serde(default)]
+    pub secrets: Secrets,
+}
+
+/// Secret values; never printed.
+#[derive(Clone, Default, Deserialize)]
+#[serde(transparent)]
+pub struct Secrets(pub serde_json::Map<String, Value>);
+
+impl std::fmt::Debug for Secrets {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Secrets([{} redacted])", self.0.len())
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -401,6 +420,7 @@ impl Dispatcher {
             .set_state(&w.nest_id, "stopped", "stopped", Some(reason), None)
             .map_err(internal)?;
         self.db.mp_stop_jobs_of(&w.nest_id).map_err(internal)?;
+        crate::worker_api::worker_stopped(&self.db, &w.nest_id);
         self.db.event(Some(&w.nest_id), "mp_worker_stopped", reason);
         Ok(())
     }
@@ -641,14 +661,29 @@ impl Dispatcher {
             "payload": job.payload,
             "config": if job.config.is_null() { json!({}) } else { job.config.clone() },
         });
+        // The secrets for this start, sealed under its broker token, before the job is visible.
+        let token = std::fs::read_to_string(self.volume(&worker).join("run/broker-token"))
+            .map(|t| zeroize::Zeroizing::new(t.trim().to_string()))
+            .map_err(|e| internal(format!("broker token: {e}")))?;
+        crate::worker_api::store_secrets(&self.db, &worker.nest_id, &token, &job.secrets.0)
+            .map_err(|e| DispatchError::new("invalid", e))?;
+        drop(token);
+        self.db
+            .mp_insert_job(&job.job_id, &worker.nest_id)
+            .map_err(internal)?;
+        self.db
+            .raw(|c| {
+                c.execute(
+                    "INSERT OR REPLACE INTO mp_job_writes (job_id, allowed) VALUES (?1, ?2)",
+                    rusqlite::params![job.job_id, job.external_writes],
+                )
+            })
+            .map_err(internal)?;
         let inbox = self
             .volume(&worker)
             .join("jobs/in")
             .join(format!("{}.json", job.job_id));
         write_for_sandbox(&inbox, body.to_string().as_bytes(), self.uid).map_err(internal)?;
-        self.db
-            .mp_insert_job(&job.job_id, &worker.nest_id)
-            .map_err(internal)?;
         self.db.touch_active(&worker.nest_id);
         Ok(json!({ "job_id": job.job_id, "state": "running", "worker": worker.nest_id }))
     }
@@ -666,6 +701,7 @@ impl Dispatcher {
                 "job_id": job_id,
                 "state": state,
                 "result": result.and_then(|r| serde_json::from_str::<Value>(&r).ok()),
+                "effects": crate::worker_api::job_extras(&self.db, job_id)["effects"],
             }));
         }
         let Some(worker) = self.db.mp_worker(&nest_id).map_err(internal)? else {
@@ -676,7 +712,11 @@ impl Dispatcher {
             .join("jobs/out")
             .join(format!("{job_id}.json"));
         let Ok(meta) = std::fs::symlink_metadata(&out) else {
-            return Ok(json!({ "job_id": job_id, "state": "running" }));
+            let mut v = json!({ "job_id": job_id, "state": "running" });
+            let extras = crate::worker_api::job_extras(&self.db, job_id);
+            v["progress"] = extras["progress"].clone();
+            v["effects"] = extras["effects"].clone();
+            return Ok(v);
         };
         // The outbox is the worker's to write: read only a bounded regular file, never a link.
         let result: Value = if meta.is_file() && meta.len() <= MAX_RESULT_BYTES {
@@ -702,7 +742,34 @@ impl Dispatcher {
         self.db
             .mp_finish_job(job_id, state, Some(&kept.to_string()))
             .map_err(internal)?;
-        Ok(json!({ "job_id": job_id, "state": state, "result": kept }))
+        Ok(json!({
+            "job_id": job_id,
+            "state": state,
+            "result": kept,
+            "effects": crate::worker_api::job_extras(&self.db, job_id)["effects"],
+        }))
+    }
+
+    /// The postbox settles one effect of a job (`worker_api::settle_effect`).
+    pub fn settle_effect(
+        &self,
+        job_id: &str,
+        key: &str,
+        action: &str,
+        reference: Option<&str>,
+    ) -> Result<Value, DispatchError> {
+        if !valid_job_id(job_id) {
+            return Err(DispatchError::new("invalid", "malformed job id"));
+        }
+        crate::worker_api::settle_effect(&self.db, job_id, key, action, reference).map_err(
+            |(status, code, detail)| {
+                if status >= 500 {
+                    internal(detail)
+                } else {
+                    DispatchError::new(code, detail)
+                }
+            },
+        )
     }
 
     /// A paused licence (marketplace payments): the buyer context's worker stops, its broker token
@@ -901,6 +968,26 @@ async fn http_poll(
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct EffectReq {
+    action: String,
+    #[serde(default)]
+    reference: Option<String>,
+}
+
+async fn http_effect(
+    State(h): State<Http>,
+    headers: HeaderMap,
+    UrlPath((job, key)): UrlPath<(String, String)>,
+    Json(req): Json<EffectReq>,
+) -> Reply {
+    on_blocking(&h, &headers, move |d| {
+        d.settle_effect(&job, &key, &req.action, req.reference.as_deref())
+    })
+    .await
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct QuarantineReq {
     #[serde(default)]
     revoke: bool,
@@ -982,6 +1069,7 @@ pub fn router(h: Http) -> Router {
     Router::new()
         .route("/v1/mp/jobs", post(http_submit))
         .route("/v1/mp/jobs/{job}", get(http_poll))
+        .route("/v1/mp/jobs/{job}/effects/{key}", post(http_effect))
         .route(
             "/v1/mp/releases/{release}/quarantine",
             post(http_quarantine),

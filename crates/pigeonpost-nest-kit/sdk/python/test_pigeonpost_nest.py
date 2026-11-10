@@ -117,6 +117,27 @@ class TestPigeonpostNest(unittest.TestCase):
         with open(path, 'r') as f:
             return json.load(f)
 
+    def test_secrets_come_from_the_broker_only(self):
+        def responder(method, path, body):
+            if path == '/v1/secrets/api_token':
+                return (200, {'name': 'api_token', 'value': 'synthetic-secret'})
+            return (404, {'error': 'secret_not_set'})
+
+        self._start_server(responder)
+        url = f'http://127.0.0.1:{self.server.server_address[1]}'
+        broker = sdk.Broker(url=url, root=self.root_dir)
+        self.assertEqual(broker.secret('api_token'), 'synthetic-secret')
+        req = self.server.requests[-1]
+        self.assertEqual(req['method'], 'GET')
+        self.assertEqual(req['headers']['authorization'], 'Bearer nbt_' + '0' * 40)
+        with self.assertRaises(sdk.BrokerError) as e:
+            broker.secret('missing')
+        self.assertEqual(e.exception.code, 'secret_not_set')
+        with self.assertRaises(sdk.NestError) as e:
+            broker.secret('../budget')
+        self.assertEqual(e.exception.code, 'invalid_secret_name')
+        self.assertEqual(len(self.server.requests), 2, 'a bad name is never sent')
+
     def test_1_echo_success(self):
         self._start_server()
         

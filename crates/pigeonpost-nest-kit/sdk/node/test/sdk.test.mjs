@@ -548,3 +548,23 @@ test("13. resultOf shape and size limit", async () => {
   assert.equal(r2.status, "failed");
   assert.equal(r2.error_code, "result_too_large");
 });
+test("secrets come from the broker only", async () => {
+  const ctx = await setup();
+  try {
+    ctx.setResponder((req) =>
+      req.url === "/v1/secrets/api_token"
+        ? { status: 200, body: { name: "api_token", value: "synthetic-secret" } }
+        : { status: 404, body: { error: "secret_not_set" } },
+    );
+    const broker = new sdk.Broker({ url: ctx.url, root: ctx.root });
+    assert.equal(await broker.secret("api_token"), "synthetic-secret");
+    const last = ctx.requests.at(-1);
+    assert.equal(last.method, "GET");
+    assert.equal(last.headers.authorization, "Bearer nbt_" + "0".repeat(40));
+    await assert.rejects(broker.secret("missing"), (e) => e.code === "secret_not_set");
+    await assert.rejects(broker.secret("../budget"), (e) => e.code === "invalid_secret_name");
+    assert.equal(ctx.requests.length, 2, "a bad name is never sent");
+  } finally {
+    await ctx.close();
+  }
+});

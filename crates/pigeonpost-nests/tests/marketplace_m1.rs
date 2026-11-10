@@ -349,6 +349,8 @@ mod dispatcher {
             release: release.clone(),
             config: Value::Null,
             limits: None,
+            external_writes: false,
+            secrets: Default::default(),
         }
     }
 
@@ -624,6 +626,132 @@ mod dispatcher {
             .as_array()
             .unwrap()
             .is_empty());
+    }
+
+    /// The worker routes the developer kit uses: progress, effects and secrets, each for the
+    /// worker's own running jobs and current start only.
+    #[test]
+    fn progress_effects_and_secrets_belong_to_one_worker_start() {
+        use pigeonpost_nests::dispatch::Secrets;
+        use pigeonpost_nests::worker_api;
+        let rig = rig();
+        let rel = admission("rel_reference1", &image('a'));
+        let mut j = job(1, "ctx-buyer-a", &rel);
+        j.secrets = Secrets(
+            serde_json::from_value(json!({ "api_token": "synthetic-secret-value-1" })).unwrap(),
+        );
+        rig.d.submit(&j).unwrap();
+        rig.d.submit(&job(2, "ctx-buyer-b", &rel)).unwrap();
+        let token = |ctx: &str| {
+            std::fs::read_to_string(rig.volume(ctx).join("run/broker-token"))
+                .unwrap()
+                .trim()
+                .to_string()
+        };
+        let (a, b) = (token("ctx-buyer-a"), token("ctx-buyer-b"));
+        let db = &rig.d.db;
+
+        // Secrets: the worker's own, through its token; never in its job file.
+        assert_eq!(
+            worker_api::secret(db, &a, "api_token").unwrap()["value"],
+            "synthetic-secret-value-1"
+        );
+        assert_eq!(
+            worker_api::secret(db, &b, "api_token").unwrap_err().1,
+            "secret_not_set"
+        );
+        assert_eq!(
+            worker_api::secret(db, "nbt_wrong", "api_token")
+                .unwrap_err()
+                .0,
+            401
+        );
+        for entry in std::fs::read_dir(rig.volume("ctx-buyer-a").join("jobs/in")).unwrap() {
+            let text = std::fs::read_to_string(entry.unwrap().path()).unwrap();
+            assert!(!text.contains("synthetic-secret-value-1"), "{text}");
+        }
+
+        // Progress: its own running job only, bounded.
+        worker_api::progress(
+            db,
+            &a,
+            &json!({ "job_id": j.job_id, "fraction": 0.5, "message": "half way" }),
+        )
+        .unwrap();
+        assert_eq!(
+            worker_api::progress(db, &b, &json!({ "job_id": j.job_id, "fraction": 0.1 }))
+                .unwrap_err()
+                .1,
+            "unknown_job"
+        );
+        let polled = rig.d.poll(&j.job_id).unwrap();
+        assert_eq!(polled["progress"]["fraction"], 0.5);
+        assert_eq!(polled["progress"]["message"], "half way");
+        for _ in 1..worker_api::MAX_PROGRESS_UPDATES {
+            worker_api::progress(db, &a, &json!({ "job_id": j.job_id, "fraction": 0.6 })).unwrap();
+        }
+        assert_eq!(
+            worker_api::progress(db, &a, &json!({ "job_id": j.job_id, "fraction": 0.7 }))
+                .unwrap_err()
+                .0,
+            429
+        );
+
+        // Effects: a release without external writes is refused, once per key.
+        let ask = |job: &str, key: &str, kind: &str| {
+            json!({ "job_id": job, "key": key, "kind": kind, "summary": "reply to ticket",
+                    "body": { "ticket": "T-1" }, "requires_approval": true })
+        };
+        let (s, v) =
+            worker_api::effect(db, &a, "k1", &ask(&j.job_id, "k1", "helpdesk.reply.send")).unwrap();
+        assert_eq!((s, v["error"].as_str()), (403, Some("effect_refused")));
+        let (s, _) =
+            worker_api::effect(db, &a, "k1", &ask(&j.job_id, "k1", "helpdesk.reply.send")).unwrap();
+        assert_eq!(s, 403);
+        assert_eq!(
+            worker_api::effect(db, &a, "k1", &ask(&j.job_id, "k1", "helpdesk.close"))
+                .unwrap_err()
+                .1,
+            "idempotency_conflict"
+        );
+        assert_eq!(
+            worker_api::effect(db, &a, "other", &ask(&j.job_id, "k1", "helpdesk.close"))
+                .unwrap_err()
+                .0,
+            400,
+            "the header names the key"
+        );
+
+        // One that declares them waits for approval; approved and then interrupted, its outcome
+        // is unknown and reported to the postbox with the job.
+        let mut w = job(3, "ctx-buyer-a", &rel);
+        w.external_writes = true;
+        rig.d.submit(&w).unwrap();
+        let (s, v) =
+            worker_api::effect(db, &a, "k2", &ask(&w.job_id, "k2", "helpdesk.reply.send")).unwrap();
+        assert_eq!((s, v["state"].as_str()), (202, Some("awaiting_approval")));
+        rig.d
+            .settle_effect(&w.job_id, "k2", "approve", None)
+            .unwrap();
+        assert_eq!(
+            rig.d
+                .settle_effect(&w.job_id, "k2", "approve", None)
+                .unwrap_err()
+                .code,
+            "effect_state"
+        );
+        rig.d.stop_listing(LISTING, true).unwrap();
+        let polled = rig.d.poll(&w.job_id).unwrap();
+        assert_eq!(polled["effects"][0]["state"], "outcome_unknown", "{polled}");
+        // The stopped start's token is fenced, and its secrets went with it.
+        assert_eq!(worker_api::secret(db, &a, "api_token").unwrap_err().0, 401);
+        rig.d
+            .settle_effect(&w.job_id, "k2", "done", Some("ext-ref-1"))
+            .unwrap();
+        assert_eq!(
+            rig.d.poll(&w.job_id).unwrap()["effects"][0]["state"],
+            "done"
+        );
     }
 
     /// Marketplace M2: an installation's configuration reaches the worker with each job, and an

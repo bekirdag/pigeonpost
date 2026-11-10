@@ -209,6 +209,21 @@ class Broker:
             raise BrokerError((reply or {}).get("error", "broker_error"), "budget refused", status)
         return reply
 
+    def secret(self, name: str) -> str:
+        """One of the installation's secret settings (`writeOnly` in config_schema). Secrets are
+        never in job.config or the environment; ask the broker each time you need one and do not
+        write it to the volume or a log. Raises BrokerError `secret_not_set` when it is not set."""
+        if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", name):
+            raise NestError("invalid_secret_name")
+        try:
+            status, reply = self.call("GET", "/v1/secrets/" + name)
+        except (_NotSent, _Sent) as e:
+            raise BrokerError("broker_unreachable", str(e)) from None
+        if status != 200 or not isinstance(reply, dict) or not isinstance(reply.get("value"), str):
+            code = (reply or {}).get("error", "broker_error") if isinstance(reply, dict) else "broker_error"
+            raise BrokerError(code, "secret refused", status)
+        return reply["value"]
+
 
 class Job:
     """What a handler receives."""

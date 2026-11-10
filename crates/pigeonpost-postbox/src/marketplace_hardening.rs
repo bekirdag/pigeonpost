@@ -548,12 +548,19 @@ pub(crate) fn job_event_in(
             c,
             &account,
             typed,
-            &json!({
-                "job_id": job,
-                "listing_id": listing,
-                "release_id": release,
-                "execution": detail["execution"],
-            }),
+            &{
+                let mut data = json!({
+                    "job_id": job,
+                    "listing_id": listing,
+                    "release_id": release,
+                    "execution": detail["execution"],
+                });
+                // Progress from the worker (developer-kit `job.progress`): the fraction only.
+                if let Some(f) = detail["progress"].as_f64() {
+                    data["progress"] = json!(f);
+                }
+                data
+            },
             now,
         )?;
     }

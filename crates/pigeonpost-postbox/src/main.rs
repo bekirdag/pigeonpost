@@ -116,6 +116,7 @@ mod marketplace_sources;
 mod marketplace_test_nests;
 #[cfg(test)]
 mod marketplace_tests;
+mod marketplace_worker;
 mod mcp;
 mod meetings;
 #[cfg(test)]

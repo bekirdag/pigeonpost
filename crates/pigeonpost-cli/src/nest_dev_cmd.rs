@@ -414,6 +414,10 @@ fn print_event(e: &Value) {
             (e["fraction"].as_f64().unwrap_or(0.0) * 100.0).round(),
             e["message"].as_str().unwrap_or("")
         ),
+        Some("secret") => println!(
+            "  secret    {} (value not shown)",
+            e["name"].as_str().unwrap_or("")
+        ),
         Some("model") => println!(
             "  model     {} input / {} output tokens (max {})",
             e["input_tokens"], e["output_tokens"], e["max_tokens"]
@@ -513,6 +517,10 @@ async fn run_app(args: &RunArgs, json_out: bool) -> Result<(), Error> {
         external_writes: m.external_writes,
         approve_all: args.approve_all,
         approve: args.approve.iter().cloned().collect::<BTreeSet<_>>(),
+        secrets: config
+            .as_ref()
+            .map(|c| c.secrets.clone())
+            .unwrap_or_default(),
     });
     // The broker exists for the app only if its manifest says it may reach it.
     let broker_url = if m.uses_broker() {

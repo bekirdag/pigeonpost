@@ -1640,7 +1640,53 @@ async fn installations_pin_configure_update_roll_back_and_uninstall() {
         body["config"],
         json!({ "team_name": "Platform", "tone": "casual", "max_answers": 5, "cite_sources": true })
     );
-    assert!(!body.to_string().contains("synthetic-secret"));
+    // W1.6: the secret travels to nestd beside the configuration, never inside it; nestd seals it
+    // under the worker's broker token and hands it out through the broker only.
+    assert!(!body["config"].to_string().contains("synthetic-secret"));
+    assert_eq!(
+        body["secrets"],
+        json!({ "api_token": "synthetic-secret-value-1" })
+    );
+    assert_eq!(body["external_writes"], false);
+
+    // What the worker reports through the broker: progress becomes `nest.job.progress`; an effect
+    // whose outcome is unknown is counted on the job and sends `nest.job.reconciling` once.
+    let job_id = body["job_id"].as_str().unwrap().to_string();
+    for _ in 0..2 {
+        crate::marketplace_worker::record(
+            &srv.state,
+            &job_id,
+            &json!({ "state": "running",
+                     "progress": { "fraction": 0.4, "message": "reading notes", "updates": 1 },
+                     "effects": [{ "key": "k1", "kind": "digest.post", "state": "outcome_unknown",
+                                   "summary": "x", "reference": null }] }),
+        )
+        .await;
+    }
+    let (s, jv) = srv
+        .get(&format!("/v1/nest-jobs/{job_id}"), &bob.token)
+        .await;
+    assert_eq!(s, 200, "{jv}");
+    assert_eq!(jv["data"]["effects_outcome_unknown"], 1, "{jv}");
+    let events = events_of(&srv, &bob.account).await;
+    let progress: Vec<&Value> = events
+        .iter()
+        .filter(|(t, d)| t == "nest.job.progress" && d["progress"].is_number())
+        .map(|(_, d)| d)
+        .collect();
+    assert_eq!(progress.len(), 1, "one update, one event: {events:?}");
+    assert_eq!(progress[0]["progress"], 0.4);
+    assert!(
+        !format!("{events:?}").contains("reading notes"),
+        "messages stay out of events"
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|(t, _)| t == "nest.job.reconciling")
+            .count(),
+        1
+    );
 
     // A newer attested release: offered as an update, not forced.
     let b2 = attested(&srv, &rev, &ann, &p, &t, "1.1.0", Some(schema_team()), 'b').await;

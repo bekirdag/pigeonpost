@@ -2662,6 +2662,51 @@ pub(crate) fn prepare_config(
     Ok((Value::Object(plain).to_string(), sealed))
 }
 
+/// An installation's sealed secrets, as stored: `(name, sealed)`.
+pub(crate) fn sealed_secrets_in(
+    c: &Connection,
+    installation: &str,
+) -> rusqlite::Result<Vec<(String, Vec<u8>)>> {
+    let mut stmt = c.prepare(
+        "SELECT name, sealed FROM nest_installation_secrets WHERE installation_id = ?1
+          ORDER BY name",
+    )?;
+    let rows = stmt
+        .query_map([installation], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect();
+    rows
+}
+
+/// Open an installation's secrets for delivery to its worker (W1.6): only over the private link
+/// to nestd, which seals them again under the worker's broker token. Never logged.
+pub(crate) fn open_secrets(
+    state: &AppState,
+    installation: &str,
+    sealed: &[(String, Vec<u8>)],
+) -> GResult<Map<String, Value>> {
+    let mut out = Map::new();
+    for (name, blob) in sealed {
+        let aad = format!("{installation}\0{name}");
+        let plain = zeroize::Zeroizing::new(
+            state
+                .vault
+                .open_labeled(SECRET_LABEL, aad.as_bytes(), blob)
+                .map_err(|_| {
+                    GErr::new(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "store_error",
+                        "a sealed secret could not be opened",
+                    )
+                })?,
+        );
+        out.insert(
+            name.clone(),
+            Value::String(String::from_utf8_lossy(&plain).into_owned()),
+        );
+    }
+    Ok(out)
+}
+
 pub(crate) fn store_secrets_in(
     c: &Connection,
     installation: &str,
