@@ -1,0 +1,38 @@
+{
+  "operation": "helpdesk.reply.send",
+  "version": "1.0",
+  "summary": "Draft a reply to one ticket from the agent's notes and post it once the buyer approves.",
+  "input": {
+    "fields": [
+      { "name": "ticket_id", "max_chars": 64, "required": true },
+      { "name": "notes", "max_chars": 4000, "required": true }
+    ]
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "answer": {
+        "type": "object",
+        "properties": {
+          "ticket_id": { "type": "string" },
+          "reply": { "type": "string" },
+          "posted": { "type": "boolean" },
+          "reference": { "type": "string" }
+        },
+        "required": ["ticket_id", "reply", "posted"]
+      },
+      "sources": { "type": "array", "items": { "type": "string" } },
+      "model_used": { "type": "boolean" }
+    },
+    "required": ["answer", "sources", "model_used"]
+  },
+  "uses_model": true,
+  "effects": [
+    {
+      "kind": "helpdesk.reply.post",
+      "requires_approval": true,
+      "summary": "Posts one reply to one ticket in the buyer's helpdesk.",
+      "idempotency": "ticket id plus job id: a redelivered job names the same effect and never posts twice"
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "operation": "csv.summarize",
+  "operation_version": "1.0",
+  "payload": { "csv": "item,qty,price\nbolts,10,0.25\nnuts,4,0.10\nwashers,12,0.05" }
+}

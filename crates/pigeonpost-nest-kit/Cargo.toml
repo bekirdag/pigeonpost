@@ -1,0 +1,17 @@
+[package]
+name = "pigeonpost-nest-kit"
+description = "Pigeonpost Nest developer kit: the Node and Python runtime helpers and the starter templates, embedded for `pigeonpost nest init`."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+publish = false
+
+# No dependencies: this crate is data. The SDKs and templates live under sdk/ and templates/ inside
+# the crate because the release images build the CLI from `crates/` alone.
+
+[lints.rust]
+unsafe_code = "forbid"

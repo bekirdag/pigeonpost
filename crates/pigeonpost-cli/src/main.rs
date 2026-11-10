@@ -17,6 +17,7 @@ mod loft_cmd;
 mod loft_key;
 mod login_cmd;
 mod nest_cmd;
+mod nest_dev_cmd;
 mod onboard_cmd;
 mod output;
 mod panel;
@@ -77,20 +78,6 @@ struct Cli {
 
     #[command(subcommand)]
     command: Command,
-}
-
-#[derive(Subcommand)]
-enum NestAction {
-    /// Check a package directory (`nest-release.toml`, `Containerfile`) against the marketplace's
-    /// package rules, the same ones the postbox applies. Exits non-zero on any finding.
-    Validate {
-        /// The package directory.
-        dir: PathBuf,
-        /// Also check an example installation configuration (a JSON file) against the package's
-        /// `config_schema`.
-        #[arg(long)]
-        config: Option<PathBuf>,
-    },
 }
 
 #[derive(Subcommand)]
@@ -234,12 +221,6 @@ enum Command {
         action: DirectoryAction,
     },
 
-    /// Work with Nest packages for the marketplace (publishers). Offline; touches no identity.
-    Nest {
-        #[command(subcommand)]
-        action: NestAction,
-    },
-
     /// Sign this terminal in to a Pigeonpost account.
     /// Set this directory up as an agent: mint its mailbox, trust your fleet, start the daemon.
     ///
@@ -330,6 +311,10 @@ enum Command {
 
     /// A hosted mailbox's calendar: list occurrences, create handle-only events, answer invitations.
     Calendar(calendar_cmd::CalendarArgs),
+
+    /// Build Nest apps for the marketplace: start one from a template, run it locally, check a
+    /// package against the marketplace's rules.
+    Nest(nest_dev_cmd::NestArgs),
 }
 
 #[derive(Subcommand)]
@@ -1251,6 +1236,11 @@ fn pigeonpost_log_directives(configured: Option<&str>) -> String {
 async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     validate_preopen_confirmations(&cli.command)?;
 
+    // Nest app development is offline and needs no identity, home or network.
+    if let Command::Nest(args) = &cli.command {
+        return nest_dev_cmd::run(args, cli.json).await;
+    }
+
     // `loft serve` is the one command that is not about an agent identity, so it runs before any
     // identity is created — a node operator need not be an agent.
     if let Command::Install {
@@ -1341,14 +1331,6 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     } = &cli.command
     {
         return directory_cmd::serve(bind, dir).await;
-    }
-
-    // Offline package checks: no identity, no home directory, no network.
-    if let Command::Nest {
-        action: NestAction::Validate { dir, config },
-    } = &cli.command
-    {
-        return nest_cmd::validate(dir, config.as_deref(), cli.json);
     }
 
     // --home wins when both are given: it is the more specific instruction, and silently
@@ -2340,11 +2322,11 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         },
 
         Command::Registry { .. }
-        | Command::Nest { .. }
         | Command::Install { .. }
         | Command::Postbox { .. }
         | Command::Group(_)
         | Command::Calendar(_)
+        | Command::Nest(_)
         | Command::Login { .. }
         | Command::Whoami
         | Command::Ssh { .. }

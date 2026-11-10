@@ -1,0 +1,30 @@
+{
+  "operation": "csv.summarize",
+  "version": "1.0",
+  "summary": "Count the rows and columns of a CSV table and total every numeric column.",
+  "input": {
+    "fields": [
+      { "name": "csv", "max_chars": 20000, "required": true },
+      { "name": "delimiter", "max_chars": 1, "required": false }
+    ]
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "answer": {
+        "type": "object",
+        "properties": {
+          "rows": { "type": "integer" },
+          "columns": { "type": "array", "items": { "type": "string" } },
+          "totals": { "type": "object", "additionalProperties": { "type": "number" } }
+        },
+        "required": ["rows", "columns", "totals"]
+      },
+      "sources": { "type": "array", "items": { "type": "string" } },
+      "model_used": { "type": "boolean" }
+    },
+    "required": ["answer", "sources", "model_used"]
+  },
+  "uses_model": false,
+  "effects": []
+}
