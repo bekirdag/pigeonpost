@@ -866,6 +866,7 @@ mod tests {
     // ---- the marketplace pool: isolation between buyer contexts ---------------------------------
 
     const NEST_A: &str = "nst_00000000000000aa";
+    #[cfg(unix)]
     const NEST_B: &str = "nst_00000000000000bb";
     const NEST_A2: &str = "nst_00000000000000a2";
 
