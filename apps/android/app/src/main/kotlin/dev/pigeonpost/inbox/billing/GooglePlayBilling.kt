@@ -50,7 +50,12 @@ class GooglePlayBilling(context: Context) : PlayBilling {
         }
     }
 
-    override suspend fun prices(products: List<String>, basePlan: String): List<PlayPrice> {
+    override suspend fun prices(products: List<String>, basePlan: String): List<PlayPrice> = priced(products, basePlan, "P1Y")
+
+    override suspend fun subscriptionPrices(products: List<String>, basePlan: String, period: String): List<PlayPrice> =
+        priced(products, basePlan, period)
+
+    private suspend fun priced(products: List<String>, basePlan: String, period: String): List<PlayPrice> {
         connect()
         val params = QueryProductDetailsParams.newBuilder().setProductList(products.map {
             QueryProductDetailsParams.Product.newBuilder().setProductId(it).setProductType(BillingClient.ProductType.SUBS).build()
@@ -63,11 +68,12 @@ class GooglePlayBilling(context: Context) : PlayBilling {
                 }
             }
         }
-        offers.clear()
+        // Only the requested products are replaced: handle and Nest prices live side by side.
+        products.forEach { offers.remove(it) }
         return details.mapNotNull { product ->
             val offer = product.subscriptionOfferDetails?.firstOrNull {
                 it.basePlanId == basePlan && it.offerId == null && it.pricingPhases.pricingPhaseList.size == 1 &&
-                    it.pricingPhases.pricingPhaseList.single().let { phase -> phase.billingPeriod == "P1Y" &&
+                    it.pricingPhases.pricingPhaseList.single().let { phase -> phase.billingPeriod == period &&
                         phase.recurrenceMode == ProductDetails.RecurrenceMode.INFINITE_RECURRING && phase.priceAmountMicros > 0 }
             } ?: return@mapNotNull null
             offers[product.productId] = product to offer
@@ -96,6 +102,24 @@ class GooglePlayBilling(context: Context) : PlayBilling {
         val flow = BillingFlowParams.newBuilder().setObfuscatedAccountId(accountId)
             .setProductDetailsParamsList(listOf(BillingFlowParams.ProductDetailsParams.newBuilder()
                 .setProductDetails(product).setOfferToken(offer.offerToken).build())).build()
+        val result = client.launchBillingFlow(screen, flow)
+        if (result.responseCode != BillingClient.BillingResponseCode.OK) throw IOException(message(result))
+    }
+
+    override fun launchReplacing(productId: String, accountId: String, oldPurchaseToken: String, upgrade: Boolean) {
+        val screen = activity.get()?.takeUnless { it.isFinishing || it.isDestroyed }
+            ?: throw IOException("Keep Pigeonpost open to start checkout.")
+        val (product, offer) = offers[productId] ?: throw IOException("Refresh Google Play prices before purchasing.")
+        if (!client.isReady) throw IOException("Google Play disconnected. Restore purchases and try again.")
+        // A larger package starts now with the time already paid credited; a smaller one at renewal.
+        val mode = if (upgrade) BillingFlowParams.SubscriptionUpdateParams.ReplacementMode.WITH_TIME_PRORATION
+            else BillingFlowParams.SubscriptionUpdateParams.ReplacementMode.DEFERRED
+        val flow = BillingFlowParams.newBuilder().setObfuscatedAccountId(accountId)
+            .setProductDetailsParamsList(listOf(BillingFlowParams.ProductDetailsParams.newBuilder()
+                .setProductDetails(product).setOfferToken(offer.offerToken).build()))
+            .setSubscriptionUpdateParams(BillingFlowParams.SubscriptionUpdateParams.newBuilder()
+                .setOldPurchaseToken(oldPurchaseToken).setSubscriptionReplacementMode(mode).build())
+            .build()
         val result = client.launchBillingFlow(screen, flow)
         if (result.responseCode != BillingClient.BillingResponseCode.OK) throw IOException(message(result))
     }

@@ -106,6 +106,8 @@ public sealed record ServerFeatures(IReadOnlySet<string> Names)
     public const string Streaming = "streaming";
     public const string MeetingSummaries = "meeting_summaries";
     public const string DisplayNames = "display_names";
+    // Nests (hosted agents, docs/nests/phase-b.md): Products, Nest status and management.
+    public const string Nests = "nests";
     // docs/contacts-and-phone.md: Phone number, Find people I know, and Invite by SMS.
     public const string PhoneNumbers = "phone_numbers";
     public const string ContactDiscovery = "contact_discovery";
