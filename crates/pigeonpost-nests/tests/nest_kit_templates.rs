@@ -4,7 +4,9 @@
 use pigeonpost_core::nest_package;
 use pigeonpost_nest_kit::{render, Lang, TEMPLATES};
 use pigeonpost_nests::analysis::check_manifest;
-use pigeonpost_nests::release::{containerfile_pinned, Manifest};
+use pigeonpost_nests::release::{
+    containerfile_assembly, containerfile_pinned, BuildSpec, Manifest,
+};
 
 #[test]
 fn every_template_manifest_parses_and_only_declared_external_writes_are_blocked() {
@@ -62,6 +64,19 @@ fn every_template_manifest_parses_and_only_declared_external_writes_are_blocked(
                 .expect("Containerfile")
                 .1;
             containerfile_pinned(containerfile).unwrap_or_else(|e| panic!("{}: {e}", t.name));
+            // An assembly only: nothing in it runs a program.
+            containerfile_assembly(containerfile, "localhost/pigeonpost-release")
+                .unwrap_or_else(|e| panic!("{}: {e}", t.name));
+            // Python compiles (installs its wheels) in nest-build.toml; Node has nothing to do.
+            let build = files.iter().find(|(p, _)| p == "nest-build.toml");
+            match lang {
+                Lang::Node => assert!(build.is_none(), "{}", t.name),
+                Lang::Python => {
+                    let spec = BuildSpec::parse(&build.expect("nest-build.toml").1)
+                        .unwrap_or_else(|e| panic!("{}: {e}", t.name));
+                    assert!(spec.image.is_none(), "the build plane's own Python");
+                }
+            }
         }
     }
 }

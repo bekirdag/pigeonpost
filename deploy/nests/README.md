@@ -92,8 +92,9 @@ reconcile, idle stop and list leave those workers alone. Design, routes and devi
 The build and analysis planes are `pigeonpost-nest-release`, run by an unprivileged user (the build
 refuses rootful podman). The reference release's source tree is `reference/hr-policy-qa/`.
 
-1. A fetch-only podman network for `cargo vendor` (the build step itself has `--network=none`), and
-   the base images the Containerfile pins, pulled by digest beforehand (`--pull=never`).
+1. A fetch-only podman network for `cargo vendor` (the compile step and the image assembly have
+   `--network=none`), and the toolchain image `nest-build.toml` names and the base image the
+   Containerfile pins, pulled by digest beforehand (`--pull=never`).
 2. `pigeonpost-nest-release build --config build.toml --src reference/hr-policy-qa --work <empty dir>`
    with `runtime`, `fetch_network`, `fetch_image` (pinned) and `image_name`; prints the build record
    for `POST /internal/v1/marketplace/builds`.

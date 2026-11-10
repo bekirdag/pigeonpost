@@ -1112,6 +1112,238 @@ pub fn empty_config_schema() -> Value {
     serde_json::json!({ "type": "object", "additionalProperties": false, "properties": {} })
 }
 
+// ---- the build files ---------------------------------------------------------------------------
+//
+// A release is built in two steps, and no publisher program runs in the second:
+//
+// 1. **compile** (`nest-build.toml`, optional): one command, run by the build plane in a gVisor
+//    container with no network, a read-only root and no capabilities, in a writable copy of the
+//    source tree with the vendored dependencies (`/src`). What it leaves there is what step 2 can
+//    copy.
+// 2. **assemble** (`Containerfile`): one pinned base image and file copies. Instructions that run
+//    a program (`RUN`), fetch (`ADD`) or reach another image (`COPY --from`) are refused.
+
+/// The compile step of a release.
+pub const BUILD_FILE: &str = "nest-build.toml";
+/// The image assembly of a release.
+pub const CONTAINERFILE: &str = "Containerfile";
+/// Most arguments a compile command may have.
+pub const MAX_COMMAND_ARGS: usize = 64;
+/// Most characters of a compile command, all arguments together.
+pub const MAX_COMMAND_CHARS: usize = 8192;
+/// Containerfile instructions an image assembly may use. None of them runs a program.
+pub const ASSEMBLY_INSTRUCTIONS: &[&str] = &[
+    "ARG",
+    "FROM",
+    "WORKDIR",
+    "COPY",
+    "ENV",
+    "USER",
+    "ENTRYPOINT",
+    "CMD",
+    "LABEL",
+    "EXPOSE",
+];
+
+/// An image reference pinned by digest: `name@sha256:<64 hex>`.
+pub fn image_pinned(image: &str) -> bool {
+    image.split_once("@sha256:").is_some_and(|(name, digest)| {
+        !name.is_empty() && digest.len() == 64 && digest.bytes().all(|b| b.is_ascii_hexdigit())
+    })
+}
+
+/// Check `nest-build.toml` (read into JSON): `command`, a non-empty list of strings, and an
+/// optional `image` pinned by digest. Whether the build plane offers that image is its own check.
+pub fn validate_build_spec(spec: &Value) -> Vec<Issue> {
+    let mut out = Vec::new();
+    let Some(m) = spec.as_object() else {
+        return vec![err("", "wrong_type", format!("{BUILD_FILE}: a table"))];
+    };
+    for key in m.keys() {
+        if key != "command" && key != "image" {
+            out.push(err(
+                format!("/{}", seg(key)),
+                "unknown_field",
+                format!("{BUILD_FILE}: only `command` and `image`"),
+            ));
+        }
+    }
+    match m.get("command") {
+        None => out.push(err("/command", "missing", "the compile command")),
+        Some(Value::Array(args)) => {
+            if args.is_empty() {
+                out.push(err("/command", "too_short", "at least the program to run"));
+            }
+            if args.len() > MAX_COMMAND_ARGS {
+                out.push(err(
+                    "/command",
+                    "too_many",
+                    format!("at most {MAX_COMMAND_ARGS} arguments"),
+                ));
+            }
+            let mut chars = 0;
+            for (i, a) in args.iter().enumerate() {
+                match a.as_str() {
+                    None => out.push(err(format!("/command/{i}"), "wrong_type", "a string")),
+                    Some(s) if s.contains('\0') => {
+                        out.push(err(format!("/command/{i}"), "bad_value", "no NUL"))
+                    }
+                    Some("") if i == 0 => {
+                        out.push(err("/command/0", "bad_value", "the program to run"))
+                    }
+                    Some(s) => chars += s.chars().count(),
+                }
+            }
+            if chars > MAX_COMMAND_CHARS {
+                out.push(err(
+                    "/command",
+                    "too_long",
+                    format!("at most {MAX_COMMAND_CHARS} characters"),
+                ));
+            }
+        }
+        Some(_) => out.push(err("/command", "wrong_type", "a list of strings")),
+    }
+    match m.get("image") {
+        None => {}
+        Some(Value::String(i)) if image_pinned(i) => {}
+        Some(Value::String(_)) => out.push(err(
+            "/image",
+            "bad_value",
+            "pinned by digest (name@sha256:<64 hex>)",
+        )),
+        Some(_) => out.push(err("/image", "wrong_type", "a string")),
+    }
+    out
+}
+
+/// The instructions of a Containerfile with their first line number: comments and blank lines
+/// dropped, `\` continuations joined.
+fn instructions(text: &str) -> Vec<(usize, String)> {
+    let mut out = Vec::new();
+    let mut current: Option<(usize, String)> = None;
+    for (n, raw) in text.lines().enumerate() {
+        let line = raw.trim();
+        if line.starts_with('#') || (line.is_empty() && current.is_none()) {
+            continue;
+        }
+        let (body, more) = match line.strip_suffix('\\') {
+            Some(b) => (b, true),
+            None => (line, false),
+        };
+        let entry = current.get_or_insert_with(|| (n + 1, String::new()));
+        if !entry.1.is_empty() {
+            entry.1.push(' ');
+        }
+        entry.1.push_str(body.trim());
+        if !more {
+            out.extend(current.take());
+        }
+    }
+    out.extend(current);
+    out
+}
+
+/// Check a Containerfile as an **image assembly**: exactly one `FROM`, pinned by digest directly
+/// or through an `ARG` default; only [`ASSEMBLY_INSTRUCTIONS`]; no `COPY --from`, no heredocs and
+/// no parser directives. Nothing in a file that passes runs a program while the image is built.
+pub fn validate_containerfile(text: &str) -> Vec<Issue> {
+    let mut out = Vec::new();
+    for (n, raw) in text.lines().enumerate() {
+        let Some(comment) = raw.trim_start().strip_prefix('#') else {
+            continue;
+        };
+        let lower = comment.trim_start().to_ascii_lowercase();
+        let directive = ["escape", "syntax", "check"].iter().any(|d| {
+            lower
+                .strip_prefix(d)
+                .is_some_and(|r| r.trim_start().starts_with('='))
+        });
+        if directive {
+            out.push(err(
+                format!("{CONTAINERFILE}:{}", n + 1),
+                "not_allowed",
+                "parser directives (escape, syntax, check) are not allowed",
+            ));
+        }
+    }
+    let mut args: BTreeSet<(String, String)> = BTreeSet::new();
+    let mut froms = 0;
+    for (line, ins) in instructions(text) {
+        let at = format!("{CONTAINERFILE}:{line}");
+        let mut words = ins.split_whitespace();
+        let Some(keyword) = words.next() else {
+            continue;
+        };
+        let keyword = keyword.to_ascii_uppercase();
+        if !ASSEMBLY_INSTRUCTIONS.contains(&keyword.as_str()) {
+            out.push(err(
+                at,
+                "not_allowed",
+                format!(
+                    "{keyword}: an image is assembled from files, never by running a program in \
+                     it; compile in {BUILD_FILE}"
+                ),
+            ));
+            continue;
+        }
+        if ins.contains("<<") {
+            out.push(err(at.clone(), "not_allowed", "heredocs are not allowed"));
+        }
+        match keyword.as_str() {
+            "ARG" => {
+                if let Some((k, v)) = words.next().and_then(|kv| kv.split_once('=')) {
+                    args.retain(|(name, _)| name != k);
+                    args.insert((k.to_string(), v.to_string()));
+                }
+            }
+            "FROM" => {
+                froms += 1;
+                let rest: Vec<&str> = words.filter(|w| !w.starts_with("--")).collect();
+                let Some(image) = rest.first() else {
+                    out.push(err(at, "missing", "FROM without an image"));
+                    continue;
+                };
+                let resolved = match image
+                    .strip_prefix("${")
+                    .and_then(|v| v.strip_suffix('}'))
+                    .or_else(|| image.strip_prefix('$'))
+                {
+                    Some(var) => args.iter().find(|(k, _)| k == var).map(|(_, v)| v.clone()),
+                    None => Some(image.to_string()),
+                };
+                match resolved {
+                    None => out.push(err(at, "missing", format!("FROM {image}: no ARG default"))),
+                    Some(r) if !image_pinned(&r) => out.push(err(
+                        at,
+                        "bad_value",
+                        format!("FROM {r}: not pinned by digest"),
+                    )),
+                    Some(_) => {}
+                }
+            }
+            "COPY" => {
+                if words.any(|w| w.to_ascii_lowercase().starts_with("--from")) {
+                    out.push(err(
+                        at,
+                        "not_allowed",
+                        "COPY --from: an image copies from its own build context only",
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+    if froms != 1 {
+        out.push(err(
+            CONTAINERFILE,
+            if froms == 0 { "missing" } else { "too_many" },
+            "exactly one FROM: the pinned runtime base",
+        ));
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1270,5 +1502,85 @@ mod tests {
             codes(&validate_config_with(&schema, &cleared, &set)),
             vec![("/token", "required")]
         );
+    }
+
+    const BASE: &str =
+        "docker.io/library/debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3";
+
+    #[test]
+    fn an_assembly_containerfile_copies_files_onto_one_pinned_base() {
+        let ok = format!(
+            "# a comment\nARG BASE_IMAGE={BASE}\nFROM ${{BASE_IMAGE}}\nENV A=1 \\\n    B=2\n\
+             WORKDIR /app\nCOPY --chown=0:0 target/release/app /usr/local/bin/app\n\
+             USER 10001:10001\nENTRYPOINT [\"/usr/local/bin/app\"]\n"
+        );
+        let issues = validate_containerfile(&ok);
+        assert!(issues.is_empty(), "{issues:?}");
+        for (bad, code) in [
+            (format!("FROM {BASE}\nRUN cargo build\n"), "not_allowed"),
+            (format!("FROM {BASE}\nrun cargo build\n"), "not_allowed"),
+            (format!("FROM {BASE}\nENV A=1\nRUN x\n"), "not_allowed"),
+            (
+                format!("FROM {BASE}\nADD https://example.invalid/x /x\n"),
+                "not_allowed",
+            ),
+            (
+                format!("FROM {BASE}\nCOPY --from=other /x /x\n"),
+                "not_allowed",
+            ),
+            (
+                format!("FROM {BASE}\nCOPY <<EOF /x\nhi\nEOF\n"),
+                "not_allowed",
+            ),
+            (format!("FROM {BASE}\nONBUILD RUN x\n"), "not_allowed"),
+            (
+                format!("# escape=`\nFROM {BASE}\nCOPY a b \\\nRUN x\n"),
+                "not_allowed",
+            ),
+            (format!("FROM {BASE} AS a\nFROM {BASE}\n"), "too_many"),
+            ("FROM debian:bookworm-slim\n".to_string(), "bad_value"),
+            ("FROM ${UNSET}\n".to_string(), "missing"),
+            ("COPY a b\n".to_string(), "missing"),
+        ] {
+            let issues = validate_containerfile(&bad);
+            assert!(issues.iter().any(|i| i.code == code), "{bad}: {issues:?}");
+        }
+        // An ordinary comment that mentions a directive word is a comment.
+        let commented = format!("# syntax highlighting is nice\nFROM {BASE}\n");
+        assert!(validate_containerfile(&commented).is_empty());
+    }
+
+    #[test]
+    fn a_build_spec_is_one_bounded_command_and_an_optional_pinned_image() {
+        let ok = json!({ "command": ["cargo", "build", "--release"], "image": BASE });
+        assert!(validate_build_spec(&ok).is_empty());
+        assert!(validate_build_spec(&json!({ "command": ["make"] })).is_empty());
+        for (bad, at) in [
+            (json!({}), "/command"),
+            (json!({ "command": [] }), "/command"),
+            (json!({ "command": "make" }), "/command"),
+            (json!({ "command": ["", "x"] }), "/command/0"),
+            (json!({ "command": ["make", 1] }), "/command/1"),
+            (json!({ "command": ["make\u{0}"] }), "/command/0"),
+            (
+                json!({ "command": vec!["x"; MAX_COMMAND_ARGS + 1] }),
+                "/command",
+            ),
+            (
+                json!({ "command": ["x".repeat(MAX_COMMAND_CHARS + 1)] }),
+                "/command",
+            ),
+            (
+                json!({ "command": ["make"], "image": "rust:latest" }),
+                "/image",
+            ),
+            (
+                json!({ "command": ["make"], "network": "host" }),
+                "/network",
+            ),
+        ] {
+            let issues = validate_build_spec(&bad);
+            assert!(issues.iter().any(|i| i.path == at), "{bad}: {issues:?}");
+        }
     }
 }

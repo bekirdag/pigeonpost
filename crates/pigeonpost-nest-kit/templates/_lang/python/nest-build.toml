@@ -1,0 +1,9 @@
+# The compile step. The build plane runs `command` in /src, a writable copy of this app with the
+# downloaded wheels in wheelhouse/, inside gVisor with no network, a read-only root and no
+# capabilities, before the Containerfile assembles the image from what it leaves in /src.
+# Here: install the pinned wheels offline, hash-checked, into deps/ (no .pyc files, so two builds
+# give the same image), then drop the wheelhouse. The toolchain is the build plane's Python.
+command = [
+  "sh", "-ec",
+  "mkdir -p deps; if grep -q '^[A-Za-z0-9]' requirements.txt; then python3 -m pip install --no-index --no-cache-dir --disable-pip-version-check --no-compile --require-hashes --only-binary=:all: --find-links=wheelhouse --target=deps --requirement=requirements.txt; fi; rm -rf wheelhouse",
+]

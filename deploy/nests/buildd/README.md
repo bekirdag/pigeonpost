@@ -19,6 +19,38 @@ The build and analysis plane is a dedicated service for compiling, scanning, and
 - Resource caps: /etc/systemd/system/user-2350.slice.d/50-nestbuild-limits.conf (CPUQuota=400%, MemoryMax=8G, TasksMax=4096) covers service and containers; per-container limits memory_mib/cpu_millis/pids in buildd.toml.
 - Files: /etc/pigeonpost-buildd (config, token hashes root:nestbuild 0640), /var/lib/pigeonpost-buildd (db, work, artifacts, owned nestbuild 0700). Nothing mounts saas_be, Keycloak or mswarm volumes; systemd unit uses ProtectSystem=strict with only those paths writable.
 
+## How a release is built
+
+Publisher code is untrusted and runs in exactly one place: the **compile step**, inside gVisor.
+
+| step | what runs | runtime | network | writable |
+|------|-----------|---------|---------|----------|
+| git | `git` (entrypoint set explicitly, so alpine/git's own `ENTRYPOINT ["git"]` never doubles it) | runsc | nestbuild-fetch (allowlisted hosts) | the source dir |
+| fetch | `cargo vendor --locked`, `npm ci --ignore-scripts`, `pip download --require-hashes` | runsc | nestbuild-fetch | vendor/ |
+| compile | the release's `nest-build.toml` `command` (build scripts, proc macros, its own tools) | runsc | **none** | its copy of the tree at /src only; root read-only, no capabilities, `--timeout` |
+| assemble | nothing: `podman build --timestamp=0` of a Containerfile with no `RUN`, `ADD` or `COPY --from` | (none started) | none | — |
+| behaviour test | the built image | runsc | none | its volume |
+
+Why the compile is not a `RUN` step in `podman build`: under rootless podman with runsc,
+buildah's `RUN` cannot produce a layer. With gVisor's default root overlay the step's writes stay
+in the sandbox's own overlay and never reach buildah's layer, so `COPY --from=build` finds
+nothing; with `--overlay2=none` the writes go to the host, but the image's root directory is 0555
+and containers.conf grants no capabilities, so they are refused. Both were reproduced off-host with
+the same runsc release (release-20261102.0) and podman 5.8: `RUN` output missing with the default
+overlay; `Permission denied` with `--overlay2=none` (under crun too, so it is the capability, not
+gVisor); `--overlay2=none` plus `--cap-add=DAC_OVERRIDE` makes `RUN` work. That last combination
+was not adopted: it gives the build container a capability, sends every root write to the host
+through the gofer, and keeps untrusted code inside buildah's least-used path. A plain `podman run`
+with a bind-mounted tree, the path git, the fetch step and the behaviour test already use, needs
+none of that, and the assembly that follows is a file copy: three assemblies of the same files
+(one with different mtimes) gave one image digest.
+
+The Containerfile the assembly reads is the one from the source tree, copied outside the tree the
+compile step can write. After the compile step, setuid/setgid/sticky bits are cleared and special
+files are refused. The toolchain image is one the build plane offers (`fetch_image`,
+`node_fetch_image`, `python_fetch_image`, `toolchain_images`); a release cannot name any other
+local image, so it cannot compile in another publisher's release image.
+
 ## Install on the build host (Ubuntu 24.04 with Docker already installed)
 
 1. apt install podman uidmap passt nftables wireguard sqlite3 ; install gVisor runsc to /usr/local/bin/runsc from the gVisor release (verify its checksum).
@@ -42,11 +74,13 @@ install -d -o nestbuild -g nestbuild -m 0700 /home/nestbuild/.config/containers
 install -o nestbuild -g nestbuild -m 0600 containers.conf /home/nestbuild/.config/containers/containers.conf
 ```
 
-4. As nestbuild (sudo -u nestbuild XDG_RUNTIME_DIR=/run/user/2350 ...): podman network create nestbuild-fetch ; load the pinned images (git, rust, node, python) into nestbuild's storage — the registry is not on nestbuild's allowlist, so pull them as root (`docker pull` / `podman pull`) and `save | sudo -u nestbuild podman load` ; podman info --format '{{.Host.Security.Rootless}}' must print true.
+4. As nestbuild (sudo -u nestbuild XDG_RUNTIME_DIR=/run/user/2350 ...): podman network create nestbuild-fetch ; load every pinned image into nestbuild's storage: git, the toolchains (rust, node, python, and any `toolchain_images`) and the runtime bases the releases' Containerfiles pin (the reference release's debian:bookworm-slim, the kit's node and python bases). The registry is not on nestbuild's allowlist, so pull them as root and load them; then check each one by its pinned reference, because `--pull=never` finds an image only by that digest. podman info --format '{{.Host.Security.Rootless}}' must print true.
 ```sh
 sudo -u nestbuild XDG_RUNTIME_DIR=/run/user/2350 podman network create nestbuild-fetch
-sudo -u nestbuild XDG_RUNTIME_DIR=/run/user/2350 podman pull <GIT_IMAGE>@sha256:<DIGEST>
-sudo -u nestbuild XDG_RUNTIME_DIR=/run/user/2350 podman pull <RUST_IMAGE>@sha256:<DIGEST>
+# for each pinned image IMG@sha256:DIGEST:
+podman pull IMG@sha256:DIGEST
+podman save IMG@sha256:DIGEST | sudo -u nestbuild XDG_RUNTIME_DIR=/run/user/2350 podman load
+sudo -u nestbuild XDG_RUNTIME_DIR=/run/user/2350 podman image exists IMG@sha256:DIGEST && echo loaded
 sudo -u nestbuild XDG_RUNTIME_DIR=/run/user/2350 podman info --format '{{.Host.Security.Rootless}}'
 ```
 
@@ -171,8 +205,12 @@ A compromised key: remove it everywhere at once; every release attested with it 
 # From the postbox host, must print ok:
 curl -s http://<BUILD_WG_ADDR>:8795/healthz
 
-# As nestbuild, gVisor container works:
-sudo -u nestbuild XDG_RUNTIME_DIR=/run/user/2350 podman run --rm --runtime=runsc --network=none <GIT_IMAGE>@sha256:<DIGEST> git --version
+# As nestbuild, gVisor container works (the entrypoint is set, as the build plane sets it):
+sudo -u nestbuild XDG_RUNTIME_DIR=/run/user/2350 podman run --rm --runtime=runsc --network=none '--entrypoint=["git"]' <GIT_IMAGE>@sha256:<DIGEST> --version
+
+# As nestbuild, the compile step's shape: gVisor, no network, read-only root, a writable bind
+# mount. Must print "hi" from the host side:
+d=$(sudo -u nestbuild mktemp -d) && sudo -u nestbuild XDG_RUNTIME_DIR=/run/user/2350 podman run --rm --pull=never --runtime=runsc --network=none --cap-drop=ALL --security-opt=no-new-privileges --read-only --tmpfs=/tmp:rw,nosuid,nodev,size=64m --volume=$d:/src:rw --workdir=/src '--entrypoint=["sh"]' <GIT_IMAGE>@sha256:<DIGEST> -c 'echo hi > /src/x' && sudo -u nestbuild cat $d/x
 
 # As nestbuild, non-allowlisted HTTPS must fail:
 sudo -u nestbuild XDG_RUNTIME_DIR=/run/user/2350 curl -m 5 https://example.com
@@ -184,7 +222,7 @@ sudo -u nestbuild XDG_RUNTIME_DIR=/run/user/2350 curl -m 5 http://127.0.0.1:<any
 nft list table inet nestbuild
 ```
 
-The live test: NESTS_LIVE_BUILD=1 cargo test -p pigeonpost-nests --test marketplace_m1 -- --ignored live_build (see that test's docs).
+The live test builds the reference release (fetch, compile in gVisor, assembly) as nestbuild: NESTS_LIVE_BUILD=1 NESTS_LIVE_FETCH_IMAGE=<RUST_IMAGE>@sha256:<DIGEST> NESTS_LIVE_FETCH_NETWORK=nestbuild-fetch cargo test -p pigeonpost-nests --test marketplace_m1 -- --ignored live_build (see that test's docs; set NESTS_LIVE_TOOLCHAIN_IMAGE when the reference's toolchain is not the fetch image). Run it twice: the two `image_digest` values must be equal.
 
 ## Limits and what is not done yet
 

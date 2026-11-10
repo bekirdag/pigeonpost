@@ -200,7 +200,7 @@ M1 builds a first-party reference release (HR policy Q&A, `deploy/nests/referenc
 
 ### How a release gets to a job
 
-1. `pigeonpost-nest-release build` vendors dependencies in a fetch container on a fetch-only network, then runs a rootless `podman build --network=none --pull=never --no-cache --cap-drop=ALL` under runsc or crun. It writes a CycloneDX 1.5 SBOM from Cargo.lock and the file list, and one release digest over the source, vendored sources, manifest, SBOM and image digests.
+1. `pigeonpost-nest-release build` vendors dependencies in a fetch container on a fetch-only network, runs the release's compile step (`nest-build.toml`: one `command`, optional pinned toolchain `image` the build plane offers) in a `podman run --network=none --read-only --cap-drop=ALL` under runsc with a writable copy of the tree at `/src`, then assembles the image with a rootless `podman build --network=none --pull=never --no-cache --timestamp=0` from a Containerfile that may not run anything (one pinned `FROM`; no `RUN`, `ADD` or `COPY --from`; `pigeonpost_core::nest_package::validate_containerfile`). Publisher code runs in the compile step only: buildah's `RUN` under rootless runsc loses its writes (gVisor's root overlay) or is refused (no capability for the 0555 root), see deploy/nests/buildd/README.md. It writes a CycloneDX 1.5 SBOM from Cargo.lock and the file list, and one release digest over the source, vendored sources, manifest, SBOM and image digests.
 2. The build record goes to POST /internal/v1/marketplace/builds. The postbox checks every digest, records the release under Pigeonpost's own publisher (owner kind `platform`), opens a review case, records the intake stage and creates the listing as a draft.
 3. `pigeonpost-nest-release scan` runs the offline static scans (secrets, capabilities, syscalls, egress and external writes in the manifest, every locked package's licence against an allowlist). The behaviour test plants honeytokens and searches every channel out of the release, plain and encoded. `pigeonpost-nest-release ai-review` asks the self-hosted model `qwen-latest-flash-next` and nothing else; its decision is always `advisory`. Each stage is a review_decisions row with its evidence and evidence digest.
 4. A staff reviewer with step-up approves over the exact release digest. The approval needs intake, scan and behaviour passed and the AI review recorded. It writes the attestation (canonical JSON statement and its digest) to release_attestations, and publishes the listing with its operations.
@@ -290,7 +290,7 @@ The team of a publisher: a personal publisher's own account; for an org publishe
 pigeonpost nest validate path/to/package [--config example-config.json] [--json]
 ```
 
-Offline: no identity, no home directory, no network. It reads `nest-release.toml` and checks for `Containerfile`, reports errors (malformed, refused at intake) and blocked items (capabilities, syscalls, egress beyond the broker, external writes: what the deterministic scan would block), and exits non-zero on any.
+Offline: no identity, no home directory, no network. It reads `nest-release.toml`, holds `Containerfile` to the image-assembly rules and `nest-build.toml` (when present) to the compile-step rules, reports errors (malformed, refused at intake) and blocked items (capabilities, syscalls, egress beyond the broker, external writes: what the deterministic scan would block), and exits non-zero on any.
 
 ### Data model additions
 
