@@ -173,7 +173,13 @@ async fn run_control(args: &[String]) -> Result<(), String> {
             ctx.db.clone(),
             mp.volume_root.clone(),
             ctx.cfg.storage.sandbox_uid,
-        );
+        )
+        .with_test_pool(mp.test_pool);
+        if mp.test_pool {
+            tracing::warn!(
+                "marketplace pool is a TEST pool: test statements only, no production releases"
+            );
+        }
         app = app.merge(pigeonpost_nests::dispatch::router(
             pigeonpost_nests::dispatch::Http {
                 dispatcher: Arc::new(d),

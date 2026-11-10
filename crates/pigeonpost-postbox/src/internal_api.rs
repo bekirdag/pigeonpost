@@ -263,6 +263,7 @@ pub(crate) fn router(state: AppState) -> Router {
         .merge(crate::nests::internal_router())
         .merge(crate::marketplace_m1::internal_router())
         .merge(crate::marketplace_m2::internal_router())
+        .merge(crate::marketplace_sources::internal_router())
         .route(
             "/internal/v1/entitlements/{provider}/{environment}/{reference}",
             put(billing_internal::put_entitlement),
@@ -333,6 +334,10 @@ pub(crate) fn router(state: AppState) -> Router {
             post(crate::call_alerts::cancel),
         )
         .fallback(|| async { err_response(StatusCode::NOT_FOUND, "not_found", None) })
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::marketplace_env::staging_layer,
+        ))
         .with_state(state)
 }
 

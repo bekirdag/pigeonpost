@@ -118,6 +118,11 @@ pub struct MarketplacePoolConfig {
     pub cpu_max_millis: u64,
     pub pids: u64,
     pub tmp_mib: u64,
+    /// Marketplace M2b: a staging postbox's **test pool** for hosted test Nests. It admits only
+    /// test statements (`pigeonpost.nest.release.test.v1`) and refuses production attestations;
+    /// a production pool (the default) does the opposite.
+    #[serde(default)]
+    pub test_pool: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -373,6 +378,7 @@ pub(crate) fn test_marketplace_pool(dir: &std::path::Path) -> MarketplacePoolCon
         cpu_max_millis: 500,
         pids: 64,
         tmp_mib: 32,
+        test_pool: false,
     }
 }
 

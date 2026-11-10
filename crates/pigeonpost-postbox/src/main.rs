@@ -94,12 +94,20 @@ mod internal_api;
 mod limits;
 mod mail_layout;
 mod marketplace;
+mod marketplace_env;
+mod marketplace_grants;
+mod marketplace_listings;
 mod marketplace_m1;
 #[cfg(test)]
 mod marketplace_m1_tests;
 mod marketplace_m2;
 #[cfg(test)]
 mod marketplace_m2_tests;
+#[cfg(test)]
+mod marketplace_m2b_tests;
+mod marketplace_org;
+mod marketplace_sources;
+mod marketplace_test_nests;
 #[cfg(test)]
 mod marketplace_tests;
 mod mcp;
@@ -542,6 +550,8 @@ async fn serve(cfg: Config) {
     nests::start_unlocker(state.clone());
     // Marketplace M1: hand admitted jobs to nestd and collect their results.
     marketplace_m1::start_dispatcher(state.clone());
+    // Marketplace M2b: expire hosted test Nests (staging postbox only).
+    marketplace_test_nests::start_sweeper(state.clone());
     start_internal_listener(&state).await;
     // Disappearing-message expiry and group maintenance (SDS §17.2, §4.3), every 30 s.
     ephemeral::start_worker(state.clone());
@@ -1063,6 +1073,13 @@ fn build_router(state: AppState) -> Router {
         .merge(marketplace_m1::router())
         // Marketplace M2: publishers, listings and installations, behind the same flag.
         .merge(marketplace_m2::router())
+        // Marketplace M2b: visibility grants, org installations, source connections, and hosted
+        // test Nests (staging postbox only).
+        .merge(marketplace_grants::router())
+        .merge(marketplace_listings::router())
+        .merge(marketplace_org::router())
+        .merge(marketplace_sources::router())
+        .merge(marketplace_test_nests::router())
         // Phase 3B: calendar and scheduled meetings (SDS §14B.5, docs/calendar.md).
         .route(
             "/v1/calendars",
@@ -1159,6 +1176,11 @@ fn build_router(state: AppState) -> Router {
         .layer(middleware::from_fn_with_state(
             overload::limits(),
             overload::admission,
+        ))
+        // Staging postbox (M2b): payment routes refused, every response marked. Inside `cors`.
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            marketplace_env::staging_layer,
         ))
         .layer(middleware::from_fn(cors))
         // Outermost of the two, so every handler (and `cors`) sees a resolved `ClientIp`.

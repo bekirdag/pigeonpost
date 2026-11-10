@@ -253,6 +253,7 @@ mod dispatcher {
             cpu_max_millis: 500,
             pids: 64,
             tmp_mib: 32,
+            test_pool: false,
         };
         let podman = FakePodman::default();
         let pool = MarketplacePool::with_podman(base(), pool_cfg, podman.clone());

@@ -37,7 +37,8 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
-/// Events a webhook may subscribe to. The last two are reserved for later phases.
+/// Events a webhook may subscribe to. `meeting.brief_ready` and `security.ssh_session` are
+/// reserved for later phases.
 pub(crate) const EVENTS: &[&str] = &[
     "member.invited",
     "member.joined",
@@ -51,6 +52,20 @@ pub(crate) const EVENTS: &[&str] = &[
     "billing.status_changed",
     "meeting.brief_ready",
     "security.ssh_session",
+    // Marketplace (M2b): an org publisher's review, build and listing events, and the org's own
+    // installations. Ids and states only.
+    "nest.publisher.decision",
+    "nest.build.failed",
+    "nest.review.stage_changed",
+    "nest.review.blocked",
+    "nest.review.decision",
+    "nest.review.completed",
+    "nest.listing.updated",
+    "nest.listing.grant_changed",
+    "nest.installation.changed",
+    "nest.test.changed",
+    "nest.test.expiring",
+    "nest.test.expired",
 ];
 
 pub(crate) const MAX_WEBHOOKS_PER_ORG: i64 = 10;

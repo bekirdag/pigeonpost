@@ -78,7 +78,7 @@ const REVIEW_POLICY: &str = "pigeonpost-nest-review-policy-v1\n\
 /// Vault label for sealed configuration secrets.
 const SECRET_LABEL: &str = "marketplace-config-secret-v1";
 /// Most rows a list returns.
-const PAGE: usize = 100;
+pub(crate) const PAGE: usize = 100;
 
 pub(crate) fn router() -> Router<AppState> {
     Router::new()
@@ -242,7 +242,7 @@ pub(crate) fn delivered_config(manifest: Option<&str>, config: Option<&str>) -> 
     Value::Object(pkg::with_defaults(&schema, &plain))
 }
 
-fn schema_of(manifest: &Value) -> Value {
+pub(crate) fn schema_of(manifest: &Value) -> Value {
     manifest
         .get("config_schema")
         .cloned()
@@ -408,17 +408,17 @@ pub(crate) fn third_party_build_in(
 
 // ---- small helpers -----------------------------------------------------------------------------------
 
-fn wake(state: &AppState, accounts: Vec<String>) {
+pub(crate) fn wake(state: &AppState, accounts: Vec<String>) {
     for a in accounts {
         state.event_hub.wake(&a);
     }
 }
 
-fn new_id(prefix: &str) -> String {
+pub(crate) fn new_id(prefix: &str) -> String {
     format!("{prefix}_{}", crate::groups::rand_b32(16))
 }
 
-fn text(v: &str, field: &str, min: usize, max: usize) -> GResult<String> {
+pub(crate) fn text(v: &str, field: &str, min: usize, max: usize) -> GResult<String> {
     let t = v.trim().to_string();
     let n = t.chars().count();
     if n < min || n > max || t.chars().any(char::is_control) {
@@ -430,12 +430,12 @@ fn text(v: &str, field: &str, min: usize, max: usize) -> GResult<String> {
     Ok(t)
 }
 
-fn reason_of(v: &str) -> GResult<String> {
+pub(crate) fn reason_of(v: &str) -> GResult<String> {
     text(v, "reason", 1, 2000)
 }
 
 #[allow(clippy::too_many_arguments)]
-fn audit_row(
+pub(crate) fn audit_row(
     state: &AppState,
     principal: &Principal,
     account: &str,
@@ -459,19 +459,19 @@ fn audit_row(
 
 /// A release, as the M2 routes decide on it.
 #[derive(Debug, Clone)]
-struct Rel {
-    id: String,
-    template_id: String,
-    publisher_id: String,
-    version: String,
-    status: String,
-    security_state: String,
-    release_digest: Option<String>,
-    image: Option<String>,
-    manifest: Value,
+pub(crate) struct Rel {
+    pub(crate) id: String,
+    pub(crate) template_id: String,
+    pub(crate) publisher_id: String,
+    pub(crate) version: String,
+    pub(crate) status: String,
+    pub(crate) security_state: String,
+    pub(crate) release_digest: Option<String>,
+    pub(crate) image: Option<String>,
+    pub(crate) manifest: Value,
 }
 
-fn release_in(c: &Connection, id: &str) -> rusqlite::Result<Option<Rel>> {
+pub(crate) fn release_in(c: &Connection, id: &str) -> rusqlite::Result<Option<Rel>> {
     c.query_row(
         "SELECT id, template_id, publisher_id, version, status, security_state, release_digest,
                 image, manifest FROM nest_releases WHERE id = ?1",
@@ -498,7 +498,7 @@ fn release_in(c: &Connection, id: &str) -> rusqlite::Result<Option<Rel>> {
 
 /// Approved, live, and carrying a staff attestation that still matches its digest: the only kind
 /// of release a listing may offer or an installation may run.
-fn live_attested_in(c: &Connection, r: &Rel) -> rusqlite::Result<bool> {
+pub(crate) fn live_attested_in(c: &Connection, r: &Rel) -> rusqlite::Result<bool> {
     if r.status != "approved" || r.security_state != "normal" {
         return Ok(false);
     }
@@ -519,7 +519,7 @@ fn live_attested_in(c: &Connection, r: &Rel) -> rusqlite::Result<bool> {
 }
 
 /// Why a release cannot be run, as an error.
-fn not_runnable(r: &Rel) -> GErr {
+pub(crate) fn not_runnable(r: &Rel) -> GErr {
     match r.security_state.as_str() {
         "revoked" => conflict_code("release_revoked", "this release is revoked"),
         "quarantined" => conflict_code("security_quarantined", "this release is quarantined"),
@@ -533,15 +533,15 @@ fn not_runnable(r: &Rel) -> GErr {
 // ---- publishers and who acts for them -----------------------------------------------------------------
 
 #[derive(Debug, Clone)]
-struct Pub {
-    id: String,
-    owner_kind: String,
-    owner_id: String,
-    display_name: String,
-    status: String,
-    decision_reason: Option<String>,
-    created_at: i64,
-    updated_at: i64,
+pub(crate) struct Pub {
+    pub(crate) id: String,
+    pub(crate) owner_kind: String,
+    pub(crate) owner_id: String,
+    pub(crate) display_name: String,
+    pub(crate) status: String,
+    pub(crate) decision_reason: Option<String>,
+    pub(crate) created_at: i64,
+    pub(crate) updated_at: i64,
 }
 
 impl Pub {
@@ -575,7 +575,7 @@ fn map_pub(r: &rusqlite::Row<'_>) -> rusqlite::Result<Pub> {
     })
 }
 
-fn pub_in(c: &Connection, id: &str) -> rusqlite::Result<Option<Pub>> {
+pub(crate) fn pub_in(c: &Connection, id: &str) -> rusqlite::Result<Option<Pub>> {
     c.query_row(
         &format!("SELECT {PUB_COLS} FROM publisher_profiles WHERE id = ?1"),
         [id],
@@ -586,17 +586,22 @@ fn pub_in(c: &Connection, id: &str) -> rusqlite::Result<Option<Pub>> {
 
 /// What the caller may do for one publisher.
 #[derive(Debug, Clone, Copy, Default)]
-struct Access {
+pub(crate) struct Access {
     /// See the publisher, its builds, reviews and listings.
-    read: bool,
+    pub(crate) read: bool,
     /// Act for it: templates, builds, listings, publishing (with step-up).
-    admin: bool,
+    pub(crate) admin: bool,
     /// Hand out and take back its publisher roles (org publishers only).
-    grant: bool,
-    role: &'static str,
+    pub(crate) grant: bool,
+    pub(crate) role: &'static str,
 }
 
-async fn access_of(state: &AppState, headers: &HeaderMap, account: &str, p: &Pub) -> Access {
+pub(crate) async fn access_of(
+    state: &AppState,
+    headers: &HeaderMap,
+    account: &str,
+    p: &Pub,
+) -> Access {
     match p.owner_kind.as_str() {
         "account" if p.owner_id == account => Access {
             read: true,
@@ -672,23 +677,23 @@ pub(crate) async fn publisher_read(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Need {
+pub(crate) enum Need {
     Read,
     Admin,
     Grant,
 }
 
-struct Ctx {
-    principal: Principal,
-    account: String,
-    p: Pub,
-    access: Access,
+pub(crate) struct Ctx {
+    pub(crate) principal: Principal,
+    pub(crate) account: String,
+    pub(crate) p: Pub,
+    pub(crate) access: Access,
 }
 
 /// The caller, their publisher and their access, authorized for `action`. Someone off the team
 /// gets `404`, exactly as for a publisher that does not exist; a team member whose role does not
 /// cover the action gets `403 publisher_role_required`.
-async fn gate(
+pub(crate) async fn gate(
     state: &AppState,
     headers: &HeaderMap,
     publisher: &str,
@@ -737,7 +742,7 @@ async fn gate(
 }
 
 /// Certified, and not revoked: what creating anything as a publisher needs.
-fn certified(p: &Pub) -> GResult<()> {
+pub(crate) fn certified(p: &Pub) -> GResult<()> {
     match p.status.as_str() {
         "approved" => Ok(()),
         "revoked" => Err(GErr::forbidden(
@@ -873,7 +878,11 @@ async fn list_roles(
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct GrantReq {
-    account_id: String,
+    /// The member's account, or (M2b) `member_id`, the org member id the org's member list shows.
+    #[serde(default)]
+    account_id: Option<String>,
+    #[serde(default)]
+    member_id: Option<String>,
     role: String,
 }
 
@@ -888,13 +897,17 @@ async fn grant_role(
 ) -> Response {
     let result = async {
         let ctx = gate(&state, &headers, &publisher, Action::PublisherManage, Need::Grant).await?;
-        let req: GrantReq = parse(body)?;
+        let mut req: GrantReq = parse(body)?;
         if !matches!(req.role.as_str(), "publisher_admin" | "publisher_finance") {
             return Err(GErr::bad(
                 "invalid_role",
                 "role must be publisher_admin or publisher_finance",
             ));
         }
+        req.account_id = Some(
+            crate::marketplace_listings::role_target(&state, &ctx.p.owner_id, &req.account_id, &req.member_id)
+                .await?,
+        );
         let now = now_unix() as i64;
         let id = new_id("prl");
         let audit = audit_row(
@@ -908,7 +921,7 @@ async fn grant_role(
             &headers,
         );
         let (rid, pid, org, by) = (id.clone(), ctx.p.id.clone(), ctx.p.owner_id.clone(), ctx.account.clone());
-        let (target, role) = (req.account_id.clone(), req.role.clone());
+        let (target, role) = (req.account_id.clone().unwrap_or_default(), req.role.clone());
         state
             .store
             .group_tx(move |tx| -> GResult<()> {
@@ -1114,7 +1127,7 @@ async fn create_template(
 
 const BUILD_COLS: &str =
     "id, publisher_id, template_id, version, source_repository, source_commit, \
-     status, release_id, review_id, failure_code, failure_reason, created_at, updated_at";
+     status, release_id, review_id, failure_code, failure_reason, created_at, updated_at, source_id";
 
 fn build_json(r: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
     let failure_code: Option<String> = r.get(9)?;
@@ -1123,7 +1136,8 @@ fn build_json(r: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
         "publisher_id": r.get::<_, String>(1)?,
         "template_id": r.get::<_, String>(2)?,
         "version": r.get::<_, String>(3)?,
-        "source": { "repository": r.get::<_, String>(4)?, "commit": r.get::<_, String>(5)? },
+        "source": { "repository": r.get::<_, String>(4)?, "commit": r.get::<_, String>(5)?,
+                    "source_id": r.get::<_, Option<String>>(13)? },
         "status": r.get::<_, String>(6)?,
         "release_id": r.get::<_, Option<String>>(7)?,
         "review_id": r.get::<_, Option<String>>(8)?,
@@ -1135,7 +1149,7 @@ fn build_json(r: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
 
 /// A source repository the build plane can fetch read-only: `https://`, a host, a path, no
 /// credentials, no query.
-fn repository_ok(url: &str) -> bool {
+pub(crate) fn repository_ok(url: &str) -> bool {
     let Some(rest) = url.strip_prefix("https://") else {
         return false;
     };
@@ -1225,10 +1239,15 @@ async fn read_build(
     into_response(result)
 }
 
+/// The source of a build: a public https repository named inline, or a registered source
+/// connection (M2b, `marketplace_sources`) by id. Either way the host must be on the allowlist.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SourceReq {
-    repository: String,
+    #[serde(default)]
+    repository: Option<String>,
+    #[serde(default)]
+    source_id: Option<String>,
     commit: String,
 }
 
@@ -1255,12 +1274,25 @@ async fn request_build(
         if !pkg::semver_ok(&req.version) {
             return Err(GErr::bad("invalid_request", "version: major.minor.patch"));
         }
-        if !repository_ok(&req.source.repository) {
-            return Err(GErr::bad(
-                "invalid_request",
-                "source.repository: an https URL with no credentials",
-            ));
-        }
+        let inline = match (&req.source.repository, &req.source.source_id) {
+            (Some(repo), None) => {
+                if !repository_ok(repo) {
+                    return Err(GErr::bad(
+                        "invalid_request",
+                        "source.repository: an https URL with no credentials",
+                    ));
+                }
+                crate::marketplace_sources::host_allowed(&state, repo)?;
+                Some(repo.clone())
+            }
+            (None, Some(_)) => None,
+            _ => {
+                return Err(GErr::bad(
+                    "invalid_request",
+                    "source: either repository or source_id",
+                ))
+            }
+        };
         if !commit_ok(&req.source.commit) {
             return Err(GErr::bad(
                 "invalid_request",
@@ -1295,19 +1327,26 @@ async fn request_build(
                         "this template already has this version",
                     ));
                 }
+                let repository = match (&inline, &req.source.source_id) {
+                    (Some(r), _) => r.clone(),
+                    (None, Some(sid)) => crate::marketplace_sources::active_repository_in(tx, &pid, sid)?
+                        .ok_or_else(|| GErr::new(StatusCode::NOT_FOUND, "not_found", "no such source"))?,
+                    (None, None) => return Err(not_found()),
+                };
                 tx.execute(
                     "INSERT INTO nest_builds (id, publisher_id, template_id, version, source_repository,
-                        source_commit, status, requested_by, created_at, updated_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'queued', ?7, ?8, ?8)",
+                        source_commit, status, requested_by, created_at, updated_at, source_id)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'queued', ?7, ?8, ?8, ?9)",
                     params![
                         bid,
                         pid,
                         req.template_id,
                         req.version,
-                        req.source.repository,
+                        repository,
                         req.source.commit,
                         by,
-                        now
+                        now,
+                        req.source.source_id
                     ],
                 )?;
                 Ok(tx.query_row(
@@ -1337,7 +1376,8 @@ async fn pending_builds(State(state): State<AppState>, headers: HeaderMap) -> Re
                 let mut stmt = c.prepare(&format!(
                     "SELECT b.id, b.publisher_id, b.template_id, b.version, b.source_repository,
                             b.source_commit, b.status, b.release_id, b.review_id, b.failure_code,
-                            b.failure_reason, b.created_at, b.updated_at, t.slug
+                            b.failure_reason, b.created_at, b.updated_at, b.source_id, t.slug,
+                            (SELECT s.kind FROM publisher_sources s WHERE s.id = b.source_id)
                        FROM nest_builds b JOIN nest_templates t ON t.id = b.template_id
                        JOIN publisher_profiles p ON p.id = b.publisher_id
                       WHERE b.status = 'queued' AND p.status = 'approved'
@@ -1346,7 +1386,12 @@ async fn pending_builds(State(state): State<AppState>, headers: HeaderMap) -> Re
                 let rows = stmt
                     .query_map([], |r| {
                         let mut v = build_json(r)?;
-                        v["template_slug"] = json!(r.get::<_, String>(13)?);
+                        v["template_slug"] = json!(r.get::<_, String>(14)?);
+                        // M2b: a deploy-key source's key is fetched from
+                        // `…/build-requests/{build}/source-credential`.
+                        v["source"]["kind"] = json!(r
+                            .get::<_, Option<String>>(15)?
+                            .unwrap_or_else(|| "https".into()));
                         Ok(v)
                     })?
                     .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -1809,7 +1854,7 @@ async fn withdraw_review(
 const LISTING_COLS: &str =
     "l.id, l.publisher_id, l.release_id, l.template_id, l.title, l.summary, \
      l.description, l.visibility, l.status, l.address, l.moderation_reason, l.created_at, \
-     l.updated_at, l.published_at, r.version";
+     l.updated_at, l.published_at, r.version, l.price_currency, l.price_term";
 
 fn listing_json(r: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
     Ok(json!({
@@ -1828,10 +1873,15 @@ fn listing_json(r: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
         "updated_at": iso(r.get(12)?),
         "published_at": r.get::<_, Option<i64>>(13)?.map(iso),
         "version": r.get::<_, String>(14)?,
+        "price": crate::marketplace_listings::price_json(r.get(15)?, r.get(16)?),
     }))
 }
 
-fn listing_in(c: &Connection, id: &str, publisher: &str) -> rusqlite::Result<Option<Value>> {
+pub(crate) fn listing_in(
+    c: &Connection,
+    id: &str,
+    publisher: &str,
+) -> rusqlite::Result<Option<Value>> {
     c.query_row(
         &format!(
             "SELECT {LISTING_COLS} FROM nest_listings l JOIN nest_releases r ON r.id = l.release_id
@@ -1843,18 +1893,14 @@ fn listing_in(c: &Connection, id: &str, publisher: &str) -> rusqlite::Result<Opt
     .optional()
 }
 
-/// The visibility classes M2 serves. `invite_only` and `organization` need grants that are not
-/// built yet and are refused rather than stored with no effect.
+/// The visibility classes. `invite_only` and `organization` listings are seen, installed and
+/// invoked through their grants (`marketplace_grants`, M2b).
 fn visibility_ok(v: &str) -> GResult<()> {
     match v {
-        "public" | "unlisted" | "private" => Ok(()),
-        "invite_only" | "organization" => Err(GErr::bad(
-            "visibility_not_available",
-            "invite_only and organization visibility are not available yet",
-        )),
+        "public" | "unlisted" | "private" | "invite_only" | "organization" => Ok(()),
         _ => Err(GErr::bad(
             "invalid_request",
-            "visibility: public, unlisted or private",
+            "visibility: public, unlisted, private, invite_only or organization",
         )),
     }
 }
@@ -1896,6 +1942,9 @@ struct ListingReq {
     #[serde(default)]
     description: Option<String>,
     visibility: String,
+    /// M2b: `{amount_minor: 0, currency, term}`.
+    #[serde(default)]
+    price: Option<crate::marketplace_listings::PriceReq>,
 }
 
 /// `POST /v1/publishers/{publisher}/listings` — a draft listing for one of the publisher's
@@ -1911,6 +1960,9 @@ async fn create_listing(
         certified(&ctx.p)?;
         let req: ListingReq = parse(body)?;
         visibility_ok(&req.visibility)?;
+        let (currency, term) = crate::marketplace_listings::price_terms(req.price.as_ref())?;
+        let currency = currency.unwrap_or("TRY");
+        let term = term.unwrap_or("one_off");
         let title = text(&req.title, "title", 2, 120)?;
         let summary = text(&req.summary, "summary", 2, 300)?;
         let description = match &req.description {
@@ -1946,8 +1998,9 @@ async fn create_listing(
                 }
                 tx.execute(
                     "INSERT INTO nest_listings (id, publisher_id, release_id, title, summary,
-                        visibility, status, created_at, updated_at, address, description, template_id)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'draft', ?7, ?7, ?8, ?9, ?10)",
+                        visibility, status, created_at, updated_at, address, description, template_id,
+                        price_currency, price_term)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'draft', ?7, ?7, ?8, ?9, ?10, ?11, ?12)",
                     params![
                         lid,
                         pid,
@@ -1958,7 +2011,9 @@ async fn create_listing(
                         now,
                         address,
                         description,
-                        rel.template_id
+                        rel.template_id,
+                        currency,
+                        term
                     ],
                 )?;
                 Ok(listing_in(tx, &lid, &pid)?.unwrap_or(Value::Null))
@@ -1981,6 +2036,9 @@ struct ListingPatch {
     description: Option<String>,
     #[serde(default)]
     visibility: Option<String>,
+    /// M2b: price terms; the amount stays zero.
+    #[serde(default)]
+    price: Option<crate::marketplace_listings::PriceReq>,
 }
 
 /// `PATCH /v1/publishers/{publisher}/listings/{listing}` — publisher-editable metadata only.
@@ -2004,6 +2062,7 @@ async fn edit_listing(
         if let Some(v) = &req.visibility {
             visibility_ok(v)?;
         }
+        let (currency, term) = crate::marketplace_listings::price_terms(req.price.as_ref())?;
         let now = now_unix() as i64;
         let pid = ctx.p.id.clone();
         let (v, wake_list) = state
@@ -2015,8 +2074,9 @@ async fn edit_listing(
                 tx.execute(
                     "UPDATE nest_listings SET title = COALESCE(?2, title), summary = COALESCE(?3, summary),
                         description = COALESCE(?4, description), visibility = COALESCE(?5, visibility),
-                        updated_at = ?6 WHERE id = ?1",
-                    params![listing, title, summary, req.description, req.visibility, now],
+                        updated_at = ?6, price_currency = COALESCE(?7, price_currency),
+                        price_term = COALESCE(?8, price_term) WHERE id = ?1",
+                    params![listing, title, summary, req.description, req.visibility, now, currency, term],
                 )?;
                 let v = listing_in(tx, &listing, &pid)?.unwrap_or(Value::Null);
                 let w = store::publisher_event_in(
@@ -2202,8 +2262,9 @@ async fn withdraw_listing(
     into_response(result)
 }
 
-/// `GET /v1/marketplace/listings?q=&cursor=` — the public catalog: published, public listings
-/// only. Unlisted listings are reachable by id, never searchable.
+/// `GET /v1/marketplace/listings?q=&cursor=` — the catalog: published, public listings, and the
+/// `invite_only` and `organization` listings whose grants let the caller discover them (M2b).
+/// Unlisted listings are reachable by id, never searchable.
 async fn catalog(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -2258,6 +2319,8 @@ async fn catalog(
                 .replace('%', "\\%")
                 .replace('_', "\\_")
         );
+        // Granted listings (M2b) for a signed-in caller; an anonymous one holds no grant.
+        let viewer = account.clone().unwrap_or_default();
         let rows = state
             .store
             .group_read(move |c| -> GResult<Vec<Value>> {
@@ -2265,24 +2328,29 @@ async fn catalog(
                     "SELECT {LISTING_COLS}, p.display_name, p.owner_kind
                        FROM nest_listings l JOIN nest_releases r ON r.id = l.release_id
                        JOIN publisher_profiles p ON p.id = l.publisher_id
-                      WHERE l.status = 'published' AND l.visibility = 'public'
+                      WHERE l.status = 'published'
+                        AND (l.visibility = 'public' OR {granted})
                         AND r.security_state = 'normal'
                         AND p.status = 'approved'
                         AND (l.title LIKE ?1 ESCAPE '\\' OR l.summary LIKE ?1 ESCAPE '\\')
-                      ORDER BY l.published_at DESC, l.id LIMIT ?2 OFFSET ?3"
+                      ORDER BY l.published_at DESC, l.id LIMIT ?2 OFFSET ?3",
+                    granted = crate::marketplace_grants::DISCOVER_SQL
                 ))?;
                 let rows = stmt
-                    .query_map(params![pattern, (PAGE + 1) as i64, offset as i64], |r| {
-                        let mut v = listing_json(r)?;
-                        v["publisher"] = json!({
-                            "display_name": r.get::<_, String>(15)?,
-                            "first_party": r.get::<_, String>(16)? == "platform",
-                        });
-                        if let Some(o) = v.as_object_mut() {
-                            o.remove("moderation_reason");
-                        }
-                        Ok(v)
-                    })?
+                    .query_map(
+                        params![pattern, (PAGE + 1) as i64, offset as i64, viewer],
+                        |r| {
+                            let mut v = listing_json(r)?;
+                            v["publisher"] = json!({
+                                "display_name": r.get::<_, String>(17)?,
+                                "first_party": r.get::<_, String>(18)? == "platform",
+                            });
+                            if let Some(o) = v.as_object_mut() {
+                                o.remove("moderation_reason");
+                            }
+                            Ok(v)
+                        },
+                    )?
                     .collect::<rusqlite::Result<Vec<_>>>()?;
                 Ok(rows)
             })
@@ -2299,21 +2367,25 @@ async fn catalog(
 // ---- installations -----------------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
-struct Inst {
-    id: String,
-    listing_id: String,
-    owner_id: String,
-    buyer_context: String,
-    release_id: String,
-    previous_release_id: Option<String>,
-    config: String,
-    status: String,
+pub(crate) struct Inst {
+    pub(crate) id: String,
+    pub(crate) listing_id: String,
+    /// `account` or `org` (M2b).
+    pub(crate) owner_kind: String,
+    pub(crate) owner_id: String,
+    pub(crate) buyer_context: String,
+    pub(crate) release_id: String,
+    pub(crate) previous_release_id: Option<String>,
+    pub(crate) config: String,
+    pub(crate) status: String,
+    /// An org installation's agent mailbox (M2b).
+    pub(crate) agent_address: Option<String>,
 }
 
-fn inst_in(c: &Connection, id: &str) -> rusqlite::Result<Option<Inst>> {
+pub(crate) fn inst_in(c: &Connection, id: &str) -> rusqlite::Result<Option<Inst>> {
     c.query_row(
         "SELECT id, listing_id, owner_id, buyer_context, release_id, previous_release_id, config,
-                status FROM nest_installations WHERE id = ?1 AND owner_kind = 'account'",
+                status, owner_kind, agent_address FROM nest_installations WHERE id = ?1",
         [id],
         |r| {
             Ok(Inst {
@@ -2325,13 +2397,18 @@ fn inst_in(c: &Connection, id: &str) -> rusqlite::Result<Option<Inst>> {
                 previous_release_id: r.get(5)?,
                 config: r.get(6)?,
                 status: r.get(7)?,
+                owner_kind: r.get(8)?,
+                agent_address: r.get(9)?,
             })
         },
     )
     .optional()
 }
 
-fn secret_names_in(c: &Connection, installation: &str) -> rusqlite::Result<BTreeSet<String>> {
+pub(crate) fn secret_names_in(
+    c: &Connection,
+    installation: &str,
+) -> rusqlite::Result<BTreeSet<String>> {
     let mut stmt =
         c.prepare("SELECT name FROM nest_installation_secrets WHERE installation_id = ?1")?;
     let rows = stmt
@@ -2343,7 +2420,7 @@ fn secret_names_in(c: &Connection, installation: &str) -> rusqlite::Result<BTree
 /// An installation as its owner sees it: plain configuration, which secrets are set (never their
 /// values), and whether the listing offers a newer attested release.
 #[allow(clippy::type_complexity)]
-fn inst_json_in(c: &Connection, id: &str) -> rusqlite::Result<Value> {
+pub(crate) fn inst_json_in(c: &Connection, id: &str) -> rusqlite::Result<Value> {
     let row: (
         String,
         String,
@@ -2426,7 +2503,7 @@ fn inst_json_in(c: &Connection, id: &str) -> rusqlite::Result<Value> {
     }))
 }
 
-fn inst_event_in(
+pub(crate) fn inst_event_in(
     c: &Connection,
     installation: &str,
     kind: &str,
@@ -2439,8 +2516,26 @@ fn inst_event_in(
         "INSERT INTO nest_installation_events (installation_id, kind, from_release, to_release,
             actor, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         params![installation, kind, from, to, actor, now],
-    )
-    .map(|_| ())
+    )?;
+    // An org's installation is announced to its webhooks (M2b): ids and versions only.
+    let org: Option<(String, String)> = c
+        .query_row(
+            "SELECT owner_id, listing_id FROM nest_installations WHERE id = ?1 AND owner_kind = 'org'",
+            [installation],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    if let Some((org, listing)) = org {
+        store::org_webhook_in(
+            c,
+            &org,
+            "nest.installation.changed",
+            &json!({ "installation_id": installation, "listing_id": listing, "change": kind,
+                     "from_release": from, "to_release": to }),
+            now as u64,
+        )?;
+    }
+    Ok(())
 }
 
 /// Secret changes: a sealed value to store, or `None` to clear.
@@ -2448,7 +2543,7 @@ type SecretChanges = Vec<(String, Option<Vec<u8>>)>;
 
 /// Validate a configuration for a release and seal its secrets. Returns the stored part and the
 /// secret changes (`None` = clear).
-fn prepare_config(
+pub(crate) fn prepare_config(
     state: &AppState,
     schema: &Value,
     config: &Value,
@@ -2487,7 +2582,7 @@ fn prepare_config(
     Ok((Value::Object(plain).to_string(), sealed))
 }
 
-fn store_secrets_in(
+pub(crate) fn store_secrets_in(
     c: &Connection,
     installation: &str,
     sealed: &[(String, Option<Vec<u8>>)],
@@ -2515,21 +2610,42 @@ fn store_secrets_in(
     Ok(())
 }
 
-/// The caller's own installation, authorized for `action`. Anyone else's is `404`.
+/// The caller's own installation, authorized for `action`. Anyone else's is `404`. An org's
+/// installation (M2b) is its Nest admins' to manage; its operators may read it (`NestOperate`)
+/// and get `403 nest_admin_required` for anything else.
 async fn inst_gate(
     state: &AppState,
     headers: &HeaderMap,
     id: &str,
     action: Action,
 ) -> GResult<(Principal, String, Inst)> {
+    use crate::nest_access::Role;
     let (principal, account) = caller(state, headers).await?;
     let iid = id.to_string();
-    let inst = state
+    let who = account.clone();
+    let (inst, role) = state
         .store
-        .group_read(move |c| -> GResult<Option<Inst>> { Ok(inst_in(c, &iid)?) })
+        .group_read(move |c| -> GResult<(Option<Inst>, Option<Role>)> {
+            let inst = inst_in(c, &iid)?;
+            let role = match &inst {
+                Some(i) if i.owner_kind == "org" => {
+                    crate::marketplace_org::org_role_in(c, i, &who, now_unix())?
+                }
+                _ => None,
+            };
+            Ok((inst, role))
+        })
         .await?;
+    if action != Action::NestOperate && role == Some(Role::Operator) {
+        return Err(GErr::forbidden(
+            "nest_admin_required",
+            "only the organization's Nest admins manage its installations",
+        ));
+    }
     let f = Facts {
-        nest_permitted: inst.as_ref().is_some_and(|i| i.owner_id == account),
+        nest_permitted: inst.as_ref().is_some_and(|i| {
+            (i.owner_kind == "account" && i.owner_id == account) || role.is_some()
+        }),
         ..facts(state)
     };
     authorize(
@@ -2639,11 +2755,22 @@ async fn install(
         let Some((publisher, visibility, status, _, rel)) = found else {
             return Err(not_found());
         };
-        // Visible to this caller, or it does not exist for them.
+        // Visible to this caller, or it does not exist for them. A granted listing also needs
+        // the grant's install switch (M2b).
         let visible = status == "published"
-            && (matches!(visibility.as_str(), "public" | "unlisted")
-                || (visibility == "private"
-                    && publisher_read(&state, &headers, &account, &publisher).await));
+            && match visibility.as_str() {
+                "public" | "unlisted" => true,
+                "private" => publisher_read(&state, &headers, &account, &publisher).await,
+                _ => {
+                    crate::marketplace_grants::install_allowed(
+                        &state,
+                        &req.listing_id,
+                        &visibility,
+                        &account,
+                    )
+                    .await?
+                }
+            };
         if !visible {
             return Err(not_found());
         }
@@ -2717,7 +2844,7 @@ async fn read_installation(
     Path(id): Path<String>,
 ) -> Response {
     let result = async {
-        let (_, _, inst) = inst_gate(&state, &headers, &id, Action::NestManage).await?;
+        let (_, _, inst) = inst_gate(&state, &headers, &id, Action::NestOperate).await?;
         let v = state
             .store
             .group_read(move |c| -> GResult<Value> { Ok(inst_json_in(c, &inst.id)?) })
@@ -2998,7 +3125,7 @@ async fn uninstall(
         let (_, account, inst) = inst_gate(&state, &headers, &id, Action::NestManage).await?;
         active(&inst)?;
         let now = now_unix() as i64;
-        let (iid, who, listing) = (inst.id.clone(), account.clone(), inst.listing_id.clone());
+        let (iid, who) = (inst.id.clone(), account.clone());
         let release = inst.release_id.clone();
         let cancelled = state
             .store
@@ -3020,14 +3147,17 @@ async fn uninstall(
                 )?;
                 let jobs: Vec<String> = {
                     let mut stmt = tx.prepare(
-                        "SELECT id FROM nest_jobs WHERE listing_id = ?1 AND account_id = ?2
+                        "SELECT id FROM nest_jobs WHERE installation_id = ?1
                            AND execution IN ('queued','running','waiting_input')",
                     )?;
                     let rows = stmt
-                        .query_map(params![listing, who], |r| r.get(0))?
+                        .query_map([&iid], |r| r.get(0))?
                         .collect::<rusqlite::Result<Vec<String>>>()?;
                     rows
                 };
+                // An org installation's agent mailbox goes with it, and every operator's
+                // delegation on it (M2b).
+                crate::marketplace_org::retire_agent_in(tx, &iid, now as u64)?;
                 for job in &jobs {
                     tx.execute(
                         "UPDATE nest_jobs SET execution = 'cancelled', error_code = 'uninstalled',
@@ -3068,7 +3198,7 @@ async fn uninstall(
 // ---- staff -------------------------------------------------------------------------------------------
 
 /// Role, step-up, then the conflict rule against `publisher` when there is one.
-async fn staff_gate(
+pub(crate) async fn staff_gate(
     state: &AppState,
     headers: &HeaderMap,
     action: Action,

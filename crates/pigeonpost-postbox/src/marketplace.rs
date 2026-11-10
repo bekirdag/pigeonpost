@@ -561,7 +561,7 @@ async fn read_listing(
                     .query_row(
                         "SELECT l.id, l.publisher_id, l.release_id, l.title, l.summary, l.visibility,
                                 l.status, p.display_name, p.owner_kind, l.description, l.address,
-                                l.published_at, r.version, r.manifest
+                                l.published_at, r.version, r.manifest, l.price_currency, l.price_term
                            FROM nest_listings l JOIN publisher_profiles p ON p.id = l.publisher_id
                            JOIN nest_releases r ON r.id = l.release_id
                           WHERE l.id = ?1",
@@ -594,7 +594,12 @@ async fn read_listing(
                                         .unwrap_or_else(pigeonpost_core::nest_package::empty_config_schema),
                                     "operations": manifest["operations"].as_array().cloned()
                                         .unwrap_or_default(),
-                                    "price": { "amount_minor": 0, "funding": "test_credits" },
+                                    "price": {
+                                        "amount_minor": 0,
+                                        "currency": r.get::<_, String>(14)?,
+                                        "term": r.get::<_, String>(15)?,
+                                        "funding": "test_credits",
+                                    },
                                 }),
                                 publisher_id: r.get(1)?,
                                 visibility,
@@ -613,6 +618,22 @@ async fn read_listing(
                 if let Some(account) = &account {
                     f.listing_visible =
                         holds_publisher(&state, &headers, account, &listing.publisher_id).await;
+                    // M2b: an invite or organization grant that allows discovery.
+                    if !f.listing_visible && listing.status == "published" {
+                        let (l, v, a) = (id.clone(), listing.visibility.clone(), account.clone());
+                        f.listing_visible = state
+                            .store
+                            .group_read(move |c| -> GResult<bool> {
+                                Ok(crate::marketplace_grants::account_grant_in(
+                                    c,
+                                    &l,
+                                    &v,
+                                    &a,
+                                    crate::marketplace_grants::Use::Discover,
+                                )?)
+                            })
+                            .await?;
+                    }
                 }
             }
         }

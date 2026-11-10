@@ -525,7 +525,15 @@ fn the_routes_and_the_contract_match() {
     let m1 = include_str!("marketplace_m1.rs");
     // M2's member routes (`marketplace_m2.rs`) too.
     let m2 = include_str!("marketplace_m2.rs");
-    let source = format!("{m0}\n{m1}\n{m2}");
+    // M2b's modules.
+    let m2b = [
+        include_str!("marketplace_grants.rs"),
+        include_str!("marketplace_org.rs"),
+        include_str!("marketplace_sources.rs"),
+        include_str!("marketplace_test_nests.rs"),
+        include_str!("marketplace_listings.rs"),
+    ];
+    let source = format!("{m0}\n{m1}\n{m2}\n{}", m2b.join("\n"));
     let served: BTreeSet<(String, String)> =
         crate::foundations_tests::routes_in(m0, "pub(crate) fn router(")
             .into_iter()
@@ -537,6 +545,10 @@ fn the_routes_and_the_contract_match() {
                 m2,
                 "pub(crate) fn router(",
             ))
+            .chain(
+                m2b.iter()
+                    .flat_map(|m| crate::foundations_tests::routes_in(m, "pub(crate) fn router(")),
+            )
             .collect();
     let spec: Value = serde_json::from_str(include_str!(
         "../../../docs/nests/contracts/pigeonpost-nests.v1.json"

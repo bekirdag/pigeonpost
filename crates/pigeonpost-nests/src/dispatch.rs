@@ -135,6 +135,35 @@ pub fn verify_admission(a: &Admission) -> Result<(), DispatchError> {
     Ok(())
 }
 
+/// The test pool's admission (M2b): a staging postbox's test statement for this release, image
+/// and digest. Never an approval, and a production pool never accepts one.
+pub fn verify_test_admission(a: &Admission) -> Result<(), DispatchError> {
+    let refuse = |why: &str| Err(DispatchError::new("not_attested", why.to_string()));
+    if !valid_ref(&a.release_id) || !pinned_image(&a.image) {
+        return refuse("malformed release");
+    }
+    if a.statement_digest != format!("sha256:{}", sha256_hex(a.statement.as_bytes())) {
+        return refuse("the statement does not match its digest");
+    }
+    let Ok(s) = serde_json::from_str::<Value>(&a.statement) else {
+        return refuse("the statement is not JSON");
+    };
+    if s["type"] != "pigeonpost.nest.release.test.v1"
+        || s["decision"] != "test_only"
+        || s["environment"] != "staging"
+        || s["release_id"] != a.release_id.as_str()
+        || s["release_digest"] != a.release_digest.as_str()
+        || s["image"] != a.image.as_str()
+        || !s["test_nest_id"].is_string()
+    {
+        return refuse("the statement is not a test statement for this release");
+    }
+    if !a.image.ends_with(s["image_digest"].as_str().unwrap_or("-")) {
+        return refuse("the image is not the stated digest");
+    }
+    Ok(())
+}
+
 /// The worker that serves one buyer context of one listing. Derived, so the same pair always
 /// lands on the same worker and two pairs never share one.
 pub fn worker_id(listing_id: &str, context: &str) -> String {
@@ -151,6 +180,9 @@ pub struct Dispatcher {
     pub uid: u32,
     /// One dispatch decision at a time: worker start and quarantine never interleave.
     lock: Mutex<()>,
+    /// A staging test pool (M2b): admits test statements only. Production pools admit
+    /// attestations only.
+    test_pool: bool,
 }
 
 impl Dispatcher {
@@ -161,7 +193,14 @@ impl Dispatcher {
             volume_root,
             uid,
             lock: Mutex::new(()),
+            test_pool: false,
         }
+    }
+
+    /// Make this the test pool of a staging postbox (`[sandbox.marketplace] test_pool = true`).
+    pub fn with_test_pool(mut self, on: bool) -> Self {
+        self.test_pool = on;
+        self
     }
 
     fn volume(&self, w: &MpWorker) -> PathBuf {
@@ -247,7 +286,11 @@ impl Dispatcher {
         {
             return Err(DispatchError::new("invalid", "malformed job"));
         }
-        verify_admission(&job.release)?;
+        if self.test_pool {
+            verify_test_admission(&job.release)?;
+        } else {
+            verify_admission(&job.release)?;
+        }
         let _one = self.lock.lock().map_err(|_| internal("dispatch lock"))?;
         let a = &job.release;
         self.release_state_ok(&a.release_id)?;
@@ -687,5 +730,44 @@ mod tests {
         assert_eq!(v["error"], "not_attested");
         let r = post("/v1/mp/jobs", Some("wrong"), job).await.unwrap();
         assert_eq!(r.status(), 401);
+    }
+
+    fn admission_with(statement: serde_json::Value) -> Admission {
+        let image = format!("localhost/x@sha256:{}", "b".repeat(64));
+        let mut st = statement;
+        st["release_id"] = json!("rel_1");
+        st["release_digest"] = json!(format!("sha256:{}", "a".repeat(64)));
+        st["image"] = json!(image);
+        st["image_digest"] = json!(format!("sha256:{}", "b".repeat(64)));
+        let text = st.to_string();
+        Admission {
+            release_id: "rel_1".into(),
+            image,
+            release_digest: format!("sha256:{}", "a".repeat(64)),
+            statement_digest: format!("sha256:{}", sha256_hex(text.as_bytes())),
+            statement: text,
+        }
+    }
+
+    #[test]
+    fn test_pools_and_production_pools_admit_disjoint_statements() {
+        let approval = admission_with(json!({
+            "type": "pigeonpost.nest.release.attestation.v1",
+            "decision": "approved", "attester": "acct_staff",
+        }));
+        let test = admission_with(json!({
+            "type": "pigeonpost.nest.release.test.v1",
+            "decision": "test_only", "environment": "staging", "test_nest_id": "tnt_1",
+        }));
+        assert!(verify_admission(&approval).is_ok());
+        assert!(verify_test_admission(&test).is_ok());
+        assert_eq!(verify_admission(&test).unwrap_err().code, "not_attested");
+        assert_eq!(
+            verify_test_admission(&approval).unwrap_err().code,
+            "not_attested"
+        );
+        let mut forged = test.clone();
+        forged.statement = forged.statement.replace("staging", "production");
+        assert!(verify_test_admission(&forged).is_err());
     }
 }

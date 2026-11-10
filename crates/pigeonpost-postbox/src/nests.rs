@@ -101,10 +101,12 @@ pub(crate) struct Runtime {
     pub(crate) input_tokens: u64,
     pub(crate) output_tokens: u64,
     /// Last wake sent per Nest, for the debounce.
-    woken: Mutex<HashMap<String, u64>>,
+    pub(crate) woken: Mutex<HashMap<String, u64>>,
     /// Phase B6: the Nests host's key-encryption key, released to nestd over the private link
     /// (`POSTBOX_NESTS_KEK_FILE`, 64 hex characters). Never logged, never sent anywhere else.
     pub(crate) kek: Option<zeroize::Zeroizing<String>>,
+    /// Marketplace M2b: staging mode, the hosted test pool and the git host allowlist.
+    pub(crate) mp: crate::marketplace_env::MpEnv,
 }
 
 impl Default for Runtime {
@@ -116,7 +118,32 @@ impl Default for Runtime {
             output_tokens: 100_000,
             woken: Mutex::new(HashMap::new()),
             kek: None,
+            mp: crate::marketplace_env::MpEnv::default(),
         }
+    }
+}
+
+/// An HTTP transport to a nestd at `url` with `token`, or `Disabled` when both are empty or
+/// either is unusable (`what` names the variables in the warning).
+pub(crate) fn http_transport(url: &str, token: &str, what: &str) -> Transport {
+    if url.is_empty() && token.is_empty() {
+        return Transport::Disabled;
+    }
+    if !url_ok(url) || token.len() < 32 {
+        tracing::warn!("{what} unusable; disabled");
+        return Transport::Disabled;
+    }
+    match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+    {
+        Ok(client) => Transport::Http {
+            url: url.to_string(),
+            token: token.to_string(),
+            client,
+        },
+        Err(_) => Transport::Disabled,
     }
 }
 
@@ -163,24 +190,10 @@ impl Runtime {
             .unwrap_or_default()
             .trim()
             .to_string();
-        let transport = if url.is_empty() && token.is_empty() {
-            Transport::Disabled
-        } else if !url_ok(&url) || token.len() < 32 {
-            tracing::warn!("POSTBOX_NESTS_URL/POSTBOX_NESTS_TOKEN unusable; Nests disabled");
-            Transport::Disabled
-        } else {
-            match reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(20))
-                .redirect(reqwest::redirect::Policy::none())
-                .build()
-            {
-                Ok(client) => {
-                    tracing::info!("Nests configured (nestd on the worker host)");
-                    Transport::Http { url, token, client }
-                }
-                Err(_) => Transport::Disabled,
-            }
-        };
+        let transport = http_transport(&url, &token, "POSTBOX_NESTS_URL/POSTBOX_NESTS_TOKEN");
+        if matches!(transport, Transport::Http { .. }) {
+            tracing::info!("Nests configured (nestd on the worker host)");
+        }
         Runtime {
             transport,
             max_per_account: env_num("POSTBOX_NESTS_MAX_PER_ACCOUNT", 1).min(1_000) as i64,
@@ -188,6 +201,7 @@ impl Runtime {
             output_tokens: env_num("POSTBOX_NESTS_OUTPUT_TOKENS", d.output_tokens),
             woken: Mutex::new(HashMap::new()),
             kek: read_kek(),
+            mp: crate::marketplace_env::MpEnv::from_env(&url),
         }
     }
 
