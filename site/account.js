@@ -351,7 +351,8 @@
       preferredCurrency: defaultCurrency(),
       locale: /^tr\b/i.test(navigator.language || "") ? "tr" : "en",
     });
-    if (window.location.hash === "#products" && box.scrollIntoView) box.scrollIntoView({ block: "start" });
+    // The Windows app links #nests (1.0.x); Linux and the web use #products.
+    if (["#products", "#nests"].includes(window.location.hash) && box.scrollIntoView) box.scrollIntoView({ block: "start" });
   }
 
   function renderDeletion(el) {
