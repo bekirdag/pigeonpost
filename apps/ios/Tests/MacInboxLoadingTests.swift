@@ -19,6 +19,9 @@ enum LocalNotifier {
     static func announce(title: String, subtitle: String, body: String, peer: String, messageId: String) {}
 }
 enum DockBadge { static func show(_ count: Int) {} }
+// Nests are not part of this build; purchase recovery is exercised by the app and NestTests.
+extension View { func nestPurchaseRecovery() -> some View { self } }
+struct NestConversationHeader: View { let peer: String; var addresses: [String] = []; var body: some View { EmptyView() } }
 @MainActor final class MenuBarItem {
     static let shared = MenuBarItem()
     func show(unread: Int) {}
