@@ -73,6 +73,113 @@ pub enum NestAction {
         #[arg(long)]
         config: Option<PathBuf>,
     },
+    /// Ask Pigeonpost to build a pinned commit of your app for review (signed in as the account).
+    Submit {
+        /// The publisher (`pub_…`) you act for.
+        #[arg(long)]
+        publisher: String,
+        /// The template (`tpl_…`), the release's package name on the marketplace.
+        #[arg(long)]
+        template: String,
+        /// The release version, as in nest-release.toml.
+        #[arg(long)]
+        version: String,
+        /// The full commit id to build.
+        #[arg(long)]
+        commit: String,
+        /// A public https repository the build plane fetches.
+        #[arg(long, conflicts_with = "source")]
+        repo: Option<String>,
+        /// A connected source (`src_…`, a deploy key) instead of a public repository.
+        #[arg(long)]
+        source: Option<String>,
+        #[arg(long, env = "PIGEONPOST_POSTBOX", default_value = crate::postbox_cmd::DEFAULT_POSTBOX)]
+        postbox: String,
+    },
+    /// Show your builds, or one build and its review's stages.
+    Status {
+        #[arg(long)]
+        publisher: String,
+        #[arg(long)]
+        build: Option<String>,
+        #[arg(long)]
+        review: Option<String>,
+        #[arg(long, env = "PIGEONPOST_POSTBOX", default_value = crate::postbox_cmd::DEFAULT_POSTBOX)]
+        postbox: String,
+    },
+    /// A hosted test Nest's log (staging postbox).
+    Logs {
+        #[arg(long)]
+        publisher: String,
+        #[arg(long = "test-nest")]
+        test_nest: String,
+        #[arg(long, env = "PIGEONPOST_POSTBOX", default_value = crate::postbox_cmd::DEFAULT_POSTBOX)]
+        postbox: String,
+    },
+}
+
+impl NestAction {
+    /// Whether the action is offline (no identity, home or network) or talks to the postbox as
+    /// the signed-in account.
+    pub fn offline(&self) -> bool {
+        !matches!(
+            self,
+            NestAction::Submit { .. } | NestAction::Status { .. } | NestAction::Logs { .. }
+        )
+    }
+}
+
+/// The account-side actions (`submit`, `status`, `logs`), after the home is known.
+pub async fn run_online(home: &Path, args: &NestArgs, json: bool) -> Result<(), Error> {
+    use crate::nest_publish_cmd as publish;
+    match &args.action {
+        NestAction::Submit {
+            publisher,
+            template,
+            version,
+            commit,
+            repo,
+            source,
+            postbox,
+        } => {
+            publish::submit(
+                home,
+                publish::Submit {
+                    postbox,
+                    publisher,
+                    template,
+                    version,
+                    commit,
+                    repo: repo.as_deref(),
+                    source: source.as_deref(),
+                },
+                json,
+            )
+            .await
+        }
+        NestAction::Status {
+            publisher,
+            build,
+            review,
+            postbox,
+        } => {
+            publish::status(
+                home,
+                postbox,
+                publisher,
+                build.as_deref(),
+                review.as_deref(),
+                json,
+            )
+            .await
+        }
+        NestAction::Logs {
+            publisher,
+            test_nest,
+            postbox,
+        } => publish::logs(home, postbox, publisher, test_nest, json).await,
+        _ => run(args, json).await,
+    }
 }
 
 #[derive(Args)]
@@ -134,6 +241,9 @@ pub async fn run(args: &NestArgs, json: bool) -> Result<(), Error> {
         NestAction::Run(r) => run_app(r, json).await,
         NestAction::Validate { dir, config } => {
             crate::nest_cmd::validate(dir, config.as_deref(), json)
+        }
+        NestAction::Submit { .. } | NestAction::Status { .. } | NestAction::Logs { .. } => {
+            Err("this nest command needs the signed-in account".into())
         }
     }
 }

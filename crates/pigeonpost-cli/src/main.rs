@@ -18,6 +18,7 @@ mod loft_key;
 mod login_cmd;
 mod nest_cmd;
 mod nest_dev_cmd;
+mod nest_publish_cmd;
 mod onboard_cmd;
 mod output;
 mod panel;
@@ -1238,7 +1239,9 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
 
     // Nest app development is offline and needs no identity, home or network.
     if let Command::Nest(args) = &cli.command {
-        return nest_dev_cmd::run(args, cli.json).await;
+        if args.action.offline() {
+            return nest_dev_cmd::run(args, cli.json).await;
+        }
     }
 
     // `loft serve` is the one command that is not about an agent identity, so it runs before any
@@ -1555,6 +1558,10 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     }
     if let Command::Calendar(args) = &cli.command {
         return calendar_cmd::run(&home, args, cli.json).await;
+    }
+    // A publisher's review pipeline acts as the signed-in account, never as a local identity.
+    if let Command::Nest(args) = &cli.command {
+        return nest_dev_cmd::run_online(&home, args, cli.json).await;
     }
 
     // Hosted mailboxes are independent of the local agent key, so — like the read-only commands
