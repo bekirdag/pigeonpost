@@ -1033,7 +1033,7 @@ export function createCallsService(cfgIn, deps = {}) {
     const TRACK = ["live", "muted", "ended", "off", "none", "later"];
     const revived = Array.isArray(m.revived) ? m.revived.filter((x) => ["noise", "mic", "camera", "voice"].includes(x)).slice(-6).join(",") : "";
     const at = Math.min(999, Math.max(0, Math.round(Number(m.at) || 0)));
-    console.log(`calls: media room=${room.id.slice(0, 6)} ${from.id.slice(0, 6)}>${to.id.slice(0, 6)} at=${at}s host=${pick(m.host, ["native", "inbox", "join", "meeting"])} vis=${pick(m.vis, ["visible", "hidden"])} mic=${pick(m.mic, TRACK)} sent=${pick(m.sent, ["raw", "noise"])} cam=${pick(m.cam, TRACK)} out=a${flag(m.out_audio)}v${flag(m.out_video)} in=a${flag(m.in_audio)}e${flag(m.in_energy)}v${flag(m.in_video)} voice=${pick(m.voice, ["playing", "stalled", "paused", "none"])} revived=${revived || "-"}`);
+    console.log(`calls: media room=${room.id.slice(0, 6)} ${from.id.slice(0, 6)}>${to.id.slice(0, 6)} at=${at}s host=${pick(m.host, ["native", "ios-native", "inbox", "join", "meeting"])} vis=${pick(m.vis, ["visible", "hidden"])} mic=${pick(m.mic, TRACK)} sent=${pick(m.sent, ["raw", "noise"])} cam=${pick(m.cam, TRACK)} out=a${flag(m.out_audio)}v${flag(m.out_video)} in=a${flag(m.in_audio)}e${flag(m.in_energy)}v${flag(m.in_video)} voice=${pick(m.voice, ["playing", "stalled", "paused", "none"])} revived=${revived || "-"}`);
     return { ok: true };
   }
 

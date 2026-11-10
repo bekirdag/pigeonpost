@@ -28,6 +28,7 @@ struct RootView: View {
         // Calls sit over everything, the sign-in included, so ending one is never hidden behind a
         // screen change.
         .overlay { CallOverlay() }
+        .overlay { NativeCallOverlay() }
         .task(id: callIdentity) {
             if Fixtures.enabled && !CallHost.debugEnabled { return }
             if session.status == .signedIn, account.me != nil {

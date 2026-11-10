@@ -211,9 +211,13 @@ arrives, it is answered without another click (the Linux app opens this).
   (past `expires_at`) or for another account is still reported, then ended at once as unanswered.
 - The system call screen shows the caller's display name and handle (lock screen, home screen,
   Recents with the app icon).
-- Answer: the app makes sure the call page is loaded and signed in, then calls
-  `PigeonpostNative.answer`. The audio session is configured for a call and activated by CallKit
-  (`didActivate`); WebKit's capture starts after that.
+- Answer: the call runs in the app itself (`NativeCall`, WebRTC in this process), inside the audio
+  session CallKit activates. It speaks the page's protocol: the same event stream, signals, three
+  m-lines and negotiated data channel. The page's media runs in WebKit's own processes, outside
+  that session, and a locked iPhone answering on it connected but carried no sound (2026-10-30,
+  2026-11-04, 2026-11-09). A room already on the media server still goes to the page (`needs_e2ee`).
+  A native participant answers with `e2ee: false`, so a mesh call holding one cannot grow past the
+  mesh limit onto the media server.
 - Decline: `POST /calls/v1/rings/{room}/decline` with the ring token (works without a member token).
 - While the system screen rings, the app polls `GET /calls/v1/rings/{room}` every 2 s; an ended
   ring is reported with `reportCall(with:endedAt:reason:)` (`.answeredElsewhere`, `.declinedElsewhere`,
