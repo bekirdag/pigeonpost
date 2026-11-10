@@ -42,7 +42,7 @@ install -d -o nestbuild -g nestbuild -m 0700 /home/nestbuild/.config/containers
 install -o nestbuild -g nestbuild -m 0600 containers.conf /home/nestbuild/.config/containers/containers.conf
 ```
 
-4. As nestbuild (sudo -u nestbuild XDG_RUNTIME_DIR=/run/user/2350 ...): podman network create nestbuild-fetch ; podman pull the pinned git image and the pinned rust image by digest (or podman load them) ; podman info --format '{{.Host.Security.Rootless}}' must print true.
+4. As nestbuild (sudo -u nestbuild XDG_RUNTIME_DIR=/run/user/2350 ...): podman network create nestbuild-fetch ; load the pinned images (git, rust, node, python) into nestbuild's storage — the registry is not on nestbuild's allowlist, so pull them as root (`docker pull` / `podman pull`) and `save | sudo -u nestbuild podman load` ; podman info --format '{{.Host.Security.Rootless}}' must print true.
 ```sh
 sudo -u nestbuild XDG_RUNTIME_DIR=/run/user/2350 podman network create nestbuild-fetch
 sudo -u nestbuild XDG_RUNTIME_DIR=/run/user/2350 podman pull <GIT_IMAGE>@sha256:<DIGEST>
@@ -73,7 +73,7 @@ chmod 0640 /etc/pigeonpost-buildd/submit-token.sha256 /etc/pigeonpost-buildd/art
 install -d -o nestbuild -g nestbuild -m 0700 /var/lib/pigeonpost-buildd
 ```
 
-8. WireGuard: wg-nestbuild.conf.example -> /etc/wireguard/wg-nestbuild.conf; systemctl enable --now wg-quick@wg-nestbuild ; open the UDP port in ufw from the postbox host and nests-1 public addresses only.
+8. WireGuard: wg-nestbuild.conf.example -> /etc/wireguard/wg-nestbuild.conf; systemctl enable --now wg-quick@wg-nestbuild ; open the UDP port in ufw from the postbox host and nests-1 public addresses only. If the build host is behind NAT (raijin is), reverse it: the postbox host and nests-1 listen (ufw allows the build host's egress address only) and the build host dials out to both with `Endpoint` and `PersistentKeepalive = 25`.
 ```sh
 install -m 0644 wg-nestbuild.conf.example /etc/wireguard/wg-nestbuild.conf
 # edit /etc/wireguard/wg-nestbuild.conf with peer keys and endpoints
@@ -82,15 +82,15 @@ ufw allow from <POSTBOX_PUBLIC_ADDR> to any port <WG_UDP_PORT> proto udp
 ufw allow from <NESTS1_PUBLIC_ADDR> to any port <WG_UDP_PORT> proto udp
 ```
 
-9. nftables: install -m 0644 nestbuild.nft /etc/nftables.d/ ; fill the resolver, model route and caller sets ; nft -f /etc/nftables.d/nestbuild.nft ; make sure /etc/nftables.conf includes /etc/nftables.d/*.nft so it survives a reboot. install -m 0755 nestbuild-allowlist /usr/local/sbin/ ; install the .service/.timer ; systemctl enable --now nestbuild-allowlist.timer ; run it once and check nft list set inet nestbuild fetch_v4.
+9. nftables: install -m 0644 nestbuild.nft /etc/nftables.d/ ; fill the resolver (include the systemd-resolved stub 127.0.0.53 if /etc/resolv.conf points at it), model route and caller sets ; check and load it with nft ; load it at boot with its own unit, nestbuild-nft.service. **Do not** add an include to /etc/nftables.conf or enable nftables.service on a Docker host: that file starts with `flush ruleset` and would wipe Docker's rules. install -m 0755 nestbuild-allowlist /usr/local/sbin/ ; install the .service/.timer ; systemctl enable --now nestbuild-allowlist.timer (every minute; each name resolved three times; public CIDR lines such as GitHub's published ranges are taken as they are) ; run it once and check nft list set inet nestbuild fetch_v4.
 ```sh
 install -m 0644 nestbuild.nft /etc/nftables.d/nestbuild.nft
 # edit /etc/nftables.d/nestbuild.nft to fill resolver, model route, caller sets
-nft -f /etc/nftables.d/nestbuild.nft
-grep 'include.*nft' /etc/nftables.conf || echo 'include "/etc/nftables.d/*.nft"' >> /etc/nftables.conf
+nft -c -f /etc/nftables.d/nestbuild.nft && nft -f /etc/nftables.d/nestbuild.nft
+install -m 0644 nestbuild-nft.service /etc/systemd/system/ && systemctl enable nestbuild-nft.service
 install -m 0755 nestbuild-allowlist /usr/local/sbin/nestbuild-allowlist
 # install nestbuild-allowlist.service and .timer into /etc/systemd/system/
-systemctl enable --now nestbuild-allowlist.timer
+systemctl daemon-reload && systemctl enable --now nestbuild-allowlist.timer
 nestbuild-allowlist
 nft list set inet nestbuild fetch_v4
 ```

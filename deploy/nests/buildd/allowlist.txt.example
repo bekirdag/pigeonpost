@@ -11,3 +11,9 @@ crates.io
 registry.npmjs.org
 pypi.org
 files.pythonhosted.org
+# GitHub's published git/web ranges (api.github.com/meta): its addresses rotate faster than a
+# resolve-and-pin allowlist can follow.
+192.30.252.0/22
+185.199.108.0/22
+140.82.112.0/20
+143.55.64.0/20

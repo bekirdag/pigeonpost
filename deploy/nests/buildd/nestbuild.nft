@@ -34,6 +34,7 @@ table inet nestbuild {
 	set fetch_v4 {
 		type ipv4_addr
 		flags interval
+		auto-merge
 	}
 
 	# The self-hosted model route (mswarm's self-hosted load balancer), by address.
@@ -60,8 +61,8 @@ table inet nestbuild {
 		# elements = { <POSTBOX_INTERNAL_PORT> }
 	}
 
-	# The host's DNS resolver (systemd-resolved stub is 127.0.0.53; prefer an upstream address so
-	# loopback can stay closed).
+	# The host's DNS resolvers. Include the systemd-resolved stub 127.0.0.53 when /etc/resolv.conf
+	# points at it (the only loopback address nestbuild may reach, port 53 only), plus the upstreams.
 	set resolver_v4 {
 		type ipv4_addr
 		# elements = { <RESOLVER_ADDR> }

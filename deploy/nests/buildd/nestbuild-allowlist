@@ -2,9 +2,9 @@
 # /usr/local/sbin/nestbuild-allowlist — refresh the build plane's egress allowlist.
 #
 # Resolves every name in /etc/pigeonpost-buildd/allowlist.txt (one per line, # comments) to its
-# IPv4 addresses and replaces the nftables set inet nestbuild fetch_v4 with exactly those, in one
-# nft transaction. Run by nestbuild-allowlist.timer every 15 minutes, because git hosts and the
-# crate registry sit behind CDNs whose addresses change.
+# IPv4 addresses (a line may also be a public IPv4 CIDR, e.g. a git host's published range) and replaces the nftables set inet nestbuild fetch_v4 with exactly those, in one
+# nft transaction. Run by nestbuild-allowlist.timer every minute and resolves each name three times,
+# because git hosts and package registries sit behind CDNs whose addresses rotate.
 #
 # Fail closed: if a name does not resolve, the old addresses for the other names stay (the set is
 # only replaced when at least one address resolved), and nothing outside the list is ever added.
@@ -15,6 +15,13 @@ LIST=/etc/pigeonpost-buildd/allowlist.txt
 addrs=()
 while read -r name _; do
   case "$name" in ''|'#'*) continue ;; esac
+  # A published range (public IPv4 CIDR only).
+  if [[ "$name" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/([0-9]|[12][0-9]|3[0-2])$ ]]; then
+    case "$name" in
+      10.*|127.*|169.254.*|172.1[6-9].*|172.2[0-9].*|172.3[01].*|192.168.*|0.*) echo "skip $name: private" >&2; continue ;;
+    esac
+    addrs+=("$name"); continue
+  fi
   # Exact names only: letters, digits, dots and hyphens.
   [[ "$name" =~ ^[a-z0-9.-]+$ ]] || { echo "skip $name: not a host name" >&2; continue; }
   while read -r ip; do
@@ -23,14 +30,14 @@ while read -r name _; do
       10.*|127.*|169.254.*|172.1[6-9].*|172.2[0-9].*|172.3[01].*|192.168.*|0.*) continue ;;
     esac
     addrs+=("$ip")
-  done < <(getent ahostsv4 "$name" | awk '{print $1}' | sort -u)
+  done < <(for _ in 1 2 3; do getent ahostsv4 "$name" | awk '{print $1}'; sleep 0.3; done | sort -u)
 done < "$LIST"
 
 if [ "${#addrs[@]}" -eq 0 ]; then
   echo "nestbuild-allowlist: nothing resolved; keeping the current set" >&2
   exit 1
 fi
-elements=$(printf '%s, ' "${addrs[@]}" | sed 's/, $//')
+elements=$(printf '%s\n' "${addrs[@]}" | sort -u | paste -sd, - | sed 's/,/, /g')
 nft -f - <<EOF
 flush set inet nestbuild fetch_v4
 add element inet nestbuild fetch_v4 { $elements }
