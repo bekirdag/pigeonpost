@@ -119,7 +119,7 @@ struct BuyNestsSection: View {
         } header: {
             Text("Packages")
         } footer: {
-            Text("Monthly, renews automatically until you cancel in your App Store subscriptions. Model allowances are shared by the package's Nests. Plans and prices may change before Nests are generally available.")
+            Text("Monthly, renews automatically until you cancel in your App Store subscriptions. Model allowances are shared by the package's Nests.")
         }
 
         if !store.setups.isEmpty {

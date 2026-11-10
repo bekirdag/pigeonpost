@@ -267,6 +267,6 @@ enum NestWords {
     }
 
     static func bytes(_ value: Int64) -> String {
-        ByteCountFormatter.string(fromByteCount: value, countStyle: .file)
+        ByteCountFormatter.string(fromByteCount: value, countStyle: .binary)
     }
 }

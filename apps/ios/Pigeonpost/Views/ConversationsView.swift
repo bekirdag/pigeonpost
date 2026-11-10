@@ -54,7 +54,7 @@ struct ConversationsView: View {
         init?(staged: String) {
             switch staged {
             case "identities": self = .identities
-            case "settings", "privacy", "blocked", "profile", "name", "phone", "find-people": self = .settings
+            case "settings", "privacy", "blocked", "profile", "name", "phone", "find-people", "products": self = .settings
             case "calls": self = .calls
             case "filtered": self = .filtered
             case "new": self = .new
