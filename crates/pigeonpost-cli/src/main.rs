@@ -16,6 +16,7 @@ mod install_cmd;
 mod loft_cmd;
 mod loft_key;
 mod login_cmd;
+mod nest_cmd;
 mod onboard_cmd;
 mod output;
 mod panel;
@@ -76,6 +77,20 @@ struct Cli {
 
     #[command(subcommand)]
     command: Command,
+}
+
+#[derive(Subcommand)]
+enum NestAction {
+    /// Check a package directory (`nest-release.toml`, `Containerfile`) against the marketplace's
+    /// package rules, the same ones the postbox applies. Exits non-zero on any finding.
+    Validate {
+        /// The package directory.
+        dir: PathBuf,
+        /// Also check an example installation configuration (a JSON file) against the package's
+        /// `config_schema`.
+        #[arg(long)]
+        config: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -217,6 +232,12 @@ enum Command {
     Directory {
         #[command(subcommand)]
         action: DirectoryAction,
+    },
+
+    /// Work with Nest packages for the marketplace (publishers). Offline; touches no identity.
+    Nest {
+        #[command(subcommand)]
+        action: NestAction,
     },
 
     /// Sign this terminal in to a Pigeonpost account.
@@ -1322,6 +1343,14 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         return directory_cmd::serve(bind, dir).await;
     }
 
+    // Offline package checks: no identity, no home directory, no network.
+    if let Command::Nest {
+        action: NestAction::Validate { dir, config },
+    } = &cli.command
+    {
+        return nest_cmd::validate(dir, config.as_deref(), cli.json);
+    }
+
     // --home wins when both are given: it is the more specific instruction, and silently
     // redirecting an explicit path would be the worst kind of helpful.
     let home = match (cli.home.clone(), cli.agent.as_deref()) {
@@ -2311,6 +2340,7 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         },
 
         Command::Registry { .. }
+        | Command::Nest { .. }
         | Command::Install { .. }
         | Command::Postbox { .. }
         | Command::Group(_)

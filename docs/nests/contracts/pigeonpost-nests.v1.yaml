@@ -16,12 +16,14 @@ info:
     phase is not enabled answers `404 feature_disabled`. Each implemented operation names its
     policy action in `x-pigeonpost-action`; a postbox test keeps the routes and this file in step.
 
-    Scope: the four core operations of the marketplace build plan, plus the seven M0 routes and
-    the M1 reference path (native jobs with zero-priced quotes and payment authorizations, staff
-    review, attestation and quarantine). Operations marked `x-pigeonpost-status: implemented` are
-    served by the postbox. Everything else in the plan (catalog, installations, publisher console,
-    paid purchases, test environments) needs its own operation schemas and policy actions before
-    implementation.
+    Scope: the four core operations of the marketplace build plan, the seven M0 routes, the M1
+    reference path (native jobs with zero-priced quotes and payment authorizations, staff review,
+    attestation and quarantine) and the M2 publisher beta (publisher certification and roles,
+    templates, source builds, the publisher's review view with redacted findings, listings and
+    visibility, the catalog, installations with configuration, update, rollback and uninstall,
+    staff queues and moderation). Operations marked `x-pigeonpost-status: implemented` are served
+    by the postbox. Paid purchases (M3), hosted test Nests and invite-only or organization
+    visibility still need their own operations.
 
     M1 moves no money: every quote and payment authorization is zero-priced, and there is no
     wallet and no spend mandate (owner decision 2026-11-09, per-purchase payments).
@@ -67,6 +69,10 @@ tags:
     description: Single-use, intent-bound references to reserved marketplace credits.
   - name: Publisher reviews
     description: Redacted status of a release candidate's review.
+  - name: Publisher console
+    description: 'Marketplace M2: what a publisher''s team does: roles, templates, builds, reviews and listings.'
+  - name: Nest installations
+    description: 'Marketplace M2: a buyer''s pinned use of a listing, with its configuration, updates, rollback and uninstall. Free (test credits only).'
 paths:
   /v1/nest-jobs:
     post:
@@ -337,6 +343,8 @@ paths:
       tags: [Publisher reviews]
       operationId: getNestReview
       summary: Read a release candidate's review status
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: PublisherManage
       description: |
         A redacted, monotonically versioned projection for the publisher's authorized team: a
         personal publisher's own account, or an org publisher's members holding the publisher role
@@ -744,6 +752,1227 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+  /v1/publishers:
+    get:
+      tags:
+      - Publisher console
+      operationId: listPublishers
+      summary: List the publishers the caller acts for
+      description: The caller's own publisher and those of the orgs they administer or hold a publisher role in, each with the caller's `role`.
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: PublisherManage
+      security:
+      - memberToken: []
+      responses:
+        '200':
+          description: Publishers.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                - next_cursor
+                additionalProperties: false
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Publisher'
+                  next_cursor:
+                    type:
+                    - string
+                    - 'null'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/publishers/{publisher}:
+    get:
+      tags:
+      - Publisher console
+      operationId: readPublisher
+      summary: Read a publisher profile
+      description: 'The publisher''s team: a personal publisher''s own account; for an org publisher, the org''s owner and full admins and active members holding a live `publisher_admin` or `publisher_finance` role. Anyone else gets `404 not_found`.'
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: PublisherManage
+      security:
+      - memberToken: []
+      parameters:
+      - $ref: '#/components/parameters/Publisher'
+      responses:
+        '200':
+          description: The publisher, with the caller's role.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Publisher'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/publishers/{publisher}/roles:
+    get:
+      tags:
+      - Publisher console
+      operationId: listPublisherRoles
+      summary: List an org publisher's roles
+      description: 'The publisher''s team: a personal publisher''s own account; for an org publisher, the org''s owner and full admins and active members holding a live `publisher_admin` or `publisher_finance` role. Anyone else gets `404 not_found`.'
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: PublisherManage
+      security:
+      - memberToken: []
+      parameters:
+      - $ref: '#/components/parameters/Publisher'
+      responses:
+        '200':
+          description: Live roles.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                - next_cursor
+                additionalProperties: false
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PublisherRole'
+                  next_cursor:
+                    type:
+                    - string
+                    - 'null'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags:
+      - Publisher console
+      operationId: grantPublisherRole
+      summary: Grant a publisher role
+      description: An org publisher's org owner or full admin gives an **active org member** `publisher_admin` (acts for the publisher, publishes with step-up) or `publisher_finance` (reads only; earnings arrive in M3). Roles live in `publisher_roles`, not `org_roles`, and count only while the person stays an active member (`400 not_org_member`, `409 role_already_held`).
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: PublisherManage
+      security:
+      - memberToken: []
+      parameters:
+      - $ref: '#/components/parameters/Publisher'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PublisherRoleGrant'
+      responses:
+        '201':
+          description: The granted role.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/PublisherRole'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v1/publishers/{publisher}/roles/{role}:
+    delete:
+      tags:
+      - Publisher console
+      operationId: revokePublisherRole
+      summary: Revoke a publisher role
+      description: An org owner or full admin takes a publisher role back.
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: PublisherManage
+      security:
+      - memberToken: []
+      parameters:
+      - $ref: '#/components/parameters/Publisher'
+      - $ref: '#/components/parameters/PublisherRoleId'
+      responses:
+        '204':
+          description: Revoked.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/publishers/{publisher}/templates:
+    get:
+      tags:
+      - Publisher console
+      operationId: listTemplates
+      summary: List templates
+      description: 'The publisher''s team: a personal publisher''s own account; for an org publisher, the org''s owner and full admins and active members holding a live `publisher_admin` or `publisher_finance` role. Anyone else gets `404 not_found`.'
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: PublisherManage
+      security:
+      - memberToken: []
+      parameters:
+      - $ref: '#/components/parameters/Publisher'
+      responses:
+        '200':
+          description: Templates.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                - next_cursor
+                additionalProperties: false
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Template'
+                  next_cursor:
+                    type:
+                    - string
+                    - 'null'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags:
+      - Publisher console
+      operationId: createTemplate
+      summary: Create a template
+      description: 'A person acting for a **certified** publisher: the owning account, an org owner or admin, or a `publisher_admin` (`403 publisher_role_required` for `publisher_finance`; `403 publisher_not_certified` / `publisher_revoked` otherwise). A template is the line of releases one package name has (`409 template_exists`).'
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: PublisherManage
+      security:
+      - memberToken: []
+      parameters:
+      - $ref: '#/components/parameters/Publisher'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TemplateCreate'
+      responses:
+        '201':
+          description: The template.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Template'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v1/publishers/{publisher}/builds:
+    get:
+      tags:
+      - Publisher console
+      operationId: listBuilds
+      summary: List build requests
+      description: 'The publisher''s team: a personal publisher''s own account; for an org publisher, the org''s owner and full admins and active members holding a live `publisher_admin` or `publisher_finance` role. Anyone else gets `404 not_found`.'
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: PublisherManage
+      security:
+      - memberToken: []
+      parameters:
+      - $ref: '#/components/parameters/Publisher'
+      responses:
+        '200':
+          description: Newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                - next_cursor
+                additionalProperties: false
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Build'
+                  next_cursor:
+                    type:
+                    - string
+                    - 'null'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags:
+      - Publisher console
+      operationId: requestBuild
+      summary: Request a build from source
+      description: 'A person acting for a **certified** publisher: the owning account, an org owner or admin, or a `publisher_admin` (`403 publisher_role_required` for `publisher_finance`; `403 publisher_not_certified` / `publisher_revoked` otherwise). Pigeonpost builds the release itself from the pinned commit (R-62: no image-only production). The build plane picks the request up; when it answers, the review starts with its intake stage and `nest.review.stage_changed` is sent. One build per template version (`409 version_exists`).'
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: PublisherManage
+      security:
+      - memberToken: []
+      parameters:
+      - $ref: '#/components/parameters/Publisher'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BuildCreate'
+      responses:
+        '201':
+          description: The queued build request.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Build'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v1/publishers/{publisher}/builds/{build}:
+    get:
+      tags:
+      - Publisher console
+      operationId: readBuild
+      summary: Read a build request
+      description: 'The publisher''s team: a personal publisher''s own account; for an org publisher, the org''s owner and full admins and active members holding a live `publisher_admin` or `publisher_finance` role. Anyone else gets `404 not_found`.'
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: PublisherManage
+      security:
+      - memberToken: []
+      parameters:
+      - $ref: '#/components/parameters/Publisher'
+      - $ref: '#/components/parameters/Build'
+      responses:
+        '200':
+          description: The build request.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Build'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/publishers/{publisher}/reviews:
+    get:
+      tags:
+      - Publisher console
+      operationId: listNestReviews
+      summary: List reviews
+      description: 'The publisher''s team: a personal publisher''s own account; for an org publisher, the org''s owner and full admins and active members holding a live `publisher_admin` or `publisher_finance` role. Anyone else gets `404 not_found`.'
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: PublisherManage
+      security:
+      - memberToken: []
+      parameters:
+      - $ref: '#/components/parameters/Publisher'
+      responses:
+        '200':
+          description: Newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                - next_cursor
+                additionalProperties: false
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/NestReviewStatus'
+                  next_cursor:
+                    type:
+                    - string
+                    - 'null'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/publishers/{publisher}/reviews/{review}/findings:
+    get:
+      tags:
+      - Publisher console
+      operationId: readNestReviewFindings
+      summary: Read redacted findings
+      description: 'The publisher''s team: a personal publisher''s own account; for an org publisher, the org''s owner and full admins and active members holding a live `publisher_admin` or `publisher_finance` role. Anyone else gets `404 not_found`. Deterministic-scan findings are shown in full (they are about the publisher''s own source); behaviour-test findings show only their rule; the AI review is advisory evidence for staff and shows only a count.'
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: PublisherManage
+      security:
+      - memberToken: []
+      parameters:
+      - $ref: '#/components/parameters/Publisher'
+      - $ref: '#/components/parameters/Review'
+      responses:
+        '200':
+          description: Per-stage findings.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/NestReviewFindings'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/publishers/{publisher}/reviews/{review}/withdraw:
+    post:
+      tags:
+      - Publisher console
+      operationId: withdrawNestReview
+      summary: Withdraw a review
+      description: The publisher's admins take an open or blocked review out of the queue (`409 review_closed` once decided).
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: PublisherManage
+      security:
+      - memberToken: []
+      parameters:
+      - $ref: '#/components/parameters/Publisher'
+      - $ref: '#/components/parameters/Review'
+      responses:
+        '200':
+          description: The withdrawn review.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/NestReviewStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v1/publishers/{publisher}/listings:
+    get:
+      tags:
+      - Publisher console
+      operationId: listPublisherListings
+      summary: List the publisher's listings
+      description: 'The publisher''s team: a personal publisher''s own account; for an org publisher, the org''s owner and full admins and active members holding a live `publisher_admin` or `publisher_finance` role. Anyone else gets `404 not_found`.'
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: PublisherManage
+      security:
+      - memberToken: []
+      parameters:
+      - $ref: '#/components/parameters/Publisher'
+      responses:
+        '200':
+          description: Every status and visibility.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                - next_cursor
+                additionalProperties: false
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Listing'
+                  next_cursor:
+                    type:
+                    - string
+                    - 'null'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags:
+      - Publisher console
+      operationId: createListing
+      summary: Create a draft listing
+      description: 'A person acting for a **certified** publisher: the owning account, an org owner or admin, or a `publisher_admin` (`403 publisher_role_required` for `publisher_finance`; `403 publisher_not_certified` / `publisher_revoked` otherwise). The listing serves the release manifest''s `listing_address` (`409 listing_address_taken`). Visibility is `public`, `unlisted` or `private` (`400 visibility_not_available` for `invite_only` and `organization`, which need grants not built yet).'
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: PublisherManage
+      security:
+      - memberToken: []
+      parameters:
+      - $ref: '#/components/parameters/Publisher'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ListingCreate'
+      responses:
+        '201':
+          description: The draft listing.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Listing'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v1/publishers/{publisher}/listings/{listing}:
+    patch:
+      tags:
+      - Publisher console
+      operationId: editListing
+      summary: Edit listing metadata
+      description: 'A person acting for a **certified** publisher: the owning account, an org owner or admin, or a `publisher_admin` (`403 publisher_role_required` for `publisher_finance`; `403 publisher_not_certified` / `publisher_revoked` otherwise). Publisher-editable fields only: `title`, `summary`, `description`, `visibility`. Status, release and address change through `publish`/`withdraw`; moderation (`suspended`) is staff''s. Sends `nest.listing.updated`.'
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: PublisherManage
+      security:
+      - memberToken: []
+      parameters:
+      - $ref: '#/components/parameters/Publisher'
+      - $ref: '#/components/parameters/Listing'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ListingPatch'
+      responses:
+        '200':
+          description: The listing.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Listing'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/publishers/{publisher}/listings/{listing}/publish:
+    post:
+      tags:
+      - Publisher console
+      operationId: publishListing
+      summary: Publish a listing
+      description: 'A person acting for a **certified** publisher: the owning account, an org owner or admin, or a `publisher_admin` (`403 publisher_role_required` for `publisher_finance`; `403 publisher_not_certified` / `publisher_revoked` otherwise). Needs **step-up**. Publishes the listing on an attested, live release of its template (the current one, or `release_id`), or moves a live listing to a newer one. Existing installations stay on their release until their owner updates. `409 review_required`, `release_revoked`, `security_quarantined`, `listing_suspended`, `listing_address_changed`.'
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: NestPublish
+      security:
+      - memberToken: []
+      parameters:
+      - $ref: '#/components/parameters/Publisher'
+      - $ref: '#/components/parameters/Listing'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ListingPublish'
+      responses:
+        '200':
+          description: The published listing.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Listing'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v1/publishers/{publisher}/listings/{listing}/withdraw:
+    post:
+      tags:
+      - Publisher console
+      operationId: withdrawListing
+      summary: Withdraw a listing
+      description: 'A person acting for a publisher: the owning account, an org owner or admin, or a `publisher_admin` (`403 publisher_role_required` for `publisher_finance`; `403 publisher_not_certified` / `publisher_revoked` otherwise). Its installations stop taking jobs; they can still be read and uninstalled. A suspended listing is staff''s (`409 listing_suspended`).'
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: PublisherManage
+      security:
+      - memberToken: []
+      parameters:
+      - $ref: '#/components/parameters/Publisher'
+      - $ref: '#/components/parameters/Listing'
+      responses:
+        '200':
+          description: The withdrawn listing.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Listing'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v1/marketplace/listings:
+    get:
+      tags:
+      - Marketplace listings
+      operationId: searchListings
+      summary: Search the catalog
+      description: Anyone, with or without a credential (a presented credential must be valid). Published, **public** listings of certified publishers on live releases only; unlisted listings are reachable by id, never listed. Discovery grants nothing.
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: NestDiscover
+      security:
+      - {}
+      - memberToken: []
+      - apiKey: []
+      - capToken: []
+      parameters:
+      - name: q
+        in: query
+        required: false
+        description: Words in the title or summary.
+        schema:
+          type: string
+          maxLength: 100
+      - name: cursor
+        in: query
+        required: false
+        description: The `next_cursor` of the previous page.
+        schema:
+          type: string
+          maxLength: 20
+      responses:
+        '200':
+          description: At most 100 per page.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                - next_cursor
+                additionalProperties: false
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Listing'
+                  next_cursor:
+                    type:
+                    - string
+                    - 'null'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/nest-installations:
+    get:
+      tags:
+      - Nest installations
+      operationId: listInstallations
+      summary: List installations
+      description: A person's own installations, active first.
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: NestInstall
+      security:
+      - memberToken: []
+      responses:
+        '200':
+          description: Installations.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                - next_cursor
+                additionalProperties: false
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Installation'
+                  next_cursor:
+                    type:
+                    - string
+                    - 'null'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags:
+      - Nest installations
+      operationId: install
+      summary: Install a listing
+      description: 'A person installs a listing they can see (published; public, unlisted, or private to their own publisher team) for their own account, on the listing''s current attested release. The installation pins that release: its jobs run it, with this configuration, in the account''s own worker. Free: `funding` is `test_credits` and no money moves (M2). `400 invalid_configuration` with `details.issues`, `409 already_installed`, `review_required`, `release_revoked`, `security_quarantined`.'
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: NestInstall
+      security:
+      - memberToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstallationCreate'
+      responses:
+        '201':
+          description: The installation.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Installation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v1/nest-installations/{installation}:
+    get:
+      tags:
+      - Nest installations
+      operationId: readInstallation
+      summary: Read an installation
+      description: 'The installing account, a person. Anyone else gets `404`. Secret values are never returned: `secrets` says which are set.'
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: NestManage
+      security:
+      - memberToken: []
+      parameters:
+      - $ref: '#/components/parameters/Installation'
+      responses:
+        '200':
+          description: The installation.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Installation'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags:
+      - Nest installations
+      operationId: uninstall
+      summary: Uninstall
+      description: The configuration and its sealed secrets are deleted, open jobs are cancelled, and the worker host deletes the account's worker and its volume (`runtime_removed` says whether it confirmed).
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: NestManage
+      security:
+      - memberToken: []
+      parameters:
+      - $ref: '#/components/parameters/Installation'
+      responses:
+        '200':
+          description: Uninstalled.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Uninstalled'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v1/nest-installations/{installation}/configuration:
+    put:
+      tags:
+      - Nest installations
+      operationId: configureInstallation
+      summary: Replace the configuration
+      description: 'Validated server-side against the installed release''s `config_schema` with the same rules `pigeonpost nest validate` runs. `writeOnly` properties are secrets: sealed at rest, never stored in the plain configuration, never returned. A secret left out keeps its stored value; one sent as `null` is cleared.'
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: NestConfigure
+      security:
+      - memberToken: []
+      parameters:
+      - $ref: '#/components/parameters/Installation'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstallationConfiguration'
+      responses:
+        '200':
+          description: The installation.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Installation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v1/nest-installations/{installation}/update:
+    post:
+      tags:
+      - Nest installations
+      operationId: updateInstallation
+      summary: Update to a newer release
+      description: 'Moves to a newer attested, live release of the same template: the listing''s current one, or `release_id`. The configuration must fit the target''s schema; send one with the request if it does not (`409 configuration_invalid_for_release`). `409 not_newer`, `up_to_date`, `review_required`, `release_revoked`, `security_quarantined`.'
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: NestManage
+      security:
+      - memberToken: []
+      parameters:
+      - $ref: '#/components/parameters/Installation'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstallationMove'
+      responses:
+        '200':
+          description: The installation.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Installation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v1/nest-installations/{installation}/rollback:
+    post:
+      tags:
+      - Nest installations
+      operationId: rollbackInstallation
+      summary: Roll back to the previous release
+      description: 'Back to the release this installation ran before its last update, if that release is still attested and live (`409 no_previous_release`, `release_revoked`, `security_quarantined`). `previous_release_id` is cleared: update again to move forward.'
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: NestManage
+      security:
+      - memberToken: []
+      parameters:
+      - $ref: '#/components/parameters/Installation'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstallationMove'
+      responses:
+        '200':
+          description: The installation.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Installation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v1/staff/publisher-applications:
+    get:
+      tags:
+      - Staff
+      operationId: staffListPublisherApplications
+      summary: Certification queue
+      description: A person with a live `reviewer` staff role and a recent strong sign-in (`403 staff_required`, `step_up_required`). Each row says whether the reviewer has a stake in it (`conflict`).
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: NestReview
+      security:
+      - memberToken: []
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - applied
+          - approved
+          - rejected
+          - revoked
+          default: applied
+      responses:
+        '200':
+          description: Oldest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                - next_cursor
+                additionalProperties: false
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Publisher'
+                  next_cursor:
+                    type:
+                    - string
+                    - 'null'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/staff/publisher-applications/{application}/decisions:
+    post:
+      tags:
+      - Staff
+      operationId: staffCertifyPublisher
+      summary: Certify or reject a publisher
+      description: A person with a live `reviewer` staff role and a recent strong sign-in (`403 staff_required`, `step_up_required`). The reviewer must have no stake in the publisher (`403 staff_conflict`). Only an `applied` application is decided (`409 application_decided`). Recorded in `publisher_certifications`, audited, and sent as `nest.publisher.decision`.
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: NestReview
+      security:
+      - memberToken: []
+      parameters:
+      - $ref: '#/components/parameters/Application'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CertificationCreate'
+      responses:
+        '201':
+          description: The decided publisher.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Publisher'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v1/staff/publishers/{publisher}/revocation:
+    post:
+      tags:
+      - Staff
+      operationId: staffRevokePublisher
+      summary: Revoke a publisher
+      description: A person with a live `reviewer` staff role and a recent strong sign-in (`403 staff_required`, `step_up_required`). The reviewer must have no stake in the publisher (`403 staff_conflict`). Its listings are suspended (so their installations stop taking jobs), queued builds are cancelled and open reviews can no longer be decided. Releases keep their own security state.
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: NestQuarantine
+      security:
+      - memberToken: []
+      parameters:
+      - $ref: '#/components/parameters/Publisher'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReasonRequest'
+      responses:
+        '200':
+          description: Revoked.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/PublisherRevocation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v1/staff/reviews:
+    get:
+      tags:
+      - Staff
+      operationId: staffListReviews
+      summary: Review queue
+      description: A person with a live `reviewer` staff role and a recent strong sign-in (`403 staff_required`, `step_up_required`). Each row says whether it is first party and whether the reviewer has a stake in it.
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: NestReview
+      security:
+      - memberToken: []
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - open
+          - blocked
+          - decided
+          - withdrawn
+          default: open
+      responses:
+        '200':
+          description: Oldest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                - next_cursor
+                additionalProperties: false
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/StaffReviewSummary'
+                  next_cursor:
+                    type:
+                    - string
+                    - 'null'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/staff/listings/{listing}/moderation:
+    post:
+      tags:
+      - Staff
+      operationId: staffModerateListing
+      summary: Suspend or reinstate a listing
+      description: A person with a live `reviewer` staff role and a recent strong sign-in (`403 staff_required`, `step_up_required`). The reviewer must have no stake in the publisher (`403 staff_conflict`). A suspended listing takes no jobs and its publisher cannot change its status. Reinstating returns it to `published` only if its release is still attested and live, its publisher certified and it was published before; otherwise to `draft`.
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: NestQuarantine
+      security:
+      - memberToken: []
+      parameters:
+      - $ref: '#/components/parameters/Listing'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ListingModeration'
+      responses:
+        '200':
+          description: The new status.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ListingModerationResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
 components:
   securitySchemes:
     memberToken:
@@ -762,6 +1991,47 @@ components:
       bearerFormat: cap_<hex>
       description: Capability token bound to exactly one mailbox (for example a Nest's own agent mailbox). Automation.
   parameters:
+    Build:
+      name: build
+      in: path
+      required: true
+      description: Build request id.
+      schema:
+        type: string
+        pattern: ^bld_[a-z2-7]{26}$
+    Listing:
+      name: listing
+      in: path
+      required: true
+      description: Listing id.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 64
+    Installation:
+      name: installation
+      in: path
+      required: true
+      description: Installation id.
+      schema:
+        type: string
+        pattern: ^ins_[a-z2-7]{26}$
+    PublisherRoleId:
+      name: role
+      in: path
+      required: true
+      description: Publisher role id.
+      schema:
+        type: string
+        pattern: ^prl_[a-z2-7]{26}$
+    Application:
+      name: application
+      in: path
+      required: true
+      description: Publisher application (profile) id.
+      schema:
+        type: string
+        pattern: ^pub_[a-z2-7]{26}$
     ActingIdentity:
       name: x-pigeonpost-identity
       in: header
@@ -823,7 +2093,7 @@ components:
         type: integer
   responses:
     BadRequest:
-      description: Malformed request (`bad_request`, `invalid_json`, `invalid_request`, `invalid_role`, `bad_display_name`, `invalid_operation_payload`, `deadline_invalid`).
+      description: Malformed request (`bad_request`, `invalid_json`, `invalid_request`, `invalid_role`, `bad_display_name`, `invalid_operation_payload`, `deadline_invalid`, `not_org_member`, `visibility_not_available`, `invalid_cursor`, `invalid_configuration` (with `details.issues`)).
       content:
         application/json:
           schema:
@@ -835,7 +2105,7 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     Forbidden:
-      description: The credential kind or the caller's authority does not allow this (`credential_not_accepted`, `human_required`, `step_up_required`, `step_up_unavailable`, `forbidden`, `staff_required`, `staff_conflict`, `not_admitted`, `mandate_revoked`, `mandate_limit`).
+      description: The credential kind or the caller's authority does not allow this (`credential_not_accepted`, `human_required`, `step_up_required`, `step_up_unavailable`, `forbidden`, `staff_required`, `staff_conflict`, `not_admitted`, `mandate_revoked`, `mandate_limit`, `publisher_role_required`, `publisher_not_certified`, `publisher_revoked`).
       content:
         application/json:
           schema:
@@ -847,7 +2117,7 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     Conflict:
-      description: State or binding conflict (`role_already_held`, `application_exists`, `idempotency_conflict`, `quote_expired`, `authorization_expired`, `authorization_reused`, `authorization_intent_mismatch`, `environment_mismatch`, `currency_mismatch`, `review_required`, `release_revoked`, `security_quarantined`, `access_expired`, `recovery_window_closed`, `review_closed`, `stages_incomplete`, `release_digest_mismatch`, `invalid_request` for a security action that does not apply).
+      description: State or binding conflict (`role_already_held`, `application_exists`, `idempotency_conflict`, `quote_expired`, `authorization_expired`, `authorization_reused`, `authorization_intent_mismatch`, `environment_mismatch`, `currency_mismatch`, `review_required`, `release_revoked`, `security_quarantined`, `access_expired`, `recovery_window_closed`, `review_closed`, `stages_incomplete`, `release_digest_mismatch`, `invalid_request` for a security action that does not apply, `template_exists`, `version_exists`, `listing_address_taken`, `listing_address_changed`, `listing_suspended`, `listing_not_suspended`, `configuration_invalid_for_release`, `already_installed`, `installation_removed`, `installation_changed`, `installation_required`, `not_newer`, `up_to_date`, `no_previous_release`, `application_decided`).
       content:
         application/json:
           schema:
@@ -939,6 +2209,31 @@ components:
                 - rate_limited
                 - financial_authority_unavailable
                 - store_error
+                - publisher_role_required
+                - publisher_not_certified
+                - publisher_revoked
+                - not_org_member
+                - template_exists
+                - version_exists
+                - build_not_queued
+                - listing_address_taken
+                - listing_address_changed
+                - listing_suspended
+                - listing_not_suspended
+                - visibility_not_available
+                - invalid_cursor
+                - invalid_configuration
+                - configuration_invalid_for_release
+                - already_installed
+                - installation_removed
+                - installation_changed
+                - installation_required
+                - not_newer
+                - up_to_date
+                - no_previous_release
+                - application_decided
+                - stage_out_of_order
+                - stage_already_recorded
             message:
               type: string
               description: Human-readable text. May change; do not parse it.
@@ -1218,7 +2513,8 @@ components:
           minimum: 1
         status:
           type: string
-          enum: [submitted, in_review, approved, changes_requested, rejected]
+          enum: [submitted, in_review, approved, changes_requested, rejected, withdrawn]
+          description: '`changes_requested` also covers a review an analysis stage blocked (its `decision_ref` is that stage''s record); `withdrawn` is the publisher''s own.'
         stages:
           type: array
           minItems: 6
@@ -1547,7 +2843,15 @@ components:
     Listing:
       type: object
       additionalProperties: false
-      required: [id, publisher_id, release_id, title, summary, visibility, status]
+      required:
+      - id
+      - publisher_id
+      - release_id
+      - title
+      - summary
+      - visibility
+      - status
+      description: A listing. The public read adds `publisher`, `operations`, `config_schema` and `price`; the publisher's own reads add `template_id`, `moderation_reason` and timestamps. The catalog leaves out `moderation_reason`.
       properties:
         id:
           type: string
@@ -1555,13 +2859,736 @@ components:
           type: string
         release_id:
           type: string
+        template_id:
+          type:
+          - string
+          - 'null'
         title:
           type: string
         summary:
           type: string
+        description:
+          type: string
         visibility:
           type: string
-          enum: [public, unlisted, private, invite_only, organization]
+          enum:
+          - public
+          - unlisted
+          - private
+          - invite_only
+          - organization
         status:
           type: string
-          enum: [draft, published, suspended, withdrawn]
+          enum:
+          - draft
+          - published
+          - suspended
+          - withdrawn
+          description: '`suspended` is staff''s (moderation, revocation); a publisher cannot leave it.'
+        address:
+          type:
+          - string
+          - 'null'
+          description: The shared Nest address jobs are sent to.
+        moderation_reason:
+          type:
+          - string
+          - 'null'
+        version:
+          type: string
+        publisher:
+          type: object
+          additionalProperties: false
+          required:
+          - display_name
+          - first_party
+          properties:
+            display_name:
+              type: string
+            first_party:
+              type: boolean
+        operations:
+          type: array
+          items:
+            type: object
+          description: The release manifest's operations and their input fields.
+        config_schema:
+          $ref: '#/components/schemas/NestConfigSchema'
+        price:
+          type: object
+          additionalProperties: false
+          required:
+          - amount_minor
+          - funding
+          properties:
+            amount_minor:
+              type: integer
+              const: 0
+            funding:
+              type: string
+              const: test_credits
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        published_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+    Publisher:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - owner_kind
+      - owner_id
+      - display_name
+      - status
+      - decision_reason
+      - created_at
+      - updated_at
+      properties:
+        id:
+          type: string
+          pattern: ^pub_[a-z2-7]{26}$
+        owner_kind:
+          type: string
+          enum:
+          - account
+          - org
+          - platform
+        owner_id:
+          type: string
+        display_name:
+          type: string
+        status:
+          type: string
+          enum:
+          - applied
+          - approved
+          - rejected
+          - revoked
+          description: '`approved` is certified.'
+        decision_reason:
+          type:
+          - string
+          - 'null'
+          description: Staff's reason for the latest decision or revocation.
+        role:
+          type: string
+          enum:
+          - owner
+          - org_admin
+          - publisher_admin
+          - publisher_finance
+          description: The caller's role (publisher reads).
+        conflict:
+          type: boolean
+          description: The reviewer has a stake in this publisher (staff queue).
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    PublisherRoleGrant:
+      type: object
+      additionalProperties: false
+      required:
+      - account_id
+      - role
+      properties:
+        account_id:
+          type: string
+          minLength: 1
+          maxLength: 64
+        role:
+          type: string
+          enum:
+          - publisher_admin
+          - publisher_finance
+    PublisherRole:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - account_id
+      - role
+      - granted_by
+      - granted_at
+      properties:
+        id:
+          type: string
+          pattern: ^prl_[a-z2-7]{26}$
+        account_id:
+          type: string
+        role:
+          type: string
+          enum:
+          - publisher_admin
+          - publisher_finance
+        granted_by:
+          type: string
+        granted_at:
+          type: string
+          format: date-time
+    TemplateCreate:
+      type: object
+      additionalProperties: false
+      required:
+      - slug
+      - name
+      properties:
+        slug:
+          type: string
+          pattern: ^[a-z0-9-]{1,64}$
+          description: The manifest `name` of every release of this template.
+        name:
+          type: string
+          minLength: 2
+          maxLength: 80
+    Template:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - publisher_id
+      - slug
+      - name
+      - created_at
+      properties:
+        id:
+          type: string
+          pattern: ^tpl_[a-z2-7]{26}$
+        publisher_id:
+          type: string
+        slug:
+          type: string
+        name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    BuildCreate:
+      type: object
+      additionalProperties: false
+      required:
+      - template_id
+      - version
+      - source
+      properties:
+        template_id:
+          type: string
+        version:
+          type: string
+          pattern: ^[0-9]{1,9}\.[0-9]{1,9}\.[0-9]{1,9}$
+        source:
+          type: object
+          additionalProperties: false
+          required:
+          - repository
+          - commit
+          properties:
+            repository:
+              type: string
+              maxLength: 300
+              pattern: ^https://[^/@?#]+/[^?#]+$
+              description: Read-only fetch; no credentials in the URL.
+            commit:
+              type: string
+              pattern: ^([0-9a-f]{40}|[0-9a-f]{64})$
+    Build:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - publisher_id
+      - template_id
+      - version
+      - source
+      - status
+      - release_id
+      - review_id
+      - failure
+      - created_at
+      - updated_at
+      properties:
+        id:
+          type: string
+          pattern: ^bld_[a-z2-7]{26}$
+        publisher_id:
+          type: string
+        template_id:
+          type: string
+        version:
+          type: string
+        source:
+          type: object
+          additionalProperties: false
+          required:
+          - repository
+          - commit
+          properties:
+            repository:
+              type: string
+            commit:
+              type: string
+        status:
+          type: string
+          enum:
+          - queued
+          - built
+          - failed
+          - cancelled
+        release_id:
+          type:
+          - string
+          - 'null'
+        review_id:
+          type:
+          - string
+          - 'null'
+        failure:
+          type:
+          - object
+          - 'null'
+          additionalProperties: false
+          required:
+          - code
+          - reason
+          properties:
+            code:
+              type: string
+            reason:
+              type:
+              - string
+              - 'null'
+              description: Redacted by the build plane.
+        template_slug:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    NestReviewFindings:
+      type: object
+      additionalProperties: false
+      required:
+      - review_id
+      - stages
+      properties:
+        review_id:
+          type: string
+        stages:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+            - stage
+            - decision
+            - reason
+            - findings
+            - recorded_at
+            properties:
+              stage:
+                type: string
+                enum:
+                - intake
+                - deterministic_scan
+                - ai_analysis
+                - behavioral_test
+                - human_review
+                - attestation
+              decision:
+                type: string
+              reason:
+                type: string
+              findings:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: false
+                  required:
+                  - rule
+                  - blocker
+                  properties:
+                    rule:
+                      type: string
+                    path:
+                      type:
+                      - string
+                      - 'null'
+                    detail:
+                      type:
+                      - string
+                      - 'null'
+                    blocker:
+                      type:
+                      - boolean
+                      - 'null'
+              advisory_findings:
+                type: integer
+                minimum: 0
+              model:
+                type: string
+                const: qwen-latest-flash-next
+              recorded_at:
+                type: string
+                format: date-time
+    ListingCreate:
+      type: object
+      additionalProperties: false
+      required:
+      - release_id
+      - title
+      - summary
+      - visibility
+      properties:
+        release_id:
+          type: string
+        title:
+          type: string
+          minLength: 2
+          maxLength: 120
+        summary:
+          type: string
+          minLength: 2
+          maxLength: 300
+        description:
+          type: string
+          maxLength: 5000
+        visibility:
+          type: string
+          enum:
+          - public
+          - unlisted
+          - private
+    ListingPatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        title:
+          type: string
+          minLength: 2
+          maxLength: 120
+        summary:
+          type: string
+          minLength: 2
+          maxLength: 300
+        description:
+          type: string
+          maxLength: 5000
+        visibility:
+          type: string
+          enum:
+          - public
+          - unlisted
+          - private
+    ListingPublish:
+      type: object
+      additionalProperties: false
+      properties:
+        release_id:
+          type: string
+          description: An attested release of the listing's template; default the listing's current one.
+    NestConfigSchema:
+      type: object
+      description: 'A release''s installation configuration schema: the Pigeonpost subset of JSON Schema 2020-12 (`pigeonpost_core::nest_package`). One flat object (`additionalProperties: false`) of `string` (with `maxLength` <= 4096 or `enum`; optional `minLength`), `integer` and `number` (optional `minimum`, `maximum`) and `boolean` properties, each with optional `title`, `description` and `default`; at most 32. `writeOnly: true` marks a secret string (no `default`, no `enum`). Every other keyword is refused by name. Fixtures: `examples/nest-config-fixtures.json`.'
+      required:
+      - type
+      - additionalProperties
+      - properties
+      properties:
+        type:
+          const: object
+        additionalProperties:
+          const: false
+        properties:
+          type: object
+          maxProperties: 32
+        required:
+          type: array
+          items:
+            type: string
+        title:
+          type: string
+        description:
+          type: string
+        $schema:
+          type: string
+    InstallationCreate:
+      type: object
+      additionalProperties: false
+      required:
+      - listing_id
+      properties:
+        listing_id:
+          type: string
+        configuration:
+          type: object
+          description: Validated against the release's `config_schema`; default `{}`.
+    InstallationConfiguration:
+      type: object
+      additionalProperties: false
+      required:
+      - configuration
+      properties:
+        configuration:
+          type: object
+    InstallationMove:
+      type: object
+      additionalProperties: false
+      properties:
+        release_id:
+          type: string
+          description: 'Update only: the target release; default the listing''s current one.'
+        configuration:
+          type: object
+          description: A configuration for the target release, when the current one does not fit its schema.
+    Installation:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - listing_id
+      - release_id
+      - status
+      - funding
+      - configuration
+      - config_schema
+      - secrets
+      - config_revision
+      - update_available
+      - created_at
+      - updated_at
+      properties:
+        id:
+          type: string
+          pattern: ^ins_[a-z2-7]{26}$
+        listing_id:
+          type: string
+        address:
+          type:
+          - string
+          - 'null'
+        listing_status:
+          type: string
+        release_id:
+          type: string
+        version:
+          type:
+          - string
+          - 'null'
+        security_state:
+          type:
+          - string
+          - 'null'
+          enum:
+          - normal
+          - quarantined
+          - revoked
+          - null
+        previous_release_id:
+          type:
+          - string
+          - 'null'
+        configuration:
+          type: object
+          description: The stored, non-secret values.
+        config_schema:
+          $ref: '#/components/schemas/NestConfigSchema'
+        secrets:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+            - name
+            - set
+            properties:
+              name:
+                type: string
+              set:
+                type: boolean
+        config_revision:
+          type: integer
+          minimum: 1
+        status:
+          type: string
+          enum:
+          - active
+          - uninstalled
+        funding:
+          type: string
+          const: test_credits
+        update_available:
+          type:
+          - object
+          - 'null'
+          additionalProperties: false
+          required:
+          - release_id
+          - version
+          properties:
+            release_id:
+              type: string
+            version:
+              type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        uninstalled_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+    Uninstalled:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - status
+      - jobs_cancelled
+      - runtime_removed
+      properties:
+        id:
+          type: string
+        status:
+          const: uninstalled
+        jobs_cancelled:
+          type: integer
+          minimum: 0
+        runtime_removed:
+          type: boolean
+    CertificationCreate:
+      type: object
+      additionalProperties: false
+      required:
+      - decision
+      - reason
+      properties:
+        decision:
+          type: string
+          enum:
+          - approved
+          - rejected
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 2000
+    ReasonRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - reason
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 2000
+    PublisherRevocation:
+      type: object
+      additionalProperties: false
+      required:
+      - publisher_id
+      - status
+      - listings_suspended
+      - builds_cancelled
+      properties:
+        publisher_id:
+          type: string
+        status:
+          const: revoked
+        listings_suspended:
+          type: integer
+          minimum: 0
+        builds_cancelled:
+          type: integer
+          minimum: 0
+    StaffReviewSummary:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - release_id
+      - publisher_id
+      - publisher_name
+      - version
+      - status
+      - revision
+      - updated_at
+      - stages_recorded
+      - first_party
+      - conflict
+      properties:
+        id:
+          type: string
+        release_id:
+          type: string
+        publisher_id:
+          type: string
+        publisher_name:
+          type: string
+        version:
+          type: string
+        status:
+          type: string
+          enum:
+          - open
+          - blocked
+          - decided
+          - withdrawn
+        revision:
+          type: integer
+        updated_at:
+          type: string
+          format: date-time
+        stages_recorded:
+          type: array
+          items:
+            type: string
+        first_party:
+          type: boolean
+        conflict:
+          type: boolean
+    ListingModeration:
+      type: object
+      additionalProperties: false
+      required:
+      - action
+      - reason
+      properties:
+        action:
+          type: string
+          enum:
+          - suspend
+          - reinstate
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 2000
+    ListingModerationResult:
+      type: object
+      additionalProperties: false
+      required:
+      - listing_id
+      - status
+      properties:
+        listing_id:
+          type: string
+        status:
+          type: string
+          enum:
+          - published
+          - draft
+          - suspended

@@ -105,13 +105,10 @@ pub(crate) enum Action {
     /// See a marketplace listing. Discovery grants nothing beyond the listing's public metadata.
     NestDiscover,
     /// Install a release as a Nest for a buyer account or org.
-    #[cfg_attr(not(test), allow(dead_code))]
     NestInstall,
     /// Change an installation's configuration.
-    #[cfg_attr(not(test), allow(dead_code))]
     NestConfigure,
     /// Administer an installation: update, roll back, remove.
-    #[cfg_attr(not(test), allow(dead_code))]
     NestManage,
     /// Submit a job to a Nest operation (`/v1/nest-jobs`): needs admission and, when the offer is
     /// paid, a valid payment for this job. M1 also uses it for the zero-priced quote and payment
@@ -129,7 +126,6 @@ pub(crate) enum Action {
     /// Read or change one's own publisher profile.
     PublisherManage,
     /// Publish a release or listing: a person with step-up.
-    #[cfg_attr(not(test), allow(dead_code))]
     NestPublish,
     /// Record a review decision on a release; also what a reviewer reads to get there.
     NestReview,

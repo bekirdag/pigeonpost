@@ -157,6 +157,32 @@ pub(crate) const TABLES: &[(&str, Rule)] = &[
         Remove(A, "substr(scope, 1, length(?1) + 1) = ?1 || '|'"),
     ),
     ("nest_operations", Unrelated),
+    // Marketplace M2. A live publisher role is a duty to an org; an installation is the account's
+    // own use of a listing, with its configuration.
+    (
+        "publisher_roles",
+        Block(A, "account_id = ?1 AND revoked_at IS NULL"),
+    ),
+    (
+        "publisher_certifications",
+        Keep("Append-only certification record of a publisher; the deciding staff role blocks"),
+    ),
+    (
+        "nest_builds",
+        Keep("Catalog record of a publisher; the publisher profile blocks the purge"),
+    ),
+    (
+        "nest_installations",
+        Block(A, "owner_kind = 'account' AND owner_id = ?1"),
+    ),
+    (
+        "nest_installation_secrets",
+        Keep("Sealed values of an installation; the installation row blocks the purge"),
+    ),
+    (
+        "nest_installation_events",
+        Keep("Ids and versions of an installation; the installation row blocks the purge"),
+    ),
     (
         "release_security_events",
         Keep("Append-only security record of a release; the actor is staff"),

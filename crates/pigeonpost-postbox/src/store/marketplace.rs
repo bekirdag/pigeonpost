@@ -35,7 +35,9 @@ CREATE TABLE IF NOT EXISTS publisher_profiles (
     decided_by   TEXT,
     decided_at   INTEGER,
     created_at   INTEGER NOT NULL,
-    updated_at   INTEGER NOT NULL
+    updated_at   INTEGER NOT NULL,
+    -- M2: the staff reason for the latest certification decision or revocation.
+    decision_reason TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS publisher_profiles_live ON publisher_profiles(owner_kind, owner_id)
     WHERE status IN ('applied','approved');
@@ -103,7 +105,14 @@ CREATE TABLE IF NOT EXISTS nest_listings (
     updated_at   INTEGER NOT NULL,
     -- The shared Nest address jobs are sent to (`to` in a job request, M1). Not a mailbox: the
     -- dispatcher resolves it here and nowhere else.
-    address      TEXT
+    address      TEXT,
+    -- M2. Publisher-editable: `title`, `summary`, `description`, `visibility`, and which attested
+    -- release of `template_id` new installs get. Staff-controlled: `suspended` (moderation) with
+    -- its reason; a publisher can never leave that state.
+    description       TEXT NOT NULL DEFAULT '',
+    template_id       TEXT REFERENCES nest_templates(id),
+    moderation_reason TEXT,
+    published_at      INTEGER
 );
 CREATE INDEX IF NOT EXISTS nest_listings_by_publisher ON nest_listings(publisher_id);
 CREATE UNIQUE INDEX IF NOT EXISTS nest_listings_address ON nest_listings(address)
@@ -116,7 +125,11 @@ CREATE TABLE IF NOT EXISTS review_cases (
     status       TEXT NOT NULL CHECK (status IN ('open','blocked','decided','withdrawn')),
     previous_id  TEXT REFERENCES review_cases(id),
     created_at   INTEGER NOT NULL,
-    updated_at   INTEGER NOT NULL
+    updated_at   INTEGER NOT NULL,
+    -- M2: bumped on every change the publisher can see, so a console can tell a new state from a
+    -- replay; and the build request a third-party case came from.
+    revision     INTEGER NOT NULL DEFAULT 1,
+    build_id     TEXT
 );
 CREATE INDEX IF NOT EXISTS review_cases_by_release ON review_cases(release_id);
 
@@ -270,6 +283,112 @@ CREATE TABLE IF NOT EXISTS operation_idempotency (
     PRIMARY KEY (scope, key)
 );
 
+-- ---- M2: the publisher beta -------------------------------------------------------------------
+
+-- Who in an org publisher may act for it, beside the org's owner and admins (who always may).
+-- Kept here rather than as new `org_roles` values so the live org table is not rebuilt; a role
+-- only counts while the person is an active member of the org (checked at use).
+CREATE TABLE IF NOT EXISTS publisher_roles (
+    id           TEXT PRIMARY KEY,
+    publisher_id TEXT NOT NULL REFERENCES publisher_profiles(id),
+    account_id   TEXT NOT NULL,
+    role         TEXT NOT NULL CHECK (role IN ('publisher_admin','publisher_finance')),
+    granted_by   TEXT NOT NULL,
+    granted_at   INTEGER NOT NULL,
+    revoked_by   TEXT,
+    revoked_at   INTEGER
+);
+CREATE UNIQUE INDEX IF NOT EXISTS publisher_roles_live ON publisher_roles(publisher_id, account_id, role)
+    WHERE revoked_at IS NULL;
+
+-- Every certification decision and revocation, by whom and why. Append-only.
+CREATE TABLE IF NOT EXISTS publisher_certifications (
+    id           TEXT PRIMARY KEY,
+    publisher_id TEXT NOT NULL REFERENCES publisher_profiles(id),
+    decision     TEXT NOT NULL CHECK (decision IN ('approved','rejected','revoked')),
+    reason       TEXT NOT NULL,
+    decided_by   TEXT NOT NULL,
+    created_at   INTEGER NOT NULL
+);
+CREATE TRIGGER IF NOT EXISTS publisher_certifications_no_update BEFORE UPDATE ON publisher_certifications
+BEGIN SELECT RAISE(ABORT, 'publisher_certifications are append-only'); END;
+CREATE TRIGGER IF NOT EXISTS publisher_certifications_no_delete BEFORE DELETE ON publisher_certifications
+BEGIN SELECT RAISE(ABORT, 'publisher_certifications are append-only'); END;
+
+-- A publisher's request to build a release from source (R-62). The build plane takes queued ones,
+-- builds them on its own host and answers with a build record or a failure.
+CREATE TABLE IF NOT EXISTS nest_builds (
+    id             TEXT PRIMARY KEY,
+    publisher_id   TEXT NOT NULL REFERENCES publisher_profiles(id),
+    template_id    TEXT NOT NULL REFERENCES nest_templates(id),
+    version        TEXT NOT NULL,
+    source_repository TEXT NOT NULL,
+    source_commit  TEXT NOT NULL,
+    status         TEXT NOT NULL CHECK (status IN ('queued','built','failed','cancelled')),
+    release_id     TEXT REFERENCES nest_releases(id),
+    review_id      TEXT REFERENCES review_cases(id),
+    failure_code   TEXT,
+    failure_reason TEXT,
+    requested_by   TEXT NOT NULL,
+    created_at     INTEGER NOT NULL,
+    updated_at     INTEGER NOT NULL,
+    UNIQUE (template_id, version)
+);
+CREATE INDEX IF NOT EXISTS nest_builds_by_status ON nest_builds(status, created_at);
+
+-- An installation: a buyer's pinned use of a listing (R-51, R-68). The buyer context is the M1
+-- one (one worker per listing and account). M2 is free: `funding` is test credits only.
+CREATE TABLE IF NOT EXISTS nest_installations (
+    id                  TEXT PRIMARY KEY,
+    listing_id          TEXT NOT NULL REFERENCES nest_listings(id),
+    owner_kind          TEXT NOT NULL CHECK (owner_kind IN ('account')),
+    owner_id            TEXT NOT NULL,
+    buyer_context       TEXT NOT NULL,
+    release_id          TEXT NOT NULL REFERENCES nest_releases(id),
+    previous_release_id TEXT REFERENCES nest_releases(id),
+    config              TEXT NOT NULL DEFAULT '{}',
+    config_revision     INTEGER NOT NULL DEFAULT 1,
+    status              TEXT NOT NULL CHECK (status IN ('active','uninstalled')),
+    funding             TEXT NOT NULL DEFAULT 'test_credits' CHECK (funding IN ('test_credits')),
+    installed_by        TEXT NOT NULL,
+    created_at          INTEGER NOT NULL,
+    updated_at          INTEGER NOT NULL,
+    uninstalled_at      INTEGER
+);
+CREATE UNIQUE INDEX IF NOT EXISTS nest_installations_live
+    ON nest_installations(listing_id, owner_kind, owner_id) WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS nest_installations_by_owner ON nest_installations(owner_kind, owner_id);
+
+-- Secret configuration values (writeOnly properties), sealed with the vault and bound to their
+-- row. Never in `nest_installations.config`, never returned by any route.
+CREATE TABLE IF NOT EXISTS nest_installation_secrets (
+    installation_id TEXT NOT NULL REFERENCES nest_installations(id),
+    name            TEXT NOT NULL,
+    sealed          BLOB NOT NULL,
+    updated_at      INTEGER NOT NULL,
+    PRIMARY KEY (installation_id, name)
+);
+
+-- What happened to an installation: ids and versions only, never configuration values.
+CREATE TABLE IF NOT EXISTS nest_installation_events (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    installation_id TEXT NOT NULL REFERENCES nest_installations(id),
+    kind            TEXT NOT NULL CHECK (kind IN
+                        ('installed','configured','updated','rolled_back','uninstalled')),
+    from_release    TEXT,
+    to_release      TEXT,
+    actor           TEXT NOT NULL,
+    created_at      INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS nest_installation_events_by_installation
+    ON nest_installation_events(installation_id);
+-- Append-only, except that an account erasure may replace the actor with its erased marker.
+CREATE TRIGGER IF NOT EXISTS nest_installation_events_no_update BEFORE UPDATE ON nest_installation_events
+WHEN NEW.actor NOT LIKE 'erased_%' OR NEW.kind <> OLD.kind OR NEW.installation_id <> OLD.installation_id
+  OR NEW.from_release IS NOT OLD.from_release OR NEW.to_release IS NOT OLD.to_release
+  OR NEW.created_at <> OLD.created_at
+BEGIN SELECT RAISE(ABORT, 'nest_installation_events are append-only'); END;
+
 -- Quarantine, release from quarantine and revocation, by whom and why. Append-only.
 CREATE TABLE IF NOT EXISTS release_security_events (
     id         TEXT PRIMARY KEY,
@@ -401,6 +520,63 @@ pub(crate) fn release_conflict_in(
         return Ok(true);
     };
     Ok(author == staff || publisher_conflict_in(c, staff, &publisher)?)
+}
+
+/// The accounts that act for a publisher and hear its events (M2): the owning account; for an org,
+/// its owner, its active full admins and its active members holding a live publisher role.
+pub(crate) fn publisher_accounts_in(
+    c: &Connection,
+    publisher: &str,
+) -> rusqlite::Result<Vec<String>> {
+    let row: Option<(String, String)> = c
+        .query_row(
+            "SELECT owner_kind, owner_id FROM publisher_profiles WHERE id = ?1",
+            [publisher],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    let Some((kind, owner)) = row else {
+        return Ok(Vec::new());
+    };
+    match kind.as_str() {
+        "account" => Ok(vec![owner]),
+        "org" => {
+            let mut stmt = c.prepare(
+                "SELECT owner_account FROM orgs WHERE id = ?1
+                 UNION
+                 SELECT m.account_id FROM org_members m JOIN org_roles r
+                     ON r.org_id = m.org_id AND r.member_id = m.id
+                  WHERE m.org_id = ?1 AND m.status = 'active' AND m.account_id IS NOT NULL
+                    AND r.role IN ('owner','admin')
+                 UNION
+                 SELECT p.account_id FROM publisher_roles p JOIN org_members m
+                     ON m.org_id = ?1 AND m.account_id = p.account_id AND m.status = 'active'
+                  WHERE p.publisher_id = ?2 AND p.revoked_at IS NULL",
+            )?;
+            let rows = stmt
+                .query_map(params![owner, publisher], |r| r.get::<_, Option<String>>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(rows.into_iter().flatten().collect())
+        }
+        _ => Ok(Vec::new()),
+    }
+}
+
+/// Announce a publisher-side event on `/v1/events` (typed events, ids and states only) to every
+/// account that acts for the publisher, in the caller's transaction. Returns the accounts to wake
+/// once it commits.
+pub(crate) fn publisher_event_in(
+    c: &Connection,
+    publisher: &str,
+    kind: &str,
+    data: &serde_json::Value,
+    now: u64,
+) -> Result<Vec<String>, super::StoreError> {
+    let accounts = publisher_accounts_in(c, publisher)?;
+    for a in &accounts {
+        super::events::append_in(c, a, kind, None, data, now)?;
+    }
+    Ok(accounts)
 }
 
 #[cfg(test)]

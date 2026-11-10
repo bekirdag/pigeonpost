@@ -178,9 +178,10 @@ async fn stage(
 
 async fn pass_analysis(srv: &Srv, review: &str) {
     for (st, dec, model) in [
+        // The contract's order; M2 refuses a stage whose predecessor is missing.
         ("deterministic_scan", "passed", None),
-        ("behavioral_test", "passed", None),
         ("ai_analysis", "advisory", Some("qwen-latest-flash-next")),
+        ("behavioral_test", "passed", None),
     ] {
         let (s, v) = stage(srv, review, st, dec, model).await;
         assert_eq!(s, 201, "{st}: {v}");
@@ -527,8 +528,8 @@ async fn staff_approve_and_attest_a_first_party_release() {
         [
             "intake",
             "deterministic_scan",
-            "behavioral_test",
-            "ai_analysis"
+            "ai_analysis",
+            "behavioral_test"
         ]
     );
 

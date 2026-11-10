@@ -65,6 +65,8 @@ const ROUTERS: &[(&str, &str)] = &[
     ("marketplace.rs", "pub(crate) fn router("),
     ("marketplace_m1.rs", "pub(crate) fn router("),
     ("marketplace_m1.rs", "pub(crate) fn internal_router("),
+    ("marketplace_m2.rs", "pub(crate) fn router("),
+    ("marketplace_m2.rs", "pub(crate) fn internal_router("),
 ];
 
 const DEPTH: usize = 4;

@@ -55,8 +55,10 @@
         "in_review",
         "approved",
         "changes_requested",
-        "rejected"
-      ]
+        "rejected",
+        "withdrawn"
+      ],
+      "description": "`changes_requested` also covers a review an analysis stage blocked (its `decision_ref` is that stage's record); `withdrawn` is the publisher's own."
     },
     "stages": {
       "type": "array",

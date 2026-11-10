@@ -319,6 +319,7 @@ mod dispatcher {
             operation_version: qa::OPERATION_VERSION.into(),
             payload: json!({ "question": "How many days of annual leave do I get?" }),
             release: release.clone(),
+            config: Value::Null,
         }
     }
 
@@ -571,6 +572,56 @@ mod dispatcher {
             .as_array()
             .unwrap()
             .is_empty());
+    }
+
+    /// Marketplace M2: an installation's configuration reaches the worker with each job, and an
+    /// uninstall stops the buyer's worker, fences its token and deletes its volume. Another buyer
+    /// of the same listing is untouched, and a reinstall starts on an empty volume.
+    #[test]
+    fn configuration_reaches_the_worker_and_an_uninstall_removes_it() {
+        let rig = rig();
+        let rel = admission("rel_reference1", &image('a'));
+        let mut j = job(1, "ctx-buyer-a", &rel);
+        j.config = json!({ "team_name": "Ops" });
+        rig.d.submit(&j).unwrap();
+        rig.d.submit(&job(2, "ctx-buyer-b", &rel)).unwrap();
+        let inbox = rig.volume("ctx-buyer-a").join("jobs/in");
+        let file = std::fs::read_dir(&inbox)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let written: Value = serde_json::from_str(&std::fs::read_to_string(file).unwrap()).unwrap();
+        assert_eq!(written["config"], json!({ "team_name": "Ops" }));
+        let mut bad = job(3, "ctx-buyer-a", &rel);
+        bad.config = json!("not an object");
+        assert_eq!(rig.d.submit(&bad).unwrap_err().code, "invalid");
+
+        let out = rig.d.remove(LISTING, "ctx-buyer-a").unwrap();
+        assert_eq!(out["removed"], true);
+        assert!(
+            !rig.volume("ctx-buyer-a").exists(),
+            "the buyer's data is gone"
+        );
+        assert!(rig.volume("ctx-buyer-b").join("run/broker-token").exists());
+        assert_eq!(rig.d.pool.list().unwrap().len(), 1);
+        let w = worker_id(LISTING, "ctx-buyer-a");
+        assert_eq!(rig.d.db.nest(&w).unwrap().unwrap().state, "deleted");
+        assert_eq!(rig.d.poll(&j.job_id).unwrap()["state"], "stopped_security");
+        // Idempotent, and refuses a path-like context.
+        assert_eq!(
+            rig.d.remove(LISTING, "ctx-buyer-a").unwrap()["removed"],
+            true
+        );
+        assert_eq!(rig.d.remove(LISTING, "ctx-none").unwrap()["removed"], false);
+        assert_eq!(rig.d.remove(LISTING, "../x").unwrap_err().code, "invalid");
+        // A reinstall starts a fresh worker on an empty volume.
+        rig.d.submit(&job(4, "ctx-buyer-a", &rel)).unwrap();
+        let inbox = std::fs::read_dir(rig.volume("ctx-buyer-a").join("jobs/in"))
+            .unwrap()
+            .count();
+        assert_eq!(inbox, 1);
     }
 
     #[test]
