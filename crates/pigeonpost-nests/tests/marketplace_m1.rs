@@ -1108,7 +1108,8 @@ mod dispatcher {
 
 // ---- live, on a Nests host ------------------------------------------------------------------------
 
-/// Builds the reference release for real: rootless podman, fetch then `--network=none` build.
+/// Builds the reference release for real: rootless podman, fetch, then the compile step and the
+/// image assembly, both with `--network=none`.
 ///
 /// ```text
 /// NESTS_LIVE_BUILD=1 NESTS_LIVE_FETCH_IMAGE=docker.io/library/rust:1.91.1-slim-bookworm@sha256:… \
@@ -1134,6 +1135,13 @@ fn live_build_of_the_reference_release() {
             memory_mib: None,
             cpu_millis: None,
             pids: None,
+            // The toolchain the reference release's nest-build.toml names, when it is not the
+            // fetch image itself.
+            toolchain_images: std::env::var("NESTS_LIVE_TOOLCHAIN_IMAGE")
+                .ok()
+                .into_iter()
+                .collect(),
+            compile_timeout_secs: 1800,
         },
         podman: pigeonpost_nests::sandbox::HostPodman,
     };

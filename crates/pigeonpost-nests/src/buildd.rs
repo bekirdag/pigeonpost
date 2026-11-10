@@ -30,7 +30,9 @@
 //!    and nothing else), with no capabilities and a read-only root. `HEAD` must be `commit`;
 //!    submodules are refused; `.git` is removed before anything else reads the tree.
 //! 2. **Build** ([`crate::release::Builder`]): vendored dependencies fetched on the fetch network,
-//!    then `podman build --network=none --timestamp=0`.
+//!    the release's compile step (`nest-build.toml`) in a gVisor `podman run` with no network,
+//!    then the image assembled by `podman build --network=none --timestamp=0` from a Containerfile
+//!    with no `RUN` step, so publisher code never runs inside buildah.
 //! 3. **Reproducibility**: the same tree is built a second time from scratch; both builds must give
 //!    the same release digest, or the build fails.
 //! 4. **Artifact**: `podman save --format oci-archive`; the manifest digest in the archive's
@@ -313,8 +315,9 @@ pub fn git_args_with(
         );
     }
     args.extend(cfg.build.limit_args());
+    // Explicit, so an image whose own ENTRYPOINT is `git` (alpine/git) does not run `git git …`.
+    args.push(crate::release::entrypoint("git"));
     args.push(cfg.git.image.clone());
-    args.push("git".into());
     args.extend(git.iter().map(|s| s.to_string()));
     args
 }
@@ -566,9 +569,11 @@ pub fn build_from_source_with(
     std::fs::rename(&part, &archive).map_err(|e| e.to_string())?;
     let (archive_sha256, archive_size) = sha256_file(&archive)?;
     let ecosystem = record.isolation["ecosystem"].clone();
+    let compile = record.isolation["compile"].clone();
     record.isolation = json!({
         "plane": "build host (pigeonpost-nest-buildd), separate from the worker host",
         "ecosystem": ecosystem,
+        "compile": compile,
         "runtime": cfg.build.runtime,
         "rootless": true,
         "git_network": cfg.git.network,
@@ -1373,6 +1378,9 @@ pub(crate) fn test_config(dir: &Path) -> BuilddConfig {
             memory_mib: Some(2048),
             cpu_millis: Some(2000),
             pids: Some(512),
+            // The toolchain the reference release's nest-build.toml names.
+            toolchain_images: vec!["docker.io/library/rust:1.91.1-slim-bookworm@sha256:8514999d4786ef12efe89239e86b3d0a021b94b9d35108c8efe6c79ca7dc1a65".into()],
+            compile_timeout_secs: 600,
         },
         reproducible: true,
         max_queued: 2,
@@ -1389,6 +1397,9 @@ mod tests {
     use super::*;
 
     const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
+    /// How the fetch and git steps name their program (`--entrypoint`, never an argument).
+    const NPM: &str = "--entrypoint=[\"npm\"]";
+    const GIT: &str = "--entrypoint=[\"git\"]";
 
     #[test]
     fn source_intake_takes_allowlisted_https_and_full_commits_only() {
@@ -1432,8 +1443,11 @@ mod tests {
         assert!(!a
             .iter()
             .any(|x| x.contains("privileged") || x == "--network=host"));
-        let git = a.iter().position(|x| x == "git").unwrap();
-        assert_eq!(a[git - 1], cfg.git.image);
+        // git is the entrypoint, never an argument after an image whose own entrypoint is git.
+        let image = a.iter().position(|x| *x == cfg.git.image).unwrap();
+        assert_eq!(a[image - 1], "--entrypoint=[\"git\"]");
+        assert_eq!(&a[image + 1..], ["rev-parse", "HEAD"]);
+        assert!(!a.iter().any(|x| x == "git"));
     }
 
     // Linux-only daemon: the checks require absolute Unix paths (`/tmp`, `/etc/...`).
@@ -1549,7 +1563,7 @@ mod tests {
                     Ok("worker stopped\n".into())
                 }
                 // `npm ci`: every locked package lands where the lockfile says.
-                Some("run") if argv.iter().any(|a| a == "npm") => {
+                Some("run") if argv.iter().any(|a| a == NPM) => {
                     let vendor = volume(":/vendor:rw").unwrap();
                     let lock: Value = serde_json::from_str(
                         &std::fs::read_to_string(vendor.join("package-lock.json"))
@@ -1585,7 +1599,7 @@ mod tests {
                     }
                     Ok(String::new())
                 }
-                Some("run") if argv.iter().any(|a| a == "git") => {
+                Some("run") if argv.iter().any(|a| a == GIT) => {
                     let src = volume(":/src:rw").unwrap();
                     if let Some(cred) = volume(":/cred:ro") {
                         *self.key_seen.lock().unwrap() =
@@ -1605,6 +1619,49 @@ mod tests {
                     }
                     if argv.iter().any(|a| a == "rev-parse") {
                         return Ok(format!("{COMMIT}\n"));
+                    }
+                    Ok(String::new())
+                }
+                // The compile step: what the reference and template commands leave behind.
+                Some("run") if volume(":/src:rw").is_some() => {
+                    let src = volume(":/src:rw").unwrap();
+                    let script = argv.last().cloned().unwrap_or_default();
+                    if script.contains("cargo build") {
+                        std::fs::create_dir_all(src.join("target/release")).unwrap();
+                        std::fs::write(src.join("target/release/hr-policy-qa"), b"\x7fELF")
+                            .unwrap();
+                    }
+                    if script.contains("pip install") {
+                        std::fs::create_dir_all(src.join("deps")).unwrap();
+                        let _ = std::fs::remove_dir_all(src.join("wheelhouse"));
+                    }
+                    // The command may rewrite its tree; the assembly must not read this.
+                    std::fs::write(src.join("Containerfile"), "FROM x\nRUN evil\n").unwrap();
+                    Ok(String::new())
+                }
+                // The assembly: every COPY source exists in the context, and the Containerfile
+                // read is the one from the source tree.
+                Some("build") => {
+                    let file = argv
+                        .iter()
+                        .find_map(|a| a.strip_prefix("--file="))
+                        .ok_or("no --file")?;
+                    let text = std::fs::read_to_string(file).map_err(|e| e.to_string())?;
+                    if text.lines().any(|l| l.trim_start().starts_with("RUN")) {
+                        return Err("the assembly read a Containerfile with RUN".into());
+                    }
+                    let context = PathBuf::from(argv.last().unwrap());
+                    for line in text.lines().filter(|l| l.starts_with("COPY ")) {
+                        let words: Vec<&str> = line
+                            .split_whitespace()
+                            .skip(1)
+                            .filter(|w| !w.starts_with("--"))
+                            .collect();
+                        for from in &words[..words.len() - 1] {
+                            if !context.join(from).exists() {
+                                return Err(format!("COPY {from}: no such file in the context"));
+                            }
+                        }
                     }
                     Ok(String::new())
                 }
@@ -1669,7 +1726,7 @@ mod tests {
                 let calls = podman.calls.lock().unwrap();
                 assert!(!calls
                     .iter()
-                    .any(|c| c.iter().any(|a| a == "npm" || a == "pip")));
+                    .any(|c| c.iter().any(|a| a == NPM || a == "pip")));
                 let builds: Vec<&Vec<String>> = calls.iter().filter(|c| c[0] == "build").collect();
                 assert_eq!(builds.len(), 2);
                 assert!(builds
@@ -1748,7 +1805,7 @@ mod tests {
             built.scan.findings
         );
         let calls = podman.calls.lock().unwrap();
-        let npm = calls.iter().find(|c| c.iter().any(|a| a == "npm")).unwrap();
+        let npm = calls.iter().find(|c| c.iter().any(|a| a == NPM)).unwrap();
         for must in [
             "--ignore-scripts",
             "--omit=dev",
@@ -1847,12 +1904,27 @@ mod tests {
         ] {
             assert!(pip.contains(&must.to_string()), "{must}: {pip:?}");
         }
-        assert!(work
-            .join("first/context/wheelhouse/tinyparse-1.0.2-py3-none-any.whl")
-            .is_file());
-        let containerfile =
-            std::fs::read_to_string(work.join("first/context/Containerfile")).unwrap();
-        assert!(containerfile.contains("--no-index") && containerfile.contains("--require-hashes"));
+        // The wheels are installed offline, hash-checked, by the compile step (no network),
+        // which leaves deps/ and removes the wheelhouse before the image is assembled.
+        let compile = calls
+            .iter()
+            .find(|c| {
+                c.iter().any(|a| a.ends_with(":/src:rw"))
+                    && c.contains(&"--network=none".to_string())
+            })
+            .expect("a compile step");
+        let script = compile.last().unwrap();
+        for must in [
+            "--no-index",
+            "--require-hashes",
+            "--no-compile",
+            "--only-binary=:all:",
+        ] {
+            assert!(script.contains(must), "{must}: {script}");
+        }
+        assert!(compile.contains(&cfg.build.python_fetch_image.clone().unwrap()));
+        assert!(work.join("first/context/deps").is_dir());
+        assert!(!work.join("first/context/wheelhouse").exists());
         // Undeclared licence: a blocker, exactly as for crates.
         std::fs::write(&manifest, &text).unwrap();
         let scan = crate::analysis::deterministic_scan(app.path()).unwrap();
@@ -2176,8 +2248,26 @@ mod tests {
                 && c.contains(&"--timestamp=0".to_string())));
         assert!(calls
             .iter()
-            .filter(|c| c.iter().any(|a| a == "git"))
+            .filter(|c| c.iter().any(|a| a == GIT))
             .all(|c| c.contains(&"--network=buildd-git".to_string())));
+        // Publisher code ran in the compile step only: no network, gVisor, nothing writable but
+        // the tree it compiles in.
+        let compile: Vec<&Vec<String>> = calls
+            .iter()
+            .filter(|c| c[0] == "run" && c.iter().any(|a| a.ends_with(":/src:rw")))
+            .filter(|c| !c.iter().any(|a| a == GIT))
+            .collect();
+        assert_eq!(compile.len(), 2, "one per build");
+        for c in compile {
+            for must in [
+                "--network=none",
+                "--runtime=runsc",
+                "--read-only",
+                "--cap-drop=ALL",
+            ] {
+                assert!(c.contains(&must.to_string()), "{must}: {c:?}");
+            }
+        }
         assert!(!dir
             .path()
             .join("work/sbd_aaaaaaaaaaaaaaaaaaaaaaaaaa")

@@ -8,9 +8,21 @@
 //! 1. **fetch**: `cargo vendor --locked` in a throwaway container on a fetch-only network. The
 //!    vendored tree is hashed into the record, and cargo itself checks every crate against the
 //!    checksums pinned in `Cargo.lock`.
-//! 2. **build**: `podman build --network=none --pull=never` from the source tree plus the vendored
-//!    sources, with no capabilities, base images pinned by digest and nothing cached. Nothing in
-//!    this step can reach a network.
+//! 2. **compile** (`nest-build.toml`, optional): the release's one command in a `podman run`
+//!    under the build runtime with `--network=none`, a read-only root, no capabilities and a
+//!    writable copy of the source tree plus the vendored sources at `/src`. This is the only step
+//!    in which publisher code runs (build scripts, proc macros, its own tools), and it runs in
+//!    gVisor.
+//! 3. **assemble**: `podman build --network=none --pull=never --timestamp=0` from that tree with a
+//!    Containerfile that only copies files onto one pinned base
+//!    ([`nest_package::validate_containerfile`]: no `RUN`, `ADD` or `COPY --from`), so nothing
+//!    runs while the image is assembled and the same files always give the same image digest.
+//!
+//! Why the compile is not a `RUN` step: under rootless podman with gVisor, a `RUN` step's writes
+//! land in gVisor's in-sandbox root overlay and never reach buildah's layer (the default), or are
+//! refused on the 0555 root directory when the overlay is off and no capability is granted. A
+//! plain `podman run` with a bind-mounted tree has neither problem and is the path the fetch step
+//! and the behaviour test already use.
 //!
 //! Node and Python releases follow the same two steps with their own lockfile and fetch tool
 //! ([`crate::ecosystem`]): `npm ci --ignore-scripts` into a vendored `node_modules/`, or
@@ -31,7 +43,13 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 pub const MANIFEST_FILE: &str = "nest-release.toml";
-pub const CONTAINERFILE: &str = "Containerfile";
+pub const CONTAINERFILE: &str = nest_package::CONTAINERFILE;
+/// The compile step (optional): see [`BuildSpec`].
+pub const BUILD_FILE: &str = nest_package::BUILD_FILE;
+/// Where the compile step sees the tree it compiles in.
+pub const COMPILE_DIR: &str = "/src";
+/// The default compile timeout.
+const DEFAULT_COMPILE_SECS: u64 = 1800;
 /// Domain separator of the release digest. The postbox computes the same digest
 /// (`marketplace_m1::release_digest`); a shared test vector keeps the two in step.
 pub const RELEASE_DIGEST_CONTEXT: &str = "pigeonpost-nest-release-v1";
@@ -106,6 +124,61 @@ pub fn operation_name_ok(name: &str) -> bool {
 /// The contract's `operation_version` pattern: `major.minor[.patch]`.
 pub fn operation_version_ok(v: &str) -> bool {
     nest_package::operation_version_ok(v)
+}
+
+/// `nest-build.toml`: the compile step. `command` runs in [`COMPILE_DIR`] under the build runtime
+/// with no network, a read-only root and no capabilities; `image` is the toolchain, one the build
+/// plane offers (unset: its toolchain for the release's language).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BuildSpec {
+    pub command: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
+}
+
+impl BuildSpec {
+    /// Parse `nest-build.toml` and hold it to `pigeonpost_core::nest_package::validate_build_spec`.
+    pub fn parse(text: &str) -> Result<BuildSpec, String> {
+        let raw: toml::Value = toml::from_str(text).map_err(|e| format!("{BUILD_FILE}: {e}"))?;
+        let json = serde_json::to_value(&raw).map_err(|e| format!("{BUILD_FILE}: {e}"))?;
+        let errors = nest_package::validate_build_spec(&json);
+        if !errors.is_empty() {
+            let lines: Vec<String> = errors.iter().map(|i| i.to_string()).collect();
+            return Err(format!("{BUILD_FILE}: {}", lines.join("; ")));
+        }
+        serde_json::from_value(json).map_err(|e| format!("{BUILD_FILE}: {e}"))
+    }
+
+    /// The release's compile step, if it has one.
+    pub fn read(src: &Path) -> Result<Option<BuildSpec>, String> {
+        match std::fs::read_to_string(src.join(BUILD_FILE)) {
+            Ok(text) => BuildSpec::parse(&text).map(Some),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(format!("{BUILD_FILE}: {e}")),
+        }
+    }
+}
+
+/// The Containerfile as an image assembly ([`nest_package::validate_containerfile`]), on a base
+/// that is not itself a release image of this build plane (`release_images`).
+pub fn containerfile_assembly(text: &str, release_images: &str) -> Result<(), String> {
+    let issues = nest_package::validate_containerfile(text);
+    if !issues.is_empty() {
+        let lines: Vec<String> = issues.iter().map(|i| i.to_string()).collect();
+        return Err(lines.join("; "));
+    }
+    let pinned = format!("{release_images}@");
+    let tagged = format!("{release_images}:");
+    if text
+        .lines()
+        .any(|l| l.contains(&pinned) || l.contains(&tagged))
+    {
+        return Err(format!(
+            "{CONTAINERFILE}: a release image is not a base image; use a pinned runtime base"
+        ));
+    }
+    Ok(())
 }
 
 /// One regular file of a tree, by its path relative to the root (with `/` separators).
@@ -268,9 +341,7 @@ pub fn containerfile_pinned(text: &str) -> Result<(), String> {
 }
 
 fn pinned(image: &str) -> bool {
-    image.split_once("@sha256:").is_some_and(|(name, digest)| {
-        !name.is_empty() && digest.len() == 64 && digest.bytes().all(|b| b.is_ascii_hexdigit())
-    })
+    nest_package::image_pinned(image)
 }
 
 /// The SBOM, CycloneDX 1.5 JSON: the application, every locked package with its declared licence
@@ -448,11 +519,31 @@ pub struct BuildConfig {
     pub cpu_millis: Option<u64>,
     #[serde(default)]
     pub pids: Option<u64>,
+    /// More toolchain images a release's `nest-build.toml` may name, each pinned by digest and
+    /// loaded into the build user's storage. The fetch images are always offered.
+    #[serde(default)]
+    pub toolchain_images: Vec<String>,
+    /// The compile step's time limit.
+    #[serde(default = "default_compile_secs")]
+    pub compile_timeout_secs: u64,
+}
+
+fn default_compile_secs() -> u64 {
+    DEFAULT_COMPILE_SECS
 }
 
 impl BuildConfig {
-    /// `--memory`, CPU quota and `--pids-limit` flags for `podman run`/`podman build`.
+    /// `--memory`, CPU quota and `--pids-limit` flags for `podman run`.
     pub fn limit_args(&self) -> Vec<String> {
+        let mut out = self.build_limit_args();
+        if let Some(p) = self.pids {
+            out.push(format!("--pids-limit={p}"));
+        }
+        out
+    }
+
+    /// [`Self::limit_args`] for `podman build`, which has no `--pids-limit`.
+    pub fn build_limit_args(&self) -> Vec<String> {
         let mut out = Vec::new();
         if let Some(m) = self.memory_mib {
             out.push(format!("--memory={m}m"));
@@ -462,10 +553,36 @@ impl BuildConfig {
             out.push("--cpu-period=100000".into());
             out.push(format!("--cpu-quota={}", c.max(10) * 100));
         }
-        if let Some(p) = self.pids {
-            out.push(format!("--pids-limit={p}"));
-        }
         out
+    }
+
+    /// The toolchain image the compile step of an `eco` release runs in: the one it names, if this
+    /// build plane offers it, or the build plane's own for the language.
+    pub fn toolchain_image(&self, eco: Ecosystem, named: Option<&str>) -> Result<String, String> {
+        let default = match eco {
+            Ecosystem::Rust => Some(&self.fetch_image),
+            Ecosystem::Node => self.node_fetch_image.as_ref(),
+            Ecosystem::Python => self.python_fetch_image.as_ref(),
+        };
+        match named {
+            None => default
+                .cloned()
+                .ok_or_else(|| format!("no toolchain for {} releases here", eco.name())),
+            Some(image) => {
+                let offered = std::iter::once(&self.fetch_image)
+                    .chain(self.node_fetch_image.iter())
+                    .chain(self.python_fetch_image.iter())
+                    .chain(self.toolchain_images.iter())
+                    .any(|i| i == image);
+                if offered {
+                    Ok(image.to_string())
+                } else {
+                    Err(format!(
+                        "{BUILD_FILE}: image {image} is not a toolchain this build plane offers"
+                    ))
+                }
+            }
+        }
     }
 }
 
@@ -484,6 +601,12 @@ impl BuildConfig {
             if image.as_deref().is_some_and(|i| !pinned(i)) {
                 return Err(format!("{key} must be pinned by digest"));
             }
+        }
+        if !self.toolchain_images.iter().all(|i| pinned(i)) {
+            return Err("toolchain_images must be pinned by digest".into());
+        }
+        if self.compile_timeout_secs == 0 {
+            return Err("compile_timeout_secs: more than zero".into());
         }
         if self.fetch_network.is_empty() || matches!(self.fetch_network.as_str(), "host" | "none") {
             return Err("fetch_network: a named podman network of its own".into());
@@ -517,8 +640,8 @@ pub fn fetch_args(cfg: &BuildConfig, src: &Path, vendor: &Path) -> Vec<String> {
     ];
     args.extend(cfg.limit_args());
     args.extend([
+        entrypoint("cargo"),
         cfg.fetch_image.clone(),
-        "cargo".into(),
         "vendor".into(),
         "--locked".into(),
         "--versioned-dirs".into(),
@@ -549,8 +672,8 @@ pub fn npm_fetch_args(cfg: &BuildConfig, image: &str, vendor: &Path) -> Vec<Stri
     ];
     args.extend(cfg.limit_args());
     args.extend([
+        entrypoint("npm"),
         image.to_string(),
-        "npm".into(),
         "ci".into(),
         "--ignore-scripts".into(),
         "--omit=dev".into(),
@@ -582,8 +705,8 @@ pub fn pip_fetch_args(cfg: &BuildConfig, image: &str, src: &Path, vendor: &Path)
     ];
     args.extend(cfg.limit_args());
     args.extend([
+        entrypoint("python3"),
         image.to_string(),
-        "python3".into(),
         "-m".into(),
         "pip".into(),
         "download".into(),
@@ -598,10 +721,52 @@ pub fn pip_fetch_args(cfg: &BuildConfig, image: &str, src: &Path, vendor: &Path)
     args
 }
 
-/// The build step. `--network=none` is the line that must not move.
+/// `--entrypoint` for one program, in podman's JSON form, so an image's own `ENTRYPOINT` (for
+/// example `["git"]` in alpine/git) never runs in front of the command.
+pub fn entrypoint(program: &str) -> String {
+    format!("--entrypoint={}", json!([program]))
+}
+
+/// The compile step: the release's command in `context` (mounted at [`COMPILE_DIR`]), under the
+/// build runtime with **no network**, a read-only root, no capabilities and a time limit.
+pub fn compile_args(
+    cfg: &BuildConfig,
+    image: &str,
+    context: &Path,
+    command: &[String],
+) -> Vec<String> {
+    let mut args: Vec<String> = vec![
+        "run".into(),
+        "--rm".into(),
+        "--pull=never".into(),
+        format!("--runtime={}", cfg.runtime),
+        "--network=none".into(),
+        "--cap-drop=ALL".into(),
+        "--security-opt=no-new-privileges".into(),
+        "--read-only".into(),
+        "--tmpfs=/tmp:rw,nosuid,nodev,size=1024m".into(),
+        "--env=HOME=/tmp".into(),
+        "--env=TMPDIR=/tmp".into(),
+        "--env=CARGO_HOME=/tmp/cargo".into(),
+        "--env=SOURCE_DATE_EPOCH=0".into(),
+        "--env=PYTHONDONTWRITEBYTECODE=1".into(),
+        format!("--volume={}:{COMPILE_DIR}:rw", context.display()),
+        format!("--workdir={COMPILE_DIR}"),
+        format!("--timeout={}", cfg.compile_timeout_secs),
+    ];
+    args.extend(cfg.limit_args());
+    args.push(entrypoint(&command[0]));
+    args.push(image.to_string());
+    args.extend(command[1..].iter().cloned());
+    args
+}
+
+/// The assembly step. `--network=none` is the line that must not move. `containerfile` lives
+/// outside `context`, so the compile step cannot rewrite it.
 pub fn build_args(
     cfg: &BuildConfig,
     context: &Path,
+    containerfile: &Path,
     tag: &str,
     source_digest: &str,
 ) -> Vec<String> {
@@ -617,10 +782,10 @@ pub fn build_args(
         // layers, so the same source and vendored tree give the same image digest.
         "--timestamp=0".into(),
         format!("--label=dev.pigeonpost.release.source={source_digest}"),
-        format!("--file={}", context.join(CONTAINERFILE).display()),
+        format!("--file={}", containerfile.display()),
         format!("--tag={tag}"),
     ];
-    args.extend(cfg.limit_args());
+    args.extend(cfg.build_limit_args());
     args.push(context.display().to_string());
     args
 }
@@ -653,6 +818,66 @@ fn copy_tree(from: &Path, files: &[SourceFile], to: &Path) -> Result<(), String>
     Ok(())
 }
 
+/// Most entries the compile step may leave in the tree the image is assembled from.
+#[cfg(unix)]
+const MAX_COMPILED_ENTRIES: usize = 500_000;
+
+/// After the compile step: no special files, and no setuid, setgid or sticky bits, in what the
+/// image will be assembled from; every directory readable by the build plane again.
+#[cfg(unix)]
+pub fn seal_tree(root: &Path) -> Result<(), String> {
+    use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+    let mut stack = vec![root.to_path_buf()];
+    let mut seen = 0usize;
+    while let Some(dir) = stack.pop() {
+        let mode = std::fs::symlink_metadata(&dir)
+            .map_err(|e| e.to_string())?
+            .permissions()
+            .mode();
+        std::fs::set_permissions(
+            &dir,
+            std::fs::Permissions::from_mode((mode & 0o777) | 0o700),
+        )
+        .map_err(|e| format!("{}: {e}", dir.display()))?;
+        for entry in std::fs::read_dir(&dir).map_err(|e| format!("{}: {e}", dir.display()))? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            seen += 1;
+            if seen > MAX_COMPILED_ENTRIES {
+                return Err("the compile step left too many files".into());
+            }
+            let path = entry.path();
+            let meta = std::fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
+            let kind = meta.file_type();
+            if kind.is_dir() {
+                stack.push(path);
+            } else if kind.is_file() {
+                let mode = meta.permissions().mode();
+                if mode & 0o7000 != 0 {
+                    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode & 0o777))
+                        .map_err(|e| e.to_string())?;
+                }
+            } else if kind.is_fifo()
+                || kind.is_socket()
+                || kind.is_block_device()
+                || kind.is_char_device()
+            {
+                return Err(format!(
+                    "{}: the compile step left a special file",
+                    path.strip_prefix(root).unwrap_or(&path).display()
+                ));
+            }
+            // Symlinks stay: buildah resolves COPY sources inside the context only.
+        }
+    }
+    Ok(())
+}
+
+/// The build plane runs on Linux; elsewhere (tests on other hosts) there is nothing to seal.
+#[cfg(not(unix))]
+pub fn seal_tree(_root: &Path) -> Result<(), String> {
+    Ok(())
+}
+
 impl<P: Podman> Builder<P> {
     /// Build `src` into an image. `work` is an empty scratch directory for this build only.
     pub fn build(&self, src: &Path, work: &Path) -> Result<BuildRecord, String> {
@@ -669,8 +894,13 @@ impl<P: Podman> Builder<P> {
         let manifest = Manifest::parse(&manifest_text)?;
         let containerfile = std::fs::read_to_string(src.join(CONTAINERFILE))
             .map_err(|e| format!("{CONTAINERFILE}: {e}"))?;
-        containerfile_pinned(&containerfile)?;
+        containerfile_assembly(&containerfile, &self.cfg.image_name)?;
         let eco = ecosystem::detect(src)?;
+        let spec = BuildSpec::read(src)?;
+        let toolchain = match &spec {
+            Some(s) => Some(self.cfg.toolchain_image(eco, s.image.as_deref())?),
+            None => None,
+        };
         let packages = ecosystem::locked(eco, src)?;
         let files = read_tree(src)?;
         if files.iter().any(|f| Ecosystem::reserved(&f.path)) {
@@ -692,7 +922,7 @@ impl<P: Podman> Builder<P> {
         let vendored = read_tree(&fetched)?;
         let vendor_digest = tree_digest(&vendored);
 
-        // 2. build, with none.
+        // 2. compile, with none, in gVisor: the only step that runs publisher code.
         let context = work.join("context");
         copy_tree(src, &files, &context)?;
         copy_tree(&fetched, &vendored, &context.join(eco.vendor_dir()))?;
@@ -703,8 +933,21 @@ impl<P: Podman> Builder<P> {
         } else {
             std::fs::create_dir_all(context.join(eco.vendor_dir())).map_err(|e| e.to_string())?;
         }
+        if let (Some(spec), Some(image)) = (&spec, &toolchain) {
+            let args = compile_args(&self.cfg, image, &context, &spec.command);
+            let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+            self.podman
+                .run(&refs)
+                .map_err(|e| format!("the compile step ({BUILD_FILE}) failed: {e}"))?;
+            seal_tree(&context)?;
+        }
+
+        // 3. assemble, with none and nothing running: the Containerfile as it is in the source
+        // tree, kept outside the context the compile step could write to.
+        let assembly = work.join("Containerfile.assemble");
+        std::fs::write(&assembly, &containerfile).map_err(|e| e.to_string())?;
         let tag = build_tag(&self.cfg, &source_digest);
-        let args = build_args(&self.cfg, &context, &tag, &source_digest);
+        let args = build_args(&self.cfg, &context, &assembly, &tag, &source_digest);
         let refs: Vec<&str> = args.iter().map(String::as_str).collect();
         self.podman.run(&refs)?;
         let image_digest = self
@@ -746,6 +989,7 @@ impl<P: Podman> Builder<P> {
                 "fetch_network": self.cfg.fetch_network,
                 "build_network": "none",
                 "ecosystem": eco.name(),
+                "compile": compile_evidence(&self.cfg, toolchain.as_deref()),
             }),
         })
     }
@@ -791,6 +1035,21 @@ impl<P: Podman> Builder<P> {
                 Ok(vendor.to_path_buf())
             }
         }
+    }
+}
+
+/// How the compile step ran, for the evidence (`null`: the release has none).
+pub fn compile_evidence(cfg: &BuildConfig, toolchain: Option<&str>) -> Value {
+    match toolchain {
+        None => Value::Null,
+        Some(image) => json!({
+            "image": image,
+            "runtime": cfg.runtime,
+            "network": "none",
+            "root": "read-only",
+            "capabilities": [],
+            "assembly": "no RUN steps",
+        }),
     }
 }
 
@@ -844,9 +1103,14 @@ mod tests {
             )),
             memory_mib: None,
             cpu_millis: None,
-            pids: None,
+            pids: Some(256),
+            toolchain_images: vec![REFERENCE_TOOLCHAIN.into()],
+            compile_timeout_secs: 900,
         }
     }
+
+    /// The toolchain the reference release's `nest-build.toml` names.
+    const REFERENCE_TOOLCHAIN: &str = "docker.io/library/rust:1.91.1-slim-bookworm@sha256:8514999d4786ef12efe89239e86b3d0a021b94b9d35108c8efe6c79ca7dc1a65";
 
     fn scratch() -> tempfile::TempDir {
         tempfile::tempdir().unwrap()
@@ -1020,6 +1284,158 @@ mod tests {
         .unwrap();
         assert_eq!(again.release_digest, record.release_digest);
         assert_eq!(again.sbom, record.sbom);
+    }
+
+    /// Publisher code runs in one place only: the compile step, a `podman run` under gVisor with
+    /// no network, a read-only root and no capabilities. The assembly that follows reads a copy
+    /// of the Containerfile kept outside the tree the compile step could write, and `podman
+    /// build` gets no `--pids-limit` (it has none).
+    #[test]
+    fn publisher_code_runs_only_in_the_compile_step_without_a_network() {
+        let work = scratch();
+        let podman = FakePodman::default();
+        let record = Builder {
+            cfg: config(),
+            podman: podman.clone(),
+        }
+        .build(&reference_source(), work.path())
+        .unwrap();
+        let calls = podman.calls.lock().unwrap().clone();
+        let order: Vec<&str> = calls.iter().map(|c| c[0].as_str()).collect();
+        assert_eq!(order, ["info", "run", "run", "build", "image"], "{calls:?}");
+        let compile = &calls[2];
+        for must in [
+            "--network=none",
+            "--runtime=runsc",
+            "--cap-drop=ALL",
+            "--security-opt=no-new-privileges",
+            "--read-only",
+            "--pull=never",
+            "--timeout=900",
+            "--pids-limit=256",
+            "--entrypoint=[\"sh\"]",
+        ] {
+            assert!(compile.contains(&must.to_string()), "{must}: {compile:?}");
+        }
+        let context = work.path().join("context");
+        assert!(compile.contains(&format!("--volume={}:/src:rw", context.display())));
+        // The command follows the toolchain image, with its program as the entrypoint.
+        let image = compile
+            .iter()
+            .position(|a| a == REFERENCE_TOOLCHAIN)
+            .unwrap();
+        assert_eq!(compile[image + 1], "-ec");
+        assert!(compile[image + 2].starts_with("cargo build --release --locked --offline"));
+        assert!(!compile
+            .iter()
+            .any(|a| a.contains("privileged") || a.contains("--cap-add")));
+
+        let build = &calls[3];
+        let assembly = work.path().join("Containerfile.assemble");
+        assert!(build.contains(&format!("--file={}", assembly.display())));
+        assert!(
+            !build.iter().any(|a| a.starts_with("--pids-limit")),
+            "{build:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&assembly).unwrap(),
+            std::fs::read_to_string(reference_source().join(CONTAINERFILE)).unwrap()
+        );
+        assert_eq!(record.isolation["compile"]["image"], REFERENCE_TOOLCHAIN);
+        assert_eq!(record.isolation["compile"]["network"], "none");
+    }
+
+    #[test]
+    fn a_containerfile_that_runs_anything_or_an_unoffered_toolchain_is_refused() {
+        let base = format!(
+            "docker.io/library/debian:bookworm-slim@sha256:{}",
+            "9".repeat(64)
+        );
+        let release = format!(
+            "localhost/pigeonpost-release-hr-policy-qa@sha256:{}",
+            "a".repeat(64)
+        );
+        let reference = std::fs::read_to_string(reference_source().join(CONTAINERFILE)).unwrap();
+        containerfile_assembly(&reference, &config().image_name).unwrap();
+        for bad in [
+            format!("FROM {base}\nRUN cargo build --release\n"),
+            format!("FROM {base}\nCOPY --from=build /x /x\n"),
+            format!("FROM {release}\n"),
+            format!("FROM {base}\nADD x /x\n"),
+        ] {
+            assert!(
+                containerfile_assembly(&bad, &config().image_name).is_err(),
+                "{bad}"
+            );
+        }
+        // Through the builder: the old multi-stage form with a RUN step is refused before
+        // anything runs.
+        let src = scratch();
+        for f in read_tree(&reference_source()).unwrap() {
+            let dest = src.path().join(&f.path);
+            std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
+            std::fs::copy(reference_source().join(&f.path), dest).unwrap();
+        }
+        let multi = format!(
+            "FROM {REFERENCE_TOOLCHAIN} AS build\nRUN cargo build\nFROM {base}\n\
+             COPY --from=build /src/target/release/hr-policy-qa /usr/local/bin/hr-policy-qa\n"
+        );
+        std::fs::write(src.path().join(CONTAINERFILE), multi).unwrap();
+        let podman = FakePodman::default();
+        let builder = Builder {
+            cfg: config(),
+            podman: podman.clone(),
+        };
+        let err = builder.build(src.path(), scratch().path()).unwrap_err();
+        assert!(err.contains("RUN"), "{err}");
+        // A toolchain the build plane does not offer (another release's image, say).
+        std::fs::copy(
+            reference_source().join(CONTAINERFILE),
+            src.path().join(CONTAINERFILE),
+        )
+        .unwrap();
+        std::fs::write(
+            src.path().join(BUILD_FILE),
+            format!("image = \"{release}\"\ncommand = [\"true\"]\n"),
+        )
+        .unwrap();
+        let err = builder.build(src.path(), scratch().path()).unwrap_err();
+        assert!(err.contains("not a toolchain"), "{err}");
+        // Only `info` ran: nothing was fetched or compiled for either.
+        assert!(podman.calls.lock().unwrap().iter().all(|c| c[0] == "info"));
+        // Unset image: the build plane's toolchain for the language.
+        assert_eq!(
+            config().toolchain_image(Ecosystem::Rust, None).unwrap(),
+            config().fetch_image
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_compiled_tree_is_sealed_before_assembly() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = scratch();
+        std::fs::create_dir_all(dir.path().join("target/release")).unwrap();
+        let bin = dir.path().join("target/release/app");
+        std::fs::write(&bin, "x").unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o4755)).unwrap();
+        std::fs::set_permissions(
+            dir.path().join("target"),
+            std::fs::Permissions::from_mode(0o000),
+        )
+        .unwrap();
+        seal_tree(dir.path()).unwrap();
+        assert_eq!(
+            std::fs::metadata(&bin).unwrap().permissions().mode() & 0o7777,
+            0o755
+        );
+        let fifo = dir.path().join("pipe");
+        let status = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        assert!(seal_tree(dir.path()).unwrap_err().contains("special file"));
     }
 
     #[test]

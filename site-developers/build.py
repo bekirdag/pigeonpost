@@ -1894,9 +1894,11 @@ This writes the following files:
 | `README.md` | The template's notes |
 | `app.mjs` | The app |
 | `app.test.mjs` | Its unit tests |
-| `Containerfile` | The runner image, base pinned by digest |
+| `Containerfile` | The image assembly: one base pinned by digest, then file copies (no `RUN`) |
 | `pigeonpost-nest.mjs` | The SDK (Node ESM, no dependencies) |
 | `docs/handbook.md` | The bundled documents (synthetic sample text; replace it) |
+
+A Python app also gets `nest-build.toml`, the compile step that installs its pinned wheels offline before the image is assembled ([how a release is built](/nest-review)).
 
 ## Run unit tests
 
@@ -2405,18 +2407,45 @@ Review holds a release to these rules. Build to them from the start.
 - Declare exactly what you use in the manifest: egress, external writes, and operations. Review refuses anything beyond the manifest.
 - Make your Nest idempotent per job id. A job may arrive twice.
 - Do not log buyer data. Logs are discarded anyway.
-- Pin base images by digest. Ship only allowlisted licences.
+- Pin base images by digest. Compile in `nest-build.toml`, never in the Containerfile. Ship only allowlisted licences.
 
 ## How a release is built
 
-Pigeonpost builds your release from its source tree, in a rootless podman build with no network access. No image you upload is ever run.
+Pigeonpost builds your release from its source tree with rootless podman. No image you upload is ever run. The build has three steps:
 
-- Dependencies are fetched in a separate, earlier step and vendored for the build.
-- Every FROM instruction in the Containerfile must be pinned by digest (`image@sha256:<64 hex>`), directly or through an ARG default.
-- Symlinks, devices, and sockets in the tree are refused.
+1. **Fetch.** Dependencies are fetched in a separate step and vendored: `cargo vendor --locked`, `npm ci --ignore-scripts`, or `pip download --require-hashes`. This is the only step with a network, and none of your code runs in it.
+2. **Compile.** The command in your `nest-build.toml` runs in a writable copy of your tree, with the vendored dependencies, at `/src`. It runs in a gVisor sandbox with no network, a read-only root filesystem and no capabilities, and it has a time limit. This is the only step that runs your code, including build scripts and procedural macros.
+3. **Assemble.** Your `Containerfile` copies files from that tree onto one base image. Nothing runs in this step, so the same files always give the same image.
+
+Rules for the build files:
+
+- The `Containerfile` has exactly one `FROM`, pinned by digest (`image@sha256:<64 hex>`), directly or through an `ARG` default. It may use only `ARG`, `FROM`, `WORKDIR`, `COPY`, `ENV`, `USER`, `ENTRYPOINT`, `CMD`, `LABEL` and `EXPOSE`. `RUN`, `ADD`, `COPY --from`, heredocs and parser directives are refused. Compile in `nest-build.toml` instead.
+- `nest-build.toml` is optional. It has `command`, a list of strings: the program and its arguments, at most 64 arguments and 8,192 characters. It may also have `image`, the toolchain image pinned by digest. That image must be one the build service offers. Leave `image` out to use the build service's toolchain for your language.
+- The compile step cannot reach a network. Everything it needs must be in your tree or in the vendored dependencies.
+- After the compile step, setuid, setgid and sticky bits are cleared, and special files are refused.
+- Symlinks, devices, and sockets in the source tree are refused.
 - Files must be at most 8 MiB each. The tree can contain at most 20,000 files.
-- Do not commit `vendor/`, `target/` or `.cargo/`.
+- Do not commit `vendor/`, `target/`, `.cargo/`, `node_modules/` or `wheelhouse/`.
+- The build runs twice from scratch. Both builds must give the same release digest.
 - The build writes an SBOM and computes the release digest.
+
+A Rust release compiles its binary and copies it onto a small base:
+
+```toml
+# nest-build.toml
+command = ["sh", "-ec", "cargo build --release --locked --offline && strip target/release/my-app"]
+```
+
+```dockerfile
+# Containerfile
+ARG BASE_IMAGE=docker.io/library/debian:bookworm-slim@sha256:<64 hex>
+FROM ${BASE_IMAGE}
+COPY target/release/my-app /usr/local/bin/my-app
+USER 10001:10001
+ENTRYPOINT ["/usr/local/bin/my-app"]
+```
+
+The Python templates install their wheels in `nest-build.toml` with `pip install --no-index --require-hashes --no-compile --target=deps`. The Node templates need no compile step: `node_modules/` is vendored as it is. `pigeonpost nest validate` checks both build files offline.
 
 > Today the build service builds Rust (Cargo) source trees: it needs `Cargo.lock`, and every dependency must come from crates.io with a checksum (no git or path dependencies). Node and Python builds come with the publisher console; the Node and Python templates run in the local kit today.
 
@@ -2426,7 +2455,7 @@ Review processes your release in this order.
 
 | Stage | What it checks | Blocks a release? |
 |---|---|---|
-| Intake and build | The manifest, the Containerfile's pinned base images, the tree's limits, the build itself | Yes |
+| Intake and build | The manifest, the build files (`Containerfile`, `nest-build.toml`), the tree's limits, the build itself | Yes |
 | Deterministic scan | Committed credentials, capabilities, syscalls, egress, external writes, licences | Yes |
 | AI analysis | An advisory review of the source by a self-hosted model | No, its findings are evidence for the reviewer |
 | Behaviour test | The release runs its operations with honeytokens planted; nothing may leak | Yes |

@@ -8,12 +8,11 @@
 //!
 //! Nothing here touches the network, an identity or the agent's home directory.
 
-use pigeonpost_core::nest_package::{self, Issue, Severity, MANIFEST_FILE};
+use pigeonpost_core::nest_package::{
+    self, Issue, Severity, BUILD_FILE, CONTAINERFILE, MANIFEST_FILE,
+};
 use serde_json::{json, Value};
 use std::path::Path;
-
-/// Files the build plane needs next to the manifest.
-const CONTAINERFILE: &str = "Containerfile";
 
 fn issue(path: &str, code: &'static str, message: impl Into<String>) -> Issue {
     Issue {
@@ -62,12 +61,32 @@ pub(crate) fn check(dir: &Path, config: Option<&Path>) -> Report {
     if let Some(m) = &manifest {
         issues.extend(nest_package::validate_manifest(m));
     }
-    if !dir.join(CONTAINERFILE).is_file() {
-        issues.push(issue(
+    // The image assembly: one pinned base and file copies, nothing that runs a program.
+    match std::fs::read_to_string(dir.join(CONTAINERFILE)) {
+        Err(_) => issues.push(issue(
             "",
             "missing",
-            format!("{CONTAINERFILE}: the build plane builds the image from it"),
-        ));
+            format!("{CONTAINERFILE}: the build plane assembles the image from it"),
+        )),
+        Ok(text) => issues.extend(nest_package::validate_containerfile(&text)),
+    }
+    // The compile step, when there is one.
+    if let Ok(text) = std::fs::read_to_string(dir.join(BUILD_FILE)) {
+        match toml::from_str::<toml::Value>(&text)
+            .map_err(|e| e.to_string())
+            .and_then(|raw| serde_json::to_value(raw).map_err(|e| e.to_string()))
+        {
+            Err(e) => issues.push(issue("", "bad_value", format!("{BUILD_FILE}: {e}"))),
+            Ok(spec) => {
+                for mut i in nest_package::validate_build_spec(&spec) {
+                    i.path = format!(
+                        "{BUILD_FILE}:{}",
+                        if i.path.is_empty() { "/" } else { &i.path }
+                    );
+                    issues.push(i);
+                }
+            }
+        }
     }
     if let Some(path) = config {
         let schema = manifest
@@ -150,14 +169,53 @@ mod tests {
 
     const REFERENCE: &str =
         include_str!("../../../deploy/nests/reference/hr-policy-qa/nest-release.toml");
+    const REFERENCE_CONTAINERFILE: &str =
+        include_str!("../../../deploy/nests/reference/hr-policy-qa/Containerfile");
+    const REFERENCE_BUILD: &str =
+        include_str!("../../../deploy/nests/reference/hr-policy-qa/nest-build.toml");
     const FIXTURES: &str =
         include_str!("../../../docs/nests/contracts/examples/nest-config-fixtures.json");
 
     fn package(manifest: &str) -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join(MANIFEST_FILE), manifest).unwrap();
-        std::fs::write(dir.path().join(CONTAINERFILE), "FROM scratch\n").unwrap();
+        std::fs::write(dir.path().join(CONTAINERFILE), REFERENCE_CONTAINERFILE).unwrap();
+        std::fs::write(dir.path().join(BUILD_FILE), REFERENCE_BUILD).unwrap();
         dir
+    }
+
+    /// The build files are held to the build plane's rules: a Containerfile that runs a program
+    /// or an unpinned base, and a malformed compile step, are errors here already.
+    #[test]
+    fn the_build_files_are_checked_offline() {
+        let dir = package(REFERENCE);
+        std::fs::write(
+            dir.path().join(CONTAINERFILE),
+            format!("{REFERENCE_CONTAINERFILE}RUN cargo build\n"),
+        )
+        .unwrap();
+        std::fs::write(dir.path().join(BUILD_FILE), "command = \"make\"\n").unwrap();
+        let r = check(dir.path(), None);
+        let found: Vec<(&str, &str)> = r.issues.iter().map(|i| (i.path.as_str(), i.code)).collect();
+        assert!(
+            found
+                .iter()
+                .any(|(p, c)| p.starts_with("Containerfile:") && *c == "not_allowed"),
+            "{found:?}"
+        );
+        assert!(
+            found.contains(&("nest-build.toml:/command", "wrong_type")),
+            "{found:?}"
+        );
+        std::fs::write(
+            dir.path().join(CONTAINERFILE),
+            "FROM debian:bookworm-slim\n",
+        )
+        .unwrap();
+        std::fs::remove_file(dir.path().join(BUILD_FILE)).unwrap();
+        let r = check(dir.path(), None);
+        assert_eq!(r.issues.len(), 1, "{:?}", r.issues);
+        assert_eq!(r.issues[0].code, "bad_value");
     }
 
     #[test]

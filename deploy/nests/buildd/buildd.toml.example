@@ -57,7 +57,9 @@ allowed_hosts = ["github.com", "codeberg.org"]
 runtime = "runsc"
 # The vendoring step (`cargo vendor --locked`) needs the crates.io registry; same network.
 fetch_network = "nestbuild-fetch"
-# The Rust toolchain image for vendoring, pinned by digest.
+# The Rust toolchain image, pinned by digest: vendoring (`cargo vendor --locked`), and the compile
+# step of Rust releases whose nest-build.toml names no image. Use the one the reference release
+# pins (deploy/nests/reference/hr-policy-qa/nest-build.toml).
 fetch_image = "docker.io/library/rust:<VERSION>-slim-bookworm@sha256:<DIGEST>"
 # Node releases (`npm ci --ignore-scripts --omit=dev`) and Python releases
 # (`pip download --require-hashes --only-binary=:all:`), each pinned by digest. Use the same
@@ -67,7 +69,13 @@ node_fetch_image = "docker.io/library/node:22.21.1-bookworm-slim@sha256:25b3eb23
 python_fetch_image = "docker.io/library/python:3.12.12-slim-bookworm@sha256:593bd06efe90efa80dc4eee3948be7c0fde4134606dd40d8dd8dbcade98e669c"
 # Local name the release images are tagged with.
 image_name = "localhost/pigeonpost-release"
-# Per-container limits (the nestbuild slice is the hard cap for everything together).
+# More toolchain images a release's nest-build.toml may name (`image = ...`), each pinned by digest
+# and loaded into nestbuild's storage. The three fetch images above are always offered.
+# toolchain_images = ["docker.io/library/rust:<OTHER_VERSION>-slim-bookworm@sha256:<DIGEST>"]
+# The compile step (publisher code, in gVisor with no network) is stopped after this long.
+compile_timeout_secs = 1800
+# Per-container limits (the nestbuild slice is the hard cap for everything together). pids applies
+# to `podman run` only; `podman build` has no such flag and runs nothing (no RUN steps).
 memory_mib = 4096
 cpu_millis = 2000
 pids = 1024

@@ -91,6 +91,10 @@ pub const PYTHON_LOCKFILES: &[File] = &[file!(
 )];
 pub const PYTHON_CONTAINERFILE: File =
     file!("Containerfile", "templates/_lang/python/Containerfile");
+/// The Python compile step (`nest-build.toml`): installs the hash-checked wheels offline, in
+/// gVisor with no network, before the image is assembled. Node apps have none: their
+/// `node_modules/` is vendored as it is.
+pub const PYTHON_BUILD: File = file!("nest-build.toml", "templates/_lang/python/nest-build.toml");
 
 pub const TEMPLATES: &[Template] = &[
     Template {
@@ -202,16 +206,28 @@ pub fn render(
         };
         out.push((f.path.to_string(), contents));
     }
-    let (lang_files, containerfile, sdk, locks) = match lang {
-        Lang::Node => (template.node, NODE_CONTAINERFILE, NODE_SDK, NODE_LOCKFILES),
+    let (lang_files, containerfile, sdk, locks, build): (_, _, _, _, &[File]) = match lang {
+        Lang::Node => (
+            template.node,
+            NODE_CONTAINERFILE,
+            NODE_SDK,
+            NODE_LOCKFILES,
+            &[],
+        ),
         Lang::Python => (
             template.python,
             PYTHON_CONTAINERFILE,
             PYTHON_SDK,
             PYTHON_LOCKFILES,
+            &[PYTHON_BUILD],
         ),
     };
-    for f in lang_files.iter().chain([&containerfile, &sdk]).chain(locks) {
+    for f in lang_files
+        .iter()
+        .chain([&containerfile, &sdk])
+        .chain(locks)
+        .chain(build)
+    {
         out.push((f.path.to_string(), f.contents.to_string()));
     }
     out
@@ -264,12 +280,13 @@ mod tests {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
         let mut files = Vec::new();
         on_disk(&root, &root, &mut files);
-        // Every template's files, plus the two runner Containerfiles and the lockfiles.
+        // Every template's files, plus the two runner Containerfiles, the lockfiles and the
+        // Python compile step.
         let listed: usize = TEMPLATES
             .iter()
             .map(|t| t.shared.len() + t.node.len() + t.python.len())
             .sum::<usize>()
-            + 2
+            + 3
             + NODE_LOCKFILES.len()
             + PYTHON_LOCKFILES.len();
         let files: Vec<String> = files
@@ -298,6 +315,7 @@ mod tests {
             "app.py",
             "test_app.py",
             "Containerfile",
+            "nest-build.toml",
             "pigeonpost_nest.py",
         ] {
             assert!(paths.contains(&want), "{paths:?}");

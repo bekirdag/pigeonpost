@@ -1,0 +1,9 @@
+# The compile step of the reference release. The build plane runs `command` in /src, a writable
+# copy of this tree with the vendored crates (`vendor/` and a `.cargo/config.toml` that points
+# cargo at them), inside gVisor with no network, a read-only root and no capabilities. What it
+# leaves in /src is what the Containerfile can copy into the image.
+
+# The toolchain, pinned by digest. It must be one the build plane offers (its Rust fetch image or
+# one of its `toolchain_images`); leave it out to use the build plane's own Rust toolchain.
+image = "docker.io/library/rust:1.91.1-slim-bookworm@sha256:8514999d4786ef12efe89239e86b3d0a021b94b9d35108c8efe6c79ca7dc1a65"
+command = ["sh", "-ec", "cargo build --release --locked --offline && strip target/release/hr-policy-qa"]
