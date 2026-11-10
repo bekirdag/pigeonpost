@@ -2037,6 +2037,88 @@
           }
         },
         {
+          "name": "The members who operate a company Nest (ManageAgents)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/orgs/:org/nests/:nest/operators",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "orgs",
+                ":org",
+                "nests",
+                ":nest",
+                "operators"
+              ],
+              "variable": [
+                {
+                  "key": "org",
+                  "value": "",
+                  "description": ""
+                },
+                {
+                  "key": "nest",
+                  "value": "",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Members with a live `operate_nest` delegation on the Nest's mailbox. Nest admins (owner, admin, agent_admin) always have access and are never listed."
+          }
+        },
+        {
+          "name": "Replace who operates a company Nest (ManageAgents)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/orgs/:org/nests/:nest/operators",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "orgs",
+                ":org",
+                "nests",
+                ":nest",
+                "operators"
+              ],
+              "variable": [
+                {
+                  "key": "org",
+                  "value": "",
+                  "description": ""
+                },
+                {
+                  "key": "nest",
+                  "value": "",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "The listed active members get the `operate_nest` delegation; members left out lose it at once, for chat, files and approvals alike (other capabilities on the same delegation are kept). Nest admins named in the list are skipped. Sending the current set again changes nothing. Adding operators is refused while the organization is read-only or suspended; removing them never is.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"operators\": [\n    \"string\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
           "name": "A Nest sandbox redeems its one-time enrollment code (no credential)",
           "request": {
             "method": "POST",

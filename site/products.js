@@ -244,12 +244,13 @@
       (async () => {
         const v = await deps.pb(`${path}/nests`);
         const rows = await orgRows(v.nests || []);
-        // Only people admins may list members. Anyone else creates the Nest and adds operators later.
+        // Only people admins may list members. Other Nest admins create the Nest without a picker and
+        // can only remove operators later (each row's "Manage operators" lists the current ones).
         const members = org.admin ? await deps.pb(`${path}/members?status=active`).then((m) => (m.members || []).filter((x) => x.id !== org.memberId)).catch(() => []) : [];
         box.textContent = "";
         const a = v.allowance || { slots: 0, used: 0 };
         box.append(el("p", { text: v.package ? `Company package: ${a.used} of ${a.slots} Nests in use.` : "This company has no Nest package yet. Its billing admin can buy one." }));
-        if (rows.length) box.append(el("ul", { class: "pp-nests", "aria-label": "Company Nests" }, rows.map(nestRow)));
+        if (rows.length) box.append(el("ul", { class: "pp-nests", "aria-label": "Company Nests" }, rows.map((n) => (org.admin ? withOperators(nestRow(n), orgId, n, members) : nestRow(n)))));
         if (!org.admin) return;
         const handle = el("input", { id: "pp-org-handle", required: true, autocomplete: "off" });
         const label = el("input", { id: "pp-org-label", required: true, maxlength: "64" });
@@ -267,6 +268,67 @@
 
     function memberName(m) {
       return [m.first_name, m.last_name].filter(Boolean).join(" ") || m.handle || "Member";
+    }
+
+    // "Manage operators" on a company Nest row, for Nest admins (GET/PUT
+    // /v1/orgs/{org}/nests/{nest}/operators). The choices are the member list (people admins only)
+    // plus whoever operates the Nest now, so any Nest admin can at least remove operators. Admins
+    // always have access and are never offered; the server skips them anyway.
+    function withOperators(li, orgId, nest, members) {
+      const key = String(nest.nest_id).replace(/[^A-Za-z0-9_-]/g, "");
+      const url = `/v1/orgs/${encodeURIComponent(orgId)}/nests/${encodeURIComponent(nest.nest_id)}/operators`;
+      const panel = el("div", { class: "pp-operators-panel", id: `pp-ops-${key}`, hidden: true });
+      const status = el("p", { class: "muted", role: "status", "aria-live": "polite" });
+      const toggle = el("button", { type: "button", class: "btn btn-small", "aria-expanded": "false", "aria-controls": panel.id, "data-manage-operators": nest.nest_id }, "Manage operators");
+      const people = members.filter((m) => !(m.roles || []).some((r) => NEST_ADMIN_ROLES.includes(r)));
+      const errors = { invalid_member: "Someone you picked is no longer an active member. Reload and try again.", too_many_operators: "A Nest can have at most 50 operators.", org_read_only: "The company is read-only until its payment is settled; you can only remove operators.", org_inactive: "The company is suspended." };
+
+      function draw(current) {
+        const held = new Set(current.map((o) => o.member_id));
+        const choices = [...people.map((m) => ({ id: m.id, name: memberName(m) }))];
+        for (const o of current) if (!choices.some((c) => c.id === o.member_id)) choices.push({ id: o.member_id, name: memberName(o) });
+        panel.textContent = "";
+        if (!choices.length) {
+          panel.append(el("p", { class: "muted", text: "No one operates this Nest. Only admins can use it." }), status);
+          return;
+        }
+        const boxes = choices.map((c) => el("input", { type: "checkbox", value: c.id, id: `pp-op-${key}-${c.id}`, "data-nest-operator": c.id, checked: held.has(c.id) }));
+        const save = el("button", { type: "submit", class: "btn btn-secondary" }, "Save operators");
+        panel.append(el("form", { class: "ac-form", onsubmit: async (e) => {
+          e.preventDefault();
+          save.disabled = true;
+          status.textContent = "Saving…";
+          try {
+            const r = await deps.pb(url, { method: "PUT", body: JSON.stringify({ operators: boxes.filter((b) => b.checked).map((b) => b.value) }) });
+            const n = (r.operators || []).length;
+            draw(r.operators || []);
+            const again = panel.querySelector('button[type="submit"]');
+            if (again) again.focus();
+            status.textContent = `Saved. ${n === 0 ? "No one else" : n === 1 ? "1 person" : `${n} people`} can use this Nest besides admins.`;
+          } catch (err) {
+            save.disabled = false;
+            status.textContent = errors[err.code] || `Couldn't save: ${err.message}`;
+          }
+        } },
+          el("fieldset", { class: "pp-operators" }, el("legend", { text: `Who can use ${nest.label} (admins always can)` }),
+            boxes.map((b, i) => el("label", { class: "pp-operator", for: b.id }, b, ` ${choices[i].name}`))),
+          people.length ? null : el("p", { class: "muted", text: "Only people admins can see the member list, so you can remove operators here but not add them." }),
+          save), status);
+      }
+
+      toggle.addEventListener("click", async () => {
+        const open = toggle.getAttribute("aria-expanded") === "true";
+        toggle.setAttribute("aria-expanded", String(!open));
+        panel.hidden = open;
+        if (open) return;
+        panel.textContent = "";
+        status.textContent = "Loading operators…";
+        panel.append(status);
+        try { draw((await deps.pb(url)).operators || []); }
+        catch (_) { status.textContent = "Couldn't load who operates this Nest."; }
+      });
+      li.append(toggle, panel);
+      return li;
     }
 
     // ---- actions ----------------------------------------------------------------------------

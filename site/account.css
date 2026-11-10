@@ -107,3 +107,4 @@
 .pp-context { display: block; margin-bottom: .75rem; }
 .pp-operators { border: 1px solid var(--line, #ddd); border-radius: .5rem; padding: .4rem .75rem; display: grid; gap: .25rem; }
 .pp-operator { display: block; }
+.pp-operators-panel { flex-basis: 100%; margin-top: .5rem; }
