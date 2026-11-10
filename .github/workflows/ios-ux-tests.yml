@@ -195,7 +195,7 @@ jobs:
     # on iOS 18 until the hosted image includes a fixed runtime.
     # https://developer.apple.com/forums/thread/826971
     runs-on: macos-15
-    timeout-minutes: 15
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: apps/ios
