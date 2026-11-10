@@ -81,26 +81,26 @@
 <p class="op-sum">Report the sender of a received message, or the caller of an incoming call, as spam</p>
 <p class="op-facts">Credentials: <code>apiKey</code>, <code>capToken</code>, <code>memberToken</code></p>
 <h3>Request body</h3><p><code>application/json</code></p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;message_id&quot;: &quot;string&quot;,
   &quot;call_id&quot;: &quot;string&quot;,
   &quot;identity&quot;: &quot;string&quot;
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Report recorded (or already recorded).</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;reported&quot;: false,
   &quot;sender&quot;: &quot;string&quot;,
   &quot;reports_against_sender&quot;: 0,
   &quot;detail&quot;: &quot;string&quot;
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td><code>invalid_report</code>, <code>no_identity</code>, <code>identity_required</code></td></tr><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>reporter_not_in_good_standing</code>, <code>wrong_identity</code>, <code>not_in_account</code></td></tr><tr><td><code>404</code></td><td><code>not_found</code></td></tr><tr><td><code>500</code></td><td><code>store_error</code> (or another server-side code such as <code>vault_error</code>).</td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/report-spam&quot; \
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/report-spam&quot; \
   -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
   -H &quot;Content-Type: application/json&quot; \
-  -d &#x27;{&quot;message_id&quot;: &quot;string&quot;, &quot;call_id&quot;: &quot;string&quot;, &quot;identity&quot;: &quot;string&quot;}&#x27;</code></pre>
+  -d &#x27;{&quot;message_id&quot;: &quot;string&quot;, &quot;call_id&quot;: &quot;string&quot;, &quot;identity&quot;: &quot;string&quot;}&#x27;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="listContacts"><span class="method">GET</span> <code class="path">/v1/contacts</code><a class="ah" href="#listContacts">#</a></h2>
@@ -110,7 +110,7 @@
 <div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr><tr><td><code>admission</code></td><td>query</td><td>string</td><td></td><td><code>block</code> lists only blocks (exact addresses, handles and <code>/ns/*</code> wildcards). One of <code>allow</code>, <code>block</code>.</td></tr></tbody></table></div>
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Contacts.</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;contacts&quot;: [
     {
       &quot;peer&quot;: &quot;string&quot;,
@@ -147,19 +147,19 @@
       &quot;string&quot;
     ]
   }
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td><code>no_identity</code> (account has no mailboxes) or <code>identity_required</code> (account has several; pass <code>identity</code>).</td></tr><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>wrong_identity</code> (capability token bound to another mailbox) or <code>not_in_account</code>.</td></tr><tr><td><code>500</code></td><td><code>store_error</code> (or another server-side code such as <code>vault_error</code>).</td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/contacts&quot; \
-  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre>
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/contacts&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="putContact"><span class="method">PUT</span> <code class="path">/v1/contacts</code><a class="ah" href="#putContact">#</a></h2>
 <p class="op-sum">Add or amend a contact (human path; may raise trust)</p>
 <p class="op-facts">Credentials: <code>apiKey</code>, <code>capToken</code>, <code>memberToken</code></p>
 <h3>Request body</h3><p><code>application/json</code></p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;peer&quot;: &quot;string&quot;,
   &quot;alias&quot;: &quot;string&quot;,
   &quot;admission&quot;: &quot;allow&quot;,
@@ -168,10 +168,10 @@
     &quot;string&quot;
   ],
   &quot;identity&quot;: &quot;string&quot;
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Responses</h3>
 <p class="resp"><code>200</code> The stored contact.</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;peer&quot;: &quot;string&quot;,
   &quot;alias&quot;: &quot;string&quot;,
   &quot;admission&quot;: &quot;allow&quot;,
@@ -181,14 +181,14 @@
   ],
   &quot;created_at&quot;: 0,
   &quot;updated_at&quot;: 0
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td><code>invalid_peer</code>, <code>invalid_verb</code>, an invalid enum value, <code>no_identity</code>, <code>identity_required</code></td></tr><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>wrong_identity</code> (capability token bound to another mailbox) or <code>not_in_account</code>.</td></tr><tr><td><code>500</code></td><td><code>store_error</code> (or another server-side code such as <code>vault_error</code>).</td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X PUT &quot;https://postbox.pigeonpost.dev/v1/contacts&quot; \
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X PUT &quot;https://postbox.pigeonpost.dev/v1/contacts&quot; \
   -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
   -H &quot;Content-Type: application/json&quot; \
-  -d &#x27;{&quot;peer&quot;: &quot;string&quot;, &quot;alias&quot;: &quot;string&quot;, &quot;admission&quot;: &quot;allow&quot;, &quot;autonomy&quot;: &quot;review&quot;, &quot;allowed_verbs&quot;: [&quot;string&quot;], &quot;identity&quot;: &quot;string&quot;}&#x27;</code></pre>
+  -d &#x27;{&quot;peer&quot;: &quot;string&quot;, &quot;alias&quot;: &quot;string&quot;, &quot;admission&quot;: &quot;allow&quot;, &quot;autonomy&quot;: &quot;review&quot;, &quot;allowed_verbs&quot;: [&quot;string&quot;], &quot;identity&quot;: &quot;string&quot;}&#x27;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="deleteContact"><span class="method">DELETE</span> <code class="path">/v1/contacts</code><a class="ah" href="#deleteContact">#</a></h2>
@@ -198,14 +198,14 @@
 <div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>peer</code></td><td>query</td><td>string</td><td>yes</td><td></td></tr><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr></tbody></table></div>
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Result.</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;removed&quot;: false
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td><code>no_identity</code> (account has no mailboxes) or <code>identity_required</code> (account has several; pass <code>identity</code>).</td></tr><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>wrong_identity</code> (capability token bound to another mailbox) or <code>not_in_account</code>.</td></tr><tr><td><code>500</code></td><td><code>store_error</code> (or another server-side code such as <code>vault_error</code>).</td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X DELETE &quot;https://postbox.pigeonpost.dev/v1/contacts&quot; \
-  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre>
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X DELETE &quot;https://postbox.pigeonpost.dev/v1/contacts&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="getPolicy"><span class="method">GET</span> <code class="path">/v1/policy</code><a class="ah" href="#getPolicy">#</a></h2>
@@ -215,7 +215,7 @@
 <div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr></tbody></table></div>
 <h3>Responses</h3>
 <p class="resp"><code>200</code> The whole policy.</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;read_receipts&quot;: false,
   &quot;accept_all&quot;: false,
   &quot;auto_accept_known&quot;: false,
@@ -226,12 +226,12 @@
   &quot;low_reputation&quot;: &quot;filter&quot;,
   &quot;group_members_known&quot;: false,
   &quot;call_history_days&quot;: 0
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td><code>no_identity</code> (account has no mailboxes) or <code>identity_required</code> (account has several; pass <code>identity</code>).</td></tr><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>wrong_identity</code> (capability token bound to another mailbox) or <code>not_in_account</code>.</td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/policy&quot; \
-  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre>
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/policy&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="putPolicy"><span class="method">PUT</span> <code class="path">/v1/policy</code><a class="ah" href="#putPolicy">#</a></h2>
@@ -239,7 +239,7 @@
 <p class="op-facts">Credentials: <code>apiKey</code>, <code>capToken</code>, <code>memberToken</code></p>
 <p>Any subset of fields. All values are validated before anything is written (<code>invalid_policy</code>). Agents (MCP) may only make settings stricter. Returns the whole policy.</p>
 <h3>Request body</h3><p><code>application/json</code></p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;read_receipts&quot;: false,
   &quot;accept_all&quot;: false,
   &quot;auto_accept_known&quot;: false,
@@ -251,10 +251,10 @@
   &quot;group_members_known&quot;: false,
   &quot;call_history_days&quot;: 0,
   &quot;identity&quot;: &quot;string&quot;
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Responses</h3>
 <p class="resp"><code>200</code> The resulting policy.</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;read_receipts&quot;: false,
   &quot;accept_all&quot;: false,
   &quot;auto_accept_known&quot;: false,
@@ -265,14 +265,14 @@
   &quot;low_reputation&quot;: &quot;filter&quot;,
   &quot;group_members_known&quot;: false,
   &quot;call_history_days&quot;: 0
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td><code>no_identity</code> (account has no mailboxes) or <code>identity_required</code> (account has several; pass <code>identity</code>).</td></tr><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>wrong_identity</code> (capability token bound to another mailbox) or <code>not_in_account</code>.</td></tr><tr><td><code>500</code></td><td><code>store_error</code> (or another server-side code such as <code>vault_error</code>).</td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X PUT &quot;https://postbox.pigeonpost.dev/v1/policy&quot; \
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X PUT &quot;https://postbox.pigeonpost.dev/v1/policy&quot; \
   -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
   -H &quot;Content-Type: application/json&quot; \
-  -d &#x27;{&quot;read_receipts&quot;: false, &quot;accept_all&quot;: false, &quot;auto_accept_known&quot;: false, &quot;unknown_calls&quot;: &quot;ring&quot;, &quot;unnamed_calls&quot;: &quot;ring&quot;, &quot;unnamed_messages&quot;: &quot;show&quot;, &quot;unknown_messages&quot;: &quot;show&quot;, &quot;low_reputation&quot;: &quot;filter&quot;, &quot;group_members_known&quot;: false, &quot;call_history_days&quot;: 0, &quot;identity&quot;: &quot;string&quot;}&#x27;</code></pre>
+  -d &#x27;{&quot;read_receipts&quot;: false, &quot;accept_all&quot;: false, &quot;auto_accept_known&quot;: false, &quot;unknown_calls&quot;: &quot;ring&quot;, &quot;unnamed_calls&quot;: &quot;ring&quot;, &quot;unnamed_messages&quot;: &quot;show&quot;, &quot;unknown_messages&quot;: &quot;show&quot;, &quot;low_reputation&quot;: &quot;filter&quot;, &quot;group_members_known&quot;: false, &quot;call_history_days&quot;: 0, &quot;identity&quot;: &quot;string&quot;}&#x27;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="acceptFiltered"><span class="method">POST</span> <code class="path">/v1/filtered/accept</code><a class="ah" href="#acceptFiltered">#</a></h2>
@@ -280,13 +280,13 @@
 <p class="op-facts">Credentials: <code>apiKey</code>, <code>capToken</code>, <code>memberToken</code></p>
 <p>Adds the sender as a contact with <code>admission=allow</code> (by handle when it has one) and moves all of its filtered messages into the inbox. Not available through a connector.</p>
 <h3>Request body</h3><p><code>application/json</code></p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;peer&quot;: &quot;string&quot;,
   &quot;identity&quot;: &quot;string&quot;
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Accepted.</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;accepted&quot;: false,
   &quot;contact&quot;: {
     &quot;peer&quot;: &quot;string&quot;,
@@ -300,14 +300,14 @@
     &quot;updated_at&quot;: 0
   },
   &quot;moved&quot;: 0
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>wrong_identity</code> (capability token bound to another mailbox) or <code>not_in_account</code>.</td></tr><tr><td><code>404</code></td><td><code>not_found</code></td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/filtered/accept&quot; \
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/filtered/accept&quot; \
   -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
   -H &quot;Content-Type: application/json&quot; \
-  -d &#x27;{&quot;peer&quot;: &quot;string&quot;, &quot;identity&quot;: &quot;string&quot;}&#x27;</code></pre>
+  -d &#x27;{&quot;peer&quot;: &quot;string&quot;, &quot;identity&quot;: &quot;string&quot;}&#x27;</code></pre><!--/email_off-->
 </section>
     <footer class="pagefoot">
       <nav>

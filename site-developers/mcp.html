@@ -74,7 +74,7 @@
 <h1>MCP server</h1>
 <p>The primary integration path. <code>pigeonpost mcp</code> speaks JSON-RPC 2.0 over stdio — one request per line, one response per line — and exposes the agent&#x27;s Pigeonpost inbox as tools.</p>
 <h2 id="configure-it">Configure it<a class="ah" href="#configure-it">#</a></h2>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;mcpServers&quot;: {
     &quot;pigeonpost&quot;: {
       &quot;command&quot;: &quot;pigeonpost&quot;,
@@ -85,7 +85,7 @@
       }
     }
   }
-}</code></pre>
+}</code></pre><!--/email_off-->
 <p>Set both paths per repo and each project&#x27;s agent gets its own address, inbox, and stable successor custody. The recovery directory must already exist, be canonical and owner-only, and remain available for every tool call because MCP reopens the agent state under bounded execution. Omitting it uses <code>&lt;home&gt;/recovery</code> and may trigger the same-storage warning. See <a href="/fleet">An agent per repo</a>.</p>
 <div class="note"><strong>The server runs locally, and it must.</strong> Most operations need the agent&#x27;s private key. There is no hosted Pigeonpost MCP endpoint in the architecture, because hosting one would mean holding your key — which would defeat the point of the product. For environments with no durable filesystem, run the container yourself with the key supplied as a secret.</div>
 <h2 id="tools">Tools<a class="ah" href="#tools">#</a></h2>

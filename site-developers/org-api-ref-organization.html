@@ -83,7 +83,7 @@
 <p>Name, namespace, status, seats and agents used and their limits, plan and settings.</p>
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Success.</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;data&quot;: {
     &quot;id&quot;: &quot;org_qivthlmhyfekbiqklot42xv4vj&quot;,
     &quot;name&quot;: &quot;Acme Inc.&quot;,
@@ -103,12 +103,12 @@
     },
     &quot;created_at&quot;: &quot;2026-09-01T12:00:00Z&quot;
   }
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Code</th><th>When</th></tr></thead><tbody><tr><td><code>401</code></td><td><a href="/org-api-errors#unauthorized"><code>unauthorized</code></a></td><td>No key, an unknown key, a revoked key or an expired key. One answer for all four, so a caller cannot probe which.</td></tr><tr><td><code>403</code></td><td><a href="/org-api-errors#ip_not_allowed"><code>ip_not_allowed</code></a></td><td>The request came from an address outside the key&#x27;s IP allowlist.</td></tr><tr><td><code>403</code></td><td><a href="/org-api-errors#insufficient_scope"><code>insufficient_scope</code></a></td><td>The key does not hold the scope this route needs. The route&#x27;s scope is listed in the reference.</td></tr><tr><td><code>403</code></td><td><a href="/org-api-errors#forbidden"><code>forbidden</code></a></td><td>The person who created the key no longer has the authority for this action (demoted or removed), or the target is out of a key&#x27;s reach: the owner, or a member holding an admin role.</td></tr><tr><td><code>404</code></td><td><a href="/org-api-errors#feature_disabled"><code>feature_disabled</code></a></td><td>The Enterprise API is not enabled for this org (<code>org_api</code> feature flag).</td></tr><tr><td><code>409</code></td><td><a href="/org-api-errors#org_inactive"><code>org_inactive</code></a></td><td>The org is not live (pending, unprovisioned or suspended).</td></tr><tr><td><code>429</code></td><td><a href="/org-api-errors#rate_limited"><code>rate_limited</code></a></td><td>Over the key&#x27;s rate limit (600 requests a minute, of which 60 writes). Wait for <code>Retry-After</code> seconds.</td></tr><tr><td><code>500</code></td><td><a href="/org-api-errors#store_error"><code>store_error</code></a></td><td>The server could not complete the request. Safe to retry with the same <code>Idempotency-Key</code>.</td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/org/v1/org&quot; \
-  -H &quot;Authorization: Bearer $PIGEONPOST_ORG_KEY&quot;</code></pre>
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/org/v1/org&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_ORG_KEY&quot;</code></pre><!--/email_off-->
 </section>
     <footer class="pagefoot">
       <nav>

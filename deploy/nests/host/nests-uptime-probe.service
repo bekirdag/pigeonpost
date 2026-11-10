@@ -1,0 +1,22 @@
+[Unit]
+Description=Nests: probe the public endpoints Pigeonpost depends on
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/nests-uptime-probe
+User=prometheus
+Group=prometheus
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/prometheus/node-exporter
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+# Four targets, at most 10 s each.
+TimeoutStartSec=60

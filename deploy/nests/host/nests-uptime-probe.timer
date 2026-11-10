@@ -1,0 +1,10 @@
+[Unit]
+Description=Probe the public endpoints Pigeonpost depends on every minute
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

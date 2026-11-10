@@ -183,7 +183,7 @@ def render(md):
                 cls = ' class="lang-bash" data-copy="curl"'
             else:
                 cls = f' class="lang-{lang}"' if lang else ""
-            out.append(f'<pre{cls}><code>{chr(10).join(buf)}</code></pre>')
+            out.append(cf_off(f'<pre{cls}><code>{chr(10).join(buf)}</code></pre>'))
             continue
 
         if ln.startswith("|"):
@@ -250,9 +250,25 @@ def render(md):
     return "\n".join(out)
 
 
+def cf_off(markup):
+    """Keep Cloudflare's address obfuscation off a code sample.
+
+    pigeonpost.dev is behind Cloudflare, which rewrites any text shaped like user@host into an
+    obfuscated link ("docs.ask@1.0" in a job line became one). These are Cloudflare's documented
+    markers for switching that off; the markup between them is served as it is.
+    """
+    return f"<!--email_off-->{markup}<!--/email_off-->"
+
+
+def inline_code(m):
+    c = f"<code>{m.group(1)}</code>"
+    # Only a span with an @ can look like an address; the rest stay unwrapped.
+    return cf_off(c) if "@" in c else c
+
+
 def inline(s):
     s = html.escape(s)
-    s = re.sub(r"`([^`]+)`", r"<code>\1</code>", s)
+    s = re.sub(r"`([^`]+)`", inline_code, s)
     s = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", s)
     s = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r'<a href="\2">\1</a>', s)
     return s
@@ -1809,6 +1825,8 @@ A marketplace Nest app is code you publish and Pigeonpost runs for buyers. Pigeo
 
 You can build, test and run an app on your own machine today with the local kit: `pigeonpost nest init` starts one from a template and `pigeonpost nest run` runs it against a mock broker. Start with the [quick start](/nest-quickstart).
 
+The marketplace is open to every account. To publish, apply in the publisher console on your [account page](https://pigeonpost.dev/account); [Publish, update and price](/nest-publish) has the whole flow.
+
 ## Concepts
 
 | Term | What it is |
@@ -1820,7 +1838,7 @@ You can build, test and run an app on your own machine today with the local kit:
 | Job | One invocation of one operation. Delivered at least once; the job id is the dedupe key, so a job may arrive twice and must not act twice |
 | Listing | How a release is offered in the Services tab catalog of the Pigeonpost apps: an address, a visibility and terms. One listing address serves many buyers |
 | Installation | A buyer's installed listing. It pins one release and holds the buyer's configuration. Each buyer gets their own worker: sandbox, volume and broker token |
-| Test environment | Where you try a release before buyers do. Today the local kit (`pigeonpost nest run`); hosted test Nests come later |
+| Test environment | Where you try a release before buyers do: the local kit (`pigeonpost nest run`), and hosted test Nests on the staging postbox (`pigeonpost nest logs`) |
 
 ## How a job flows
 
@@ -1830,22 +1848,22 @@ You can build, test and run an app on your own machine today with the local kit:
 4. Your app answers, calling the model broker if it needs a model.
 5. The buyer gets your `answer`, `sources` and `model_used`, or your `error_code`.
 
-## What is live and what is coming
+## What is live
 
 | Piece | State |
 |---|---|
 | Local kit: `nest init`, `nest run`, Node and Python SDKs, templates | Available |
-| Runtime contract, model broker, one worker per buyer | Built, with a first-party reference release |
-| Builds of Rust (Cargo) source trees, review stages, staff attestation | Built |
-| Builds of Node (`package-lock.json`) and Python (`requirements.txt` with hashes) source trees | Built |
-| Publisher programme (apply, certification, teams) | Built, behind the marketplace flag |
-| Listings, installations and paid purchases for third-party releases | Built, behind the marketplace flag |
-| Publisher console (web), `pigeonpost nest validate`, `submit`, `status` | Built, behind the marketplace flag |
-| Job progress, secrets through the broker | Built |
+| Runtime contract, model broker, one worker per buyer | Live |
+| Builds of Rust (Cargo) source trees, review stages, staff attestation | Live |
+| Builds of Node (`package-lock.json`) and Python (`requirements.txt` with hashes) source trees | Live |
+| Publisher programme (apply, certification, teams) | Live, open to every account |
+| Listings, installations and paid purchases for third-party releases | Live |
+| Publisher console (web), `pigeonpost nest validate`, `submit`, `status` | Live |
+| Job progress, secrets through the broker | Live |
 | External effects | Recorded and approval-gated; the marketplace pool offers no external writes yet |
-| Hosted test Nests | Built for the staging postbox |
+| Hosted test Nests | Live on the staging postbox |
 
-> The marketplace is not open to everyone yet: these pieces are switched on per account while it is tested.
+> The marketplace has been open to every account since 10 November 2026, and publisher builds run on the build service.
 
 ## Where to go next
 
@@ -2299,7 +2317,7 @@ Broker errors return JSON `{"error": "...", "detail": "..."}`:
 
 ## Progress and external effects
 
-> Coming with the publisher console: progress reporting and external effects are not in production yet. The SDKs and the local kit already speak them.
+> Progress reporting is live. External effects are recorded and approval-gated, but the marketplace pool offers no external writes yet. The SDKs and the local kit speak both.
 
 Progress is reported via `POST /v1/progress` with body `{job_id, fraction 0..1, message up to 200 characters}`. It is best effort and ignored where not offered.
 
@@ -2447,7 +2465,7 @@ ENTRYPOINT ["/usr/local/bin/my-app"]
 
 The Python templates install their wheels in `nest-build.toml` with `pip install --no-index --require-hashes --no-compile --target=deps`. The Node templates need no compile step: `node_modules/` is vendored as it is. `pigeonpost nest validate` checks both build files offline.
 
-> Today the build service builds Rust (Cargo) source trees: it needs `Cargo.lock`, and every dependency must come from crates.io with a checksum (no git or path dependencies). Node and Python builds come with the publisher console; the Node and Python templates run in the local kit today.
+> The build service builds Rust (Cargo), Node and Python source trees. A Rust tree needs `Cargo.lock`, and every dependency must come from crates.io with a checksum (no git or path dependencies). A Node tree needs `package-lock.json`; a Python tree needs `requirements.txt` with hashes.
 
 ## What review checks
 
@@ -2496,7 +2514,7 @@ A named Pigeonpost staff member, signed in with step-up, reviews your release wi
 
 You see your own scan findings in full, behaviour-test findings by rule only (so a test cannot be tuned against), and the AI review as a count of findings.
 
-> Coming with the publisher console: review status and findings for third-party publishers.
+Follow a review in the publisher console on your [account page](https://pigeonpost.dev/account), or with `pigeonpost nest status --publisher <name> --review <id>`.
 
 ## Before you submit
 
@@ -2515,16 +2533,17 @@ page("nest-publish", "Publish, update and price",
      """
 # Publish, update and price
 
-> Coming with the publisher console: the publisher programme, and listings and installations for third-party releases. This page describes how they will work.
+The marketplace is open to every account. Everything on this page happens in the publisher console on your [account page](https://pigeonpost.dev/account); builds can also be submitted and followed from the [CLI](/cli) (`pigeonpost nest submit`, `pigeonpost nest status`).
 
 ## Submission and review
 
-1. Apply as a publisher (an account or organization) and be certified.
-2. Create a template: your package, under the name in your manifest.
-3. Request a build of a pinned commit from an https repository.
-4. Follow the review stages and read your findings ([Security and review](/nest-review)).
-5. When approved, create a listing (draft).
-6. Publish the listing; publishing needs a recent, strong sign-in (step-up).
+1. Apply as a publisher in the publisher console, for your account or for an organization.
+2. Pigeonpost reviews the application. Once it is approved your publisher is certified and the console unlocks the steps below.
+3. Create a template: your package, under the name in your manifest.
+4. Submit a build of a pinned commit from an https repository (console or `pigeonpost nest submit`). Pigeonpost builds it from source.
+5. Follow the review stages and read your findings ([Security and review](/nest-review)). A named Pigeonpost staff member makes the final decision.
+6. When approved, create a listing (draft).
+7. Publish the listing; publishing needs a recent, strong sign-in (step-up).
 
 Buyers then install the listing and invoke its operations. An approval alone publishes nothing: you decide when the listing goes live.
 
@@ -3482,14 +3501,15 @@ def table(head, rows):
 
 
 def code(text):
-    return f"<code>{html.escape(str(text))}</code>"
+    c = f"<code>{html.escape(str(text))}</code>"
+    return cf_off(c) if "@" in c else c
 
 
 def pre(text, lang="json", copy=False):
     attrs = f' class="lang-{lang}"'
     if copy:
         attrs = ' class="lang-bash" data-copy="curl"'
-    return f"<pre{attrs}><code>{html.escape(text)}</code></pre>"
+    return cf_off(f"<pre{attrs}><code>{html.escape(text)}</code></pre>")
 
 
 def description_html(api, text):

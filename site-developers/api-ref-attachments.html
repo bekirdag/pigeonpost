@@ -86,19 +86,19 @@
 <h3>Request body</h3><p><code>application/octet-stream</code></p>
 <h3>Responses</h3>
 <p class="resp"><code>201</code> Stored.</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;id&quot;: &quot;string&quot;,
   &quot;bytes&quot;: 0,
   &quot;media_type&quot;: &quot;string&quot;,
   &quot;filename&quot;: &quot;string&quot;
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td><code>empty_attachment</code>, <code>no_identity</code>, <code>identity_required</code></td></tr><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>wrong_identity</code> (capability token bound to another mailbox) or <code>not_in_account</code>.</td></tr><tr><td><code>404</code></td><td><code>not_found</code></td></tr><tr><td><code>409</code></td><td><code>mailbox_full</code></td></tr><tr><td><code>413</code></td><td><code>attachment_too_large</code></td></tr><tr><td><code>500</code></td><td><code>store_error</code>, <code>storage_error</code></td></tr><tr><td><code>507</code></td><td><code>storage_full</code></td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/attachments&quot; \
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/attachments&quot; \
   -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
   -H &quot;Content-Type: application/octet-stream&quot; \
-  --data-binary @file</code></pre>
+  --data-binary @file</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="downloadAttachment"><span class="method">GET</span> <code class="path">/v1/attachments/{id}</code><a class="ah" href="#downloadAttachment">#</a></h2>
@@ -113,8 +113,8 @@
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td><code>no_identity</code> (account has no mailboxes) or <code>identity_required</code> (account has several; pass <code>identity</code>).</td></tr><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>wrong_identity</code> (capability token bound to another mailbox) or <code>not_in_account</code>.</td></tr><tr><td><code>404</code></td><td><code>not_found</code></td></tr><tr><td><code>500</code></td><td><code>store_error</code> (or another server-side code such as <code>vault_error</code>).</td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/attachments/$ID&quot; \
-  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre>
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/attachments/$ID&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre><!--/email_off-->
 </section>
     <footer class="pagefoot">
       <nav>

@@ -74,9 +74,9 @@
 <h1>Quickstart</h1>
 <h2 id="the-short-way-three-commands">The short way: three commands<a class="ah" href="#the-short-way-three-commands">#</a></h2>
 <p>If you just want one agent reachable — no loft to run, no keys to place — this is the whole thing:</p>
-<pre class="lang-bash"><code>npm i -g @bekirdag/pigeonpost
+<!--email_off--><pre class="lang-bash"><code>npm i -g @bekirdag/pigeonpost
 pigeonpost login            # prints a link and a QR code; scan it with the app
-pigeonpost onboard agent    # mints the mailbox, trusts your fleet, installs the daemon</code></pre>
+pigeonpost onboard agent    # mints the mailbox, trusts your fleet, installs the daemon</code></pre><!--/email_off-->
 <p><code>login</code> prints a QR beside the code so the phone in your pocket can approve the box in front of you. The phone never hands over its own token — it approves the request this machine made, and the code printed beside the QR is what stops a photograph of your screen from being enough on its own.</p>
 <p><code>onboard agent</code> asks nothing. Every value it needs is derivable from where you ran it and who you signed in as, so it derives them and prints what it decided:</p>
 <ul><li>the handle is your namespace plus the directory&#x27;s name — <code>/pp/alex/superproject</code> if you are</li></ul>
@@ -84,18 +84,18 @@ pigeonpost onboard agent    # mints the mailbox, trusts your fleet, installs the
 <ul><li>the fleet it trusts is your namespace and everything beneath it</li><li>the verbs are the postbox&#x27;s current grantable list, asked for rather than hardcoded</li><li>the repository is the one you are standing in</li></ul>
 <h2 id="a-company-agent-with-an-address-already-assigned">A company agent with an address already assigned<a class="ah" href="#a-company-agent-with-an-address-already-assigned">#</a></h2>
 <p>When your organization has created an agent such as <code>/acme/agent1</code>, bring a machine up as exactly that agent — no account sign-in on the box:</p>
-<pre class="lang-bash"><code>pigeonpost login --device --handle /acme/agent1 --label &quot;Build box&quot; --onboard</code></pre>
+<!--email_off--><pre class="lang-bash"><code>pigeonpost login --device --handle /acme/agent1 --label &quot;Build box&quot; --onboard</code></pre><!--/email_off-->
 <p>It prints a QR, a short code and a confirmation number. Somebody allowed to operate the agent scans the QR, checks that their screen shows the same confirmation number, and holds to approve. For scripted installs an admin can issue a one-time enrollment code instead; pass it on standard input rather than as an argument, so it never lands in shell history:</p>
-<pre class="lang-bash"><code>printf &#x27;%s
-&#x27; &quot;$CODE&quot; | pigeonpost login --enroll-stdin --onboard --workspace /srv/app</code></pre>
+<!--email_off--><pre class="lang-bash"><code>printf &#x27;%s
+&#x27; &quot;$CODE&quot; | pigeonpost login --enroll-stdin --onboard --workspace /srv/app</code></pre><!--/email_off-->
 <p>Either way the machine ends up holding only that agent&#x27;s mailbox credential. If it was signed in to a Pigeonpost account before, that session is revoked and removed. <code>--onboard</code> records the workspace context and nothing else: it grants no SSH and no new automatic actions.</p>
 <p>Everything below is the longer path: two agents on one machine through a loft you run yourself, with no account anywhere. Both paths produce the same protocol; they differ only in who hosts the mailbox.</p>
 <h2 id="1-install">1. Install<a class="ah" href="#1-install">#</a></h2>
-<pre class="lang-bash"><code>npm i -g @bekirdag/pigeonpost</code></pre>
+<!--email_off--><pre class="lang-bash"><code>npm i -g @bekirdag/pigeonpost</code></pre><!--/email_off-->
 <p>The npm launcher downloads the binary for your platform from the matching GitHub release and verifies a SHA-256 baked into the package before running it. This guide does not attest publication.</p>
 <h2 id="2-create-two-agents">2. Create two agents<a class="ah" href="#2-create-two-agents">#</a></h2>
 <p>An agent has a home plus successor-key custody. <code>PIGEONPOST_HOME</code> selects the home; <code>PIGEONPOST_RECOVERY_DIR</code> selects an existing canonical owner-only directory that must be available every time that agent opens:</p>
-<pre class="lang-bash"><code>mkdir -p &quot;$HOME/.pigeonpost-recovery/alice&quot; &quot;$HOME/.pigeonpost-recovery/bob&quot;
+<!--email_off--><pre class="lang-bash"><code>mkdir -p &quot;$HOME/.pigeonpost-recovery/alice&quot; &quot;$HOME/.pigeonpost-recovery/bob&quot;
 chmod 700 &quot;$HOME/.pigeonpost-recovery&quot; \
   &quot;$HOME/.pigeonpost-recovery/alice&quot; &quot;$HOME/.pigeonpost-recovery/bob&quot;
 
@@ -108,30 +108,30 @@ PIGEONPOST_HOME=&quot;$ALICE_HOME&quot; PIGEONPOST_RECOVERY_DIR=&quot;$ALICE_REC
 # /k/za21mg7q4nfepakf34acbz5ssw
 
 PIGEONPOST_HOME=&quot;$BOB_HOME&quot; PIGEONPOST_RECOVERY_DIR=&quot;$BOB_RECOVERY&quot; pigeonpost id
-# /k/8ecrjaefap8kp552ke8ea8gkgm</code></pre>
+# /k/8ecrjaefap8kp552ke8ea8gkgm</code></pre><!--/email_off-->
 <p>Each home now holds <code>identity.key</code> and <code>state.db</code>; its selected recovery directory holds <code>successor.key</code>.</p>
 <div class="note">Losing both keys loses the address permanently. There is no reset — that is the design, not an oversight. These demo paths may still share one storage device; durable identities should use independently protected storage. See <a href="/concepts#key-loss-is-permanent">Core concepts</a>.</div>
 <h2 id="3-point-them-at-a-loft">3. Point them at a loft<a class="ah" href="#3-point-them-at-a-loft">#</a></h2>
 <p>A loft holds Pigeonpost messages while an agent is asleep:</p>
-<pre class="lang-bash"><code>pigeonpost install
+<!--email_off--><pre class="lang-bash"><code>pigeonpost install
 PIGEONPOST_HOME=&quot;$ALICE_HOME&quot; PIGEONPOST_RECOVERY_DIR=&quot;$ALICE_RECOVERY&quot; \
   pigeonpost loft add http://127.0.0.1:7717
 PIGEONPOST_HOME=&quot;$BOB_HOME&quot; PIGEONPOST_RECOVERY_DIR=&quot;$BOB_RECOVERY&quot; \
-  pigeonpost loft add http://127.0.0.1:7717</code></pre>
+  pigeonpost loft add http://127.0.0.1:7717</code></pre><!--/email_off-->
 <p>This publishes each agent&#x27;s record to the loft so senders can find where to deliver.</p>
 <h2 id="4-open-bob-s-inbox">4. Open Bob&#x27;s inbox<a class="ah" href="#4-open-bob-s-inbox">#</a></h2>
 <p>A new inbox holds strangers for review. For this walkthrough, let Bob accept Alice:</p>
-<pre class="lang-bash"><code>PIGEONPOST_HOME=&quot;$BOB_HOME&quot; PIGEONPOST_RECOVERY_DIR=&quot;$BOB_RECOVERY&quot; \
-  pigeonpost allow /k/za21mg7q4nfepakf34acbz5ssw</code></pre>
+<!--email_off--><pre class="lang-bash"><code>PIGEONPOST_HOME=&quot;$BOB_HOME&quot; PIGEONPOST_RECOVERY_DIR=&quot;$BOB_RECOVERY&quot; \
+  pigeonpost allow /k/za21mg7q4nfepakf34acbz5ssw</code></pre><!--/email_off-->
 <p>Alternatively <code>pigeonpost accept-all true</code> opens the inbox to everyone — convenient for testing, and covered properly in <a href="/inbox">Controlling your inbox</a>.</p>
 <h2 id="5-send">5. Send<a class="ah" href="#5-send">#</a></h2>
-<pre class="lang-bash"><code>PIGEONPOST_HOME=&quot;$ALICE_HOME&quot; PIGEONPOST_RECOVERY_DIR=&quot;$ALICE_RECOVERY&quot; \
-  pigeonpost send /k/8ecrjaefap8kp552ke8ea8gkgm --body &quot;the eagle lands at noon&quot;</code></pre>
+<!--email_off--><pre class="lang-bash"><code>PIGEONPOST_HOME=&quot;$ALICE_HOME&quot; PIGEONPOST_RECOVERY_DIR=&quot;$ALICE_RECOVERY&quot; \
+  pigeonpost send /k/8ecrjaefap8kp552ke8ea8gkgm --body &quot;the eagle lands at noon&quot;</code></pre><!--/email_off-->
 <p>If the loft is unreachable the message goes to a durable outbox and is retried by <code>pigeonpost flush</code>. Sending while offline is a normal case, not an error.</p>
 <h2 id="6-receive">6. Receive<a class="ah" href="#6-receive">#</a></h2>
-<pre class="lang-bash"><code>PIGEONPOST_HOME=&quot;$BOB_HOME&quot; PIGEONPOST_RECOVERY_DIR=&quot;$BOB_RECOVERY&quot; pigeonpost inbox
+<!--email_off--><pre class="lang-bash"><code>PIGEONPOST_HOME=&quot;$BOB_HOME&quot; PIGEONPOST_RECOVERY_DIR=&quot;$BOB_RECOVERY&quot; pigeonpost inbox
 PIGEONPOST_HOME=&quot;$BOB_HOME&quot; PIGEONPOST_RECOVERY_DIR=&quot;$BOB_RECOVERY&quot; pigeonpost read &lt;id&gt;
-PIGEONPOST_HOME=&quot;$BOB_HOME&quot; PIGEONPOST_RECOVERY_DIR=&quot;$BOB_RECOVERY&quot; pigeonpost ack &lt;id&gt;</code></pre>
+PIGEONPOST_HOME=&quot;$BOB_HOME&quot; PIGEONPOST_RECOVERY_DIR=&quot;$BOB_RECOVERY&quot; pigeonpost ack &lt;id&gt;</code></pre><!--/email_off-->
 <p><code>inbox</code> fetches from every configured loft and lists what is unread. <code>read</code> shows one message without marking it read; <code>ack</code> marks it read.</p>
 <h2 id="next">Next<a class="ah" href="#next">#</a></h2>
 <ul><li>Wire it into an agent framework with the <a href="/mcp">MCP server</a></li><li>Give each of your repos its own agent — <a href="/fleet">An agent per repo</a></li><li>Take a human-readable name — <a href="/handles">Claiming a handle</a></li></ul>

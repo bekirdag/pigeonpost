@@ -75,13 +75,45 @@ install -o nestbuild -g nestbuild -m 0600 containers.conf /home/nestbuild/.confi
 ```
 
 4. As nestbuild (sudo -u nestbuild XDG_RUNTIME_DIR=/run/user/2350 ...): podman network create nestbuild-fetch ; load every pinned image into nestbuild's storage: git, the toolchains (rust, node, python, and any `toolchain_images`) and the runtime bases the releases' Containerfiles pin (the reference release's debian:bookworm-slim, the kit's node and python bases). The registry is not on nestbuild's allowlist, so pull them as root and load them; then check each one by its pinned reference, because `--pull=never` finds an image only by that digest. podman info --format '{{.Host.Security.Rootless}}' must print true.
+The images production preloads (the same pins as `buildd.toml` and the kit's templates; when a
+pin changes there, load the new one here):
+
+| role | image |
+|------|-------|
+| git | `docker.io/alpine/git:2.47.2@sha256:062a01ad7a0eb17cff382bc5e26086b4d710e56dfdfdf001109a49b6d9bd378c` |
+| rust (fetch and toolchain) | `docker.io/library/rust:1.91.1-slim-bookworm@sha256:8514999d4786ef12efe89239e86b3d0a021b94b9d35108c8efe6c79ca7dc1a65` |
+| node | `docker.io/library/node:22.21.1-bookworm-slim@sha256:25b3eb23a00590b7499f2a2ce939322727fcce1b15fdd69754fcd09536a3ae2c` |
+| python | `docker.io/library/python:3.12.12-slim-bookworm@sha256:593bd06efe90efa80dc4eee3948be7c0fde4134606dd40d8dd8dbcade98e669c` |
+| runtime base | `docker.io/library/debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3` |
+
+The build host already runs Docker, so pull with root's `docker` (by digest), stream it into
+nestbuild's rootless storage, and tag it: an image pulled by digest is saved without a name and
+loads as `<none>`, which `podman tag` fixes. Then check every pin.
 ```sh
 sudo -u nestbuild XDG_RUNTIME_DIR=/run/user/2350 podman network create nestbuild-fetch
-# for each pinned image IMG@sha256:DIGEST:
-podman pull IMG@sha256:DIGEST
-podman save IMG@sha256:DIGEST | sudo -u nestbuild XDG_RUNTIME_DIR=/run/user/2350 podman load
-sudo -u nestbuild XDG_RUNTIME_DIR=/run/user/2350 podman image exists IMG@sha256:DIGEST && echo loaded
-sudo -u nestbuild XDG_RUNTIME_DIR=/run/user/2350 podman info --format '{{.Host.Security.Rootless}}'
+IMAGES="
+docker.io/alpine/git:2.47.2@sha256:062a01ad7a0eb17cff382bc5e26086b4d710e56dfdfdf001109a49b6d9bd378c
+docker.io/library/rust:1.91.1-slim-bookworm@sha256:8514999d4786ef12efe89239e86b3d0a021b94b9d35108c8efe6c79ca7dc1a65
+docker.io/library/node:22.21.1-bookworm-slim@sha256:25b3eb23a00590b7499f2a2ce939322727fcce1b15fdd69754fcd09536a3ae2c
+docker.io/library/python:3.12.12-slim-bookworm@sha256:593bd06efe90efa80dc4eee3948be7c0fde4134606dd40d8dd8dbcade98e669c
+docker.io/library/debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3
+"
+NB="sudo -u nestbuild XDG_RUNTIME_DIR=/run/user/2350"
+for ref in $IMAGES; do
+  name="${ref%@*}"                 # e.g. docker.io/library/rust:1.91.1-slim-bookworm
+  repo="${name%:*}"                # e.g. docker.io/library/rust
+  byd="$repo@${ref#*@}"            # e.g. docker.io/library/rust@sha256:8514...
+  docker pull "$byd"
+  id=$(docker image inspect --format '{{.Id}}' "$byd")
+  docker save "$byd" | $NB podman load
+  # pulled by digest, the image loads without a name: tag it by its image id
+  $NB podman tag "$id" "$name"
+done
+# check: every pin must be found by the exact reference the build plane uses (--pull=never)
+for ref in $IMAGES; do
+  $NB podman image exists "$ref" && echo "ok      $ref" || echo "MISSING $ref"
+done
+$NB podman info --format '{{.Host.Security.Rootless}}'   # must print true
 ```
 
 5. install -d -m 0750 -o root -g nestbuild /etc/pigeonpost-buildd ; copy buildd.toml.example to /etc/pigeonpost-buildd/buildd.toml and fill the placeholders; copy allowlist.txt.example to allowlist.txt.
@@ -166,6 +198,15 @@ POSTBOX_MARKETPLACE_MAX_WORKERS=20
 POSTBOX_MARKETPLACE_MONTHLY_BROKER_TOKENS=2000000
 POSTBOX_MARKETPLACE_JOBS_PER_MINUTE=10
 ```
+
+In production `<BUILD_WG_ADDR>` is `10.71.0.1` (the `wg-nestbuild` tunnel is `10.71.0.0/29`:
+build host `.1`, postbox host `.2`, nests-1 `.3`; never `10.69.0.0/24`, the nests-mp pool on
+nests-1), so `POSTBOX_MARKETPLACE_BUILDD_URL=http://10.71.0.1:8795`. The billing bridge, on the
+same build host, is reached over the same tunnel: `POSTBOX_BRIDGE_URL=http://10.71.0.1:8787`.
+The build host is behind NAT, so it is the side that dials out (step 8).
+
+The postbox container runs as the image's nonroot user (uid 65532): mount the token and key files
+read-only (`:ro`) and make them owned by uid 65532, or the postbox cannot read them.
 
 The submit token file must be 0600 and contain the raw submit token. The attestation key file must be 0600 and contain a 64-hex-digit Ed25519 seed (generate with openssl rand -hex 32; keep an escrow copy offline). Staff can override quotas per publisher with PUT /v1/staff/marketplace/publishers/{publisher}/quotas. The postbox logs the key id (ppk_...) at start. Print the public key for nestd with `pigeonpost-nest-buildd public-key < /etc/pigeonpost/attestation.key` (it reads the seed on stdin and prints the public key and its key id; run it on the postbox host, the seed never leaves it). nestd logs the key ids it trusts at start; they must match.
 

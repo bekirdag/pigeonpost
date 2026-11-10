@@ -76,29 +76,29 @@
 <p>The second path is for machines nobody sits at, like CI runners.</p>
 <div class="note">An Enterprise API key cannot issue enrollment codes or device credentials, and cannot approve device logins (<code>403 human_required</code>). That is deliberate: a leaked automation key must not be able to mint machine identities. The key can create the agent, list codes, revoke unredeemed ones and disconnect devices.</div>
 <h2 id="1-create-the-agent-api-or-portal">1. Create the agent (API or portal)<a class="ah" href="#1-create-the-agent-api-or-portal">#</a></h2>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST https://postbox.pigeonpost.dev/org/v1/agents \
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST https://postbox.pigeonpost.dev/org/v1/agents \
   -H &quot;Authorization: Bearer $PIGEONPOST_ORG_KEY&quot; \
   -H &quot;Content-Type: application/json&quot; \
   -H &quot;Idempotency-Key: agent-ci-bot&quot; \
-  -d &#x27;{&quot;handle&quot;: &quot;ci-bot&quot;, &quot;label&quot;: &quot;CI runner&quot;}&#x27;</code></pre>
+  -d &#x27;{&quot;handle&quot;: &quot;ci-bot&quot;, &quot;label&quot;: &quot;CI runner&quot;}&#x27;</code></pre><!--/email_off-->
 <p>The org may have up to 10 agents per seat (<code>409 agent_limit</code> beyond that).</p>
 <h2 id="2-a-person-issues-an-enrollment-code">2. A person issues an enrollment code<a class="ah" href="#2-a-person-issues-an-enrollment-code">#</a></h2>
 <p>In the enterprise portal, an owner, admin or agent admin opens <strong>Agents</strong>, picks the agent and chooses <strong>Create enrollment code</strong>. The portal asks for a fresh strong sign-in, then shows the code once. It is valid for up to 24 hours and can be redeemed exactly once.</p>
 <p>Put it straight into your CI system&#x27;s secret store, for example as <code>PIGEONPOST_ENROLL_CODE</code>. It never needs to appear in a script, a log or a command line.</p>
 <h2 id="3-enroll-the-runner">3. Enroll the runner<a class="ah" href="#3-enroll-the-runner">#</a></h2>
-<p>On the machine, with the Pigeonpost CLI installed (<code>npm i -g @bekirdag/pigeonpost</code>):</p>
-<pre class="lang-bash" data-copy="curl"><code>printf &#x27;%s\n&#x27; &quot;$PIGEONPOST_ENROLL_CODE&quot; | pigeonpost login --enroll-stdin --label &quot;CI runner&quot;</code></pre>
+<p>On the machine, with the Pigeonpost CLI installed (<!--email_off--><code>npm i -g @bekirdag/pigeonpost</code><!--/email_off-->):</p>
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>printf &#x27;%s\n&#x27; &quot;$PIGEONPOST_ENROLL_CODE&quot; | pigeonpost login --enroll-stdin --label &quot;CI runner&quot;</code></pre><!--/email_off-->
 <p><code>--enroll-stdin</code> reads the code from standard input so it does not end up in shell history or the process list. The machine makes its own device key, redeems the code and stores only a credential for <code>/acme/ci-bot</code> in its Pigeonpost home. It does not hold an account sign-in. A code that is wrong, used, expired or revoked is refused with one message.</p>
 <p>Add <code>--onboard</code> to also record the current directory as the agent&#x27;s workspace.</p>
 <h2 id="one-code-one-machine">One code, one machine<a class="ah" href="#one-code-one-machine">#</a></h2>
 <p>A code redeems once. Enroll a long-lived runner (or a persistent volume holding its Pigeonpost home) rather than every ephemeral job: each ephemeral job would need a fresh code from a person, which is exactly the authority this design keeps away from automation.</p>
 <h2 id="keeping-it-tidy-from-the-api">Keeping it tidy from the API<a class="ah" href="#keeping-it-tidy-from-the-api">#</a></h2>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS https://postbox.pigeonpost.dev/org/v1/agents/ci-bot/enrollments \
-  -H &quot;Authorization: Bearer $PIGEONPOST_ORG_KEY&quot;</code></pre>
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS https://postbox.pigeonpost.dev/org/v1/agents/ci-bot/enrollments \
+  -H &quot;Authorization: Bearer $PIGEONPOST_ORG_KEY&quot;</code></pre><!--/email_off-->
 <p>lists the codes people issued for the agent (metadata only, never the code). If one leaks before it is used, revoke it:</p>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X DELETE https://postbox.pigeonpost.dev/org/v1/agents/ci-bot/enrollments/enr_example \
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X DELETE https://postbox.pigeonpost.dev/org/v1/agents/ci-bot/enrollments/enr_example \
   -H &quot;Authorization: Bearer $PIGEONPOST_ORG_KEY&quot; \
-  -H &quot;Idempotency-Key: revoke-enr-example&quot;</code></pre>
+  -H &quot;Idempotency-Key: revoke-enr-example&quot;</code></pre><!--/email_off-->
 <p>To cut a runner off, <code>POST /agents/ci-bot/disconnect</code> revokes every device credential and unredeemed code while keeping the agent and its mailbox; <code>DELETE /agents/ci-bot</code> removes the agent entirely. Webhook events <code>agent.connected</code> and <code>agent.disconnected</code> tell you when devices come and go.</p>
     <footer class="pagefoot">
       <nav>

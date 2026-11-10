@@ -34,9 +34,12 @@ broker_ip = "10.67.255.1"
 broker_port = 8788
 
 # The marketplace pool (M0): gVisor, a separate network and volumes, one sandbox per buyer context.
-# Off when this table is absent; nestd does not use it until M1. deploy/nests/README.md has the setup.
+# Off when this table is absent. deploy/nests/README.md has the setup.
 # [sandbox.marketplace]
-# image = "localhost/pigeonpost-marketplace-worker@sha256:REPLACE"
+# The pool image must differ from [sandbox] image above (the first-party runner): nestd refuses to
+# start otherwise. Every marketplace job carries its attested release image, so this image is never
+# what a worker runs; a pinned no-op image is enough (pull it by digest first).
+# image = "docker.io/library/busybox@sha256:<digest>"
 # network = "nests-mp"
 # volume_root = "/var/lib/nests/mp"
 # broker_ip = "10.67.255.1"
@@ -50,7 +53,8 @@ broker_port = 8788
 # attestation_keys = ["<64-hex Ed25519 public key>"]
 # Each buyer worker gets a LUKS2 thin volume of this size (storage.backend must be lvm-luks).
 # worker_gib = 1
-# Release images this host lacks are pulled by digest from the build plane (deploy/nests/buildd).
+# Release images this host lacks are pulled by digest from the build plane (deploy/nests/buildd),
+# over wg-nestbuild (production: <BUILD_WG_ADDR> is 10.71.0.1).
 # [sandbox.marketplace.artifacts]
 # url = "http://<BUILD_WG_ADDR>:8795"
 # token_file = "/etc/nests/buildd-artifact.token"
@@ -105,9 +109,11 @@ postbox_url = "https://postbox.pigeonpost.dev"
 token_file = "/run/credentials/nests-alert-relay.service/alerts.token"
 to = "/bekir"
 
-# Optional Postmark fallback through Postmark: used when the postbox send fails (connection error,
-# timeout, 5xx) and always for Postbox* alerts. The server token is /etc/credstore/postmark.token
-# (root 0400), handed over by systemd LoadCredential. Remove this section to disable it.
+# Optional Postmark fallback: used when the postbox send fails (connection error, timeout, 5xx)
+# and always for Postbox* alerts (the postbox may be what is down). The Postmark server token lives
+# at /etc/credstore/postmark.token (root:root 0400); systemd's LoadCredential=postmark.token in
+# nests-alert-relay.service hands it over as the path below. With this section set and the token
+# missing, the relay refuses to start. Remove this section to disable the fallback.
 [alerts.postmark]
 token_file = "/run/credentials/nests-alert-relay.service/postmark.token"
 from = "alerts@pigeonpost.dev"

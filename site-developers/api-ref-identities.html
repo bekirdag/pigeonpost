@@ -82,7 +82,7 @@
 <p class="op-facts">Credentials: <code>apiKey</code>, <code>memberToken</code></p>
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Mailboxes.</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;identities&quot;: [
     {
       &quot;address&quot;: &quot;string&quot;,
@@ -90,12 +90,12 @@
       &quot;handle&quot;: &quot;string&quot;
     }
   ]
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td><code>use_api_key</code> — a capability token was presented where an account credential is required.</td></tr><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>500</code></td><td><code>store_error</code> (or another server-side code such as <code>vault_error</code>).</td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/identities&quot; \
-  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre>
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/identities&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="createIdentity"><span class="method">POST</span> <code class="path">/v1/identities</code><a class="ah" href="#createIdentity">#</a></h2>
@@ -103,26 +103,26 @@
 <p class="op-facts">Credentials: <code>apiKey</code>, <code>memberToken</code> (optional)</p>
 <p>With an API key or member token: created under that account, no proof-of-work, optionally under a <code>handle</code> the account is authorised for. Anonymous (no bearer): proof-of-work and the per-IP mint budget apply, <code>handle</code> is ignored, and the mailbox is ephemeral. A capability token cannot create mailboxes (400 <code>use_api_key</code>).</p>
 <h3>Request body</h3><p><code>application/json</code></p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;pow_challenge&quot;: &quot;string&quot;,
   &quot;pow_solution&quot;: &quot;string&quot;,
   &quot;label&quot;: &quot;string&quot;,
   &quot;handle&quot;: &quot;string&quot;
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Responses</h3>
 <p class="resp"><code>201</code> Mailbox created.</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;address&quot;: &quot;string&quot;,
   &quot;handle&quot;: &quot;string&quot;,
   &quot;capability_token&quot;: &quot;string&quot;
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td><code>use_api_key</code>, <code>pow_required</code>, <code>invalid_handle</code></td></tr><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>account_required</code>, <code>identity_quota</code>, <code>namespace_not_yours</code>, <code>namespace_quota</code>, <code>identity_not_proved</code>, <code>address_not_proved</code>, <code>name_reserved</code>, <code>parent_not_yours</code>, <code>already_named</code></td></tr><tr><td><code>409</code></td><td><code>handle_taken</code></td></tr><tr><td><code>429</code></td><td><code>mint_rate_limited</code> (with <code>Retry-After</code>), <code>mint_lifetime_cap</code>, <code>mint_source_halted</code>.</td></tr><tr><td><code>500</code></td><td><code>store_error</code> (or another server-side code such as <code>vault_error</code>).</td></tr><tr><td><code>503</code></td><td><code>open_namespace_closed</code> — open namespace has no reserved-name list configured.</td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/identities&quot; \
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/identities&quot; \
   -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
   -H &quot;Content-Type: application/json&quot; \
-  -d &#x27;{&quot;pow_challenge&quot;: &quot;string&quot;, &quot;pow_solution&quot;: &quot;string&quot;, &quot;label&quot;: &quot;string&quot;, &quot;handle&quot;: &quot;string&quot;}&#x27;</code></pre>
+  -d &#x27;{&quot;pow_challenge&quot;: &quot;string&quot;, &quot;pow_solution&quot;: &quot;string&quot;, &quot;label&quot;: &quot;string&quot;, &quot;handle&quot;: &quot;string&quot;}&#x27;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="deleteIdentity"><span class="method">DELETE</span> <code class="path">/v1/identities</code><a class="ah" href="#deleteIdentity">#</a></h2>
@@ -133,38 +133,38 @@
 <div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>identity</code></td><td>query</td><td>string</td><td>yes</td><td>The <code>/k/…</code> address to delete.</td></tr></tbody></table></div>
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Deleted.</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;deleted&quot;: true
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>forbidden</code> — capability token naming another mailbox.</td></tr><tr><td><code>404</code></td><td><code>not_found</code></td></tr><tr><td><code>500</code></td><td><code>store_error</code> (or another server-side code such as <code>vault_error</code>).</td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X DELETE &quot;https://postbox.pigeonpost.dev/v1/identities&quot; \
-  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre>
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X DELETE &quot;https://postbox.pigeonpost.dev/v1/identities&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="bindIdentityHandle"><span class="method">POST</span> <code class="path">/v1/identities/handle</code><a class="ah" href="#bindIdentityHandle">#</a></h2>
 <p class="op-sum">Give an existing mailbox a handle</p>
 <p class="op-facts">Credentials: <code>apiKey</code>, <code>memberToken</code></p>
 <h3>Request body</h3><p><code>application/json</code></p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;address&quot;: &quot;string&quot;,
   &quot;handle&quot;: &quot;string&quot;,
   &quot;capability_token&quot;: &quot;string&quot;
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Bound.</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;address&quot;: &quot;string&quot;,
   &quot;handle&quot;: &quot;string&quot;
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td><code>invalid_handle</code></td></tr><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>account_required</code>, <code>not_your_mailbox</code>, <code>proof_required</code>, <code>namespace_quota</code>, <code>namespace_not_yours</code>, <code>identity_not_proved</code>, <code>address_not_proved</code>, <code>name_reserved</code>, <code>parent_not_yours</code>, <code>already_named</code></td></tr><tr><td><code>404</code></td><td><code>unknown_mailbox</code></td></tr><tr><td><code>409</code></td><td><code>already_named</code>, <code>handle_taken</code></td></tr><tr><td><code>500</code></td><td><code>store_error</code> (or another server-side code such as <code>vault_error</code>).</td></tr><tr><td><code>503</code></td><td><code>open_namespace_closed</code></td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/identities/handle&quot; \
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/identities/handle&quot; \
   -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
   -H &quot;Content-Type: application/json&quot; \
-  -d &#x27;{&quot;address&quot;: &quot;string&quot;, &quot;handle&quot;: &quot;string&quot;, &quot;capability_token&quot;: &quot;string&quot;}&#x27;</code></pre>
+  -d &#x27;{&quot;address&quot;: &quot;string&quot;, &quot;handle&quot;: &quot;string&quot;, &quot;capability_token&quot;: &quot;string&quot;}&#x27;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="whoami"><span class="method">GET</span> <code class="path">/v1/whoami</code><a class="ah" href="#whoami">#</a></h2>
@@ -174,15 +174,15 @@
 <div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr></tbody></table></div>
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Acting mailbox.</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;address&quot;: &quot;string&quot;,
   &quot;handle&quot;: &quot;string&quot;
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td><code>no_identity</code> (account has no mailboxes) or <code>identity_required</code> (account has several; pass <code>identity</code>).</td></tr><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>wrong_identity</code> (capability token bound to another mailbox) or <code>not_in_account</code>.</td></tr><tr><td><code>500</code></td><td><code>store_error</code> (or another server-side code such as <code>vault_error</code>).</td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/whoami&quot; \
-  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre>
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/whoami&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="getWorkspace"><span class="method">GET</span> <code class="path">/v1/workspace</code><a class="ah" href="#getWorkspace">#</a></h2>
@@ -192,41 +192,41 @@
 <div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr></tbody></table></div>
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Opaque ciphertext; the postbox holds no key for it.</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;nonce&quot;: &quot;string&quot;,
   &quot;ciphertext&quot;: &quot;string&quot;,
   &quot;kdf_salt&quot;: &quot;string&quot;,
   &quot;updated_at&quot;: 0
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td><code>no_identity</code> (account has no mailboxes) or <code>identity_required</code> (account has several; pass <code>identity</code>).</td></tr><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>wrong_identity</code> (capability token bound to another mailbox) or <code>not_in_account</code>.</td></tr><tr><td><code>404</code></td><td><code>not_found</code></td></tr><tr><td><code>500</code></td><td><code>store_error</code> (or another server-side code such as <code>vault_error</code>).</td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/workspace&quot; \
-  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre>
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/workspace&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="putWorkspace"><span class="method">PUT</span> <code class="path">/v1/workspace</code><a class="ah" href="#putWorkspace">#</a></h2>
 <p class="op-sum">Store the acting mailbox&#x27;s encrypted workspace context</p>
 <p class="op-facts">Credentials: <code>apiKey</code>, <code>capToken</code>, <code>memberToken</code></p>
 <h3>Request body</h3><p><code>application/json</code></p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;nonce&quot;: &quot;string&quot;,
   &quot;ciphertext&quot;: &quot;string&quot;,
   &quot;kdf_salt&quot;: &quot;string&quot;,
   &quot;identity&quot;: &quot;string&quot;
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Stored.</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;ok&quot;: true
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td><code>invalid_workspace</code>, <code>no_identity</code>, <code>identity_required</code></td></tr><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>wrong_identity</code> (capability token bound to another mailbox) or <code>not_in_account</code>.</td></tr><tr><td><code>500</code></td><td><code>store_error</code> (or another server-side code such as <code>vault_error</code>).</td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X PUT &quot;https://postbox.pigeonpost.dev/v1/workspace&quot; \
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X PUT &quot;https://postbox.pigeonpost.dev/v1/workspace&quot; \
   -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
   -H &quot;Content-Type: application/json&quot; \
-  -d &#x27;{&quot;nonce&quot;: &quot;string&quot;, &quot;ciphertext&quot;: &quot;string&quot;, &quot;kdf_salt&quot;: &quot;string&quot;, &quot;identity&quot;: &quot;string&quot;}&#x27;</code></pre>
+  -d &#x27;{&quot;nonce&quot;: &quot;string&quot;, &quot;ciphertext&quot;: &quot;string&quot;, &quot;kdf_salt&quot;: &quot;string&quot;, &quot;identity&quot;: &quot;string&quot;}&#x27;</code></pre><!--/email_off-->
 </section>
     <footer class="pagefoot">
       <nav>

@@ -74,23 +74,23 @@
 <h1>Quick start</h1>
 <h2 id="pick-a-template">Pick a template<a class="ah" href="#pick-a-template">#</a></h2>
 <p>List the starter templates:</p>
-<pre class="lang-bash"><code>pigeonpost nest templates</code></pre>
+<!--email_off--><pre class="lang-bash"><code>pigeonpost nest templates</code></pre><!--/email_off-->
 <div class="tw"><table><thead><tr><th>Template</th><th>Description</th></tr></thead><tbody><tr><td><code>tool</code></td><td>A no-AI tool: summarizes a CSV table. No broker, no network.</td></tr><tr><td><code>docs-qa</code></td><td>AI Q&amp;A over documents bundled with the release, through the model broker. Based on the reference release <code>hr-policy-qa</code>.</td></tr><tr><td><code>approval-write</code></td><td>Drafts a helpdesk reply and posts it as an external write the buyer approves first.</td></tr></tbody></table></div>
 <h2 id="initialize-the-app">Initialize the app<a class="ah" href="#initialize-the-app">#</a></h2>
 <p>Create a new app from the <code>docs-qa</code> template. <code>--publisher</code> is your publisher name, the first part of the listing address; add <code>--lang python</code> for Python.</p>
-<pre class="lang-bash"><code>pigeonpost nest init docs-qa my-app --publisher acme</code></pre>
+<!--email_off--><pre class="lang-bash"><code>pigeonpost nest init docs-qa my-app --publisher acme</code></pre><!--/email_off-->
 <p>This writes the following files:</p>
 <div class="tw"><table><thead><tr><th>File</th><th>Purpose</th></tr></thead><tbody><tr><td><code>nest-release.toml</code></td><td>The release manifest: what the release is and may do</td></tr><tr><td><code>operations/docs.ask.json</code></td><td>The operation descriptor</td></tr><tr><td><code>jobs/example.json</code></td><td>A job to run locally</td></tr><tr><td><code>README.md</code></td><td>The template&#x27;s notes</td></tr><tr><td><code>app.mjs</code></td><td>The app</td></tr><tr><td><code>app.test.mjs</code></td><td>Its unit tests</td></tr><tr><td><code>Containerfile</code></td><td>The image assembly: one base pinned by digest, then file copies (no <code>RUN</code>)</td></tr><tr><td><code>pigeonpost-nest.mjs</code></td><td>The SDK (Node ESM, no dependencies)</td></tr><tr><td><code>docs/handbook.md</code></td><td>The bundled documents (synthetic sample text; replace it)</td></tr></tbody></table></div>
 <p>A Python app also gets <code>nest-build.toml</code>, the compile step that installs its pinned wheels offline before the image is assembled (<a href="/nest-review">how a release is built</a>).</p>
 <h2 id="run-unit-tests">Run unit tests<a class="ah" href="#run-unit-tests">#</a></h2>
-<pre class="lang-bash"><code>cd my-app
+<!--email_off--><pre class="lang-bash"><code>cd my-app
 node --test app.test.mjs        # Python: python3 -m unittest test_app
-cd ..</code></pre>
+cd ..</code></pre><!--/email_off-->
 <h2 id="run-the-app-locally">Run the app locally<a class="ah" href="#run-the-app-locally">#</a></h2>
 <p>Run the example job. The app runs as a plain local process against a mock broker that gives deterministic replies and counts tokens against the monthly allowance:</p>
-<pre class="lang-bash"><code>pigeonpost nest run my-app</code></pre>
+<!--email_off--><pre class="lang-bash"><code>pigeonpost nest run my-app</code></pre><!--/email_off-->
 <p>It prints what the app did and what the buyer would get:</p>
-<pre class="lang-text"><code>my-app 0.1.0 | node app.mjs | broker: mock at http://127.0.0.1:53211
+<!--email_off--><pre class="lang-text"><code>my-app 0.1.0 | node app.mjs | broker: mock at http://127.0.0.1:53211
 -- job job_gtk2gs6xeqfhcizg2vz37objye docs.ask@1.0
   progress   30%  asking the model
   model     328 input / 24 output tokens (max 400)
@@ -98,27 +98,27 @@ cd ..</code></pre>
   answer    &quot;[mock model reply 1] Question: How many days of annual leave do I get?&quot;
   sources   [&quot;annual-leave&quot;,&quot;sick-leave&quot;]
   model_used true
-broker: 1 model request(s); 328/200000 input and 24/20000 output tokens of the monthly allowance</code></pre>
+broker: 1 model request(s); 328/200000 input and 24/20000 output tokens of the monthly allowance</code></pre><!--/email_off-->
 <h2 id="try-your-own-job-file">Try your own job file<a class="ah" href="#try-your-own-job-file">#</a></h2>
 <p>A job file names the operation, its version and the payload. <code>nest run</code> checks it as admission does, before the app starts.</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;operation&quot;: &quot;docs.ask&quot;,
   &quot;operation_version&quot;: &quot;1.0&quot;,
   &quot;payload&quot;: {
     &quot;question&quot;: &quot;What is the sick leave policy?&quot;
   }
-}</code></pre>
+}</code></pre><!--/email_off-->
 <p>Run with this job:</p>
-<pre class="lang-bash"><code>pigeonpost nest run my-app --job my-job.json</code></pre>
+<!--email_off--><pre class="lang-bash"><code>pigeonpost nest run my-app --job my-job.json</code></pre><!--/email_off-->
 <h2 id="test-fallbacks-and-fixed-replies">Test fallbacks and fixed replies<a class="ah" href="#test-fallbacks-and-fixed-replies">#</a></h2>
 <p>Answer every model request as a Nest with no AI connected, to test your fallback:</p>
-<pre class="lang-bash"><code>pigeonpost nest run my-app --no-model</code></pre>
+<!--email_off--><pre class="lang-bash"><code>pigeonpost nest run my-app --no-model</code></pre><!--/email_off-->
 <p>Or fix the mock model&#x27;s reply:</p>
-<pre class="lang-bash"><code>pigeonpost nest run my-app --reply &quot;Fixed answer text&quot;</code></pre>
+<!--email_off--><pre class="lang-bash"><code>pigeonpost nest run my-app --reply &quot;Fixed answer text&quot;</code></pre><!--/email_off-->
 <h2 id="test-the-approval-flow">Test the approval flow<a class="ah" href="#test-the-approval-flow">#</a></h2>
 <p>The <code>approval-write</code> template posts a reply to the buyer&#x27;s helpdesk, an external write the buyer approves first:</p>
-<pre class="lang-bash"><code>pigeonpost nest init approval-write my-helpdesk --publisher acme
-pigeonpost nest run my-helpdesk --approve-all --redeliver</code></pre>
+<!--email_off--><pre class="lang-bash"><code>pigeonpost nest init approval-write my-helpdesk --publisher acme
+pigeonpost nest run my-helpdesk --approve-all --redeliver</code></pre><!--/email_off-->
 <p>The first delivery ends with <code>approval_required</code> and the effect waits. <code>--approve-all</code> approves it as the buyer would and delivers the job again with the same id: the effect is performed once. <code>--redeliver</code> then delivers it a third time, as the platform may: the effect has the same idempotency key, so it is reported as already done and nothing is posted twice.</p>
 <div class="note">External writes are not offered at launch; review blocks <code>external_writes = true</code> until they are. The flow runs in the local kit now.</div>
 <h2 id="options-for-nest-run">Options for nest run<a class="ah" href="#options-for-nest-run">#</a></h2>

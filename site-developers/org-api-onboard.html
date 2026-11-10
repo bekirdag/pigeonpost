@@ -75,45 +75,45 @@
 <p>When your HR system hires someone, it can give them a Pigeonpost address in your org, put them in the right rooms and send them a welcome, all through the Enterprise API. Offboarding is the reverse.</p>
 <p>You need a key with <code>members:write</code> and <code>rooms:write</code> (and <code>messages:send</code> with a <code>send_as</code> agent, for the welcome). The person who creates the key must be allowed to manage people.</p>
 <h2 id="1-invite-them">1. Invite them<a class="ah" href="#1-invite-them">#</a></h2>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST https://postbox.pigeonpost.dev/org/v1/members \
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST https://postbox.pigeonpost.dev/org/v1/members \
   -H &quot;Authorization: Bearer $PIGEONPOST_ORG_KEY&quot; \
   -H &quot;Content-Type: application/json&quot; \
   -H &quot;Idempotency-Key: onboard-E10442&quot; \
-  -d &#x27;{&quot;first_name&quot;: &quot;Jane&quot;, &quot;last_name&quot;: &quot;Doe&quot;, &quot;contact&quot;: &quot;jane.doe@example.com&quot;, &quot;handle&quot;: &quot;jane&quot;}&#x27;</code></pre>
+  -d &#x27;{&quot;first_name&quot;: &quot;Jane&quot;, &quot;last_name&quot;: &quot;Doe&quot;, &quot;contact&quot;: &quot;jane.doe@example.com&quot;, &quot;handle&quot;: &quot;jane&quot;}&#x27;</code></pre><!--/email_off-->
 <p>The answer is <code>201</code> with the new member (status <code>invited</code>) and the invitation:</p>
-<pre class="lang-json"><code>{&quot;data&quot;: {
+<!--email_off--><pre class="lang-json"><code>{&quot;data&quot;: {
   &quot;member&quot;: {&quot;id&quot;: &quot;mem_…&quot;, &quot;handle&quot;: &quot;/acme/jane&quot;, &quot;status&quot;: &quot;invited&quot;, &quot;…&quot;: &quot;…&quot;},
   &quot;invitation&quot;: {&quot;id&quot;: &quot;inv_…&quot;, &quot;link&quot;: &quot;https://enterprise.pigeonpost.dev/invite#…&quot;,
                  &quot;expires_at&quot;: &quot;2026-11-03T10:15:00Z&quot;, &quot;delivery&quot;: &quot;queued&quot;}
-}}</code></pre>
+}}</code></pre><!--/email_off-->
 <ul><li><code>delivery: queued</code> means Pigeonpost sends the invitation to the contact address. With <code>copy_link</code>, deliver the link yourself, for example in the welcome pack.</li><li>The link is single-use and returned only in this response (<code>Cache-Control: no-store</code>). Do not log it.</li><li>The person accepts by signing in with the invited contact address; if your org requires MFA, they set it up then.</li><li>Use your HR system&#x27;s employee id in the <code>Idempotency-Key</code>: a retry after a timeout returns the same invitation instead of a <code>409 already_invited</code>.</li></ul>
 <p>The API invites <strong>ordinary members</strong> only. Roles are granted by a person in the portal.</p>
 <p>Common refusals: <code>409 seat_limit</code> (buy seats first), <code>409 handle_taken</code>, <code>409 domain_not_verified</code> (your org only invites verified domains) and <code>400 invalid_handle</code>.</p>
 <h2 id="2-add-them-to-rooms">2. Add them to rooms<a class="ah" href="#2-add-them-to-rooms">#</a></h2>
 <p>Rooms with <code>auto_join</code> pick up new members automatically when they accept. For other rooms, send a room invitation:</p>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST https://postbox.pigeonpost.dev/org/v1/rooms/grp_example/members \
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST https://postbox.pigeonpost.dev/org/v1/rooms/grp_example/members \
   -H &quot;Authorization: Bearer $PIGEONPOST_ORG_KEY&quot; \
   -H &quot;Content-Type: application/json&quot; \
   -H &quot;Idempotency-Key: onboard-E10442-room-engineering&quot; \
-  -d &#x27;{&quot;handle&quot;: &quot;jane&quot;}&#x27;</code></pre>
+  -d &#x27;{&quot;handle&quot;: &quot;jane&quot;}&#x27;</code></pre><!--/email_off-->
 <p>Rooms are end-to-end encrypted. The invitation appears in the person&#x27;s app; when they accept, a room member&#x27;s device adds them to the encryption group. The API never adds anyone to a room&#x27;s keys.</p>
 <h2 id="3-know-when-they-joined">3. Know when they joined<a class="ah" href="#3-know-when-they-joined">#</a></h2>
 <p>Subscribe a webhook to <code>member.joined</code> (see <a href="/org-api-webhooks">Verify webhook signatures</a>), or poll <code>GET /members/{member}</code> until <code>status</code> is <code>active</code>. If the invitation expires, issue a new link:</p>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST https://postbox.pigeonpost.dev/org/v1/members/jane/resend-invite \
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST https://postbox.pigeonpost.dev/org/v1/members/jane/resend-invite \
   -H &quot;Authorization: Bearer $PIGEONPOST_ORG_KEY&quot; \
-  -H &quot;Idempotency-Key: onboard-E10442-resend-1&quot;</code></pre>
+  -H &quot;Idempotency-Key: onboard-E10442-resend-1&quot;</code></pre><!--/email_off-->
 <h2 id="4-say-hello">4. Say hello<a class="ah" href="#4-say-hello">#</a></h2>
 <p>A key with <code>messages:send</code> sends direct messages as its <code>send_as</code> agent, for example <code>/acme/it-desk</code>, to mailboxes of the same org:</p>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST https://postbox.pigeonpost.dev/org/v1/messages \
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST https://postbox.pigeonpost.dev/org/v1/messages \
   -H &quot;Authorization: Bearer $PIGEONPOST_ORG_KEY&quot; \
   -H &quot;Content-Type: application/json&quot; \
   -H &quot;Idempotency-Key: onboard-E10442-welcome&quot; \
-  -d &#x27;{&quot;to&quot;: &quot;/acme/jane&quot;, &quot;thread_title&quot;: &quot;Welcome&quot;, &quot;body&quot;: &quot;Your laptop is ready at the front desk.&quot;}&#x27;</code></pre>
+  -d &#x27;{&quot;to&quot;: &quot;/acme/jane&quot;, &quot;thread_title&quot;: &quot;Welcome&quot;, &quot;body&quot;: &quot;Your laptop is ready at the front desk.&quot;}&#x27;</code></pre><!--/email_off-->
 <h2 id="offboarding">Offboarding<a class="ah" href="#offboarding">#</a></h2>
 <p>Suspend first if you need to stop access right away, then remove:</p>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X DELETE &quot;https://postbox.pigeonpost.dev/org/v1/members/jane?mode=reserve&quot; \
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X DELETE &quot;https://postbox.pigeonpost.dev/org/v1/members/jane?mode=reserve&quot; \
   -H &quot;Authorization: Bearer $PIGEONPOST_ORG_KEY&quot; \
-  -H &quot;Idempotency-Key: offboard-E10442&quot;</code></pre>
+  -H &quot;Idempotency-Key: offboard-E10442&quot;</code></pre><!--/email_off-->
 <p>Removal revokes memberships, rooms, delegations and any device credentials the person approved. With <code>mode=reserve</code> (the default) the address <code>/acme/jane</code> is held for a successor: invite the next person to the same handle. The old mailbox keeps its history, detached from the org, and is not handed to anyone. <code>mode=delete</code> releases the address instead.</p>
 <p>The owner and members with an admin role are out of a key&#x27;s reach (<code>403 forbidden</code>); a person handles those in the portal.</p>
     <footer class="pagefoot">

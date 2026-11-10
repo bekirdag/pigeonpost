@@ -82,18 +82,18 @@
 <p class="op-facts">Credentials: <code>apiKey</code>, <code>memberToken</code></p>
 <h3>Responses</h3>
 <p class="resp"><code>200</code> What the person enters at GitHub.</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;device_code&quot;: &quot;string&quot;,
   &quot;user_code&quot;: &quot;string&quot;,
   &quot;verification_uri&quot;: &quot;string&quot;,
   &quot;expires_in&quot;: 0,
   &quot;interval&quot;: 0
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>account_required</code> — a capability token was presented where an account credential is required.</td></tr><tr><td><code>404</code></td><td><code>github_login_unavailable</code></td></tr><tr><td><code>502</code></td><td><code>github_unreachable</code></td></tr><tr><td><code>503</code></td><td><code>github_device_flow_disabled</code></td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/github/device&quot; \
-  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre>
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/github/device&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="claimGithub"><span class="method">POST</span> <code class="path">/v1/github/claim</code><a class="ah" href="#claimGithub">#</a></h2>
@@ -101,23 +101,23 @@
 <p class="op-facts">Credentials: <code>apiKey</code>, <code>memberToken</code></p>
 <p>Polled; <code>pending</code> and <code>slow_down</code> are ordinary 200 answers.</p>
 <h3>Request body</h3><p><code>application/json</code></p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;device_code&quot;: &quot;string&quot;
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Status.</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;status&quot;: &quot;pending&quot;,
   &quot;login&quot;: &quot;string&quot;,
   &quot;handle&quot;: &quot;/github/alex&quot;
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>account_required</code> — a capability token was presented where an account credential is required.</td></tr><tr><td><code>404</code></td><td><code>github_login_unavailable</code></td></tr><tr><td><code>409</code></td><td><code>login_changed_hands</code>, <code>login_already_claimed</code></td></tr><tr><td><code>500</code></td><td><code>store_error</code> (or another server-side code such as <code>vault_error</code>).</td></tr><tr><td><code>502</code></td><td><code>github_refused</code></td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/github/claim&quot; \
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/github/claim&quot; \
   -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
   -H &quot;Content-Type: application/json&quot; \
-  -d &#x27;{&quot;device_code&quot;: &quot;string&quot;}&#x27;</code></pre>
+  -d &#x27;{&quot;device_code&quot;: &quot;string&quot;}&#x27;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="handleAvailability"><span class="method">GET</span> <code class="path">/v1/handles/{name}/availability</code><a class="ah" href="#handleAvailability">#</a></h2>
@@ -128,16 +128,16 @@
 <div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>name</code></td><td>path</td><td>string</td><td>yes</td><td></td></tr></tbody></table></div>
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Availability.</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;name&quot;: &quot;string&quot;,
   &quot;available&quot;: false,
   &quot;reason&quot;: &quot;invalid&quot;
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>500</code></td><td><code>reserved_names_unavailable</code>, <code>store_error</code></td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/handles/$NAME/availability&quot; \
-  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre>
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/handles/$NAME/availability&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="myHandles"><span class="method">GET</span> <code class="path">/v1/me/handles</code><a class="ah" href="#myHandles">#</a></h2>
@@ -147,7 +147,7 @@
 <div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>include_inactive</code></td><td>query</td><td>boolean</td><td></td><td></td></tr></tbody></table></div>
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Holdings (<code>Cache-Control - private, no-store</code>).</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;account&quot;: &quot;string&quot;,
   &quot;handles&quot;: [
     {
@@ -158,12 +158,12 @@
       &quot;active&quot;: false
     }
   ]
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td><code>member_token_required</code> — this route needs a member sign-in, not a key or capability token.</td></tr><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>500</code></td><td><code>store_error</code> (or another server-side code such as <code>vault_error</code>).</td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/me/handles&quot; \
-  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre>
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/me/handles&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="claimAddress"><span class="method">POST</span> <code class="path">/v1/claims/address</code><a class="ah" href="#claimAddress">#</a></h2>
@@ -171,15 +171,15 @@
 <p class="op-facts">Credentials: <code>memberToken</code></p>
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Proved.</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;handle&quot;: &quot;string&quot;,
   &quot;proved_at&quot;: 0
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td><code>member_token_required</code>, <code>no_address</code>, <code>invalid_address</code></td></tr><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>address_not_verified</code></td></tr><tr><td><code>409</code></td><td><code>address_held</code>, <code>address_moved</code></td></tr><tr><td><code>500</code></td><td><code>store_error</code> (or another server-side code such as <code>vault_error</code>).</td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/claims/address&quot; \
-  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre>
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/claims/address&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="myEntitlements"><span class="method">GET</span> <code class="path">/v1/me/entitlements</code><a class="ah" href="#myEntitlements">#</a></h2>
@@ -187,7 +187,7 @@
 <p class="op-facts">Credentials: <code>memberToken</code></p>
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Entitlements (<code>Cache-Control - private, no-store</code>).</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;account&quot;: &quot;string&quot;,
   &quot;entitlements&quot;: [
     {
@@ -215,36 +215,36 @@
     }
   ],
   &quot;web_plan&quot;: {}
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>human_required</code> — an interactive sign-in is required.</td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/me/entitlements&quot; \
-  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre>
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/me/entitlements&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="claimPlanName"><span class="method">POST</span> <code class="path">/v1/claims/plan</code><a class="ah" href="#claimPlanName">#</a></h2>
 <p class="op-sum">Register a name within the account&#x27;s Pigeonpost Cloud web plan</p>
 <p class="op-facts">Credentials: <code>memberToken</code></p>
 <h3>Request body</h3><p><code>application/json</code></p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;namespace&quot;: &quot;string&quot;
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Responses</h3>
 <p class="resp"><code>200</code> The name is registered (idempotent).</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;namespace&quot;: &quot;string&quot;,
   &quot;mailbox&quot;: &quot;string&quot;,
   &quot;capacity&quot;: 0,
   &quot;used&quot;: 0
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td><code>invalid_namespace</code>, <code>member_token_required</code>, <code>bad_request</code></td></tr><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>402</code></td><td><code>no_plan</code></td></tr><tr><td><code>403</code></td><td><code>human_required</code></td></tr><tr><td><code>409</code></td><td><code>plan_capacity_reached</code>, <code>name_reserved</code>, <code>namespace_taken</code>, <code>handle_already_subscribed</code></td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/claims/plan&quot; \
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/claims/plan&quot; \
   -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
   -H &quot;Content-Type: application/json&quot; \
-  -d &#x27;{&quot;namespace&quot;: &quot;string&quot;}&#x27;</code></pre>
+  -d &#x27;{&quot;namespace&quot;: &quot;string&quot;}&#x27;</code></pre><!--/email_off-->
 </section>
     <footer class="pagefoot">
       <nav>

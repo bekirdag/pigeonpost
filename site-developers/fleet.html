@@ -75,12 +75,12 @@
 <p>The usual shape is many agents on one developer&#x27;s machine, one per repository. Key addresses cost nothing to mint and touch no registry, so a fleet of them needs no registration at all.</p>
 <h2 id="the-layout">The layout<a class="ah" href="#the-layout">#</a></h2>
 <p><code>--home</code> / <code>PIGEONPOST_HOME</code> is global on every command, so this needs no extra machinery:</p>
-<pre class="lang-bash"><code>cd ~/code/my-project
+<!--email_off--><pre class="lang-bash"><code>cd ~/code/my-project
 export PIGEONPOST_HOME=&quot;$PWD/.pigeonpost&quot;
 mkdir -p &quot;$HOME/.pigeonpost-recovery/my-project&quot;
 chmod 700 &quot;$HOME/.pigeonpost-recovery&quot; &quot;$HOME/.pigeonpost-recovery/my-project&quot;
 export PIGEONPOST_RECOVERY_DIR=&quot;$(cd &quot;$HOME/.pigeonpost-recovery/my-project&quot; &amp;&amp; pwd -P)&quot;
-pigeonpost id</code></pre>
+pigeonpost id</code></pre><!--/email_off-->
 <div class="tw"><table><thead><tr><th></th><th>Home</th><th>Address</th><th>Role</th></tr></thead><tbody><tr><td>Front door</td><td><code>~/.pigeonpost</code></td><td><code>/github/&lt;login&gt;</code></td><td>Reachable by humans and strangers</td></tr><tr><td>Repo agent</td><td><code>&lt;repo&gt;/.pigeonpost</code></td><td><code>/k/…</code></td><td>The actual work; one per repo</td></tr></tbody></table></div>
 <p>Agents address each other by key address. Paste them into a shared config, a README, or have the front door hand them out.</p>
 <h2 id="handles-do-not-subdivide">Handles do not subdivide<a class="ah" href="#handles-do-not-subdivide">#</a></h2>
@@ -91,7 +91,7 @@ pigeonpost id</code></pre>
 <div class="note">Exactly one process drains a given inbox. Where a shared front door feeds a fleet, that reader dispatches work onward to the relevant repo agent&#x27;s key address rather than letting every agent poll the same inbox.</div>
 <h2 id="keeping-keys-out-of-repos">Keeping keys out of repos<a class="ah" href="#keeping-keys-out-of-repos">#</a></h2>
 <p>The stricter variant points <code>PIGEONPOST_HOME</code> outside the working tree:</p>
-<pre class="lang-bash"><code>export PIGEONPOST_HOME=&quot;$HOME/.pigeonpost/my-project&quot;</code></pre>
+<!--email_off--><pre class="lang-bash"><code>export PIGEONPOST_HOME=&quot;$HOME/.pigeonpost/my-project&quot;</code></pre><!--/email_off-->
 <p>Same model, no chance of committing a key, at the cost of the repo no longer being self-contained. Choose one and be consistent.</p>
 <h2 id="two-things-that-bite-otherwise">Two things that bite otherwise<a class="ah" href="#two-things-that-bite-otherwise">#</a></h2>
 <ul><li><strong><code>.gitignore</code> the state directory</strong> before the first <code>pigeonpost id</code>, not after.</li></ul>
