@@ -48,11 +48,11 @@ pub(crate) fn router() -> Router<AppState> {
         .route("/v1/marketplace/listings/{listing}", get(read_listing))
 }
 
-fn not_found() -> GErr {
+pub(crate) fn not_found() -> GErr {
     GErr::new(StatusCode::NOT_FOUND, "not_found", "no such record")
 }
 
-fn feature_off() -> GErr {
+pub(crate) fn feature_off() -> GErr {
     GErr::new(
         StatusCode::NOT_FOUND,
         "feature_disabled",
@@ -60,7 +60,7 @@ fn feature_off() -> GErr {
     )
 }
 
-fn iso(secs: i64) -> String {
+pub(crate) fn iso(secs: i64) -> String {
     chrono::DateTime::from_timestamp(secs, 0)
         .map(|d| d.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
         .unwrap_or_default()
@@ -68,7 +68,7 @@ fn iso(secs: i64) -> String {
 
 /// Map a policy refusal onto the contract's error codes. `hide` is for records whose existence is
 /// private: no grant reads exactly like no such record.
-fn deny(reason: DenyReason, hide: bool) -> GErr {
+pub(crate) fn deny(reason: DenyReason, hide: bool) -> GErr {
     match reason {
         DenyReason::Auth(denial) => crate::org::auth_denial(denial),
         DenyReason::NotPermitted if hide => not_found(),
@@ -79,7 +79,7 @@ fn deny(reason: DenyReason, hide: bool) -> GErr {
     }
 }
 
-fn facts(state: &AppState) -> Facts {
+pub(crate) fn facts(state: &AppState) -> Facts {
     Facts {
         now: now_unix(),
         step_up: (*state.step_up).clone(),
@@ -88,7 +88,7 @@ fn facts(state: &AppState) -> Facts {
 }
 
 /// The signed-in caller and their account, once the `marketplace` flag is on for it.
-async fn caller(state: &AppState, headers: &HeaderMap) -> GResult<(Principal, String)> {
+pub(crate) async fn caller(state: &AppState, headers: &HeaderMap) -> GResult<(Principal, String)> {
     let principal = principal_for_token(state, crate::bearer(headers)).await?;
     let account = capabilities::principal_account(&principal)
         .map(str::to_string)
@@ -99,18 +99,20 @@ async fn caller(state: &AppState, headers: &HeaderMap) -> GResult<(Principal, St
     Ok((principal, account))
 }
 
-fn ip_of(client_ip: &Option<Extension<ClientIp>>) -> Option<std::net::IpAddr> {
+pub(crate) fn ip_of(client_ip: &Option<Extension<ClientIp>>) -> Option<std::net::IpAddr> {
     client_ip
         .as_ref()
         .and_then(|Extension(ip)| ip.as_str().parse().ok())
 }
 
-fn parse<T: serde::de::DeserializeOwned>(body: Result<Json<Value>, JsonRejection>) -> GResult<T> {
+pub(crate) fn parse<T: serde::de::DeserializeOwned>(
+    body: Result<Json<Value>, JsonRejection>,
+) -> GResult<T> {
     let Json(value) = body.map_err(|_| GErr::bad("invalid_json", "expected a JSON object"))?;
     serde_json::from_value(value).map_err(|e| GErr::bad("invalid_request", e.to_string()))
 }
 
-fn into_response<T: IntoResponse>(result: GResult<T>) -> Response {
+pub(crate) fn into_response<T: IntoResponse>(result: GResult<T>) -> Response {
     match result {
         Ok(out) => out.into_response(),
         Err(e) => api_error(e),

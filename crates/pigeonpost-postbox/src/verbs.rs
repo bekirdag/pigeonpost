@@ -553,6 +553,25 @@ mod tests {
         }
     }
 
+    /// Marketplace M1: there is no `nest_job` verb. A job's authority is admission and its payment
+    /// authorization at `POST /v1/nest-jobs` (an agent submits there with its own capability
+    /// token), never a contact grant, so an envelope asking for one fails closed like any unknown
+    /// verb and cannot be granted.
+    #[test]
+    fn a_nest_job_is_never_an_envelope_verb() {
+        assert_eq!(class_of("nest_job"), None);
+        let envelope = r#"{"v":1,"verb":"nest_job","args":{"operation":"hr.policy.ask"}}"#;
+        assert_eq!(
+            decide(envelope, true, &granted(&["nest_job"])),
+            Decision::Review {
+                held: Held::UnknownVerb,
+                verb: Some("nest_job".into())
+            }
+        );
+        assert!(validate_grant(&granted(&["nest_job"])).is_err());
+        assert!(validate_grant_for(&granted(&["nest_job"]), true).is_err());
+    }
+
     #[test]
     fn grants_accept_only_grantable_verbs() {
         assert!(validate_grant(&granted(&["run_tests", "read_file"])).is_ok());

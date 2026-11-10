@@ -1,0 +1,16 @@
+[package]
+name = "hr-policy-qa"
+version = "1.0.0"
+edition = "2021"
+license = "MIT"
+description = "Pigeonpost Nests marketplace reference release: HR policy Q&A from bundled, synthetic policy text."
+publish = false
+
+# Its own workspace: the build plane builds this tree alone, offline, from vendored sources.
+[workspace]
+
+[dependencies]
+serde_json = "1"
+
+[profile.release]
+opt-level = "s"

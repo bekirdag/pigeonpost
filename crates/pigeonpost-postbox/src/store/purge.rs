@@ -143,6 +143,24 @@ pub(crate) const TABLES: &[(&str, Rule)] = &[
         "release_attestations",
         Keep("Append-only signed evidence for a release"),
     ),
+    // Marketplace M1. A job is a record of work done for the account: it blocks.
+    ("nest_jobs", Block(A, "account_id = ?1")),
+    (
+        "nest_job_events",
+        Keep("Ids and states of a job, no content; the job row blocks the purge"),
+    ),
+    // Zero-priced, five-minute bindings with no job behind them: residue.
+    ("nest_payment_authorizations", Remove(A, "account_id = ?1")),
+    ("nest_quotes", Remove(A, "account_id = ?1")),
+    (
+        "operation_idempotency",
+        Remove(A, "substr(scope, 1, length(?1) + 1) = ?1 || '|'"),
+    ),
+    ("nest_operations", Unrelated),
+    (
+        "release_security_events",
+        Keep("Append-only security record of a release; the actor is staff"),
+    ),
     ("plan_names", Block(A, "account_id = ?1")),
     ("test_handle_claims", Block(A, "account_id = ?1")),
     (

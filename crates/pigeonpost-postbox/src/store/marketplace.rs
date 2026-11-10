@@ -23,9 +23,11 @@ CREATE TABLE IF NOT EXISTS staff_roles (
 CREATE UNIQUE INDEX IF NOT EXISTS staff_roles_live ON staff_roles(account_id, role)
     WHERE revoked_at IS NULL;
 
+-- `platform` is Pigeonpost's own first-party publisher (M1): made by the build plane, never by an
+-- application, and the only kind staff may review while belonging to it.
 CREATE TABLE IF NOT EXISTS publisher_profiles (
     id           TEXT PRIMARY KEY,
-    owner_kind   TEXT NOT NULL CHECK (owner_kind IN ('account','org')),
+    owner_kind   TEXT NOT NULL CHECK (owner_kind IN ('account','org','platform')),
     owner_id     TEXT NOT NULL,
     display_name TEXT NOT NULL,
     status       TEXT NOT NULL CHECK (status IN ('applied','approved','rejected','revoked')),
@@ -57,6 +59,21 @@ CREATE TABLE IF NOT EXISTS nest_releases (
     status       TEXT NOT NULL CHECK (status IN ('draft','submitted','approved','rejected','revoked')),
     created_by   TEXT NOT NULL,
     created_at   INTEGER NOT NULL,
+    -- The build record (M1). `release_digest` covers the source, vendored sources, manifest, SBOM
+    -- and image digests; it is what staff attest.
+    release_digest  TEXT CHECK (release_digest IS NULL OR release_digest LIKE 'sha256:%'),
+    source_digest   TEXT,
+    vendor_digest   TEXT,
+    manifest_digest TEXT,
+    sbom_digest     TEXT,
+    sbom            TEXT,
+    manifest        TEXT,
+    image           TEXT,
+    build_isolation TEXT,
+    -- Runtime security, separate from the review status: quarantine can be lifted, revocation
+    -- cannot.
+    security_state  TEXT NOT NULL DEFAULT 'normal'
+                    CHECK (security_state IN ('normal','quarantined','revoked')),
     UNIQUE (template_id, version)
 );
 CREATE INDEX IF NOT EXISTS nest_releases_by_publisher ON nest_releases(publisher_id);
@@ -64,7 +81,15 @@ CREATE INDEX IF NOT EXISTS nest_releases_by_publisher ON nest_releases(publisher
 CREATE TRIGGER IF NOT EXISTS nest_releases_immutable BEFORE UPDATE ON nest_releases
 WHEN OLD.image_digest <> NEW.image_digest OR OLD.version <> NEW.version
   OR OLD.template_id <> NEW.template_id OR OLD.publisher_id <> NEW.publisher_id
+  OR OLD.release_digest IS NOT NEW.release_digest OR OLD.source_digest IS NOT NEW.source_digest
+  OR OLD.vendor_digest IS NOT NEW.vendor_digest OR OLD.manifest_digest IS NOT NEW.manifest_digest
+  OR OLD.sbom_digest IS NOT NEW.sbom_digest OR OLD.sbom IS NOT NEW.sbom
+  OR OLD.manifest IS NOT NEW.manifest OR OLD.image IS NOT NEW.image
 BEGIN SELECT RAISE(ABORT, 'nest_releases are immutable'); END;
+CREATE TRIGGER IF NOT EXISTS nest_releases_revocation_is_permanent BEFORE UPDATE ON nest_releases
+WHEN (OLD.security_state = 'revoked' AND NEW.security_state <> 'revoked')
+  OR (OLD.status = 'revoked' AND NEW.status <> 'revoked')
+BEGIN SELECT RAISE(ABORT, 'a revoked release stays revoked'); END;
 
 CREATE TABLE IF NOT EXISTS nest_listings (
     id           TEXT PRIMARY KEY,
@@ -75,9 +100,14 @@ CREATE TABLE IF NOT EXISTS nest_listings (
     visibility   TEXT NOT NULL CHECK (visibility IN ('public','unlisted','private','invite_only','organization')),
     status       TEXT NOT NULL CHECK (status IN ('draft','published','suspended','withdrawn')),
     created_at   INTEGER NOT NULL,
-    updated_at   INTEGER NOT NULL
+    updated_at   INTEGER NOT NULL,
+    -- The shared Nest address jobs are sent to (`to` in a job request, M1). Not a mailbox: the
+    -- dispatcher resolves it here and nowhere else.
+    address      TEXT
 );
 CREATE INDEX IF NOT EXISTS nest_listings_by_publisher ON nest_listings(publisher_id);
+CREATE UNIQUE INDEX IF NOT EXISTS nest_listings_address ON nest_listings(address)
+    WHERE address IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS review_cases (
     id           TEXT PRIMARY KEY,
@@ -90,15 +120,33 @@ CREATE TABLE IF NOT EXISTS review_cases (
 );
 CREATE INDEX IF NOT EXISTS review_cases_by_release ON review_cases(release_id);
 
+-- One row per review step (M1): the automated stages record `passed`/`failed` (the AI stage only
+-- ever `advisory`, so AI never decides), and only the human review records a decision.
 CREATE TABLE IF NOT EXISTS review_decisions (
     id         TEXT PRIMARY KEY,
     case_id    TEXT NOT NULL REFERENCES review_cases(id),
     reviewer   TEXT NOT NULL,
-    decision   TEXT NOT NULL CHECK (decision IN ('approved','rejected','changes_requested')),
+    decision   TEXT NOT NULL CHECK (decision IN
+                   ('approved','rejected','changes_requested','passed','failed','advisory')),
     reason     TEXT NOT NULL,
-    created_at INTEGER NOT NULL
+    created_at INTEGER NOT NULL,
+    stage      TEXT NOT NULL DEFAULT 'human_review' CHECK (stage IN
+                   ('intake','deterministic_scan','ai_analysis','behavioral_test','human_review','attestation')),
+    evidence        TEXT,
+    evidence_digest TEXT CHECK (evidence_digest IS NULL OR evidence_digest LIKE 'sha256:%'),
+    -- Staff reviewed a first-party (platform) release: the conflict rule's one exception.
+    first_party INTEGER NOT NULL DEFAULT 0 CHECK (first_party IN (0, 1)),
+    CHECK ((stage = 'human_review') = (decision IN ('approved','rejected','changes_requested'))),
+    CHECK ((stage = 'ai_analysis') = (decision = 'advisory')),
+    CHECK (first_party = 0 OR stage = 'human_review')
 );
 CREATE INDEX IF NOT EXISTS review_decisions_by_case ON review_decisions(case_id);
+-- `first_party` can only describe a platform publisher's case, whatever the code above it does.
+CREATE TRIGGER IF NOT EXISTS review_decisions_first_party_is_platform
+BEFORE INSERT ON review_decisions WHEN NEW.first_party = 1 AND NOT EXISTS (
+    SELECT 1 FROM review_cases c JOIN publisher_profiles p ON p.id = c.publisher_id
+     WHERE c.id = NEW.case_id AND p.owner_kind = 'platform')
+BEGIN SELECT RAISE(ABORT, 'first_party is for platform publishers only'); END;
 CREATE TRIGGER IF NOT EXISTS review_decisions_no_update BEFORE UPDATE ON review_decisions
 BEGIN SELECT RAISE(ABORT, 'review_decisions are append-only'); END;
 CREATE TRIGGER IF NOT EXISTS review_decisions_no_delete BEFORE DELETE ON review_decisions
@@ -111,13 +159,176 @@ CREATE TABLE IF NOT EXISTS release_attestations (
     attester         TEXT NOT NULL,
     statement_digest TEXT NOT NULL,
     created_at       INTEGER NOT NULL,
+    -- M1: the canonical statement itself, the release digest it covers and the staff decision it
+    -- records. Admission recomputes `statement_digest` from `statement` before trusting it.
+    release_digest   TEXT,
+    decision_id      TEXT REFERENCES review_decisions(id),
+    statement        TEXT,
+    first_party      INTEGER NOT NULL DEFAULT 0 CHECK (first_party IN (0, 1)),
     UNIQUE (release_id, statement_digest)
 );
 CREATE TRIGGER IF NOT EXISTS release_attestations_no_update BEFORE UPDATE ON release_attestations
 BEGIN SELECT RAISE(ABORT, 'release_attestations are append-only'); END;
 CREATE TRIGGER IF NOT EXISTS release_attestations_no_delete BEFORE DELETE ON release_attestations
 BEGIN SELECT RAISE(ABORT, 'release_attestations are append-only'); END;
+
+-- ---- M1: the reference path ---------------------------------------------------------------------
+
+-- What a listing offers, from its release's manifest. M1 is free: no money moves, so a price other
+-- than zero cannot be stored.
+CREATE TABLE IF NOT EXISTS nest_operations (
+    listing_id        TEXT NOT NULL REFERENCES nest_listings(id),
+    operation         TEXT NOT NULL,
+    operation_version TEXT NOT NULL,
+    input_schema      TEXT NOT NULL,
+    price_minor       INTEGER NOT NULL DEFAULT 0 CHECK (price_minor = 0),
+    PRIMARY KEY (listing_id, operation, operation_version)
+);
+
+-- Server-priced quotes; zero only in M1.
+CREATE TABLE IF NOT EXISTS nest_quotes (
+    id                TEXT PRIMARY KEY,
+    account_id        TEXT NOT NULL,
+    listing_id        TEXT NOT NULL REFERENCES nest_listings(id),
+    release_id        TEXT NOT NULL REFERENCES nest_releases(id),
+    operation         TEXT NOT NULL,
+    operation_version TEXT NOT NULL,
+    amount_minor      INTEGER NOT NULL CHECK (amount_minor = 0),
+    currency          TEXT NOT NULL,
+    expires_at        INTEGER NOT NULL,
+    created_at        INTEGER NOT NULL
+);
+
+-- Single-use references, stored as a hash only. Zero-priced: nothing is reserved.
+CREATE TABLE IF NOT EXISTS nest_payment_authorizations (
+    ref_sha256   TEXT PRIMARY KEY,
+    quote_id     TEXT NOT NULL UNIQUE REFERENCES nest_quotes(id),
+    account_id   TEXT NOT NULL,
+    amount_minor INTEGER NOT NULL CHECK (amount_minor = 0),
+    expires_at   INTEGER NOT NULL,
+    consumed_by  TEXT,
+    consumed_at  INTEGER,
+    created_at   INTEGER NOT NULL
+);
+CREATE TRIGGER IF NOT EXISTS nest_payment_authorizations_single_use
+BEFORE UPDATE ON nest_payment_authorizations WHEN OLD.consumed_by IS NOT NULL
+BEGIN SELECT RAISE(ABORT, 'a payment authorization is used once'); END;
+
+-- Jobs: admission, execution and settlement are separate dimensions (contract `NestJob`).
+CREATE TABLE IF NOT EXISTS nest_jobs (
+    id                   TEXT PRIMARY KEY,
+    account_id           TEXT NOT NULL,
+    acting               TEXT,
+    buyer_context        TEXT NOT NULL,
+    listing_id           TEXT NOT NULL REFERENCES nest_listings(id),
+    address              TEXT NOT NULL,
+    release_id           TEXT NOT NULL REFERENCES nest_releases(id),
+    operation            TEXT NOT NULL,
+    operation_version    TEXT NOT NULL,
+    quote_id             TEXT NOT NULL UNIQUE REFERENCES nest_quotes(id),
+    authorization_sha256 TEXT NOT NULL UNIQUE,
+    intent_digest        TEXT NOT NULL,
+    payload              TEXT NOT NULL,
+    client_trace_id      TEXT,
+    admission  TEXT NOT NULL CHECK (admission IN ('pending','authorized','funded','admitted','rejected')),
+    execution  TEXT NOT NULL CHECK (execution IN ('not_started','queued','running','waiting_input',
+                   'reconciling','succeeded','failed','cancelled','expired','stopped_security')),
+    settlement TEXT NOT NULL CHECK (settlement IN ('none','reserved','pending_reconciliation',
+                   'settled','released','disputed')),
+    revision    INTEGER NOT NULL DEFAULT 1,
+    result      TEXT,
+    error_code  TEXT,
+    worker      TEXT,
+    deadline_at INTEGER NOT NULL,
+    created_at  INTEGER NOT NULL,
+    updated_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS nest_jobs_by_execution ON nest_jobs(execution);
+CREATE INDEX IF NOT EXISTS nest_jobs_by_release ON nest_jobs(release_id, execution);
+CREATE INDEX IF NOT EXISTS nest_jobs_by_account ON nest_jobs(account_id);
+
+-- Ids and states only, never content.
+CREATE TABLE IF NOT EXISTS nest_job_events (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id     TEXT NOT NULL REFERENCES nest_jobs(id),
+    kind       TEXT NOT NULL,
+    detail     TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS nest_job_events_by_job ON nest_job_events(job_id);
+CREATE TRIGGER IF NOT EXISTS nest_job_events_no_update BEFORE UPDATE ON nest_job_events
+BEGIN SELECT RAISE(ABORT, 'nest_job_events are append-only'); END;
+
+-- Required `Idempotency-Key`s, kept for the life of the record they created.
+CREATE TABLE IF NOT EXISTS operation_idempotency (
+    scope          TEXT NOT NULL,
+    key            TEXT NOT NULL,
+    request_sha256 TEXT NOT NULL,
+    status         INTEGER NOT NULL,
+    response       TEXT NOT NULL,
+    created_at     INTEGER NOT NULL,
+    PRIMARY KEY (scope, key)
+);
+
+-- Quarantine, release from quarantine and revocation, by whom and why. Append-only.
+CREATE TABLE IF NOT EXISTS release_security_events (
+    id         TEXT PRIMARY KEY,
+    release_id TEXT NOT NULL REFERENCES nest_releases(id),
+    action     TEXT NOT NULL CHECK (action IN ('quarantined','released','revoked')),
+    actor      TEXT NOT NULL,
+    reason     TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+CREATE TRIGGER IF NOT EXISTS release_security_events_no_update BEFORE UPDATE ON release_security_events
+BEGIN SELECT RAISE(ABORT, 'release_security_events are append-only'); END;
+CREATE TRIGGER IF NOT EXISTS release_security_events_no_delete BEFORE DELETE ON release_security_events
+BEGIN SELECT RAISE(ABORT, 'release_security_events are append-only'); END;
 ";
+
+/// Who has a stake in a release, for a staff review. `first_party` is set when the publisher is
+/// Pigeonpost's own (`owner_kind = 'platform'`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ReviewConflict {
+    pub conflicted: bool,
+    pub first_party: bool,
+}
+
+/// The conflict check for a staff review of a release (owner decision 2026-11-10): the M0 rule —
+/// a reviewer who owns, filed or belongs to the publisher, or built the release, may not review it
+/// — with one exception. A **first-party** release (publisher `owner_kind = 'platform'`) may be
+/// reviewed by staff, since every staff member belongs to Pigeonpost and the owner is the only
+/// reviewer. Having built the release still conflicts, first party or not. Every third-party
+/// publisher keeps the full rule. A release or publisher that cannot be found is a conflict.
+pub(crate) fn review_conflict_in(
+    c: &Connection,
+    staff: &str,
+    release: &str,
+) -> rusqlite::Result<ReviewConflict> {
+    let row: Option<(String, String)> = c
+        .query_row(
+            "SELECT r.created_by, p.owner_kind FROM nest_releases r
+               JOIN publisher_profiles p ON p.id = r.publisher_id WHERE r.id = ?1",
+            [release],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    let Some((author, kind)) = row else {
+        return Ok(ReviewConflict {
+            conflicted: true,
+            first_party: false,
+        });
+    };
+    if kind == "platform" {
+        return Ok(ReviewConflict {
+            conflicted: author == staff,
+            first_party: true,
+        });
+    }
+    Ok(ReviewConflict {
+        conflicted: release_conflict_in(c, staff, release)?,
+        first_party: false,
+    })
+}
 
 /// `account`'s live staff roles, as stored. Text that no longer parses is ignored, so a role this
 /// binary does not know grants nothing.
@@ -174,7 +385,6 @@ pub(crate) fn publisher_conflict_in(
 
 /// The conflict check for reviewing a release: its publisher's stake (above), or having built it.
 /// A release that cannot be found counts as a conflict.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn release_conflict_in(
     c: &Connection,
     staff: &str,
@@ -368,6 +578,148 @@ mod tests {
         // Delete attestation fails
         assert!(c
             .execute("DELETE FROM release_attestations WHERE id='a1'", [])
+            .is_err());
+    }
+
+    /// The owner decision of 2026-11-10, both sides: staff may review a first-party (platform)
+    /// release, and every third-party publisher keeps the M0 conflict rule.
+    #[test]
+    fn first_party_releases_may_be_reviewed_by_staff_and_third_parties_keep_the_rule() {
+        let c = db();
+        publisher(&c, "pplat", "platform", "pigeonpost", "system:build-plane");
+        release(&c, "rplat", "pplat", "system:build-plane");
+        assert_eq!(
+            review_conflict_in(&c, "owner", "rplat").unwrap(),
+            ReviewConflict {
+                conflicted: false,
+                first_party: true
+            }
+        );
+        // Having built a release conflicts, first party or not.
+        release(&c, "rplat2", "pplat", "owner");
+        assert!(
+            review_conflict_in(&c, "owner", "rplat2")
+                .unwrap()
+                .conflicted
+        );
+
+        // Third party: owning, filing, belonging to or owning the org all conflict, and none of
+        // them is ever first party.
+        publisher(&c, "pacct", "account", "owner", "owner");
+        release(&c, "racct", "pacct", "author");
+        publisher(&c, "pfiled", "account", "someone", "owner");
+        release(&c, "rfiled", "pfiled", "author");
+        c.execute_batch(
+            "INSERT INTO orgs (id, owner_account) VALUES ('o1', 'boss');
+             INSERT INTO org_members (id, org_id, account_id, status) VALUES ('m1', 'o1', 'owner', 'active');",
+        )
+        .unwrap();
+        publisher(&c, "porg", "org", "o1", "boss");
+        release(&c, "rorg", "porg", "author");
+        for (staff, rel) in [
+            ("owner", "racct"),
+            ("owner", "rfiled"),
+            ("owner", "rorg"),
+            ("boss", "rorg"),
+        ] {
+            assert_eq!(
+                review_conflict_in(&c, staff, rel).unwrap(),
+                ReviewConflict {
+                    conflicted: true,
+                    first_party: false
+                },
+                "{staff} on {rel}"
+            );
+        }
+        // An unrelated third party is clear, and still not first party.
+        publisher(&c, "pfree", "account", "third", "third");
+        release(&c, "rfree", "pfree", "author");
+        assert_eq!(
+            review_conflict_in(&c, "owner", "rfree").unwrap(),
+            ReviewConflict {
+                conflicted: false,
+                first_party: false
+            }
+        );
+        // A release that does not exist is a conflict.
+        assert!(review_conflict_in(&c, "owner", "rnone").unwrap().conflicted);
+    }
+
+    #[test]
+    fn the_schema_keeps_first_party_and_ai_decisions_honest() {
+        let c = db();
+        publisher(&c, "pplat", "platform", "pigeonpost", "system:build-plane");
+        release(&c, "rplat", "pplat", "system:build-plane");
+        publisher(&c, "pacct", "account", "other", "other");
+        release(&c, "racct", "pacct", "author");
+        c.execute_batch(
+            "INSERT INTO review_cases (id, release_id, publisher_id, status, created_at, updated_at) VALUES ('cplat', 'rplat', 'pplat', 'open', 0, 0);
+             INSERT INTO review_cases (id, release_id, publisher_id, status, created_at, updated_at) VALUES ('cacct', 'racct', 'pacct', 'open', 0, 0);",
+        )
+        .unwrap();
+        let insert = |id: &str, case: &str, stage: &str, decision: &str, first_party: i64| {
+            c.execute(
+                "INSERT INTO review_decisions (id, case_id, reviewer, decision, reason, created_at, stage, first_party)
+                 VALUES (?1, ?2, 'rev', ?4, 'r', 0, ?3, ?5)",
+                rusqlite::params![id, case, stage, decision, first_party],
+            )
+        };
+        // first_party only on a platform case, and only on the human review.
+        assert!(insert("d1", "cacct", "human_review", "approved", 1).is_err());
+        assert!(insert("d2", "cplat", "deterministic_scan", "passed", 1).is_err());
+        assert!(insert("d3", "cplat", "human_review", "approved", 1).is_ok());
+        // AI is advisory only; it can neither pass, fail nor approve.
+        for decision in ["approved", "passed", "failed"] {
+            assert!(
+                insert("d4", "cacct", "ai_analysis", decision, 0).is_err(),
+                "{decision}"
+            );
+        }
+        assert!(insert("d5", "cacct", "ai_analysis", "advisory", 0).is_ok());
+        // Automated stages never carry a human decision, and the human review never "passes".
+        assert!(insert("d6", "cacct", "behavioral_test", "approved", 0).is_err());
+        assert!(insert("d7", "cacct", "human_review", "passed", 0).is_err());
+        // A revoked release stays revoked; a quarantine can be lifted.
+        c.execute(
+            "UPDATE nest_releases SET security_state = 'quarantined' WHERE id = 'racct'",
+            [],
+        )
+        .unwrap();
+        c.execute(
+            "UPDATE nest_releases SET security_state = 'normal' WHERE id = 'racct'",
+            [],
+        )
+        .unwrap();
+        c.execute(
+            "UPDATE nest_releases SET security_state = 'revoked' WHERE id = 'racct'",
+            [],
+        )
+        .unwrap();
+        assert!(c
+            .execute(
+                "UPDATE nest_releases SET security_state = 'normal' WHERE id = 'racct'",
+                []
+            )
+            .is_err());
+        // Zero only: no price and no quote can carry money in M1.
+        c.execute_batch(
+            "INSERT INTO nest_listings (id, publisher_id, release_id, title, summary, visibility, status, created_at, updated_at)
+             VALUES ('l1', 'pacct', 'racct', 't', 's', 'public', 'published', 0, 0);",
+        )
+        .unwrap();
+        assert!(c
+            .execute(
+                "INSERT INTO nest_operations (listing_id, operation, operation_version, input_schema, price_minor)
+                 VALUES ('l1', 'a.b', '1.0', '{}', 100)",
+                []
+            )
+            .is_err());
+        assert!(c
+            .execute(
+                "INSERT INTO nest_quotes (id, account_id, listing_id, release_id, operation, operation_version, amount_minor, currency, expires_at, created_at)
+                 VALUES ('q1', 'a', 'l1', 'racct', 'a.b', '1.0', 1, 'TRY', 0, 0)",
+                []
+            )
             .is_err());
     }
 

@@ -253,6 +253,18 @@ def erase(conn, request_id, blob_root, evidence):
         if has(conn, "publisher_profiles"):
             conn.execute("UPDATE publisher_profiles SET status='revoked', owner_id=?, display_name='erased', updated_at=? WHERE owner_kind='account' AND owner_id=?", ("erased_" + request_id, now, account))
             conn.execute("UPDATE publisher_profiles SET applied_by=? WHERE applied_by=?", ("erased_" + request_id, account))
+        # Marketplace M1: unused zero-priced quotes and authorizations go; a job keeps its states
+        # and ids for the release's record but loses its content and no longer names the person.
+        if has(conn, "nest_payment_authorizations"):
+            conn.execute("DELETE FROM nest_payment_authorizations WHERE account_id=? AND consumed_by IS NULL", (account,))
+            conn.execute("UPDATE nest_payment_authorizations SET account_id=? WHERE account_id=?", ("erased_" + request_id, account))
+        if has(conn, "nest_jobs"):
+            conn.execute("UPDATE nest_jobs SET account_id=?, acting=NULL, payload='{}', result=NULL, client_trace_id=NULL WHERE account_id=?", ("erased_" + request_id, account))
+        if has(conn, "nest_quotes"):
+            conn.execute("DELETE FROM nest_quotes WHERE account_id=? AND id NOT IN (SELECT quote_id FROM nest_jobs) AND id NOT IN (SELECT quote_id FROM nest_payment_authorizations)", (account,))
+            conn.execute("UPDATE nest_quotes SET account_id=? WHERE account_id=?", ("erased_" + request_id, account))
+        if has(conn, "operation_idempotency"):
+            conn.execute("DELETE FROM operation_idempotency WHERE substr(scope, 1, length(?) + 1) = ? || '|'", (account, account))
         for table in ("apple_handle_plans", "apple_plan_names", "nest_store_purchases", "nest_setups"):
             if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone():
                 conn.execute("UPDATE " + table + " SET account_id=? WHERE account_id=?", ("erased_" + request_id, account))

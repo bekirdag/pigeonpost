@@ -89,6 +89,40 @@ CREATE TABLE IF NOT EXISTS events (
     kind    TEXT NOT NULL,
     detail  TEXT
 );
+-- Marketplace pool (build plan M1): attested releases this host may run, one worker per listing
+-- and buyer context, and the jobs handed to them. A worker also has a `nests` row, so the broker
+-- meters it like any Nest; the first-party lifecycle (reconcile, idle stop, list) skips it.
+CREATE TABLE IF NOT EXISTS mp_releases (
+    release_id       TEXT PRIMARY KEY,
+    image            TEXT NOT NULL,
+    release_digest   TEXT NOT NULL,
+    statement_digest TEXT NOT NULL,
+    state            TEXT NOT NULL CHECK (state IN ('admitted','quarantined','revoked')),
+    updated_at       INTEGER NOT NULL
+);
+CREATE TRIGGER IF NOT EXISTS mp_releases_revocation_is_permanent BEFORE UPDATE ON mp_releases
+WHEN OLD.state = 'revoked' AND NEW.state <> 'revoked'
+BEGIN SELECT RAISE(ABORT, 'a revoked release stays revoked'); END;
+CREATE TRIGGER IF NOT EXISTS mp_releases_identity BEFORE UPDATE ON mp_releases
+WHEN OLD.image <> NEW.image OR OLD.release_digest <> NEW.release_digest
+BEGIN SELECT RAISE(ABORT, 'a release never changes its image'); END;
+CREATE TABLE IF NOT EXISTS mp_workers (
+    nest_id       TEXT PRIMARY KEY REFERENCES nests(id),
+    listing_id    TEXT NOT NULL,
+    buyer_context TEXT NOT NULL,
+    release_id    TEXT NOT NULL,
+    created_at    INTEGER NOT NULL,
+    UNIQUE (listing_id, buyer_context)
+);
+CREATE INDEX IF NOT EXISTS mp_workers_by_release ON mp_workers(release_id);
+CREATE TABLE IF NOT EXISTS mp_jobs (
+    job_id     TEXT PRIMARY KEY,
+    nest_id    TEXT NOT NULL REFERENCES mp_workers(nest_id),
+    state      TEXT NOT NULL CHECK (state IN ('running','succeeded','failed','stopped_security')),
+    result     TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
 ";
 
 /// How long a control instance's claim on a Nest lasts without renewal.
@@ -746,6 +780,233 @@ fn row_nest(r: &rusqlite::Row<'_>) -> rusqlite::Result<Nest> {
         last_active_at: r.get(14)?,
         last_error: r.get(15)?,
     })
+}
+
+/// One marketplace worker: which listing and buyer context it serves, and which release it runs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MpWorker {
+    pub nest_id: String,
+    pub listing_id: String,
+    pub buyer_context: String,
+    pub release_id: String,
+}
+
+fn row_worker(r: &rusqlite::Row<'_>) -> rusqlite::Result<MpWorker> {
+    Ok(MpWorker {
+        nest_id: r.get(0)?,
+        listing_id: r.get(1)?,
+        buyer_context: r.get(2)?,
+        release_id: r.get(3)?,
+    })
+}
+
+const MP_WORKER_COLS: &str = "nest_id, listing_id, buyer_context, release_id";
+
+impl Db {
+    // ---- Marketplace pool (M1) -----------------------------------------------------------------
+
+    /// `(image, release_digest, state)` of a release this host has heard of.
+    pub fn mp_release(&self, release_id: &str) -> Result<Option<(String, String, String)>, String> {
+        self.with(|c| {
+            c.query_row(
+                "SELECT image, release_digest, state FROM mp_releases WHERE release_id = ?1",
+                params![release_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()
+        })
+    }
+
+    /// Record an attested release. A release already known keeps its row: its image and digest
+    /// never change, and one that is quarantined or revoked stays so.
+    pub fn mp_admit(
+        &self,
+        release_id: &str,
+        image: &str,
+        release_digest: &str,
+        statement_digest: &str,
+    ) -> Result<(), String> {
+        self.with(|c| {
+            c.execute(
+                "INSERT INTO mp_releases
+                    (release_id, image, release_digest, statement_digest, state, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, 'admitted', ?5) ON CONFLICT(release_id) DO NOTHING",
+                params![release_id, image, release_digest, statement_digest, now()],
+            )
+            .map(|_| ())
+        })
+    }
+
+    /// Quarantine or revoke. An unknown release is recorded in that state, so it can never be
+    /// admitted later. Revocation is permanent: a trigger refuses the way back.
+    pub fn mp_set_release_state(&self, release_id: &str, state: &str) -> Result<(), String> {
+        self.with(|c| {
+            c.execute(
+                "INSERT INTO mp_releases
+                    (release_id, image, release_digest, statement_digest, state, updated_at)
+                 VALUES (?1, '', '', '', ?2, ?3)
+                 ON CONFLICT(release_id) DO UPDATE SET state = excluded.state,
+                    updated_at = excluded.updated_at",
+                params![release_id, state, now()],
+            )
+            .map(|_| ())
+        })
+    }
+
+    /// Drop a quarantine that was recorded before the release was ever admitted here (no image).
+    /// Never touches an admitted or revoked release.
+    pub fn mp_forget_unadmitted(&self, release_id: &str) -> Result<(), String> {
+        self.with(|c| {
+            c.execute(
+                "DELETE FROM mp_releases WHERE release_id = ?1 AND image = '' AND state = 'quarantined'",
+                params![release_id],
+            )
+            .map(|_| ())
+        })
+    }
+
+    pub fn mp_worker_for(
+        &self,
+        listing_id: &str,
+        context: &str,
+    ) -> Result<Option<MpWorker>, String> {
+        self.with(|c| {
+            c.query_row(
+                &format!(
+                    "SELECT {MP_WORKER_COLS} FROM mp_workers
+                      WHERE listing_id = ?1 AND buyer_context = ?2"
+                ),
+                params![listing_id, context],
+                row_worker,
+            )
+            .optional()
+        })
+    }
+
+    pub fn mp_worker(&self, nest_id: &str) -> Result<Option<MpWorker>, String> {
+        self.with(|c| {
+            c.query_row(
+                &format!("SELECT {MP_WORKER_COLS} FROM mp_workers WHERE nest_id = ?1"),
+                params![nest_id],
+                row_worker,
+            )
+            .optional()
+        })
+    }
+
+    /// Record a new worker with its ledger row, so the broker meters it like any Nest.
+    pub fn mp_insert_worker(
+        &self,
+        w: &MpWorker,
+        input_limit: i64,
+        output_limit: i64,
+    ) -> Result<(), String> {
+        let t = now();
+        self.with(|c| {
+            let tx = c.transaction()?;
+            tx.execute(
+                "INSERT INTO nests (id, account_id, address, label, state, desired, quota_gib,
+                    input_limit, output_limit, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, 'marketplace', 'provisioning', 'running', 1, ?4, ?5, ?6, ?6)",
+                params![
+                    w.nest_id,
+                    w.buyer_context,
+                    w.listing_id,
+                    input_limit,
+                    output_limit,
+                    t
+                ],
+            )?;
+            tx.execute(
+                "INSERT INTO mp_workers (nest_id, listing_id, buyer_context, release_id, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![w.nest_id, w.listing_id, w.buyer_context, w.release_id, t],
+            )?;
+            tx.commit()
+        })
+    }
+
+    pub fn mp_set_worker_release(&self, nest_id: &str, release_id: &str) -> Result<(), String> {
+        self.with(|c| {
+            c.execute(
+                "UPDATE mp_workers SET release_id = ?2 WHERE nest_id = ?1",
+                params![nest_id, release_id],
+            )
+            .map(|_| ())
+        })
+    }
+
+    pub fn mp_workers_of_release(&self, release_id: &str) -> Result<Vec<MpWorker>, String> {
+        self.with(|c| {
+            let mut stmt = c.prepare(&format!(
+                "SELECT {MP_WORKER_COLS} FROM mp_workers WHERE release_id = ?1 ORDER BY nest_id"
+            ))?;
+            let rows = stmt.query_map(params![release_id], row_worker)?;
+            rows.collect()
+        })
+    }
+
+    /// Ids of every marketplace worker: the first-party lifecycle leaves these alone.
+    pub fn mp_worker_ids(&self) -> Result<std::collections::HashSet<String>, String> {
+        self.with(|c| {
+            let mut stmt = c.prepare("SELECT nest_id FROM mp_workers")?;
+            let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+            rows.collect()
+        })
+    }
+
+    /// `(nest_id, state, result)` of a job this host was given.
+    #[allow(clippy::type_complexity)]
+    pub fn mp_job(&self, job_id: &str) -> Result<Option<(String, String, Option<String>)>, String> {
+        self.with(|c| {
+            c.query_row(
+                "SELECT nest_id, state, result FROM mp_jobs WHERE job_id = ?1",
+                params![job_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()
+        })
+    }
+
+    pub fn mp_insert_job(&self, job_id: &str, nest_id: &str) -> Result<(), String> {
+        let t = now();
+        self.with(|c| {
+            c.execute(
+                "INSERT INTO mp_jobs (job_id, nest_id, state, created_at, updated_at)
+                 VALUES (?1, ?2, 'running', ?3, ?3)",
+                params![job_id, nest_id, t],
+            )
+            .map(|_| ())
+        })
+    }
+
+    /// Finish a running job once; a finished job never changes again.
+    pub fn mp_finish_job(
+        &self,
+        job_id: &str,
+        state: &str,
+        result: Option<&str>,
+    ) -> Result<bool, String> {
+        self.with(|c| {
+            c.execute(
+                "UPDATE mp_jobs SET state = ?2, result = ?3, updated_at = ?4
+                  WHERE job_id = ?1 AND state = 'running'",
+                params![job_id, state, result, now()],
+            )
+            .map(|n| n > 0)
+        })
+    }
+
+    /// Every running job of a worker stops for security reasons.
+    pub fn mp_stop_jobs_of(&self, nest_id: &str) -> Result<usize, String> {
+        self.with(|c| {
+            c.execute(
+                "UPDATE mp_jobs SET state = 'stopped_security', updated_at = ?2
+                  WHERE nest_id = ?1 AND state = 'running'",
+                params![nest_id, now()],
+            )
+        })
+    }
 }
 
 #[cfg(test)]
