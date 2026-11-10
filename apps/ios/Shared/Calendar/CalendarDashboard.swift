@@ -248,16 +248,6 @@ enum CalendarPresentation {
         switch value { case "green": return .green; case "orange": return .orange; case "red": return Color.red; case "purple": return .purple; case "teal": return .teal; case "gray": return .gray; default: return .blue }
     }
     static func events(_ items: [EventOccurrence], day: CalendarDay, zone: TimeZone) -> [EventOccurrence] {
-        // Resolve real day boundaries once per day, including23/25-hour days, not once per row.
-        let start = try? day.start(in: zone).timeIntervalSince1970
-        let end = try? day.adding(days: 1).start(in: zone).timeIntervalSince1970
-        return items.filter { item in
-            if item.allDay == true {
-                guard let first = item.startDate, let last = item.endDate else { return false }
-                return first <= day.id && day.id < last
-            }
-            guard let first = item.startsAt, let last = item.endsAt, let start, let end else { return false }
-            return Double(first) < end && Double(last) > start
-        }
+        CalendarPresentationCore.events(items, day: day, zone: zone)
     }
 }
