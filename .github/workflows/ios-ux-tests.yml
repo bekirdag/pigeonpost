@@ -194,8 +194,8 @@ jobs:
     # Keep the current-runtime UI suite above, and verify real StoreKit transactions
     # on iOS 18 until the hosted image includes a fixed runtime.
     # https://developer.apple.com/forums/thread/826971
-    runs-on: macos-14
-    timeout-minutes: 15
+    runs-on: macos-15
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: apps/ios
@@ -204,11 +204,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@8632757d5a758c452f724e9d837848c694a7bb48 # 1.91.1
       - name: Select the StoreKit-compatible simulator
         run: |
-          sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
+          sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
           python3 - <<'PY'
           import json, os, subprocess
           devices = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'devices', 'available', '--json']))['devices']
-          phones = [d for runtime, entries in devices.items()
+          # Newest first: an app built with the iOS 18.5 SDK links libraries older runtimes lack.
+          version = lambda runtime: [int(n) for n in runtime.rsplit('.', 1)[1].split('-')[1:]]
+          phones = [d for runtime, entries in sorted(devices.items(), key=lambda item: version(item[0]) if item[0].startswith('com.apple.CoreSimulator.SimRuntime.iOS-') else [], reverse=True)
                     if runtime.startswith('com.apple.CoreSimulator.SimRuntime.iOS-18-')
                     for d in entries if 'iPhone' in d['name']]
           assert phones, 'No iOS 18 iPhone simulator available for StoreKit testing'

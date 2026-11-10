@@ -2114,7 +2114,7 @@ const CORS_ORIGINS: [&str; 4] = [
 /// upload and download are made of, and their absence here is why the web inbox could not manage
 /// either — the CLI and the phone were unaffected, because neither asks permission first.
 const CORS_ALLOW_HEADERS: &str =
-    "authorization, content-type, x-pigeonpost-identity, x-pigeonpost-filename, x-pigeonpost-media-type, x-pigeonpost-device";
+    "authorization, content-type, x-pigeonpost-identity, x-pigeonpost-filename, x-pigeonpost-media-type, x-pigeonpost-device, x-file-name";
 
 /// Minimal CORS: echo an allowlisted `Origin`, answer preflight, allow the bearer header. Same-origin
 /// callers (the onboarding page, agents) are unaffected.
@@ -7279,6 +7279,8 @@ mod tests {
             "x-pigeonpost-media-type",
             // Which MLS device is acting: every device-scoped groups and /v1/mls route (Phase 3a).
             "x-pigeonpost-device",
+            // The display name of a file added to a Nest (B4): the web inbox's upload.
+            "x-file-name",
         ] {
             assert!(
                 CORS_ALLOW_HEADERS.split(", ").any(|h| h == name),
