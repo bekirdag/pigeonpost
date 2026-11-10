@@ -1,4 +1,4 @@
-/* Copied verbatim from site-inbox/app.css lines 9-458 (fonts and design tokens). A test keeps
+/* Copied verbatim from site-inbox/app.css lines 9-473 (fonts and design tokens). A test keeps
    the copy exact; change the inbox first, then re-copy. */
 @font-face {
   font-family: "Geist";
@@ -26,6 +26,11 @@
   color-scheme: light dark;
   /* The accent. `--navy` and `--blue` keep their old roles (filled marks, and links / primary
      actions) and now both sit in the mockup's one blue family. */
+  --pp-bg: #f6f7f9; --pp-surface: #ffffff; --pp-border: #e3e6eb; --pp-border-strong: #cfd5de;
+  --pp-text: #111827; --pp-muted: #8a93a3; --pp-icon: #6b7280; --pp-icon-hover: #2f5bea;
+  --pp-hover-bg: #eef2fd; --pp-accent: #2f5bea; --pp-accent-hover: #2449c9;
+  --pp-accent-ring: rgba(47, 91, 234, .16); --pp-disabled: #e7eaef; --pp-disabled-icon: #a3abb8;
+  --pp-success: #16a34a; --pp-sent-top: #3d68f5; --pp-tip-bg: #111827;
   --navy: #2563eb;
   --navy-hover: #1d4fd8;
   --blue: #2457d6;
@@ -187,6 +192,11 @@
     --find-text: #f5edff;
     --find-fill: #5c3a81;
     --find-edge: #b795e5;
+    --pp-bg: #0f1115; --pp-surface: #181b21; --pp-border: #262a33; --pp-border-strong: #353b47;
+    --pp-text: #eef0f4; --pp-muted: #7c8595; --pp-icon: #9aa3b2; --pp-icon-hover: #7c9bff;
+    --pp-hover-bg: #1f2533; --pp-accent: #4c74ff; --pp-accent-hover: #3d63ec;
+    --pp-accent-ring: rgba(76, 116, 255, .22); --pp-disabled: #232730; --pp-disabled-icon: #5b6370;
+    --pp-success: #4ade80; --pp-sent-top: #3d68f5; --pp-tip-bg: #111827;
     --navy: #8ab4ff;
     --navy-hover: #a5c5ff;
     --blue: #8ab4ff;
@@ -321,6 +331,11 @@
   --find-text: #f5edff;
   --find-fill: #5c3a81;
   --find-edge: #b795e5;
+  --pp-bg: #0f1115; --pp-surface: #181b21; --pp-border: #262a33; --pp-border-strong: #353b47;
+  --pp-text: #eef0f4; --pp-muted: #7c8595; --pp-icon: #9aa3b2; --pp-icon-hover: #7c9bff;
+  --pp-hover-bg: #1f2533; --pp-accent: #4c74ff; --pp-accent-hover: #3d63ec;
+  --pp-accent-ring: rgba(76, 116, 255, .22); --pp-disabled: #232730; --pp-disabled-icon: #5b6370;
+  --pp-success: #4ade80; --pp-sent-top: #3d68f5; --pp-tip-bg: #111827;
   --navy: #8ab4ff;
   --navy-hover: #a5c5ff;
   --blue: #8ab4ff;

@@ -17,8 +17,8 @@ COPY . .
 # fetching components the build does not need.
 RUN rm -f rust-toolchain.toml \
  && cargo build --release --locked -p pigeonpost-cli -p pigeonpost-nests \
-      --bin pigeonpost --bin pigeonpost-nest-runner --bin pigeonpost-nestd \
- && strip target/release/pigeonpost target/release/pigeonpost-nest-runner target/release/pigeonpost-nestd
+      --bin pigeonpost --bin pigeonpost-nest-runner --bin pigeonpost-nest-parser --bin pigeonpost-nestd \
+ && strip target/release/pigeonpost target/release/pigeonpost-nest-runner target/release/pigeonpost-nest-parser target/release/pigeonpost-nestd
 
 FROM ${BASE_IMAGE}
 RUN apt-get update \
@@ -27,6 +27,8 @@ RUN apt-get update \
  && useradd --uid 10001 --no-create-home --home-dir /nest/home --shell /usr/sbin/nologin nest
 COPY --from=build /src/target/release/pigeonpost /usr/local/bin/pigeonpost
 COPY --from=build /src/target/release/pigeonpost-nest-runner /usr/local/bin/pigeonpost-nest-runner
+# B4: the file parser, run by nestd in a separate no-network sandbox from this same image.
+COPY --from=build /src/target/release/pigeonpost-nest-parser /usr/local/bin/pigeonpost-nest-parser
 USER 10001:10001
 ENV PIGEONPOST_HOME=/nest/home PIGEONPOST_AGENTD_LISTEN=mailbox
 ENTRYPOINT ["/usr/local/bin/pigeonpost-nest-runner", "init"]

@@ -50,6 +50,15 @@ pub trait Sandbox: Send + Sync {
     fn stats(&self, nest_id: &str) -> Option<Stats>;
     /// A short name for status output ("gvisor-systrap", "firecracker", …).
     fn kind(&self) -> &'static str;
+    /// Parse one uploaded file (Phase B4) in a sandbox of its own: no network, `input` read-only,
+    /// only `out` writable, bounded memory, processes and `timeout`. Never inside the Nest's own
+    /// sandbox, so a parser exploit cannot reach the Nest's mailbox or broker credentials.
+    fn run_parser(
+        &self,
+        input: &Path,
+        out: &Path,
+        timeout: std::time::Duration,
+    ) -> Result<(), String>;
 }
 
 pub const LABEL: &str = "dev.pigeonpost.nest";
@@ -159,6 +168,53 @@ impl GvisorPodman {
 
     fn podman(&self, args: &[&str]) -> Result<String, String> {
         crate::storage::run("podman", args)
+    }
+}
+
+impl GvisorPodman {
+    /// The exact `podman run` arguments for one parse. Pure, so the profile is asserted in tests.
+    pub fn parser_args(cfg: &SandboxConfig, name: &str, input: &Path, out: &Path) -> Vec<String> {
+        vec![
+            "run".into(),
+            "--rm".into(),
+            "--name".into(),
+            name.into(),
+            "--runtime".into(),
+            cfg.oci_runtime.clone(),
+            "--pull".into(),
+            "never".into(),
+            // No network at all: a parser has nobody to talk to.
+            "--network".into(),
+            "none".into(),
+            "--user".into(),
+            "10001:10001".into(),
+            "--cap-drop".into(),
+            "ALL".into(),
+            "--security-opt".into(),
+            "no-new-privileges".into(),
+            "--read-only".into(),
+            "--tmpfs".into(),
+            "/tmp:rw,nosuid,nodev,noexec,size=16m,mode=1777".into(),
+            "--volume".into(),
+            format!("{}:/in:ro,nosuid,nodev,noexec", input.to_string_lossy()),
+            "--volume".into(),
+            format!("{}:/out:rw,nosuid,nodev,noexec", out.to_string_lossy()),
+            "--memory".into(),
+            "256m".into(),
+            "--memory-swap".into(),
+            "256m".into(),
+            "--cpus".into(),
+            "1.000".into(),
+            "--pids-limit".into(),
+            "16".into(),
+            "--log-driver".into(),
+            "none".into(),
+            "--entrypoint".into(),
+            "/usr/local/bin/pigeonpost-nest-parser".into(),
+            cfg.image.clone(),
+            "/in".into(),
+            "/out".into(),
+        ]
     }
 }
 
@@ -276,6 +332,38 @@ impl Sandbox for GvisorPodman {
     fn kind(&self) -> &'static str {
         "gvisor-systrap"
     }
+
+    fn run_parser(
+        &self,
+        input: &Path,
+        out: &Path,
+        timeout: std::time::Duration,
+    ) -> Result<(), String> {
+        let name = format!("nest-parse-{}", crate::util::random_hex(8));
+        let args = Self::parser_args(&self.cfg, &name, input, out);
+        let mut child = std::process::Command::new("podman")
+            .args(&args)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| format!("podman: {e}"))?;
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) if status.success() => return Ok(()),
+                Ok(Some(status)) => return Err(format!("parser exited with {status}")),
+                Ok(None) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(100))
+                }
+                _ => {
+                    let _ = self.podman(&["rm", "--force", "--time", "0", "--ignore", &name]);
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err("parser timed out".into());
+                }
+            }
+        }
+    }
 }
 
 /// "12.5MB", "1.2GB", "512kB" → bytes (podman's decimal units).
@@ -358,6 +446,25 @@ impl Sandbox for Fake {
     }
     fn kind(&self) -> &'static str {
         "fake"
+    }
+
+    /// Tests: the same parser, in process (the profile itself is asserted on `parser_args`).
+    fn run_parser(
+        &self,
+        input: &Path,
+        out: &Path,
+        _timeout: std::time::Duration,
+    ) -> Result<(), String> {
+        let data = std::fs::read(input).map_err(|e| e.to_string())?;
+        let m = crate::parse::parse(&data);
+        for p in &m.parts {
+            std::fs::write(out.join(&p.name), &p.text).map_err(|e| e.to_string())?;
+        }
+        std::fs::write(
+            out.join("manifest.json"),
+            serde_json::to_vec(&m).unwrap_or_default(),
+        )
+        .map_err(|e| e.to_string())
     }
 }
 

@@ -563,12 +563,18 @@
                                     <TextBlock Text="{x:Bind ViewModel.ConversationTitle, Mode=OneWay}" FontFamily="{StaticResource MonoFont}" CharacterSpacing="-10" TextTrimming="CharacterEllipsis" />
                                 </HyperlinkButton>
                                 <Grid ColumnSpacing="4" HorizontalAlignment="Left">
-                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                     <HyperlinkButton Click="Contact_Click" Padding="0" FontSize="12.5" Foreground="{ThemeResource TextSecondaryBrush}" HorizontalContentAlignment="Left"
                                                      IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" AutomationProperties.Name="Sender address details">
                                         <TextBlock Text="{x:Bind ViewModel.ConversationAddress, Mode=OneWay}" TextTrimming="CharacterEllipsis" />
                                     </HyperlinkButton>
                                     <Button Grid.Column="1" Click="CopyPeer_Click" Style="{StaticResource FooterIconButton}" Width="24" Height="24" Foreground="{ThemeResource TextTertiaryBrush}" IsEnabled="{x:Bind ViewModel.HasConversation, Mode=OneWay}" AutomationProperties.Name="Copy address" ToolTipService.ToolTip="Copy address"><FontIcon Glyph="&#xE8C8;" FontSize="12" /></Button>
+                                    <StackPanel x:Name="NestHeader" Grid.Column="2" Orientation="Horizontal" Spacing="8" Margin="4,0,0,0" VerticalAlignment="Center" Visibility="Collapsed">
+                                        <Border x:Name="NestStatusPill" CornerRadius="8" Padding="8,1,8,2" Background="{ThemeResource RowSelectedBrush}">
+                                            <TextBlock x:Name="NestStatusText" FontSize="12" Foreground="{ThemeResource TextPrimaryBrush}" />
+                                        </Border>
+                                        <HyperlinkButton x:Name="NestPageLink" Click="NestPage_Click" Padding="0" FontSize="12.5" Content="Nest page" />
+                                    </StackPanel>
                                 </Grid>
                             </StackPanel>
                             <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">

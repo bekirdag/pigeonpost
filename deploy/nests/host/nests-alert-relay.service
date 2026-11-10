@@ -1,0 +1,24 @@
+[Unit]
+Description=Nests alert relay (Alertmanager -> Pigeonpost message)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/pigeonpost-nestd alert-relay --config /etc/nests/nestd.toml
+User=nest-broker
+Group=nests
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LoadCredential=alerts.token:/etc/nests/alerts.token
+Restart=on-failure
+MemoryMax=64M
+
+[Install]
+WantedBy=multi-user.target

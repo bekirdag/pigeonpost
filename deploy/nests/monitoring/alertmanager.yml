@@ -1,0 +1,13 @@
+# Alertmanager on nests-1: everything to the local Pigeonpost relay (pigeonpost-nestd alert-relay),
+# which sends one message to the operator from the dedicated alerts mailbox.
+route:
+  receiver: pigeonpost
+  group_by: [alertname]
+  group_wait: 1m
+  group_interval: 10m
+  repeat_interval: 12h
+receivers:
+  - name: pigeonpost
+    webhook_configs:
+      - url: http://127.0.0.1:9796/alert
+        send_resolved: true

@@ -18,6 +18,10 @@ name = "pigeonpost-nestd"
 path = "src/bin/nestd.rs"
 
 [[bin]]
+name = "pigeonpost-nest-parser"
+path = "src/bin/parser.rs"
+
+[[bin]]
 name = "pigeonpost-nest-runner"
 path = "src/bin/runner.rs"
 
@@ -34,8 +38,16 @@ subtle.workspace = true
 rand_core.workspace = true
 ed25519-dalek.workspace = true
 zeroize.workspace = true
+# B6: volume keys wrapped under the off-host KEK.
+chacha20poly1305.workspace = true
 tracing = "0.1"
+# B4 file parsing (MIT/Apache-2.0): archives and deflate only; no other format libraries.
+zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
+flate2 = "1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [lints.rust]
 unsafe_code = "forbid"
+
+[dev-dependencies]
+tempfile = "3"

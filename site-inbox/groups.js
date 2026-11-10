@@ -754,14 +754,23 @@
             el("span", { class: "compose-context-line", id: "group-compose-context-line" })),
           el("button", { class: "icon-btn compose-context-close", id: "group-compose-context-close", type: "button", "aria-label": "Cancel", onclick: () => { cancelCompose(); $("group-compose").focus(); } }, svg(ICON.close))),
         el("input", { type: "file", id: "group-file-input", multiple: true, hidden: true, "aria-hidden": "true", tabindex: "-1", onchange: (e) => { stageFiles(e.target.files); e.target.value = ""; } }),
-        el("button", { class: "attach", type: "button", "aria-label": "Attach a file", onclick: () => $("group-file-input").click() }, svg(ICON.attach)),
+        el("div", { class: "composer-pill" },
+        markup(el("button", { class: "attach", type: "button", "aria-label": "Attach a file", onclick: () => $("group-file-input").click() }), ATTACH_MARKUP),
         el("textarea", { id: "group-compose", rows: "1", placeholder: "Write to the group", "aria-label": "Message to the group", onkeydown: (e) => {
           if (e.key === "Escape" && G.compose) { e.preventDefault(); e.stopPropagation(); cancelCompose(); return; }
           if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendFromComposer(); }
         } }),
-        el("button", { class: "send", id: "group-send", type: "submit", "aria-label": "Send" }, svg(ICON.send))));
+        markup(el("button", { class: "send", id: "group-send", type: "submit", "aria-label": "Send" }), SEND_MARKUP)),
+        markup(el("div", { class: "composer-hint" }), '<span id="group-compose-hint">' + SEND_HINT + "</span>")));
     pane.append(view);
+    window.PigeonpostEmoji?.attach($("group-compose"));
   }
+
+  // The composer's icons, as markup: the send arrow turns into a check while editing.
+  const ATTACH_MARKUP = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5 12.6 19.9a5.5 5.5 0 0 1-7.8-7.8l8.5-8.5a3.7 3.7 0 0 1 5.2 5.2l-8.5 8.5a1.8 1.8 0 0 1-2.6-2.6l7.8-7.8"/></svg>';
+  const SEND_MARKUP = '<svg class="ic-arrow" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5.5 11.5 12 5l6.5 6.5"/></svg><svg class="ic-check" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+  const SEND_HINT = "<kbd>Enter</kbd> to send · <kbd>Shift</kbd>+<kbd>Enter</kbd> new line";
+  function markup(node, html) { node.innerHTML = html; return node; }
 
   function openGroup(gid) {
     const h = host();
@@ -1094,10 +1103,13 @@
     if (!bar) return;
     const c = G.compose;
     bar.hidden = !c;
+    $("group-composer").classList.toggle("editing", Boolean(c && c.kind === "edit"));
+    $("group-send").setAttribute("aria-label", c && c.kind === "edit" ? "Save edit" : "Send");
+    $("group-compose-hint").innerHTML = !c ? SEND_HINT : c.kind === "edit" ? "<kbd>Enter</kbd> to save · <kbd>Esc</kbd> to cancel" : "<kbd>Enter</kbd> to send · <kbd>Esc</kbd> to cancel";
     if (!c) return;
     const UI = window.PigeonpostMessageActions;
     $("group-compose-context-icon").innerHTML = UI ? (c.kind === "edit" ? UI.ICONS.edit : UI.ICONS.reply) : "";
-    $("group-compose-context-title").textContent = c.kind === "edit" ? "Editing message" : "Replying to " + (c.x.sender === me() ? "yourself" : nameOf(c.x.sender));
+    $("group-compose-context-title").textContent = c.kind === "edit" ? "Edit message" : "Replying to " + (c.x.sender === me() ? "yourself" : nameOf(c.x.sender));
     $("group-compose-context-line").textContent = UI ? UI.quoteExcerpt(c.x.text || "", (c.x.files || []).map((f) => ({ filename: f.name }))) : c.x.text || "";
     $("group-compose-context-close").setAttribute("aria-label", c.kind === "edit" ? "Cancel editing" : "Cancel reply");
   }

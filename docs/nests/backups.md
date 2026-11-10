@@ -115,3 +115,11 @@ by the probe's size and lost nothing: the delete is a log entry, the client's co
 - Repository size: on raijin `du -sh /mnt/backups/nests/repo`.
 - Rotate the nests-1 → raijin SSH key: new key in `/etc/nests/backup/id_ed25519`, replace the line
   in raijin's `/etc/ssh/nestsbak_authorized_keys` (keep `restrict,from="10.68.0.1"`).
+
+## Since Phase B6: wrapped keys
+
+Archives contain the LUKS key files as they are on the host. Since B6 (`key_wrap = true`) that is
+**wrapped** under the host KEK, which is held only by the postbox and the owner's Keychain escrow
+(`pigeonpost-nests-kek`). Restoring a volume needs the KEK as well as the borg key. A backup on
+raijin alone no longer opens any Nest. After a restore, the postbox's tombstone replay destroys
+any Nest it had deleted (see `deploy/nests/README.md`).

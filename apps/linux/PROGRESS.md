@@ -56,3 +56,22 @@
 ## 2026-10-28 — 1.0.11: round three (live stream banners, meeting notes)
 
 - LIVE banner with Watch / Go live in browser and stage invitations, "Who can go live", the stream notice; a native Meeting notes reader with a per-account notes key; group composer focus. Details, tests and the meeting-audio privacy checklist: `docs/linux-round3-2026-10-27-progress.md`.
+
+## Nests Phase B (2026-11-05)
+
+- Products page with Buy an Inbox, Buy Nests and Services tabs, behind the postbox `nests` feature.
+  Buying, upgrading and managing a package open the website (no in-app payment on desktop).
+- Nest conversations show their status in the header. A Nest page lists files with coverage and
+  approvals; approvals echo the shown `args_hash`. It also shows usage, pause/resume, rename,
+  export (save dialog), and delete with the name typed back.
+- Company context: an organization's Nests and creation of a new organization Nest.
+- The open Nest conversation refreshes its status and approval cards every 20 seconds, shows waiting
+  cards with Approve and Reject above the composer, and has an add-file button.
+- Organization Nests are matched by mailbox address even when a conversation is keyed by handle, so
+  they show the same header.
+- Resume is hidden for a Nest paused for payment or over capacity; an unfunded Nest shows its
+  deletion date and keeps Export.
+- Approve is offered only for a call that can be shown in full; a refused approval stays on screen.
+- Exports may reach 1 GiB rather than the 25 MiB attachment limit, usage shows requests and the
+  package's pooled hours, and New Nest appears when a slot is free.
+- Tests: `tests/test_nests.py` (rules) and `tests/test_ui_nests.py` (GTK, Xvfb in CI).

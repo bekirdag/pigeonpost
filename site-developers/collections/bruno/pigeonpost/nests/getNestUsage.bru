@@ -1,0 +1,19 @@
+meta {
+  name: This month's model tokens, running time and storage, from the Nests ledger
+  type: http
+  seq: 15
+}
+
+get {
+  url: {{baseUrl}}/v1/nests/:nest/usage
+  body: none
+  auth: bearer
+}
+
+params:path {
+  nest: 
+}
+
+auth:bearer {
+  token: {{token}}
+}

@@ -1007,6 +1007,9 @@ impl Store {
         conn.execute_batch(nests::SCHEMA)?;
         // Nests Phase B1: store purchases, purchase intents and paid-but-unprovisioned setups.
         conn.execute_batch(nest_funding::SCHEMA)?;
+        // Nests Phase B4: file metadata (the bytes live on the Nest's volume).
+        conn.execute_batch(crate::nest_files::SCHEMA)?;
+        conn.execute_batch(crate::nest_approvals::SCHEMA)?;
         for stmt in MIGRATIONS
             .iter()
             .chain(filtering::MIGRATIONS)

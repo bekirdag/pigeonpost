@@ -42,6 +42,11 @@ async fn main() {
         "control" => run_control(&args).await,
         "broker" => run_broker(&args).await,
         "mock-upstream" => run_mock(&args).await,
+        "alert-relay" => match load(&args).map(|c| c.alerts) {
+            Ok(Some(alerts)) => pigeonpost_nests::metrics::relay(alerts).await,
+            Ok(None) => Err("no [alerts] section in the config".into()),
+            Err(e) => Err(e),
+        },
         "hash-token" => {
             let mut s = String::new();
             let _ = std::io::stdin().read_line(&mut s);
@@ -104,13 +109,17 @@ async fn run_control(args: &[String]) -> Result<(), String> {
         }
     }
     let sandbox: Arc<dyn sandbox::Sandbox> = Arc::from(sandbox::from_config(&cfg.sandbox)?);
-    let volumes: Arc<dyn storage::Volumes> = Arc::from(storage::from_config(&cfg.storage)?);
+    // Phase B6: volume keys are wrapped under a KEK the postbox releases over WireGuard.
+    let vault = Arc::new(pigeonpost_nests::keywrap::Vault::new());
+    let volumes: Arc<dyn storage::Volumes> =
+        Arc::from(storage::from_config(&cfg.storage, vault.clone())?);
     let host = std::fs::read_to_string("/etc/hostname")
         .map(|h| h.trim().to_string())
         .unwrap_or_else(|_| "nests-host".into());
     let bind = cfg.control.bind.clone();
     let every = cfg.control.reconcile_secs.max(10);
-    let ctx = control::Ctx::new(cfg, db, sandbox, volumes, token_hash.to_lowercase(), host);
+    let ctx = control::Ctx::new(cfg, db, sandbox, volumes, token_hash.to_lowercase(), host)
+        .with_vault(vault);
 
     // Reconcile before serving: after a reboot every sandbox is gone and every volume closed.
     if let Err(e) = control::reconcile(&ctx).await {
@@ -127,6 +136,28 @@ async fn run_control(args: &[String]) -> Result<(), String> {
             }
         }
     });
+
+    // Phase B6: Prometheus metrics on loopback only (no ids, accounts or content).
+    if let Some(mbind) = ctx.cfg.control.metrics_bind.clone() {
+        if !mbind.starts_with("127.") {
+            return Err("metrics_bind must be a loopback address".into());
+        }
+        let mctx = ctx.clone();
+        let app = axum::Router::new().route(
+            "/metrics",
+            axum::routing::get(move || {
+                let c = mctx.clone();
+                async move { pigeonpost_nests::metrics::render(&c) }
+            }),
+        );
+        let ml = tokio::net::TcpListener::bind(&mbind)
+            .await
+            .map_err(|e| format!("bind {mbind}: {e}"))?;
+        tracing::info!(bind = %mbind, "metrics listening");
+        tokio::spawn(async move {
+            let _ = axum::serve(ml, app).await;
+        });
+    }
 
     let listener = tokio::net::TcpListener::bind(&bind)
         .await

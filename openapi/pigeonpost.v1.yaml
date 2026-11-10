@@ -4419,6 +4419,552 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+  /v1/nests/{nest}:
+    parameters:
+      - name: nest
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: '^nst_[0-9a-f]{1,60}$'
+    get:
+      tags: [nests]
+      operationId: getNest
+      summary: One of this account's Nests with its status header (feature `nests`)
+      description: '`status` is what a client shows above the conversation: `ready`, `working` (a run reported `working` in the last 15 minutes), `needs_you` (`status_reason: payment`), `paused` (`over_capacity` or by the owner) or `unavailable` (`setting_up`, `failed`). Another account''s Nest answers 404.'
+      security:
+        - apiKey: []
+        - memberToken: []
+      responses:
+        '200':
+          description: The Nest.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NestView'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: '`feature_disabled` or `credential_not_accepted`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: '`no_nest`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    patch:
+      tags: [nests]
+      operationId: renameNest
+      summary: Rename a Nest (a person only)
+      security:
+        - memberToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [label]
+              properties:
+                label: {type: string, minLength: 1, maxLength: 64}
+      responses:
+        '200':
+          description: Renamed.
+          content: {application/json: {schema: {type: object, properties: {nest_id: {type: string}, label: {type: string}}}}}
+        '400':
+          description: '`bad_label`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403':
+          description: '`feature_disabled` or `human_required`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '404':
+          description: '`no_nest`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+    delete:
+      tags: [nests]
+      operationId: deleteNest
+      summary: Delete a Nest (a person only; the label typed back as confirmation)
+      description: 'Destroys the runtime and the encrypted volume, revokes the mailbox credential and closes open approvals. Export first. A package slot is free again at once.'
+      security:
+        - memberToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirm]
+              properties:
+                confirm: {type: string, description: The Nest's label, exactly.}
+      responses:
+        '200':
+          description: Deleted.
+          content: {application/json: {schema: {type: object, properties: {nest_id: {type: string}, state: {type: string}}}}}
+        '400':
+          description: '`confirm_required`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403':
+          description: '`feature_disabled` or `human_required`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '404':
+          description: '`no_nest`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '502':
+          description: '`nestd_failed`: nothing was revoked; retry'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+  /v1/nests/{nest}/files:
+    parameters:
+      - name: nest
+        in: path
+        required: true
+        schema: {type: string, pattern: '^nst_[0-9a-f]{1,60}$'}
+    get:
+      tags: [nests]
+      operationId: listNestFiles
+      summary: The Nest's files, their parse status and coverage, and its storage quota
+      security:
+        - apiKey: []
+        - memberToken: []
+      responses:
+        '200':
+          description: The files.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  files:
+                    type: array
+                    items: {$ref: '#/components/schemas/NestFile'}
+                  used_bytes: {type: integer}
+                  quota_bytes: {type: integer}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403':
+          description: '`feature_disabled` or `credential_not_accepted`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '404':
+          description: '`no_nest`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+    post:
+      tags: [nests]
+      operationId: uploadNestFile
+      summary: Upload one file to the Nest (a person only, at most 25 MiB)
+      description: 'Raw bytes in the body; the display name, percent-encoded UTF-8, in `x-file-name`. The Nests host quarantines the file and parses it (PDF, DOCX, TXT/MD, CSV, XLSX, ZIP) in a separate sandbox with no network. Only verified text reaches the Nest. Archive entries with unsafe paths, archive bombs and nested archives are skipped and listed in `warnings`.'
+      security:
+        - memberToken: []
+      parameters:
+        - name: x-file-name
+          in: header
+          required: true
+          schema: {type: string, maxLength: 600}
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: {type: string, format: binary}
+      responses:
+        '201':
+          description: Stored and parsed (or rejected with a reason).
+          content: {application/json: {schema: {$ref: '#/components/schemas/NestFile'}}}
+        '400':
+          description: '`bad_name`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403':
+          description: '`feature_disabled` or `human_required`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '404':
+          description: '`no_nest`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '409':
+          description: '`too_many_files`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '413':
+          description: '`too_large`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '429':
+          description: '`rate_limited`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '502':
+          description: '`upload_failed`: nothing was stored'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '507':
+          description: '`storage_full`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+  /v1/nests/{nest}/files/{file}:
+    parameters:
+      - name: nest
+        in: path
+        required: true
+        schema: {type: string, pattern: '^nst_[0-9a-f]{1,60}$'}
+      - name: file
+        in: path
+        required: true
+        schema: {type: string, pattern: '^nfl_[0-9a-f]{24}$'}
+    delete:
+      tags: [nests]
+      operationId: deleteNestFile
+      summary: Remove a file and everything parsed from it (a person only)
+      security:
+        - memberToken: []
+      responses:
+        '200':
+          description: Removed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  file_id: {type: string}
+                  removed: {type: boolean}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403':
+          description: '`feature_disabled` or `human_required`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '404':
+          description: '`no_nest` or `no_file`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '502':
+          description: '`nestd_failed`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+  /v1/nest-approvals:
+    post:
+      tags: [nests]
+      operationId: proposeNestAction
+      summary: A Nest proposes one typed tool call for its owner to approve (the Nest's mailbox credential)
+      description: 'Tools: `send_message {to, body}`. Nothing is carried out until the owner approves exactly this call. A newer proposal for the same tool and recipient replaces a pending one. Unknown tools (including anything in the never-auto set) are refused.'
+      security:
+        - capToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tool, args]
+              properties:
+                tool: {type: string, enum: [send_message]}
+                args: {type: object}
+      responses:
+        '201':
+          description: The approval card.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  approval_id: {type: string}
+                  status: {type: string}
+                  args_hash: {type: string}
+                  expires_at: {type: integer}
+        '400':
+          description: '`unknown_tool`, `bad_args`, `bad_recipient` or `bad_body`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403':
+          description: '`credential_not_accepted` or `not_a_nest`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '429':
+          description: '`too_many_pending`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+  /v1/nests/{nest}/approvals:
+    parameters:
+      - name: nest
+        in: path
+        required: true
+        schema: {type: string, pattern: '^nst_[0-9a-f]{1,60}$'}
+    get:
+      tags: [nests]
+      operationId: listNestApprovals
+      summary: The Nest's approval cards, newest first (the last 100)
+      security:
+        - apiKey: []
+        - memberToken: []
+      responses:
+        '200':
+          description: The cards.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  approvals:
+                    type: array
+                    items: {$ref: '#/components/schemas/NestApproval'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403':
+          description: '`feature_disabled` or `credential_not_accepted`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '404':
+          description: '`no_nest`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+  /v1/nests/{nest}/approvals/{approval}/{decision}:
+    parameters:
+      - name: nest
+        in: path
+        required: true
+        schema: {type: string, pattern: '^nst_[0-9a-f]{1,60}$'}
+      - name: approval
+        in: path
+        required: true
+        schema: {type: string, pattern: '^nap_[0-9a-f]{24}$'}
+      - name: decision
+        in: path
+        required: true
+        schema: {type: string, enum: [approve, reject]}
+    post:
+      tags: [nests]
+      operationId: decideNestApproval
+      summary: Approve or reject exactly the call that was shown (a person only)
+      description: 'The body echoes the `args_hash` the person saw. A changed call (`approval_changed`), a replaced, decided or expired card (`approval_closed`) and a recipient outside the destination policy (`recipient_not_allowed`: only the owner''s own mailboxes and contacts they allowed) are refused. An approved card is carried out once by the postbox, never by the Nest.'
+      security:
+        - memberToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [args_hash]
+              properties:
+                args_hash: {type: string}
+      responses:
+        '200':
+          description: Decided (and, for approve, carried out).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  approval_id: {type: string}
+                  status: {type: string, enum: [approved, rejected]}
+                  result: {type: string}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403':
+          description: '`human_required`, `feature_disabled` or `recipient_not_allowed`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '404':
+          description: '`no_nest` or `no_approval`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '409':
+          description: '`approval_changed` or `approval_closed`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '429':
+          description: '`rate_limited` (50 sends per Nest a day)'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '502':
+          description: '`tool_failed`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+  /v1/nests/{nest}/pause:
+    parameters:
+      - {name: nest, in: path, required: true, schema: {type: string, pattern: '^nst_[0-9a-f]{1,60}$'}}
+    post:
+      tags: [nests]
+      operationId: pauseNest
+      summary: Pause a Nest (a person only); mail waits until it is resumed
+      security:
+        - memberToken: []
+      responses:
+        '200':
+          description: Paused.
+          content: {application/json: {schema: {type: object, properties: {nest_id: {type: string}, state: {type: string}}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403':
+          description: '`feature_disabled` or `human_required`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '404':
+          description: '`no_nest`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '502':
+          description: '`nestd_failed`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+  /v1/nests/{nest}/resume:
+    parameters:
+      - {name: nest, in: path, required: true, schema: {type: string, pattern: '^nst_[0-9a-f]{1,60}$'}}
+    post:
+      tags: [nests]
+      operationId: resumeNest
+      summary: Resume a Nest its owner paused (a person only)
+      description: 'A Nest paused for funding (`needs_payment`) or over its package (`over_capacity`) resumes only when that is resolved.'
+      security:
+        - memberToken: []
+      responses:
+        '200':
+          description: Running.
+          content: {application/json: {schema: {type: object, properties: {nest_id: {type: string}, state: {type: string}}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402':
+          description: '`needs_payment`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '403':
+          description: '`feature_disabled` or `human_required`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '404':
+          description: '`no_nest`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '409':
+          description: '`over_capacity`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '502':
+          description: '`nestd_failed`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+  /v1/nests/{nest}/usage:
+    parameters:
+      - {name: nest, in: path, required: true, schema: {type: string, pattern: '^nst_[0-9a-f]{1,60}$'}}
+    get:
+      tags: [nests]
+      operationId: getNestUsage
+      summary: This month's model tokens, running time and storage, from the Nests ledger
+      security:
+        - apiKey: []
+        - memberToken: []
+      responses:
+        '200':
+          description: Usage.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  nest_id: {type: string}
+                  period: {type: ['string', 'null']}
+                  input_tokens: {type: object}
+                  output_tokens: {type: object}
+                  requests: {type: ['integer', 'null']}
+                  running_secs: {type: ['integer', 'null']}
+                  files_bytes: {type: integer}
+                  disk: {type: ['object', 'null']}
+                  package: {type: ['object', 'null']}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403':
+          description: '`feature_disabled` or `credential_not_accepted`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '404':
+          description: '`no_nest`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '502':
+          description: '`nestd_failed`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+  /v1/nests/{nest}/export:
+    parameters:
+      - {name: nest, in: path, required: true, schema: {type: string, pattern: '^nst_[0-9a-f]{1,60}$'}}
+    get:
+      tags: [nests]
+      operationId: exportNest
+      summary: Download the Nest's files, their text and its conversations as a zip (a person only)
+      security:
+        - memberToken: []
+      responses:
+        '200':
+          description: The zip.
+          content:
+            application/zip:
+              schema: {type: string, format: binary}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403':
+          description: '`feature_disabled` or `human_required`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '404':
+          description: '`no_nest`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '413':
+          description: '`export_too_large` (over 512 MiB of files: contact support)'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '502':
+          description: '`nestd_failed`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+  /v1/orgs/{org}/nests:
+    parameters:
+      - {name: org, in: path, required: true, schema: {type: string}}
+    get:
+      tags: [nests]
+      operationId: listOrgNests
+      summary: The organization's Nests a member may act on (feature `nests`)
+      description: 'Nest admins (owner, admin, agent_admin) see every org Nest; other members see the ones they hold a live `operate_nest` delegation for. Includes the org''s Nest allowance.'
+      security:
+        - memberToken: []
+      responses:
+        '200':
+          description: The Nests.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  nests:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        nest_id: {type: string}
+                        address: {type: ['string', 'null']}
+                        label: {type: string}
+                        state: {type: string}
+                        role: {type: string, enum: [owner, operator]}
+                  allowance:
+                    type: object
+                    properties:
+                      slots: {type: integer}
+                      used: {type: integer}
+                  package: {type: ['object', 'null']}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403':
+          description: '`feature_disabled` or `not_org_member`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '404':
+          description: '`not_found`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+    post:
+      tags: [nests]
+      operationId: createOrgNest
+      summary: Create an org-owned Nest on a new org agent address (ManageAgents)
+      description: 'Uses one of the org''s agent addresses (10 × seats) and, separately, a free slot of a Nest package the organization bought. Each listed member gets the `operate_nest` delegation.'
+      security:
+        - memberToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [handle, label]
+              properties:
+                handle: {type: string}
+                label: {type: string, minLength: 1, maxLength: 64}
+                operators: {type: array, maxItems: 50, items: {type: string}}
+      responses:
+        '201':
+          description: Created; the sandbox enrolls within seconds.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  nest_id: {type: string}
+                  address: {type: string}
+                  handle: {type: string}
+                  state: {type: string}
+        '400':
+          description: '`bad_label`, `invalid_member` or an invalid handle'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402':
+          description: '`no_nest_slot`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '403':
+          description: '`feature_disabled` or the role does not allow it'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '409':
+          description: '`agent_limit` or `handle_taken`'
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
   /v1/nests/enroll:
     post:
       tags: [nests]
@@ -11985,6 +12531,55 @@ components:
         paid_through: {type: ['integer', 'null']}
         cancel_requested_at: {type: ['integer', 'null']}
         pending_plan_code: {type: ['string', 'null']}
+    NestFile:
+      type: object
+      properties:
+        file_id: {type: string}
+        name: {type: string}
+        bytes: {type: integer}
+        sha256: {type: string}
+        kind: {type: ['string', 'null'], enum: [text, csv, pdf, docx, xlsx, zip, unknown, null]}
+        status: {type: string, enum: [uploading, parsed, partial, rejected, failed]}
+        reason: {type: ['string', 'null']}
+        coverage:
+          type: object
+          properties:
+            units_total: {type: ['integer', 'null'], description: Pages, sheets or archive entries.}
+            units_text: {type: ['integer', 'null'], description: How many yielded text.}
+        chars: {type: ['integer', 'null']}
+        warnings: {type: array, items: {type: string}}
+        created_at: {type: integer}
+    NestApproval:
+      type: object
+      properties:
+        approval_id: {type: string}
+        tool: {type: string}
+        call: {type: object, description: 'The canonical call `{tool, args}` exactly as it will be carried out.'}
+        args_hash: {type: string}
+        status: {type: string, enum: [pending, approved, rejected, superseded, expired, failed]}
+        created_at: {type: integer}
+        expires_at: {type: integer}
+        decided_at: {type: ['integer', 'null']}
+        result: {type: ['string', 'null']}
+    NestView:
+      type: object
+      properties:
+        nest_id: {type: string}
+        address: {type: ['string', 'null']}
+        label: {type: string}
+        state: {type: string}
+        funding:
+          type: string
+          enum: [ops, package]
+        status:
+          type: string
+          enum: [ready, working, needs_you, paused, unavailable]
+        role: {type: string, enum: [owner, operator], description: 'The caller''s role (org Nests have operators).'}
+        org_id: {type: ['string', 'null'], description: 'Set for an organization-owned Nest.'}
+        status_reason: {type: ['string', 'null'], description: '`payment`, `over_capacity`, `setting_up`, `failed` or null'}
+        paused_reason: {type: ['string', 'null'], description: '`unfunded`, `over_capacity` or null'}
+        delete_after: {type: ['integer', 'null'], description: 'Unfunded Nests are deleted after this (end of the 30-day export window).'}
+        created_at: {type: integer}
     NestSnapshot:
       type: object
       properties:
@@ -12008,18 +12603,7 @@ components:
         nests:
           type: array
           items:
-            type: object
-            properties:
-              nest_id: {type: string}
-              address: {type: ['string', 'null']}
-              label: {type: string}
-              state: {type: string}
-              funding:
-                type: string
-                enum: [ops, package]
-              paused_reason: {type: ['string', 'null'], description: '`unfunded`, `over_capacity` or null'}
-              delete_after: {type: ['integer', 'null'], description: 'Unfunded Nests are deleted after this (end of the 30-day export window).'}
-              created_at: {type: integer}
+            $ref: '#/components/schemas/NestView'
         setups:
           type: array
           items:

@@ -1055,6 +1055,7 @@ tests.AddRange(PeopleNameTests.All());
 tests.AddRange(ContactImportTests.All());
 tests.AddRange(ContactImportTests.StandIn());
 tests.AddRange(OrganizationSurfaceTests.All());
+tests.AddRange(NestTests.All());
 tests.AddRange(CallHistoryAuthorizationTests.All());
 tests.AddRange(NativeCallSessionTests.All());
 tests.AddRange(InboxAuthorizationTests.All());

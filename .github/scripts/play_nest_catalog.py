@@ -24,10 +24,10 @@ BASE_PLAN = "monthly"
 API = f"https://androidpublisher.googleapis.com/androidpublisher/v3/applications/{PACKAGE}"
 APPLY = os.environ.get("APPLY", "false").lower() == "true"
 
-# Proposed prices, pending owner approval (build plan §12). Pro is not sold (capacity).
+# Prices approved by the owner on 2026-11-08 (build plan §12). Pro is not sold (capacity).
 CATALOG = [
     {"product_id": "pigeonpost.nests.ai.starter", "title": "Pigeonpost AI", "usd": "10.00",
-     "benefits": ["One AI agent with its own private workspace", "Managed AI included, no key needed"],
+     "benefits": ["One AI agent in a private workspace", "Managed AI included, no key needed"],
      "description": "Your own AI agent in a private cloud workspace, reached in Pigeonpost."},
     {"product_id": "pigeonpost.nests.ai.plus", "title": "Pigeonpost AI Plus", "usd": "25.00",
      "benefits": ["Three AI agents with private workspaces", "Larger managed AI allowance"],
@@ -94,6 +94,10 @@ def regional(play, usd):
     converted = play.call("POST", "/pricing:convertRegionPrices", {"price": money(usd)})
     configs = [{"regionCode": code, "price": value["price"], "newSubscriberAvailability": True}
                for code, value in sorted(converted.get("convertedRegionPrices", {}).items())]
+    # Conversion rounds to local price points (10.00 becomes 9.99); the US price is the approved one.
+    for config in configs:
+        if config["regionCode"] == "US":
+            config["price"] = money(usd)
     return configs, converted.get("regionVersion", {}).get("version")
 
 
@@ -149,7 +153,13 @@ def run():
         if us:
             p = us["price"]
             us_price = f"{p.get('units', '0')}.{str(p.get('nanos', 0)).rjust(9, '0')[:2]}"
-            if us_price != spec["usd"]:
+            if us_price != spec["usd"] and APPLY and plan.get("state") != "ACTIVE":
+                us["price"] = money(spec["usd"])
+                _, version = regional(play, spec["usd"])
+                play.call("PATCH", f"/subscriptions/{pid}", sub,
+                          params={"updateMask": "basePlans", "regionsVersion.version": version})
+                us_price = spec["usd"]
+            elif us_price != spec["usd"]:
                 raise RuntimeError(f"{pid}: US price {us_price} differs from {spec['usd']}")
         print(json.dumps({"product": pid, "base_plan": plan["basePlanId"], "state": plan.get("state"),
                           "usd": us_price, "regions": len(plan.get("regionalConfigs", []))}), flush=True)
