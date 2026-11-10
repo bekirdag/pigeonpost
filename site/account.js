@@ -466,15 +466,20 @@
     });
     const body = await res.json().catch(() => ({}));
     // A step-up refusal is not an expired token: refreshing cannot make the sign-in stronger.
-    if (res.status === 401 && body.error !== "step_up_required" && !retried && await refreshSession()) return pbFetch(path, opts, true);
+    const stepUp = body.error === "step_up_required" || (body.error && body.error.code === "step_up_required");
+    if (res.status === 401 && !stepUp && !retried && await refreshSession()) return pbFetch(path, opts, true);
     if (!res.ok) {
-      const e = new Error(body.detail || body.error || `postbox ${res.status}`);
+      // Two shapes: `{error: "code", detail, …}` and the contract's
+      // `{error: {code, message, details}}` (marketplace routes). Read both as the first.
+      const nested = body && typeof body.error === "object" && body.error ? body.error : null;
+      const flat = nested ? { ...(nested.details || {}), error: nested.code || null, detail: nested.message || "" } : body;
+      const e = new Error(flat.detail || flat.error || `postbox ${res.status}`);
       e.status = res.status;
       // The whole error body: step-up challenges carry acr_values/max_age, validation errors issues.
-      e.body = body;
+      e.body = flat;
       // The machine-readable half. Callers translate these into sentences; the detail string is a
       // fallback for codes nobody has written a sentence for yet.
-      e.code = body.error || null;
+      e.code = flat.error || null;
       throw e;
     }
     return body;

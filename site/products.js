@@ -71,7 +71,9 @@
   function mount(root, deps) {
     // Back from a company checkout (`?nest_org=`), the page opens in that company's context.
     const returnOrg = new URLSearchParams(deps.search || "").get("nest_org");
-    const state = { tab: "nests", context: ORG_ID.test(returnOrg || "") ? returnOrg : "personal", currency: null, data: null, gen: 0 };
+    // Back from a marketplace checkout (`?mp_purchase=`), the Services tab finishes the install.
+    const returnPurchase = /[?&](mp_purchase|mp_checkout)=[a-f0-9]{32}\b/.test(deps.search || "");
+    const state = { tab: returnPurchase ? "services" : "nests", context: ORG_ID.test(returnOrg || "") ? returnOrg : "personal", currency: null, data: null, gen: 0 };
     const nestsOn = () => Boolean(deps.features && deps.features.has("nests"));
     const catalog = deps.features && deps.features.has("marketplace") && window.PPMarketplace && window.PPMarketplace.catalog
       ? window.PPMarketplace.catalog(deps) : null;

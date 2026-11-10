@@ -106,6 +106,17 @@
         mount(r.checkout_form_content);
         return;
       }
+      if (pending.kind === "marketplace") {
+        // A marketplace service, for the buyer or for a company whose billing they manage. The
+        // bridge asks the postbox what may be bought and at what price; nothing is priced here.
+        const owner = pending.owner && pending.owner.kind === "org" ? { kind: "org", id: pending.owner.id } : { kind: "account" };
+        const r = await post("/v1/marketplace/checkout", { intent_id: pending.intent_id, listing_id: pending.listing_id,
+          owner, billing_profile_id: pending.billing_profile_id, locale: pending.locale });
+        const amount = money(Number(r.amount_minor) / 100, r.currency);
+        say(`${pending.title || "Service"}${owner.kind === "org" ? " for your company" : ""}: ${r.term === "monthly" ? `${amount} per month, renewing monthly until you cancel` : `${amount}, one-off`}.`);
+        mount(r.checkout_form_content);
+        return;
+      }
       if (pending.kind === "nest") {
         // Nests Phase B2: a monthly Nest package, bought exactly like a Cloud plan.
         // A company package carries the org; the bridge checks the buyer manages its billing.

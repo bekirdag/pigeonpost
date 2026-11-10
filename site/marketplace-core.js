@@ -101,6 +101,17 @@
 
   MP.when = (iso) => (iso ? new Date(iso).toLocaleDateString() : "");
 
+  /// A price in minor units, in the listing's currency.
+  MP.money = function (minor, currency) {
+    const n = Number(minor) / 100;
+    try { return new Intl.NumberFormat(undefined, { style: "currency", currency }).format(n); } catch (_) { return `${n.toFixed(2)} ${currency}`; }
+  };
+  MP.priceText = function (price) {
+    if (!price || Number(price.amount_minor) === 0) return "Free";
+    const m = MP.money(price.amount_minor, price.currency);
+    return price.term === "monthly" ? `${m} a month` : `${m}, one-off`;
+  };
+
   // ---- configuration schema → form ---------------------------------------------------------------
   //
   // The release's `config_schema` is one flat object of string, integer, number and boolean

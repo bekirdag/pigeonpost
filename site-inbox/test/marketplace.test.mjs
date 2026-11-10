@@ -60,7 +60,7 @@ function page(t, routes) {
 
 // ---- Services catalog -------------------------------------------------------------------------
 
-function catalogPage(t, { features = ["nests", "marketplace"], installs = [], detail = DETAIL, listings = [LISTING], extra } = {}) {
+function catalogPage(t, { features = ["nests", "marketplace"], installs = [], detail = DETAIL, listings = [LISTING], extra, deps: more = {} } = {}) {
   const p = page(t, (method, path, body) => {
     if (extra) { const r = extra(method, path, body); if (r !== undefined) return r; }
     if (method === "GET" && path.startsWith("/v1/marketplace/listings?") || path === "/v1/marketplace/listings") return { data: listings, next_cursor: null };
@@ -74,6 +74,7 @@ function catalogPage(t, { features = ["nests", "marketplace"], installs = [], de
     ...p.deps, features: new Set(features),
     bridgeGet: async () => ({ subscriptions: [], prices: { plans: [] } }), bridgeAction: async () => ({}),
     startCheckout: () => {}, billingProfileId: async () => null, randomHex32: () => "ab".repeat(16), search: "", locale: "en",
+    ...more,
   });
   return p;
 }
@@ -131,7 +132,7 @@ test("a free listing shows its operations and installs with its settings", async
   assert.equal(p.doc.activeElement, p.$("#mp-detail-title"), "focus moves to the detail");
   assert.equal(p.$('.mp-ops code').textContent, "hr.ask");
   assert.match(p.$("#mp-price").textContent, /Free while the marketplace is being tested\./);
-  assert.match(p.$("#mp-price").textContent, /one-off purchase or monthly/);
+  assert.equal(p.$("#mp-buy"), null, "a free listing is installed, not bought");
   const fields = p.$("#mp-install fieldset.mp-config");
   assert.equal(fields.querySelector("legend").textContent, "Settings");
   const secret = p.$("#mp-install-cfg-api_key");
@@ -149,12 +150,140 @@ test("a free listing shows its operations and installs with its settings", async
   assert.ok(p.$("#mp-installation"), "the installation replaces the install form");
 });
 
-test("a priced listing says Available soon and has no install or buy button", async (t) => {
-  const p = catalogPage(t, { detail: { ...DETAIL, price: { amount_minor: 500, funding: "card" } } });
+const PRICED = { ...DETAIL, price: { amount_minor: 12000, currency: "TRY", term: "monthly", funding: "card", on_sale: true } };
+const ORGS = { orgs: [
+  { id: "org_acmeco1", name: "Acme Co", my_roles: ["owner"] },
+  { id: "org_viewer1", name: "Viewer Co", my_roles: ["member"] },
+] };
+
+test("a priced listing is bought for me or a company I manage billing for, through the hosted checkout", async (t) => {
+  const checkouts = [];
+  let profile = null;
+  const p = catalogPage(t, {
+    detail: PRICED,
+    extra: (m, path) => (m === "GET" && path === "/v1/orgs" ? ORGS : undefined),
+    deps: { startCheckout: (pending) => checkouts.push(pending), billingProfileId: async () => profile, goBilling: () => checkouts.push("billing") },
+  });
   await openDetail(p);
-  assert.match(p.$("#mp-price").textContent, /Available soon\./);
+  await tick();
+  assert.match(p.$("#mp-price").textContent, /a month/);
+  assert.match(p.$("#mp-price").textContent, /billed monthly through iyzico/);
+  assert.equal(p.$("#mp-install"), null, "a priced listing has no free install");
+  const owners = [...p.$("#mp-buy-owner").options].map((o) => o.value);
+  assert.deepEqual(owners, ["personal", "org_acmeco1"], "only companies whose billing I manage");
+  // Without billing details the buyer is sent to them first.
+  p.submit(p.$("#mp-buy"));
+  await tick();
+  assert.match(p.$("#mp-cat-status").textContent, /billing details first/);
+  p.$("#mp-buy-billing").click();
+  assert.deepEqual(checkouts, ["billing"]);
+  profile = "11111111-2222-4333-8444-555555555555";
+  p.$("#mp-buy-owner").value = "org_acmeco1";
+  p.submit(p.$("#mp-buy"));
+  await tick();
+  const pending = checkouts[1];
+  assert.equal(pending.kind, "marketplace");
+  assert.equal(pending.listing_id, "lst_a");
+  assert.deepEqual(JSON.parse(JSON.stringify(pending.owner)), { kind: "org", id: "org_acmeco1" });
+  assert.equal(pending.billing_profile_id, profile);
+  assert.match(pending.intent_id, /^[a-f0-9]{32}$/);
+});
+
+test("a listing not on sale shows its price and no buy button", async (t) => {
+  const p = catalogPage(t, { detail: { ...PRICED, price: { ...PRICED.price, on_sale: false, term: "one_off" } } });
+  await openDetail(p);
+  assert.match(p.$("#mp-price").textContent, /one-off/);
+  assert.match(p.$("#mp-price").textContent, /Not on sale right now/);
+  assert.equal(p.$("#mp-buy"), null);
   assert.equal(p.$("#mp-install"), null);
-  assert.equal([...p.doc.querySelectorAll("#mp-detail button")].some((b) => /buy/i.test(b.textContent)), false);
+});
+
+test("back from iyzico the bridge says it was paid, and the install uses the purchase id", async (t) => {
+  const intent = "cd".repeat(16);
+  const answers = [
+    { intent_id: intent, installation_id: "ins_paid1", listing_id: "lst_a", owner: { kind: "account" }, status: "pending" },
+    { intent_id: intent, installation_id: "ins_paid1", listing_id: "lst_a", owner: { kind: "account" }, status: "paid" },
+  ];
+  const cleared = [];
+  const p = catalogPage(t, {
+    detail: PRICED,
+    deps: {
+      search: `?mp_purchase=${intent}`,
+      clearReturn: (k) => cleared.push(k),
+      bridgeGet: async (path) => {
+        if (path === `/v1/marketplace/checkout/${intent}`) return answers.length > 1 ? answers.shift() : answers[0];
+        return { subscriptions: [], prices: { plans: [] } };
+      },
+    },
+  });
+  await tick(60);
+  assert.equal(p.$("#pp-tab-services").getAttribute("aria-selected"), "true", "the return opens Services");
+  assert.ok(cleared.includes("mp_purchase"));
+  assert.match(p.$("#mp-cat-status").textContent, /Waiting for iyzico/);
+  p.$("#mp-purchase-refresh").click();
+  await tick(60);
+  assert.match(p.$("#mp-cat-status").textContent, /Payment received/);
+  p.$("#mp-finish-cfg-tone").value = "short";
+  p.submit(p.$("#mp-finish"));
+  await tick();
+  const post = p.calls.find((c) => c.method === "POST" && c.path === "/v1/nest-installations");
+  assert.deepEqual(post.body, { listing_id: "lst_a", purchase_id: "ins_paid1", configuration: { tone: "short" } });
+});
+
+test("a company purchase installs as the company's, on an address it names", async (t) => {
+  const intent = "ef".repeat(16);
+  const p = catalogPage(t, {
+    detail: PRICED,
+    extra: (m, path) => (m === "POST" && path === "/v1/orgs/org_acmeco1/nest-installations" ? { data: { id: "ins_org1" } } : undefined),
+    deps: {
+      search: `?mp_purchase=${intent}`,
+      bridgeGet: async (path) => (path.startsWith("/v1/marketplace/checkout/")
+        ? { intent_id: intent, installation_id: "ins_org1", listing_id: "lst_a", owner: { kind: "org", id: "org_acmeco1" }, status: "paid" }
+        : { subscriptions: [], prices: { plans: [] } }),
+    },
+  });
+  await tick(60);
+  p.$("#mp-finish-handle").value = "hr-helper";
+  p.submit(p.$("#mp-finish"));
+  await tick();
+  const post = p.calls.find((c) => c.method === "POST" && c.path === "/v1/orgs/org_acmeco1/nest-installations");
+  assert.deepEqual(post.body, { listing_id: "lst_a", purchase_id: "ins_org1", handle: "hr-helper" });
+  assert.match(p.$("#mp-cat-status").textContent, /installed for the company/);
+});
+
+test("a paid installation shows its licence, payments with receipts, and Cancel for monthly", async (t) => {
+  const actions = [], opened = [];
+  let licence = { status: "active", paid_through: "2030-01-31T00:00:00Z", cancel_at_period_end: false };
+  const p = catalogPage(t, {
+    detail: PRICED,
+    installs: [{ ...INSTALL, funding: "card" }],
+    deps: {
+      bridgeGet: async (path) => {
+        if (path === "/v1/marketplace/installations/ins_1") {
+          return { installation_id: "ins_1", term: "monthly", licence, payments: [
+            { payment_id: "pay_1", status: "settled", amount_minor: 12000, currency: "TRY", invoice_id: "inv_1", settled_at: "2030-01-01T00:00:00Z" },
+          ] };
+        }
+        if (path === "/v1/billing/invoices/inv_1/download") return { url: "https://files.example/receipt.pdf" };
+        return { subscriptions: [], prices: { plans: [] } };
+      },
+      bridgeAction: async (path, body, method) => { actions.push({ path, method }); licence = { ...licence, status: "canceling", cancel_at_period_end: true }; return {}; },
+    },
+  });
+  p.window.open = (url) => opened.push(url);
+  await openDetail(p);
+  await tick(40);
+  assert.match(p.$("#mp-licence-status").textContent, /Licence: Active · paid through/);
+  assert.equal(p.doc.querySelectorAll("#mp-payments li").length, 1);
+  p.$('[data-receipt="inv_1"]').click();
+  await tick();
+  assert.deepEqual(opened, ["https://files.example/receipt.pdf"]);
+  p.$("#mp-cancel").click();
+  await tick(40);
+  assert.deepEqual(actions, [{ path: "/v1/marketplace/installations/ins_1/cancel", method: "POST" }]);
+  assert.match(p.$("#mp-cat-status").textContent, /keeps working until the end of the paid month/);
+  assert.match(p.$("#mp-licence-status").textContent, /until the end of the paid period/);
+  assert.equal(p.$("#mp-cancel"), null, "a cancelled licence has nothing more to cancel");
 });
 
 test("an install refused for its settings lists the issues", async (t) => {
@@ -370,7 +499,7 @@ test("a listing is created as a draft, edited by changed fields only, and publis
   p.$('[data-publish="lst_1"]').click();
   await tick();
   assert.match(p.$("#mp-pub-status").textContent, /HR helper is published/);
-  assert.match(p.$("#mp-earnings").textContent, /after paid launch/);
+  assert.match(p.$("#mp-earnings").textContent, /Set a price on a listing/);
   assert.ok(p.$("#mp-installs"));
 });
 
@@ -571,7 +700,7 @@ test("a decision refused for a stake reads as a conflict", async (t) => {
 
 // ---- the account page ---------------------------------------------------------------------------
 
-async function accountPage(t, { features }) {
+async function accountPage(t, { features, nested = false }) {
   const dom = new JSDOM('<main id="account-root"></main>', { url: "https://pigeonpost.dev/account", runScripts: "outside-only", virtualConsole: new VirtualConsole() });
   t.after(() => dom.window.close());
   const { window } = dom;
@@ -588,7 +717,12 @@ async function accountPage(t, { features }) {
     if (path === "/v1/capabilities") return res({ features });
     if (path === "/v1/publishers") return res({ data: [{ ...PUB, status: "approved" }] });
     if (path === "/v1/publishers/pub_1/listings") return res({ data: [{ id: "lst_1", title: "HR helper", summary: "A", visibility: "public", status: "draft", version: "1.0.0" }] });
-    if (path === "/v1/publishers/pub_1/listings/lst_1/publish") return res({ error: "step_up_required", acr_values: "gold", max_age: 300 }, 401);
+    if (path === "/v1/publishers/pub_1/listings/lst_1/publish") {
+      // The postbox's own error shape is nested (`{error: {code, message, details}}`).
+      return nested
+        ? res({ error: { code: "step_up_required", message: "sign in again", details: { acr_values: "gold", max_age: 300 } } }, 401)
+        : res({ error: "step_up_required", acr_values: "gold", max_age: 300 }, 401);
+    }
     if (path.startsWith("/v1/publishers/pub_1/")) return res({ data: [] });
     if (path.startsWith("/v1/staff/")) return res({ error: "staff_required", detail: "staff only" }, 403);
     if (path === "/v1/orgs") return res({ orgs: [] });
@@ -622,4 +756,44 @@ test("a step-up refusal on the account page does not burn a token refresh and ke
   btn.click();
   for (let i = 0; i < 10; i++) await tick(1);
   assert.equal(p.window.localStorage.getItem("pp_mp_return"), "publisher", "the page comes back to the publisher card");
+});
+
+test("the postbox's nested error shape reads as its code, with the step-up challenge", async (t) => {
+  const p = await accountPage(t, { features: ["nests", "marketplace"], nested: true });
+  p.doc.querySelector('[data-publish="lst_1"]').click();
+  for (let i = 0; i < 20; i++) await tick(1);
+  assert.equal(p.calls.some((c) => c.path === "/api/v1/auth/refresh"), false, "a step-up is not an expired token");
+  const btn = p.doc.querySelector('#mp-pub-status [data-stepup="publisher"]');
+  assert.ok(btn, "the nested step_up_required is recognised");
+});
+
+test("a publisher prices a listing with step-up and is offered the nearest invoiceable prices", async (t) => {
+  let answers = [
+    () => { throw fail(401, "step_up_required", { acr_values: "gold", max_age: 300 }); },
+    () => { throw fail(422, "price_not_invoiceable", { nearest: [11999, 12001] }); },
+    () => ({ data: { listing_id: "lst_1", price: { amount_minor: 12001, currency: "TRY", term: "monthly" } } }),
+  ];
+  const p = publisherPage(t, {
+    listings: [{ id: "lst_1", title: "HR helper", summary: "A", visibility: "public", status: "published", version: "1.0.0",
+      price: { amount_minor: 0, currency: "TRY", term: "one_off", funding: "test_credits" } }],
+    extra: (m, path) => (m === "PUT" && path === "/v1/publishers/pub_1/listings/lst_1/price" ? answers.shift()() : undefined),
+  });
+  await tick();
+  p.$('[data-price="lst_1"]').click();
+  assert.match(p.$("#mp-price-lst_1").textContent, /Now: Free/);
+  p.$("#mp-price-lst_1-amount").value = "120";
+  p.$("#mp-price-lst_1-term").value = "monthly";
+  p.submit(p.$("#mp-price-lst_1"));
+  await tick();
+  assert.ok(p.$('#mp-pub-status [data-stepup="publisher"]'), "a price change asks for step-up");
+  p.submit(p.$("#mp-price-lst_1"));
+  await tick();
+  const puts = p.calls.filter((c) => c.method === "PUT");
+  assert.deepEqual(puts[1].body, { amount_minor: 12000, currency: "TRY", term: "monthly" });
+  const near = [...p.doc.querySelectorAll("#mp-price-lst_1-nearest [data-nearest]")].map((b) => b.getAttribute("data-nearest"));
+  assert.deepEqual(near, ["11999", "12001"]);
+  p.$('#mp-price-lst_1-nearest [data-nearest="12001"]').click();
+  await tick();
+  assert.equal(p.calls.filter((c) => c.method === "PUT")[2].body.amount_minor, 12001);
+  assert.match(p.$("#mp-pub-status").textContent, /Price saved/);
 });

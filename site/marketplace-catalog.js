@@ -2,9 +2,13 @@
 // listings with a publisher badge and a "Marketplace" filter, a listing's detail, and the buyer's
 // own installations (install, settings, update, roll back, uninstall).
 //
-// Buying is web-only and not built yet: a listing with a price shows "Available soon". Only
-// zero-priced listings can be installed. products.js asks this file for a controller once per
-// mount and hands it a fresh container on every redraw; the controller keeps its own state.
+// Buying is web-only. A priced listing is bought for yourself or for a company whose billing you
+// manage: the bridge starts the purchase (`POST /api/v1/marketplace/checkout`), the hosted iyzico
+// form takes the card on /billing/checkout, and the return (`?mp_purchase=<intent>`) asks the
+// bridge whether it was paid before installing with the purchase's id. A paid installation shows
+// its licence, paid-through date, payments with receipts, and Cancel for a monthly one.
+// products.js asks this file for a controller once per mount and hands it a fresh container on
+// every redraw; the controller keeps its own state.
 //
 // Calls (all through deps.pb):
 //   GET    /v1/marketplace/listings?q=&cursor=        the public catalog
@@ -15,18 +19,38 @@
 //   POST   /v1/nest-installations/{id}/update         {release_id?}
 //   POST   /v1/nest-installations/{id}/rollback       {}
 //   DELETE /v1/nest-installations/{id}                uninstall
+//   POST   /v1/orgs/{org}/nest-installations           install for a company {listing_id, handle, purchase_id}
+// and the billing bridge (deps.bridgeGet / deps.bridgeAction / deps.startCheckout):
+//   POST   /api/v1/marketplace/checkout               (on /billing/checkout) start a purchase
+//   GET    /api/v1/marketplace/checkout/{intent}       where a purchase stands after iyzico
+//   GET    /api/v1/marketplace/installations/{id}      licence and payments of a paid installation
+//   POST   /api/v1/marketplace/installations/{id}/cancel   cancel a monthly licence at period end
+//   GET    /api/v1/billing/invoices/{id}/download      a receipt
 (function () {
   "use strict";
 
   const MP = (window.PPMarketplace = window.PPMarketplace || {});
   const el = (...a) => MP.el(...a);
   const CONFIRM_WORD = "UNINSTALL";
+  const INTENT = /^[a-f0-9]{32}$/;
+  // The org roles that may install for a company (ManageAgents) and buy for it (ManageBilling).
+  const NEST_ADMIN_ROLES = ["owner", "admin", "agent_admin"];
+  const BILLING_ROLES = ["owner", "billing_admin"];
+  const LICENCE_TEXT = {
+    active: "Active", canceling: "Active until the end of the paid period", paused: "Paused: payment is due",
+    expired: "Ended", terminated: "Ended", revoked: "Revoked (refunded)",
+  };
+
 
   MP.catalog = function (deps) {
     const st = {
       filter: "all", query: "", listings: null, next: null, installs: [], error: null,
       open: null, detail: null, gen: 0, container: null, builtins: null,
+      orgs: null, purchase: null, licences: {},
     };
+    // Back from iyzico: `?mp_purchase=<intent>` (the bridge's return URL; `mp_checkout` too).
+    const returnParams = new URLSearchParams(deps.search || "");
+    const returning = [returnParams.get("mp_purchase"), returnParams.get("mp_checkout")].find((v) => INTENT.test(v || "")) || null;
     const status = MP.statusRegion("mp-cat-status");
 
     const installFor = (listingId) => st.installs.find((i) => i.listing_id === listingId && i.status === "active");
@@ -148,10 +172,139 @@
     }
 
     function priceBlock(l) {
-      const free = l.price && Number(l.price.amount_minor) === 0;
+      const free = !l.price || Number(l.price.amount_minor) === 0;
+      if (free) {
+        return el("div", { class: "mp-price", id: "mp-price" },
+          el("p", { class: "pp-price", text: "Free while the marketplace is being tested." }));
+      }
       return el("div", { class: "mp-price", id: "mp-price" },
-        el("p", { class: "pp-price", text: free ? "Free while the marketplace is being tested." : "Available soon." }),
-        el("p", { class: "ac-note", text: "Paid services will be sold here on the web, as a one-off purchase or monthly. Buying isn't open yet." }));
+        el("p", { class: "pp-price", text: MP.priceText(l.price) }),
+        el("p", { class: "ac-note", text: l.price.term === "monthly"
+          ? "Sold by Piyote Bilişim on behalf of the publisher and billed monthly through iyzico. Cancel any time; it keeps working until the end of the paid month."
+          : "Sold by Piyote Bilişim on behalf of the publisher. A one-off purchase through iyzico; the price includes tax." }),
+        l.price.on_sale ? null : el("p", { class: "muted", text: "Not on sale right now. Check back soon." }));
+    }
+
+    async function loadOrgs() {
+      if (st.orgs) return st.orgs;
+      try {
+        const v = await deps.pb("/v1/orgs");
+        st.orgs = (v.orgs || []).map((o) => {
+          const roles = o.my_roles || [];
+          return { id: o.id, name: o.name, admin: roles.some((r) => NEST_ADMIN_ROLES.includes(r)), billing: roles.some((r) => BILLING_ROLES.includes(r)) };
+        }).filter((o) => o.admin && o.billing);
+      } catch (_) { st.orgs = []; }
+      draw();
+      return st.orgs;
+    }
+
+    /// Buy: for yourself, or for a company you install for and manage billing for.
+    function buyForm(l) {
+      if (!l.price || !l.price.on_sale) return null;
+      if (st.orgs === null) loadOrgs();
+      const who = el("select", { id: "mp-buy-owner" },
+        el("option", { value: "personal", text: "For me" }),
+        ...(st.orgs || []).map((o) => el("option", { value: o.id, text: `For ${o.name}` })));
+      const form = el("form", { class: "ac-form", id: "mp-buy", onsubmit: async (e) => {
+        e.preventDefault();
+        const profile = deps.billingProfileId ? await deps.billingProfileId() : null;
+        if (!profile) {
+          status.say("Add your billing details first; the receipt is made out to them.",
+            el("button", { type: "button", class: "btn btn-small", id: "mp-buy-billing", onclick: () => deps.goBilling && deps.goBilling() }, "Billing details"));
+          return;
+        }
+        const owner = who.value === "personal" ? { kind: "account" } : { kind: "org", id: who.value };
+        deps.startCheckout({
+          kind: "marketplace", intent_id: deps.randomHex32(), listing_id: l.id, title: l.title,
+          owner, billing_profile_id: profile, locale: deps.locale || "en",
+          price_text: MP.priceText(l.price),
+        });
+      } }, el("fieldset", {}, el("legend", { text: "Buy" }),
+        el("label", { for: "mp-buy-owner" }, "Who it's for"), who,
+        el("button", { type: "submit", class: "btn btn-primary", id: "mp-buy-go" }, `Buy · ${MP.priceText(l.price)}`)));
+      return form;
+    }
+
+    /// Where a purchase stands after iyzico; the redirect itself proves nothing.
+    async function checkPurchase(intent) {
+      try {
+        const r = await deps.bridgeGet(`/v1/marketplace/checkout/${intent}`);
+        st.purchase = r;
+        if (r.listing_id) { st.open = r.listing_id; await openListing(r.listing_id); }
+        if (r.status === "pending") status.say("Waiting for iyzico to confirm the payment…",
+          el("button", { type: "button", class: "btn btn-small", id: "mp-purchase-refresh", onclick: () => checkPurchase(intent) }, "Check again"));
+        else if (r.status === "paid") status.say("Payment received. Finish installing below.");
+        else if (r.status === "installed") status.say("This purchase is installed.");
+        else status.say(r.status === "expired" ? "The payment was not completed. Nothing was charged." : "This purchase did not go through.");
+      } catch (err) { MP.report(deps, status, err, "services"); }
+      draw();
+    }
+
+    /// The install a paid purchase admits: its id is the installation's.
+    function finishForm(l, p) {
+      const org = p.owner && p.owner.kind === "org" ? p.owner.id : null;
+      const cfg = MP.configForm(l.config_schema, { idPrefix: "mp-finish-cfg", legend: "Settings" });
+      const handle = org ? el("input", { id: "mp-finish-handle", required: true, pattern: "[a-z0-9][a-z0-9-]{1,30}", autocomplete: "off" }) : null;
+      return el("form", { class: "ac-form", id: "mp-finish", onsubmit: async (e) => {
+        e.preventDefault();
+        const body = { listing_id: l.id, purchase_id: p.installation_id };
+        const c = cfg.read();
+        if (Object.keys(c).length) body.configuration = c;
+        try {
+          if (org) {
+            body.handle = handle.value.trim();
+            await deps.pb(`/v1/orgs/${encodeURIComponent(org)}/nest-installations`, { method: "POST", body: JSON.stringify(body) });
+            status.say(`${l.title} is installed for the company. Manage it from the company's Nests.`);
+          } else {
+            await deps.pb("/v1/nest-installations", { method: "POST", body: JSON.stringify(body) });
+            status.say(`${l.title} is installed.`);
+          }
+          st.purchase = null;
+        } catch (err) { MP.report(deps, status, err, "services"); }
+        await refreshInstalls();
+      } }, el("fieldset", {}, el("legend", { text: "Finish installing" }),
+        org ? el("label", { for: "mp-finish-handle" }, "Its address in the company (letters, digits, dashes)") : null, handle,
+        cfg.empty ? null : cfg.node,
+        el("button", { type: "submit", class: "btn btn-primary", id: "mp-finish-go" }, "Install")));
+    }
+
+    /// A paid installation's licence and payments, from the bridge.
+    function licenceBlock(inst) {
+      const box = el("div", { class: "mp-licence", id: "mp-licence" });
+      const known = st.licences[inst.id];
+      if (known === undefined) {
+        st.licences[inst.id] = null;
+        deps.bridgeGet(`/v1/marketplace/installations/${encodeURIComponent(inst.id)}`)
+          .then((v) => { st.licences[inst.id] = v; draw(); })
+          .catch((err) => { st.licences[inst.id] = { error: err }; draw(); });
+      }
+      if (!known) { box.append(el("p", { class: "muted", text: "Loading the licence…" })); return box; }
+      if (known.error) { box.append(el("p", { class: "muted", text: MP.errorText(known.error) })); return box; }
+      const l = known.licence || {};
+      box.append(el("p", { id: "mp-licence-status", text: `Licence: ${LICENCE_TEXT[l.status] || l.status}${l.paid_through ? ` · paid through ${MP.when(l.paid_through)}` : ""}` }));
+      if (l.deletion_due_at) box.append(el("p", { class: "pp-warn", text: `Its data is deleted on ${MP.when(l.deletion_due_at)} unless it is paid.` }));
+      const pays = known.payments || [];
+      if (pays.length) {
+        box.append(el("ul", { class: "mp-list", id: "mp-payments", "aria-label": "Payments" }, pays.map((p) => el("li", { class: "mp-row" },
+          el("span", { text: `${MP.when(p.settled_at)} · ${MP.money(p.amount_minor, p.currency)} · ${p.reversal_kind ? p.reversal_kind : p.status}` }),
+          p.invoice_id ? el("button", { type: "button", class: "btn btn-small", "data-receipt": p.invoice_id, onclick: async () => {
+            try {
+              const { url } = await deps.bridgeGet(`/v1/billing/invoices/${encodeURIComponent(p.invoice_id)}/download`);
+              if (/^https:\/\//.test(url || "")) window.open(url, "_blank", "noopener");
+            } catch (err) { MP.report(deps, status, err, "services"); }
+          } }, "Receipt") : null))));
+      }
+      if (known.term === "monthly" && l.status === "active" && !l.cancel_at_period_end) {
+        box.append(el("button", { type: "button", class: "btn btn-small", id: "mp-cancel", onclick: async () => {
+          try {
+            await deps.bridgeAction(`/v1/marketplace/installations/${encodeURIComponent(inst.id)}/cancel`, {}, "POST");
+            status.say("Cancelled. It keeps working until the end of the paid month.");
+          } catch (err) { MP.report(deps, status, err, "services"); }
+          delete st.licences[inst.id];
+          draw();
+        } }, "Cancel the monthly licence"));
+      }
+      return box;
     }
 
     function installForm(l) {
@@ -185,6 +338,7 @@
       if (inst.listing_status && inst.listing_status !== "published") {
         box.append(el("p", { class: "muted", text: "The publisher has taken this listing down. Your installation stays until you remove it." }));
       }
+      if (inst.funding === "card") box.append(licenceBlock(inst));
       const act = async (what, sub, body, done) => {
         try {
           await deps.pb(`${path}${sub}`, { method: what, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -235,8 +389,11 @@
         el("h5", { text: "What it does" }), operationsBlock(d.operations || []),
         priceBlock(d));
       const inst = installFor(d.id);
+      const paid = st.purchase && st.purchase.listing_id === d.id && st.purchase.status === "paid" ? st.purchase : null;
       if (inst) box.append(installationBlock(d, inst));
+      else if (paid) box.append(finishForm(d, paid));
       else if (d.price && Number(d.price.amount_minor) === 0) box.append(installForm(d));
+      else box.append(buyForm(d));
       box.append(el("p", { class: "ac-note" }, "Something wrong with this service? ", el("a", { href: "/app-support.html", text: "Tell Pigeonpost support" }), " and include its name."));
       return box;
     }
@@ -254,7 +411,13 @@
         st.container = container;
         st.builtins = builtins || null;
         draw();
-        if (!st.listings && !st.error && st.gen === 0) load();
+        if (!st.listings && !st.error && st.gen === 0) {
+          load();
+          if (returning) {
+            if (deps.clearReturn) { deps.clearReturn("mp_purchase"); deps.clearReturn("mp_checkout"); }
+            checkPurchase(returning);
+          }
+        }
       },
       reload: () => load(),
       open: openListing,

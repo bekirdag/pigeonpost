@@ -13,6 +13,9 @@
 //   GET  /v1/publishers/{p}/reviews[/{r}[/findings]]      NestReviewStatus and redacted findings
 //   POST /v1/publishers/{p}/reviews/{r}/withdraw
 //   GET|POST /v1/publishers/{p}/listings, PATCH …/{l}, POST …/{l}/publish (step-up), POST …/{l}/withdraw
+//   PUT|DELETE /v1/publishers/{p}/listings/{l}/price (step-up) {amount_minor, currency, term}: a
+//     price the financial authority cannot invoice is refused with 422 price_not_invoiceable and
+//     the nearest prices it can (details.nearest), which the form offers
 (function () {
   "use strict";
 
@@ -321,6 +324,7 @@
       if (!admin) return li;
       const row = el("span", { class: "ac-row-actions" });
       row.append(el("button", { type: "button", class: "btn btn-small", "aria-label": `Edit ${l.title}`, "aria-expanded": String(st.editing === l.id), onclick: () => { st.editing = st.editing === l.id ? null : l.id; draw(); } }, "Edit"));
+      row.append(el("button", { type: "button", class: "btn btn-small", "data-price": l.id, "aria-label": `Price of ${l.title}`, "aria-expanded": String(st.pricing === l.id), onclick: () => { st.pricing = st.pricing === l.id ? null : l.id; st.nearest = null; draw(); } }, "Price"));
       if (l.status === "draft" || l.status === "withdrawn") {
         row.append(el("button", { type: "button", class: "btn btn-small", "data-publish": l.id, "aria-label": `Publish ${l.title}`, onclick: () => act(() => post(`${lpath}/publish`, {}), `${l.title} is published.`, loadPublisher) }, "Publish"));
       }
@@ -329,7 +333,50 @@
       }
       li.append(row);
       if (st.editing === l.id) li.append(editListingForm(l, lpath));
+      if (st.pricing === l.id) li.append(priceForm(l, lpath));
       return li;
+    }
+
+    /// The listing's price (payments): tax-inclusive, in TRY, USD or EUR, one-off or monthly.
+    function priceForm(l, lpath) {
+      const p = `mp-price-${l.id}`;
+      const cur = l.price || {};
+      const priced = Number(cur.amount_minor) > 0;
+      const amount = el("input", { id: `${p}-amount`, type: "number", min: "0.01", step: "0.01", required: true,
+        value: priced ? (Number(cur.amount_minor) / 100).toFixed(2) : "" });
+      const currency = el("select", { id: `${p}-currency` }, ["TRY", "USD", "EUR"].map((c) => el("option", { value: c, text: c, selected: (cur.currency || "TRY") === c })));
+      const term = el("select", { id: `${p}-term` },
+        el("option", { value: "one_off", text: "One-off", selected: cur.term !== "monthly" }),
+        el("option", { value: "monthly", text: "Monthly", selected: cur.term === "monthly" }));
+      const send = (minor) => act(async () => {
+        try {
+          return await post(`${lpath}/price`, { amount_minor: minor, currency: currency.value, term: term.value }, "PUT");
+        } catch (e) {
+          if (e.code === "price_not_invoiceable") {
+            const near = (e.body && (e.body.nearest || (e.body.details || {}).nearest)) || [];
+            st.nearest = { id: l.id, prices: near.filter((n) => Number.isInteger(n) && n > 0).slice(0, 4) };
+            draw();
+          }
+          throw e;
+        }
+      }, "Price saved. It goes on sale once Pigeonpost's billing holds it.", async () => { st.pricing = null; st.nearest = null; await loadPublisher(); });
+      const nearest = st.nearest && st.nearest.id === l.id && st.nearest.prices.length
+        ? el("p", { id: `${p}-nearest`, role: "status" }, "That amount can't be invoiced. Nearest prices: ",
+          ...st.nearest.prices.map((n) => el("button", { type: "button", class: "btn btn-small", "data-nearest": String(n), onclick: () => { amount.value = (n / 100).toFixed(2); send(n); } }, MP.money(n, currency.value))))
+        : null;
+      return el("form", { class: "ac-form mp-edit", id: p, onsubmit: (e) => {
+        e.preventDefault();
+        const minor = Math.round(Number(amount.value) * 100);
+        if (!Number.isInteger(minor) || minor <= 0) { status.say("Enter a price above zero."); return; }
+        send(minor);
+      } }, el("fieldset", {}, el("legend", { text: `Price of ${l.title}` }),
+        el("p", { class: "muted", text: `Now: ${MP.priceText(l.price)}. Prices include tax. Changing it asks you to confirm it's you.` }),
+        el("label", { for: `${p}-amount` }, "Amount"), amount,
+        el("label", { for: `${p}-currency` }, "Currency"), currency,
+        el("label", { for: `${p}-term` }, "Billing"), term,
+        nearest,
+        el("button", { type: "submit", class: "btn btn-small" }, "Save price"),
+        priced ? el("button", { type: "button", class: "btn btn-small", id: `${p}-free`, onclick: () => act(() => post(`${lpath}/price`, undefined, "DELETE"), "The listing is free again.", async () => { st.pricing = null; await loadPublisher(); }) }, "Make it free") : null));
     }
 
     function editListingForm(l, lpath) {
@@ -383,7 +430,7 @@
         el("section", { class: "mp-section", id: "mp-installs", "aria-labelledby": "mp-installs-h" }, el("h4", { id: "mp-installs-h", text: "Installations" }),
           el("p", { class: "muted", text: "How many accounts installed each listing will show here." })),
         el("section", { class: "mp-section", id: "mp-earnings", "aria-labelledby": "mp-earnings-h" }, el("h4", { id: "mp-earnings-h", text: "Earnings and payouts" }),
-          el("p", { class: "muted", text: "Comes after paid launch. Every listing is free until then." })),
+          el("p", { class: "muted", text: "Set a price on a listing to sell it. Earnings and payouts will show here." })),
       ];
     }
 
