@@ -1436,6 +1436,8 @@ mod tests {
         assert_eq!(a[git - 1], cfg.git.image);
     }
 
+    // Linux-only daemon: the checks require absolute Unix paths (`/tmp`, `/etc/...`).
+    #[cfg(unix)]
     #[test]
     fn the_config_refuses_loose_settings() {
         let ok = || test_config(Path::new("/tmp"));

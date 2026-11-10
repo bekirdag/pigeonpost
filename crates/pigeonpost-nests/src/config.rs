@@ -587,6 +587,8 @@ mod tests {
         assert!(c.check().is_err());
     }
 
+    // Linux-only daemon: the checks require absolute Unix paths (`/tmp`, `/etc/...`).
+    #[cfg(unix)]
     #[test]
     fn the_marketplace_pool_must_be_stricter_and_share_nothing() {
         let dir = std::env::temp_dir();
