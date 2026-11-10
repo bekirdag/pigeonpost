@@ -76,6 +76,10 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
     val meetingCode by model.memberMeetingCode.collectAsStateWithLifecycle()
     val deviceOpen by model.deviceApprovalOpen.collectAsStateWithLifecycle()
     val notesOpen by model.meetingNotesOpen.collectAsStateWithLifecycle()
+    val productsOpen by model.productsOpen.collectAsStateWithLifecycle()
+    // Nests B3: the account's Nests, so a Nest conversation shows its status header.
+    val nestsOn = state.has(dev.pigeonpost.core.nests.NestRules.FEATURE)
+    LaunchedEffect(nestsOn, state.acting?.address, session.authorizationId) { if (nestsOn && session.signedIn) model.nests?.load() }
     val organizationRoomsOpen by model.organizationRoomsOpen.collectAsStateWithLifecycle()
     val organizationRoomPreparing by model.organizationRoomPreparing.collectAsStateWithLifecycle()
     val organizationRooms by (model.organizationRooms?.state ?: remember { kotlinx.coroutines.flow.MutableStateFlow(dev.pigeonpost.core.enterprise.OrganizationRoomsState()) }).collectAsStateWithLifecycle()
@@ -221,6 +225,12 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
             confirmButton = {}, dismissButton = { TextButton({ model.calls?.cancelScheduledJoin() }) { Text("Cancel") } })
         meetingCode?.let { code -> if (session.signedIn && session.termsAccepted && state.acting != null) MeetingLinkDialog(model, state, code, meetingLookup, calendar.zone.id) }
         if (notesOpen && !session.loading && session.signedIn && session.termsAccepted) MeetingNotesDialog(model)
+        val nestStore = model.nests
+        if (productsOpen && nestStore != null && nestsOn && !session.loading && session.signedIn && session.termsAccepted)
+            ProductsDialog(nestStore, dismiss = { model.closeProducts() },
+                openHandles = { model.closeProducts(); sheet = "plans" }, openLink = openLink,
+                openConversation = { address -> model.closeProducts(); model.startConversation(address) },
+                pickFile = { model.pickNestFile() }, exportTo = { model.exportNest() })
         if (deviceOpen && !session.loading && session.signedIn && session.termsAccepted) DeviceApprovalDialog(model, deviceApproval)
         if (organizationRoomsOpen && !session.loading && session.signedIn && session.termsAccepted)
             OrganizationRoomsDialog(model, state, organizationRooms, groups, organizationRoomPreparing, session.authorizationId) { openLink("https://enterprise.pigeonpost.dev/app") }

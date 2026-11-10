@@ -32,6 +32,11 @@
   color-scheme: light dark;
   /* The accent. `--navy` and `--blue` keep their old roles (filled marks, and links / primary
      actions) and now both sit in the mockup's one blue family. */
+  --pp-bg: #f6f7f9; --pp-surface: #ffffff; --pp-border: #e3e6eb; --pp-border-strong: #cfd5de;
+  --pp-text: #111827; --pp-muted: #8a93a3; --pp-icon: #6b7280; --pp-icon-hover: #2f5bea;
+  --pp-hover-bg: #eef2fd; --pp-accent: #2f5bea; --pp-accent-hover: #2449c9;
+  --pp-accent-ring: rgba(47, 91, 234, .16); --pp-disabled: #e7eaef; --pp-disabled-icon: #a3abb8;
+  --pp-success: #16a34a; --pp-sent-top: #3d68f5; --pp-tip-bg: #111827;
   --navy: #2563eb;
   --navy-hover: #1d4fd8;
   --blue: #2457d6;
@@ -193,6 +198,11 @@
     --find-text: #f5edff;
     --find-fill: #5c3a81;
     --find-edge: #b795e5;
+    --pp-bg: #0f1115; --pp-surface: #181b21; --pp-border: #262a33; --pp-border-strong: #353b47;
+    --pp-text: #eef0f4; --pp-muted: #7c8595; --pp-icon: #9aa3b2; --pp-icon-hover: #7c9bff;
+    --pp-hover-bg: #1f2533; --pp-accent: #4c74ff; --pp-accent-hover: #3d63ec;
+    --pp-accent-ring: rgba(76, 116, 255, .22); --pp-disabled: #232730; --pp-disabled-icon: #5b6370;
+    --pp-success: #4ade80; --pp-sent-top: #3d68f5; --pp-tip-bg: #111827;
     --navy: #8ab4ff;
     --navy-hover: #a5c5ff;
     --blue: #8ab4ff;
@@ -327,6 +337,11 @@
   --find-text: #f5edff;
   --find-fill: #5c3a81;
   --find-edge: #b795e5;
+  --pp-bg: #0f1115; --pp-surface: #181b21; --pp-border: #262a33; --pp-border-strong: #353b47;
+  --pp-text: #eef0f4; --pp-muted: #7c8595; --pp-icon: #9aa3b2; --pp-icon-hover: #7c9bff;
+  --pp-hover-bg: #1f2533; --pp-accent: #4c74ff; --pp-accent-hover: #3d63ec;
+  --pp-accent-ring: rgba(76, 116, 255, .22); --pp-disabled: #232730; --pp-disabled-icon: #5b6370;
+  --pp-success: #4ade80; --pp-sent-top: #3d68f5; --pp-tip-bg: #111827;
   --navy: #8ab4ff;
   --navy-hover: #a5c5ff;
   --blue: #8ab4ff;
@@ -2743,3 +2758,193 @@ audio.viewer-media { width: min(560px, 100%); background: none; }
 #discover-found-section h3, #discover-missing-section h3 { margin: 16px 0 8px; font-size: 13.5px; font-weight: 600; color: var(--label); }
 .invite-text { margin: 0 0 12px; padding: 10px 12px; border-left: 3px solid var(--edge); background: var(--inset);
   border-radius: 6px; color: var(--ink); font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
+
+/* ---- the conversation, as the owner's design draws it -----------------------------------------
+   Its tokens (--pp-*) are local to the conversation and composer so the rest of the app keeps its
+   own accent. */
+.pane-thread { background: var(--pp-bg); }
+.messages { max-width: 1100px; padding: 0 16px 12px; gap: 4px; }
+.messages > li.mine + li:not(.mine):not(.sep),
+.messages > li:not(.mine):not(.sep) + li.mine { margin-top: 12px; }
+.messages > li.sep { gap: 14px; margin: 18px 0 10px; }
+.messages > li.sep::before, .messages > li.sep::after { background: var(--pp-border); }
+.daybreak { font-size: 13px; font-weight: 500; color: var(--pp-muted); }
+
+.msg-stack { max-width: min(72%, 560px); }
+/* Agent cards, tables and code need the room they had. */
+.msg-stack:has(.request, .md-table, .md-code) { max-width: min(78%, 620px); }
+@media (max-width: 600px) { .msg-stack, .msg-stack:has(.request, .md-table, .md-code) { max-width: 92%; } }
+
+.bubble {
+  padding: 9px 14px 7px; border-radius: 20px; background: var(--pp-surface); color: var(--pp-text);
+  border: 1px solid var(--pp-border); box-shadow: 0 1px 2px rgba(16, 24, 40, .04);
+}
+.bubble .text, .bubble .request { font-size: 15.5px; line-height: 1.45; }
+.messages > li:not(.mine) .bubble { border-bottom-left-radius: 6px; }
+.messages > li.mine .bubble { border-bottom-right-radius: 6px; }
+.messages > li.mine + li.mine .bubble { border-top-right-radius: 6px; }
+.messages > li:not(.mine):not(.sep) + li:not(.mine):not(.sep) .bubble { border-top-left-radius: 6px; }
+
+/* Sent: white on the accent. Everything nested reads these, so markdown, files and requests follow. */
+.mine .bubble {
+  background: linear-gradient(180deg, var(--pp-sent-top), var(--pp-accent)); border-color: transparent;
+  box-shadow: 0 2px 8px rgba(47, 91, 234, .22); color: #fff;
+  --mine-text: white; --mine-sub: rgba(255, 255, 255, .85); --mine-meta: rgba(255, 255, 255, .85);
+  --mine-rule: rgba(255, 255, 255, .22); --mine-edge: rgba(255, 255, 255, .3); --mine-chip: rgba(255, 255, 255, .16);
+  --ink: white; --body: white; --muted: rgba(255, 255, 255, .85); --faint: rgba(255, 255, 255, .78);
+  --blue: white; --inset: rgba(255, 255, 255, .14); --rule: rgba(255, 255, 255, .22); --card-rule: rgba(255, 255, 255, .22);
+}
+
+/* Time, "edited" and ticks end the text: on its last line when there is room, under it when not. */
+.msg-stack > .bubble > .text { display: inline; }
+.msg-stack > .bubble > .text > .md-p:last-child { display: inline; margin: 0; }
+.bubble .meta {
+  float: right; display: inline-flex; align-items: center; gap: 3px;
+  margin: 6px -4px -2px 12px; padding: 0; border: 0;
+  font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; color: inherit; opacity: .7;
+}
+.mine .bubble .meta { color: inherit; opacity: .85; }
+.bubble .meta .failed, .bubble .meta .send-retry, .bubble .meta .send-discard { opacity: 1; }
+.mine .bubble .meta .failed { color: #ffd9d9; }
+.bubble .meta .meta-spacer { display: none; }
+.bubble .meta .edited { margin-right: 2px; }
+
+.ticks svg, .ticks-sent svg { width: 16px; height: 16px; }
+.ticks-pending svg, .ticks-working svg, .ticks-agent-failed svg { width: 14px; height: 14px; }
+.mine .bubble .meta .ticks-seen { color: #bfe0ff; }
+.mine .bubble .meta .ticks-working { color: #a7f3c4; }
+.mine .bubble .meta .ticks-agent-failed { color: #ffd9d9; }
+.ticks-button:focus-visible { outline-color: currentColor; }
+
+.reply-quote {
+  display: block; width: calc(100% + 8px); margin: 0 -4px 6px; padding: 6px 10px; border-radius: 10px;
+  border-left: 3px solid var(--pp-accent); background: var(--pp-hover-bg); color: var(--pp-text);
+  font-size: 13.5px; line-height: 1.35;
+}
+.mine .reply-quote { border-left-color: currentColor; background: rgba(255, 255, 255, .16); color: #fff; }
+.reply-quote .reply-who { display: block; font-size: 12px; font-weight: 600; color: inherit; opacity: .85; }
+.reply-quote .reply-line {
+  font-size: inherit; white-space: normal;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.reply-quote:focus-visible { outline-color: currentColor; }
+
+.msg-actions { gap: 2px; margin-top: 3px; padding: 0 4px; min-height: 0; opacity: .75; transition: opacity .14s; }
+.msg-action {
+  position: relative; width: 28px; height: 28px; border-radius: 50%; color: var(--pp-muted);
+  transition: background .12s, color .12s;
+}
+.msg-action svg { width: 17px; height: 17px; }
+.msg-action:hover, .msg-action:focus-visible { background: var(--pp-hover-bg); color: var(--pp-icon-hover); }
+.msg-action.copied { color: var(--pp-success); }
+.msg-action::after {
+  content: attr(data-tip); position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%);
+  padding: 3px 8px; border-radius: 6px; font-size: 11.5px; font-weight: 500; white-space: nowrap;
+  background: var(--pp-tip-bg); color: #fff; opacity: 0; pointer-events: none; transition: opacity .12s;
+}
+.msg-action:hover::after { opacity: 1; }
+@media (hover: none) {
+  .msg-action { width: 28px; height: 28px; }
+  .msg-action::after { display: none; }
+}
+
+/* The composer: a pill in a blurred bar, with the reply or edit bar sitting above it. */
+.composer {
+  display: block; width: 100%; max-width: none; margin: 0;
+  padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); border: 0; border-top: 1px solid var(--pp-border);
+  border-radius: 0; background: color-mix(in srgb, var(--pp-bg) 82%, transparent);
+  -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+}
+.composer:focus-within { border-color: var(--pp-border); }
+.composer .pending-files { max-width: 1100px; margin: 0 auto 8px; }
+.compose-context:not([hidden]) {
+  max-width: 1100px; margin: 0 auto 8px; padding: 8px 8px 8px 12px; border-radius: 14px;
+  background: var(--pp-surface); border: 1px solid var(--pp-border); border-left: 3px solid var(--pp-accent);
+}
+.compose-context-icon { color: var(--pp-accent); }
+.compose-context-text { font-size: 13px; line-height: 1.3; }
+.compose-context-title { color: var(--pp-accent); font-weight: 600; }
+.compose-context-line { color: var(--pp-muted); }
+.compose-context-close { width: 28px; height: 28px; border-radius: 50%; }
+
+.composer-pill {
+  max-width: 1100px; margin: 0 auto; display: flex; align-items: flex-end; gap: 4px; padding: 6px;
+  background: var(--pp-surface); border: 1px solid var(--pp-border); border-radius: 26px;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 4px 16px rgba(16, 24, 40, .05);
+  transition: border-color .15s, box-shadow .15s;
+}
+.composer-pill:hover { border-color: var(--pp-border-strong); }
+.composer-pill:focus-within {
+  border-color: var(--pp-accent); box-shadow: 0 0 0 4px var(--pp-accent-ring), 0 4px 16px rgba(16, 24, 40, .06);
+}
+.composer .attach {
+  order: 0; flex: none; width: 40px; height: 40px; border: 0; border-radius: 50%; background: transparent;
+  display: grid; place-items: center; color: var(--pp-icon); cursor: pointer;
+  transition: background .15s, color .15s, transform .1s;
+}
+.composer .attach:hover, .composer .attach:focus-visible { background: var(--pp-hover-bg); color: var(--pp-icon-hover); }
+.composer .attach:active { transform: scale(.92); }
+.composer .attach svg { width: 22px; height: 22px; }
+.composer textarea {
+  flex: 1; min-width: 0; padding: 9px 6px; font-size: 16px; line-height: 22px; color: var(--pp-text);
+  border-radius: 0; max-height: 154px; overflow-y: auto;
+}
+.composer textarea::placeholder { color: var(--pp-muted); }
+.emoji-btn {
+  flex: none; width: 40px; height: 40px; border: 0; border-radius: 50%; background: transparent;
+  display: grid; place-items: center; color: var(--pp-icon); cursor: pointer;
+  transition: background .15s, color .15s, transform .1s;
+}
+.emoji-btn:hover, .emoji-btn:focus-visible, .emoji-btn[aria-expanded="true"] { background: var(--pp-hover-bg); color: var(--pp-icon-hover); }
+.emoji-btn:active { transform: scale(.92); }
+.emoji-btn svg { width: 22px; height: 22px; }
+.composer-pill { position: relative; }
+.emoji-panel:not([hidden]) {
+  position: absolute; right: 0; bottom: calc(100% + 10px); z-index: 30; display: flex; flex-direction: column;
+  width: min(344px, calc(100vw - 32px)); height: min(380px, 55vh); padding: 10px; border-radius: 16px;
+  background: var(--pp-surface); border: 1px solid var(--pp-border);
+  box-shadow: 0 8px 28px rgba(16, 24, 40, .18);
+}
+.emoji-search {
+  flex: none; width: 100%; box-sizing: border-box; padding: 8px 12px; font: inherit; font-size: 16px; color: var(--pp-text);
+  background: var(--pp-bg); border: 1px solid var(--pp-border); border-radius: 10px; outline: none;
+}
+.emoji-search:focus { border-color: var(--pp-accent); }
+.emoji-search::placeholder { color: var(--pp-muted); }
+.emoji-tabs { flex: none; display: flex; justify-content: space-between; margin: 6px 0 2px; }
+.emoji-tab, .emoji-cell {
+  border: 0; background: transparent; cursor: pointer; padding: 0; line-height: 1; border-radius: 8px;
+  font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
+}
+.emoji-tab { width: 32px; height: 32px; font-size: 17px; }
+.emoji-tab:hover, .emoji-tab:focus-visible, .emoji-cell:hover, .emoji-cell:focus-visible { background: var(--pp-hover-bg); outline: none; }
+.emoji-body { position: relative; flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.emoji-heading { margin: 8px 2px 4px; font-size: 12px; font-weight: 600; color: var(--pp-muted); }
+.emoji-grid { display: grid; grid-template-columns: repeat(auto-fill, 38px); justify-content: space-between; }
+.emoji-cell { width: 38px; height: 38px; font-size: 22px; }
+.emoji-cell[hidden] { display: none; }
+.emoji-none { margin: 24px 0; text-align: center; font-size: 14px; color: var(--pp-muted); }
+.send {
+  order: 0; width: 40px; height: 40px; margin-left: 0; border-radius: 50%;
+  background: var(--pp-accent); color: #fff; transform: scale(1.04); box-shadow: 0 4px 12px rgba(47, 91, 234, .32);
+  transition: background .18s, color .18s, transform .18s cubic-bezier(.3, 1.6, .6, 1);
+}
+.send:hover:not(:disabled) { background: var(--pp-accent-hover); }
+.send:active:not(:disabled) { transform: scale(.94); }
+.send:disabled { background: var(--pp-disabled); color: var(--pp-disabled-icon); cursor: not-allowed; transform: none; box-shadow: none; }
+.send svg { width: 20px; height: 20px; margin-left: 0; }
+.send .ic-check { display: none; }
+.composer.editing .send .ic-arrow { display: none; }
+.composer.editing .send .ic-check { display: block; }
+
+.composer-hint {
+  max-width: 1100px; margin: 6px auto 0; padding: 0 18px; display: flex; justify-content: space-between;
+  font-size: 12px; color: var(--pp-muted); opacity: 0; transition: opacity .15s;
+}
+.composer-pill:focus-within + .composer-hint { opacity: 1; }
+.composer-hint kbd { font: inherit; font-size: 11px; padding: 1px 5px; border: 1px solid var(--pp-border); border-radius: 4px; background: var(--pp-surface); }
+/* Below this width Enter makes a new line, so the hint would be wrong. */
+@media (max-width: 780px) { .composer-hint { display: none; } }
+
+/* A preview keeps its own surface inside a sent bubble, so its text stays on that surface's colours. */
+.mine .bubble .attachment-preview { color: var(--pp-text); --ink: var(--pp-text); --body: var(--pp-text); --muted: var(--pp-muted); }
