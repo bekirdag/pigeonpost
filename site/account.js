@@ -67,7 +67,7 @@
     login(undefined, "CONFIGURE_TOTP");
   }
 
-  async function login(remember, kcAction) {
+  async function login(remember, kcAction, stepUp) {
     if (!authReady) {
       toast("Sign-in isn't configured yet. The pigeonpost-prod realm web client is being set up.");
       return;
@@ -92,7 +92,10 @@
       + `&response_type=code&scope=${encodeURIComponent(scope)}`
       + `&redirect_uri=${encodeURIComponent(redirect)}`
       + `&code_challenge=${challenge}&code_challenge_method=S256&state=${state}`
-      + (kcAction ? `&kc_action=${encodeURIComponent(kcAction)}` : "");
+      + (kcAction ? `&kc_action=${encodeURIComponent(kcAction)}` : "")
+      // Step-up (RFC 9470): ask the realm for exactly the strength and freshness the postbox named.
+      + (stepUp && stepUp.acr_values ? `&acr_values=${encodeURIComponent(stepUp.acr_values)}` : "")
+      + (stepUp && stepUp.max_age != null ? `&max_age=${encodeURIComponent(stepUp.max_age)}` : "");
     window.location.href = url;
   }
 
@@ -278,6 +281,8 @@
         <button class="btn btn-small" id="ac-logout">Sign out</button>
       </div>
       <div class="ac-card" id="ac-products"></div>
+      <div class="ac-card" id="ac-publisher" hidden></div>
+      <div class="ac-card" id="ac-staff" hidden></div>
       ${searchBlock()}
       <div class="ac-card"><h3>Your handles</h3><p class="muted">Names belong to your Pigeonpost account across mobile, desktop and web.</p><button class="btn btn-small" id="ac-handles-refresh">Refresh handles</button><div id="ac-subs"><p class="muted">Loading…</p></div></div>
       <div class="ac-card">
@@ -328,8 +333,17 @@
       const caps = await pbFetch("/v1/capabilities");
       if (Array.isArray(caps.features)) features = new Set(caps.features.map(String));
     } catch (_) { /* an older postbox: nothing new is on */ }
+    const marketplace = features.has("marketplace") && window.PPMarketplace;
+    // A staff or publishing action the postbox refused for want of a recent strong sign-in: sign
+    // in again with its acr_values/max_age, and come back to the same card.
+    const stepUp = (challenge, section) => {
+      SS.setItem("pp_mp_return", section || "");
+      login(undefined, undefined, challenge);
+    };
+    if (marketplace) mountMarketplace(stepUp);
     window.PPProducts.mount(box, {
       features,
+      stepUp,
       pb: (path, init) => pbFetch(path, init),
       bridgeGet: (path) => apiGet(path),
       bridgeAction: (path, body, method) => apiAction(path, body, method),
@@ -351,7 +365,22 @@
       preferredCurrency: defaultCurrency(),
       locale: /^tr\b/i.test(navigator.language || "") ? "tr" : "en",
     });
-    if (window.location.hash === "#products" && box.scrollIntoView) box.scrollIntoView({ block: "start" });
+    const back = SS.getItem("pp_mp_return");
+    SS.removeItem("pp_mp_return");
+    const target = back === "publisher" ? $("#ac-publisher") : back === "staff" ? $("#ac-staff") : window.location.hash === "#products" || back === "services" ? box : null;
+    if (target && target.scrollIntoView) target.scrollIntoView({ block: "start" });
+  }
+
+  // ---- marketplace publisher console and staff dashboard -------------------------------------
+  //
+  // Only with the postbox's `marketplace` feature on. The staff card unhides itself only for a
+  // staff account; the publisher card is for anyone who wants to apply or already publishes.
+  function mountMarketplace(stepUp) {
+    const deps = { pb: (path, init) => pbFetch(path, init), toast, stepUp };
+    const pub = $("#ac-publisher");
+    if (pub && window.PPMarketplace.publisher) { pub.hidden = false; window.PPMarketplace.publisher(pub, deps); }
+    const staff = $("#ac-staff");
+    if (staff && window.PPMarketplace.staff) window.PPMarketplace.staff(staff, deps);
   }
 
   function renderDeletion(el) {
@@ -433,11 +462,14 @@
       ),
       body: o.body,
     });
-    if (res.status === 401 && !retried && await refreshSession()) return pbFetch(path, opts, true);
     const body = await res.json().catch(() => ({}));
+    // A step-up refusal is not an expired token: refreshing cannot make the sign-in stronger.
+    if (res.status === 401 && body.error !== "step_up_required" && !retried && await refreshSession()) return pbFetch(path, opts, true);
     if (!res.ok) {
       const e = new Error(body.detail || body.error || `postbox ${res.status}`);
       e.status = res.status;
+      // The whole error body: step-up challenges carry acr_values/max_age, validation errors issues.
+      e.body = body;
       // The machine-readable half. Callers translate these into sentences; the detail string is a
       // fallback for codes nobody has written a sentence for yet.
       e.code = body.error || null;

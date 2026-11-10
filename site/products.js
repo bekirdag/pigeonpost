@@ -67,6 +67,8 @@
   function mount(root, deps) {
     const state = { tab: "nests", context: "personal", currency: null, data: null, gen: 0 };
     const nestsOn = () => Boolean(deps.features && deps.features.has("nests"));
+    const catalog = deps.features && deps.features.has("marketplace") && window.PPMarketplace && window.PPMarketplace.catalog
+      ? window.PPMarketplace.catalog(deps) : null;
 
     function tabs() {
       const order = [["inbox", "Buy an Inbox"], ["nests", "Buy Nests"], ["services", "Services"]];
@@ -107,10 +109,18 @@
     }
 
     function servicesPanel() {
+      const builtins = el("ul", { class: "pp-services" }, SERVICES.map(([name, what]) =>
+        el("li", { class: "pp-service" }, el("strong", { text: name }), el("span", { text: what }), el("span", { class: "pp-soon", text: "Coming soon" }))));
+      // With the `marketplace` feature on, marketplace-catalog.js owns this tab (OD-8: listings live
+      // here, with a publisher badge and a Marketplace filter) and shows these under "All services".
+      if (catalog) {
+        const box = el("div", { id: "pp-marketplace" });
+        catalog.render(box, builtins);
+        return panel("services", box);
+      }
       return panel("services",
         el("p", { class: "muted", text: "Ready-made assistants that run on a Nest. They are not available yet." }),
-        el("ul", { class: "pp-services" }, SERVICES.map(([name, what]) =>
-          el("li", { class: "pp-service" }, el("strong", { text: name }), el("span", { text: what }), el("span", { class: "pp-soon", text: "Coming soon" })))));
+        builtins);
     }
 
     function nestsPanel() {
