@@ -966,6 +966,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     fn mounts_in(argv: &[String]) -> Vec<String> {
         argv.iter()
             .enumerate()
@@ -974,6 +975,8 @@ mod tests {
             .collect()
     }
 
+    // Linux podman arguments with host paths; Nests hosts are Linux.
+    #[cfg(unix)]
     #[test]
     fn the_marketplace_profile_is_fixed_and_stricter_than_first_party() {
         let rig = rig();
@@ -1031,6 +1034,8 @@ mod tests {
         assert!(a.contains("NEST_BROKER_URL=http://10.67.255.1:8788"), "{a}");
     }
 
+    // Linux podman arguments with host paths; Nests hosts are Linux.
+    #[cfg(unix)]
     #[test]
     fn two_contexts_share_no_mount_no_container_and_no_label() {
         let rig = rig();
@@ -1156,6 +1161,8 @@ mod tests {
 
     /// The firewall that makes "network only to the broker" true. The bridge is separate from the
     /// first-party one and the policy allows the broker and nothing else, with no postbox path.
+    // Linux podman arguments with host paths; Nests hosts are Linux.
+    #[cfg(unix)]
     #[test]
     fn the_marketplace_bridge_is_policed_to_the_broker_only() {
         let nft = include_str!("../../../deploy/nests/host/nests.nft");
