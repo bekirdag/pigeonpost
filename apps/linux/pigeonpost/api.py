@@ -42,7 +42,7 @@ class Transport:
         self.allow_loopback_http = allow_loopback_http
 
     def request(self, method, url, *, data=None, form=None, token=None, headers=None,
-                raw=None, binary=False, timeout=35):
+                raw=None, binary=False, timeout=35, max_bytes=None):
         parts = urllib.parse.urlsplit(url)
         loopback = self.allow_loopback_http and parts.scheme == "http" and parts.hostname == "127.0.0.1"
         if parts.scheme != "https" and not loopback:
@@ -60,7 +60,7 @@ class Transport:
         req = urllib.request.Request(url, data=raw, method=method, headers=hdr)
         try:
             with self.opener.open(req, timeout=timeout) as response:
-                limit = MAX_FILE if binary else 16 * 1024 * 1024
+                limit = max_bytes or (MAX_FILE if binary else 16 * 1024 * 1024)
                 body = response.read(limit + 1)
                 if len(body) > limit:
                     raise APIError(0, "response_too_large", "This response is too large to open.")

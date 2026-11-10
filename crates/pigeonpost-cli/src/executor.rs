@@ -35,6 +35,9 @@ pub const RUNNABLE_VERBS: &[&str] = &[
     "full_access",
     "git_push",
     "deploy",
+    // Nests B3: plain conversation with a Nest. Only a `runtime = "nest"` route runs it — the
+    // Nest runner has no tools, so the whole effect is a model answer to the sender.
+    "chat",
 ];
 
 /// Marks a reply this executor generated. An auto-reply must never itself be auto-acted on, or two
@@ -321,7 +324,7 @@ impl Permission {
     /// needs `workspace`; everything that leaves the machine needs `full`.
     pub fn admits(&self, verb: &str) -> bool {
         match verb {
-            "report_status" | "answer_question" => true,
+            "report_status" | "answer_question" | "chat" => true,
             "run_tests" | "make_change" => {
                 matches!(self, Permission::Workspace | Permission::Full)
             }
@@ -678,6 +681,38 @@ pub fn classify(
     }
     if !route.verbs.iter().any(|v| v == &verb) {
         return Err(Refusal::VerbNotEnabledHere);
+    }
+
+    // `chat` is prose, not an envelope, and only a Nest answers it: anywhere else the postbox
+    // would never have stamped it `auto`, and a runtime with tools must not take prose as work.
+    if verb == "chat" {
+        let runtime: Runtime = route.runtime.parse()?;
+        if !matches!(runtime, Runtime::Nest) {
+            return Err(Refusal::VerbNotInPhase);
+        }
+        let text = message
+            .get("untrusted_body")
+            .or_else(|| message.get("body"))
+            .and_then(|b| b.as_str())
+            .map(str::to_string)
+            .ok_or(Refusal::BadArguments("chat has no text"))?;
+        if text.trim().is_empty() || text.chars().count() > 8000 {
+            return Err(Refusal::BadArguments("chat text must be 1-8000 characters"));
+        }
+        if !route.workspace.is_dir() {
+            return Err(Refusal::WorkspaceMissing);
+        }
+        return Ok(Action {
+            route,
+            verb,
+            note: None,
+            question: Some(text),
+            task: None,
+            target: None,
+            runtime,
+            reply_context: reply_context(message),
+            amendment: None,
+        });
     }
 
     // The body is parsed only after every cheaper gate has passed.
@@ -1570,6 +1605,48 @@ mod tests {
                 0
             ));
         }
+    }
+
+    /// Nests B3: `chat` is plain text, and only a Nest route runs it.
+    #[test]
+    fn chat_runs_only_on_a_nest_route_and_carries_the_text_as_data() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = config(&["chat"], dir.path());
+        let chat = serde_json::json!({
+            "autonomy": "auto", "verb": "chat",
+            "untrusted_body": "what's on my list today?",
+        });
+        assert_eq!(
+            classify(&cfg, dir.path(), "/bekir/agent1", None, &chat),
+            Err(Refusal::VerbNotInPhase),
+            "a runtime with tools never takes prose as work"
+        );
+        cfg.mailbox[0].runtime = "nest".into();
+        let action = classify(&cfg, dir.path(), "/bekir/agent1", None, &chat).unwrap();
+        assert_eq!(action.question.as_deref(), Some("what's on my list today?"));
+        let turn: serde_json::Value =
+            serde_json::from_str(&crate::runner::prompt(&action, "/k/owner")).unwrap();
+        assert_eq!(turn["kind"], "chat");
+        assert_eq!(turn["sender"], "/k/owner");
+        assert_eq!(turn["text"], "what's on my list today?");
+        // Held, empty, oversized or not granted here: refused.
+        let mut held = chat.clone();
+        held["autonomy"] = "review".into();
+        assert_eq!(
+            classify(&cfg, dir.path(), "/bekir/agent1", None, &held),
+            Err(Refusal::NotAuto)
+        );
+        let mut big = chat.clone();
+        big["untrusted_body"] = "x".repeat(8001).into();
+        assert!(matches!(
+            classify(&cfg, dir.path(), "/bekir/agent1", None, &big),
+            Err(Refusal::BadArguments(_))
+        ));
+        cfg.mailbox[0].verbs = vec!["answer_question".into()];
+        assert_eq!(
+            classify(&cfg, dir.path(), "/bekir/agent1", None, &chat),
+            Err(Refusal::VerbNotEnabledHere)
+        );
     }
 
     /// The failure most likely to happen by accident: two agents answering each other forever.

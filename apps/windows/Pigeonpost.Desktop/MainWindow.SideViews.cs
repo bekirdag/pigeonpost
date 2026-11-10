@@ -15,7 +15,7 @@ namespace Pigeonpost.Desktop;
 //  Every feature appears only when GET /v1/capabilities lists it for the account.
 public sealed partial class MainWindow
 {
-    private enum SideView { Chats, Calls, Filtered, Groups, Calendar, Machine, Rooms, Notes }
+    private enum SideView { Chats, Calls, Filtered, Groups, Calendar, Machine, Rooms, Notes, Products, Nest }
 
     private ServerFeatures features = ServerFeatures.None;
     private SideView sideView = SideView.Chats;
@@ -26,7 +26,7 @@ public sealed partial class MainWindow
     private readonly System.Collections.ObjectModel.ObservableCollection<CallRow> filteredCallRows = [];
     private readonly System.Collections.ObjectModel.ObservableCollection<FilteredSender> filteredSenders = [];
     private IReadOnlyList<InboxMessage> filteredMessages = [];
-    private Button? callsNav, groupsNav, chatsNav, calendarNav, machineNav, roomsNav, notesNav;
+    private Button? callsNav, groupsNav, chatsNav, calendarNav, machineNav, roomsNav, notesNav, productsNav;
     private int featureVersion;
     private sealed record SideBinding(InboxViewModel Inbox, AuthorizationLease? Authorization, string Mailbox);
     private SideBinding? sideBinding;
@@ -90,6 +90,7 @@ public sealed partial class MainWindow
         meetingNotes.Activate(features);
         _ = meetingNotes.RegisterAsync();
         BuildSideNav();
+        NestsFeaturesChanged();
         await MailboxChangedForSideViewsAsync();
     }
 
@@ -110,7 +111,9 @@ public sealed partial class MainWindow
         filteredSenders.Clear();
         // Machine approval belongs to the signed-in person, not the inbox; keep it across a rebind.
         // Rooms stay open and reload for the newly selected canonical inbox.
-        if (sideView is not SideView.Chats and not SideView.Machine and not SideView.Rooms and not SideView.Notes) ShowSideView(SideView.Chats);
+        // Nests belong to the account too; only the organization list follows the selected inbox.
+        if (sideView is not SideView.Chats and not SideView.Machine and not SideView.Rooms and not SideView.Notes and not SideView.Products and not SideView.Nest) ShowSideView(SideView.Chats);
+        if (sideView == SideView.Products) _ = LoadNestOrganizationsAsync();
         if (sideView == SideView.Rooms) { roomStore.Synchronize(); roomStore.LoadOrganizations(roomStore.State.ContextId); }
         UpdateFilteredEntry();
         _ = RefreshOrganizationBadgeAsync();
@@ -160,6 +163,8 @@ public sealed partial class MainWindow
                 if (target is not null) await calendarModel.ReloadAsync(target, lifetime.Token);
             }
             if (!SideCurrent(binding)) return;
+            await RefreshNestsAsync();
+            if (!SideCurrent(binding)) return;
             if (sideView == SideView.Calls) await callHistory.MarkSeenAsync();
             if (SideCurrent(binding)) binding.Inbox.PruneExpired();
         }
@@ -183,6 +188,7 @@ public sealed partial class MainWindow
         avatars.Enabled = false;
         filteredMessages = [];
         filteredSenders.Clear();
+        ResetNests();
         ShowSideView(SideView.Chats);
         SideNav.Visibility = NewGroupButton.Visibility = FilteredEntry.Visibility = Visibility.Collapsed;
         ProfileMenuItem.Visibility = PrivacyMenuItem.Visibility = TimerMenuItem.Visibility = Visibility.Collapsed;
@@ -209,7 +215,7 @@ public sealed partial class MainWindow
         {
             var button = new Button { Content = label, Padding = new Thickness(12, 4, 12, 5), MinHeight = 30, CornerRadius = new CornerRadius(8), FontSize = 13, HorizontalAlignment = HorizontalAlignment.Stretch };
             AutomationProperties.SetName(button, automation);
-            button.Click += (_, _) => { if (IsCompact && view is SideView.Calendar or SideView.Notes) compactConversation = true; ShowSideView(view); };
+            button.Click += (_, _) => { if (IsCompact && view is SideView.Calendar or SideView.Notes or SideView.Products) compactConversation = true; ShowSideView(view); };
             var index = SideNav.Children.Count;
             if (index / 2 >= SideNav.RowDefinitions.Count) SideNav.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             Grid.SetColumn(button, index % 2); Grid.SetRow(button, index / 2);
@@ -223,7 +229,8 @@ public sealed partial class MainWindow
         roomsNav = features.Has(ServerFeatures.Organizations) && groupsNav is not null ? Nav("Rooms", "Rooms", SideView.Rooms) : null;
         machineNav = features.Has(ServerFeatures.Organizations) ? Nav("Machines", "Machines", SideView.Machine) : null;
         notesNav = features.Has(ServerFeatures.MeetingSummaries) ? Nav("Meeting notes", "Meeting notes", SideView.Notes) : null;
-        SideNav.Visibility = ToVisibility(callsNav is not null || groupsNav is not null || calendarNav is not null || machineNav is not null || notesNav is not null);
+        productsNav = NestsOn ? Nav("Products", "Products", SideView.Products) : null;
+        SideNav.Visibility = ToVisibility(callsNav is not null || groupsNav is not null || calendarNav is not null || machineNav is not null || notesNav is not null || productsNav is not null);
         NewGroupButton.Visibility = ToVisibility(groupsNav is not null);
         UpdateSideNav();
     }
@@ -242,8 +249,10 @@ public sealed partial class MainWindow
             AutomationProperties.SetName(groupsNav, count > 0 ? $"Groups, {count} new" : "Groups");
             NewGroupButton.Visibility = ToVisibility(groupsModel.Enabled);
         }
-        foreach (var (button, view) in new[] { (chatsNav, SideView.Chats), (callsNav, SideView.Calls), (groupsNav, SideView.Groups), (calendarNav, SideView.Calendar), (machineNav, SideView.Machine), (roomsNav, SideView.Rooms), (notesNav, SideView.Notes) })
-            if (button is not null) button.Style = (Style)Application.Current.Resources[sideView == view ? "AccentButtonStyle" : "DefaultButtonStyle"];
+        // A Nest's own page is reached from Products, so Products stays lit.
+        var lit = sideView == SideView.Nest ? SideView.Products : sideView;
+        foreach (var (button, view) in new[] { (chatsNav, SideView.Chats), (callsNav, SideView.Calls), (groupsNav, SideView.Groups), (calendarNav, SideView.Calendar), (machineNav, SideView.Machine), (roomsNav, SideView.Rooms), (notesNav, SideView.Notes), (productsNav, SideView.Products) })
+            if (button is not null) button.Style = (Style)Application.Current.Resources[lit == view ? "AccentButtonStyle" : "DefaultButtonStyle"];
     }
 
     private void ShowSideView(SideView view)
@@ -255,6 +264,7 @@ public sealed partial class MainWindow
         calendarPage?.Dispose(); calendarPage = null;
         SidePage.Children.Clear();
         SideListHost.Children.Clear();
+        ClearNestPages();
         switch (view)
         {
             case SideView.Calls: SidePage.Children.Add(BuildCallsPage()); _ = callHistory.MarkSeenAsync(); break;
@@ -264,6 +274,8 @@ public sealed partial class MainWindow
             case SideView.Machine: SidePage.Children.Add(BuildApprovalPage()); break;
             case SideView.Rooms: SidePage.Children.Add(BuildRoomsPage()); break;
             case SideView.Notes: SidePage.Children.Add(BuildNotesPage()); break;
+            case SideView.Products: SidePage.Children.Add(BuildProductsPage()); break;
+            case SideView.Nest: SidePage.Children.Add(BuildNestPage()); break;
         }
         UpdateLayoutMode();
         UpdateSideNav();

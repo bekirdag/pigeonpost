@@ -85,6 +85,8 @@ class CallsMixin:
             name = "conversation"
         if name == "filtered" and MESSAGE_FILTERING not in self.features:
             name = "conversation"
+        if name in ("products", "nest") and not self.nests_on():
+            name = "conversation"
         self.main_stack.set_visible_child_name(name)
         if name == "calls":
             self.render_calls()

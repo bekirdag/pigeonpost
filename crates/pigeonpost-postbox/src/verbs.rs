@@ -257,6 +257,50 @@ pub fn decide(body: &str, sender_is_auto: bool, granted: &[String]) -> Decision 
     }
 }
 
+/// The Nest conversation verb (Nests Phase B3, R-71). Unlike every verb above it is not an
+/// envelope: it is plain prose sent to a **Nest** mailbox by a sender that Nest's owner granted
+/// `chat`. It exists only for Nests because a Nest's runner has no tools: its whole effect is a
+/// model answer back to the sender, metered against the Nest's own budget. On any other mailbox
+/// prose stays held for a human, whatever the grant says (and the grant itself is refused).
+pub const NEST_CHAT: &str = "chat";
+/// Longest chat message a Nest acts on; longer prose is held like any other.
+pub const MAX_CHAT_CHARS: usize = 8000;
+
+/// [`decide`], for a recipient that may be a Nest. A Nest treats granted prose as `chat`;
+/// envelopes (and everything on a non-Nest mailbox) are decided exactly as before.
+pub fn decide_for(
+    body: &str,
+    sender_is_auto: bool,
+    granted: &[String],
+    recipient_is_nest: bool,
+) -> Decision {
+    if recipient_is_nest
+        && sender_is_auto
+        && parse(body).is_none()
+        && granted.iter().any(|g| g == NEST_CHAT)
+        && !body.trim().is_empty()
+        && body.chars().count() <= MAX_CHAT_CHARS
+    {
+        return Decision::Auto {
+            verb: NEST_CHAT.to_string(),
+        };
+    }
+    decide(body, sender_is_auto, granted)
+}
+
+/// [`validate_grant`], plus `chat`, which only a Nest mailbox may grant.
+pub fn validate_grant_for(verbs: &[String], recipient_is_nest: bool) -> Result<(), String> {
+    let (chat, rest): (Vec<String>, Vec<String>) =
+        verbs.iter().cloned().partition(|v| v == NEST_CHAT);
+    if !chat.is_empty() && !recipient_is_nest {
+        return Err(
+            "'chat' is only for Nest mailboxes: anywhere else a person's prose is held for them"
+                .into(),
+        );
+    }
+    validate_grant(&rest)
+}
+
 /// Check a proposed allowlist before storing it.
 ///
 /// Refusing a denied or unknown verb here — rather than storing it and letting it silently never
@@ -288,6 +332,51 @@ pub fn validate_grant(verbs: &[String]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chat_is_prose_to_a_nest_from_a_granted_sender_and_nothing_else() {
+        let chat = granted(&["chat", "answer_question"]);
+        let auto = |d: Decision| matches!(d, Decision::Auto { verb } if verb == "chat");
+        assert!(auto(decide_for(
+            "what's on my calendar?",
+            true,
+            &chat,
+            true
+        )));
+        // Not a Nest, not trusted, not granted, empty or oversized: held like any prose.
+        assert!(!auto(decide_for("hi", true, &chat, false)));
+        assert!(!auto(decide_for("hi", false, &chat, true)));
+        assert!(!auto(decide_for(
+            "hi",
+            true,
+            &granted(&["answer_question"]),
+            true
+        )));
+        assert!(!auto(decide_for("   ", true, &chat, true)));
+        assert!(!auto(decide_for(
+            &"x".repeat(MAX_CHAT_CHARS + 1),
+            true,
+            &chat,
+            true
+        )));
+        // An envelope to a Nest is still decided by its own verb, never smuggled in as chat.
+        let env = r#"{"v":1,"verb":"run_shell","args":{}}"#;
+        assert_eq!(
+            decide_for(env, true, &chat, true),
+            Decision::Review {
+                held: Held::VerbDenied,
+                verb: Some("run_shell".into())
+            }
+        );
+        // Only a Nest may grant it.
+        assert!(validate_grant_for(&chat, true).is_ok());
+        assert!(validate_grant_for(&chat, false).is_err());
+        assert!(validate_grant_for(&granted(&["chat", "spend"]), true).is_err());
+        assert!(
+            validate_grant(&granted(&["chat"])).is_err(),
+            "not a general verb"
+        );
+    }
 
     fn granted(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()

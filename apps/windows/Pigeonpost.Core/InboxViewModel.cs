@@ -35,6 +35,7 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
     public IReadOnlyList<string> NeverAutoVerbs => snapshot.Vocabulary?.NeverAuto ?? [];
     public Contact? ExactContact(string peer) => snapshot.Contacts.FirstOrDefault(c => !c.IsWildcard
         && ConversationBuilder.ResolvePeer(c.Peer, snapshot, Mailboxes) == ConversationBuilder.ResolvePeer(peer, snapshot, Mailboxes));
+    public string ResolvePeerKey(string peer) => ConversationBuilder.ResolvePeer(peer, snapshot, Mailboxes);
     public Mailbox? OwnMailbox(string peer) => Mailboxes.FirstOrDefault(m => m.Address == peer || PostAddress.Canonical(m.Key) == PostAddress.Canonical(peer));
 
     public IReadOnlyList<Mailbox> Mailboxes { get; private set; } = [];

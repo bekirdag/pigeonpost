@@ -48,6 +48,8 @@ class MainActivity : ComponentActivity() {
     private val openAuthorization: (Intent) -> Unit = { authorization.launch(it) }
     private val notifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) { model.refreshPushRegistration(); offerFullScreenCalls() }
     private val documents = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { model.attach(it) }
+    private val nestFile = registerForActivityResult(ActivityResultContracts.OpenDocument()) { model.nestFileChosen(it) }
+    private val nestExport = registerForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { model.nestExportTo(it) }
     private val photos = registerForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(8)) { model.attach(it) }
     // Profile pictures: one photo from the picker, or a new one from the camera (written to a private cache file).
     private val picture = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { model.pictureChosen(it) }
@@ -94,6 +96,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState); enableEdgeToEdge()
         Development.rememberHarness(this, intent)
         model.authorizationWindow = openAuthorization
+        model.nestFilePicker = { nestFile.launch(arrayOf("*/*")) }
+        model.nestExportPicker = { name -> nestExport.launch(name) }
         setContent { PigeonpostApp(model,
             signIn = { provider, other -> lifecycleScope.launch { model.session.begin(provider, other)?.let { intent ->
                 try { authorization.launch(intent) }

@@ -32,6 +32,7 @@ from .window_calls import CallsMixin
 from .window_contacts import ContactsMixin
 from .window_groups import GroupsMixin
 from .window_messages import MessagesMixin
+from .window_nests import NestsMixin
 from .window_notes import NotesMixin
 from .window_orgs import OrgsMixin
 from .window_pairing import PairingMixin
@@ -69,7 +70,7 @@ def main_later(seconds, fn):
     GLib.timeout_add_seconds(seconds, lambda: (fn(), False)[1])
 
 
-class Window(ContactsMixin, MessagesMixin, NotesMixin, PairingMixin, OrgsMixin, CalendarMixin, PrivacyMixin, CallsMixin, GroupsMixin, Adw.ApplicationWindow):
+class Window(ContactsMixin, MessagesMixin, NestsMixin, NotesMixin, PairingMixin, OrgsMixin, CalendarMixin, PrivacyMixin, CallsMixin, GroupsMixin, Adw.ApplicationWindow):
     def __init__(self, app, session=None, api=None, restore=True, preferences=None, calls=None, protected=None):
         super().__init__(application=app, title="Pigeonpost", default_width=1180, default_height=780)
         self.set_size_request(800, 540)
@@ -102,6 +103,7 @@ class Window(ContactsMixin, MessagesMixin, NotesMixin, PairingMixin, OrgsMixin, 
         self.reset_groups()
         self.reset_calendar()
         self.reset_orgs()
+        self.reset_nests()
         self.reset_pairing()
         self.reset_messages()
         self.reset_notes(keep_login=False)
@@ -337,6 +339,7 @@ class Window(ContactsMixin, MessagesMixin, NotesMixin, PairingMixin, OrgsMixin, 
         self.load_filtered()
         self.calendar_features_changed()
         self.orgs_features_changed()
+        self.nests_features_changed()
         self.notes_features_changed()
         if changed:
             self.render_all()
@@ -394,6 +397,10 @@ class Window(ContactsMixin, MessagesMixin, NotesMixin, PairingMixin, OrgsMixin, 
         sidebar.append(self.orgs_button)
         self.notes_button = self.side_button("Meeting notes", "x-office-document-symbolic", "Meeting notes", lambda: self.show_page("notes"))
         sidebar.append(self.notes_button)
+        # Nests (docs/nests/phase-b.md): Products, shown only while the postbox enables `nests`.
+        self.products_button = self.side_button("Products", "applications-other-symbolic", "Products: inboxes, Nests and services",
+                                                lambda: self.show_page("products"))
+        sidebar.append(self.products_button)
         self.peer_search = Gtk.SearchEntry(placeholder_text="Search conversations")
         self.peer_search.connect("search-changed", lambda _: self.render_peers())
         sidebar.append(self.peer_search)
@@ -474,6 +481,16 @@ class Window(ContactsMixin, MessagesMixin, NotesMixin, PairingMixin, OrgsMixin, 
         self.timer_badge = label("", "pp-meta")
         self.timer_badge.set_visible(False)
         toolbar.append(self.timer_badge)
+        # A Nest conversation shows the Nest's status and a way to its page (Nests B3).
+        self.nest_badge = label("", "pp-meta")
+        self.nest_badge.set_visible(False)
+        toolbar.append(self.nest_badge)
+        self.nest_manage_button = button("Nest settings", self.open_nest_for_peer, "emblem-system-symbolic", "flat")
+        self.nest_manage_button.set_visible(False)
+        toolbar.append(self.nest_manage_button)
+        self.nest_file_button = button("Add a file to this Nest", self.nest_add_file_for_peer, "mail-attachment-symbolic", "flat")
+        self.nest_file_button.set_visible(False)
+        toolbar.append(self.nest_file_button)
         # Calls run in the web inbox: no Linux WebKitGTK build ships WebRTC (see README).
         self.voice_call_button = button("Voice call", lambda: self.call(False), "call-start-symbolic", "flat")
         self.video_call_button = button("Video call", lambda: self.call(True), "camera-video-symbolic", "flat")
@@ -515,6 +532,11 @@ class Window(ContactsMixin, MessagesMixin, NotesMixin, PairingMixin, OrgsMixin, 
         self.blocked_banner.append(button("Unblock", lambda: self.unblock_peer()))
         self.blocked_banner.set_visible(False)
         detail.append(self.blocked_banner)
+        self.nest_panel = box(8, margin=12)
+        self.nest_panel_holder = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, propagate_natural_height=True,
+                                                    max_content_height=240, child=self.nest_panel)
+        self.nest_panel_holder.set_visible(False)
+        detail.append(self.nest_panel_holder)
         self.mode_holder = box(0)
         self.mode_holder.set_visible(False)
         detail.append(self.mode_holder)
@@ -559,6 +581,8 @@ class Window(ContactsMixin, MessagesMixin, NotesMixin, PairingMixin, OrgsMixin, 
         self.main_stack.add_named(self.build_calendar_page(), "calendar")
         self.main_stack.add_named(self.build_orgs_page(), "orgs")
         self.main_stack.add_named(self.build_notes_page(), "notes")
+        self.main_stack.add_named(self.build_products_page(), "products")
+        self.main_stack.add_named(self.build_nest_page(), "nest")
         self.main_stack.set_visible_child_name("conversation")
         panes = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL, position=270)
         panes.set_start_child(sidebar_ground)
@@ -638,6 +662,7 @@ class Window(ContactsMixin, MessagesMixin, NotesMixin, PairingMixin, OrgsMixin, 
             self.groups_tick()
             self.calendar_tick()
             self.orgs_tick()
+            self.nests_tick()
             if any(m.get("expires_at") for m in self.messages):
                 live = live_messages(self.messages)
                 if len(live) != len(self.messages):
@@ -877,6 +902,8 @@ class Window(ContactsMixin, MessagesMixin, NotesMixin, PairingMixin, OrgsMixin, 
                 menu.append("Block…", "conversation.block")
         self.conversation_menu.set_menu_model(menu)
         self.conversation_menu.set_visible(bool(self.peer))
+        if getattr(self, "nest_badge", None) is not None:
+            self.nest_chrome()
 
     def unblock_peer(self):
         """The banner's Unblock: removes the exact block, or the namespace rule that covers it."""
@@ -1855,12 +1882,14 @@ class Window(ContactsMixin, MessagesMixin, NotesMixin, PairingMixin, OrgsMixin, 
         self.lease = self.mailbox_lease = None
         self.reset_calendar()
         self.reset_orgs()
+        self.reset_nests()
         self.reset_pairing()
         self.reset_notes(keep_login=False)
         self.reset_contacts()
         self.calendar_button.set_visible(False)
         self.orgs_button.set_visible(False)
         self.notes_button.set_visible(False)
+        self.products_button.set_visible(False)
         self.sync_side_nav()
         self.identity = self.peer = self.subject = None
         self.messages, self.contacts, self.threads, self.archived, self.mailboxes = [], [], [], [], []

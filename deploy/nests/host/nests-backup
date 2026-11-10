@@ -67,3 +67,5 @@ borg create --read-special --compression zstd,3 --stats \
   "::nests-$STAMP" "${PATHS[@]}"
 borg prune --glob-archives 'nests-*' --keep-daily 14 --keep-weekly 8 --keep-monthly 6
 echo "nests-backup: archive nests-$STAMP, ${#SNAPS[@]} volume(s)"
+# Phase B6: the success marker Prometheus reads (nests_backup_last_success_seconds).
+date +%s > /var/lib/nests/backup-last-success.tmp && mv /var/lib/nests/backup-last-success.tmp /var/lib/nests/backup-last-success

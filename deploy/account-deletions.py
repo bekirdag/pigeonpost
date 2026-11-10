@@ -239,6 +239,11 @@ def erase(conn, request_id, blob_root, evidence):
         # their setups are kept for refunds, no longer naming the person; open intents go.
         if has(conn, "nest_purchase_intents"):
             conn.execute("DELETE FROM nest_purchase_intents WHERE account_id=?", (account,))
+        # File names on a Nest are the person's data; the files themselves went with the Nest.
+        if has(conn, "nest_files"):
+            conn.execute("DELETE FROM nest_files WHERE account_id=?", (account,))
+        if has(conn, "nest_approvals"):
+            conn.execute("DELETE FROM nest_approvals WHERE account_id=?", (account,))
         for table in ("apple_handle_plans", "apple_plan_names", "nest_store_purchases", "nest_setups"):
             if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone():
                 conn.execute("UPDATE " + table + " SET account_id=? WHERE account_id=?", ("erased_" + request_id, account))

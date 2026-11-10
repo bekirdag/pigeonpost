@@ -146,6 +146,8 @@ fun SettingsDialog(state: InboxState, session: SessionState, fixtures: Boolean, 
                 if (state.has("orgs") && model?.deviceApproval != null) SettingsRow("Sign in a machine", "Review an agent's terminal code", Icons.Outlined.Computer) { dismiss(); model.openDeviceApproval() }
                 if (state.has("orgs") && state.has("groups") && model?.organizationRooms != null) SettingsRow("Organization rooms", "Your team's encrypted conversations", Icons.Outlined.Business) { dismiss(); model.openOrganizationRooms() }
                 if (state.has(Features.MEETING_SUMMARIES) && model?.meetingNotes != null) SettingsRow("Meeting notes", "Summaries and transcripts of calls you agreed to", Icons.Outlined.Description) { dismiss(); model.openMeetingNotes() }
+                if (state.has(dev.pigeonpost.core.nests.NestRules.FEATURE) && model?.nests != null)
+                    SettingsRow("Products", "Inboxes, Nests and Services", Icons.Outlined.Storefront) { dismiss(); model.openProducts() }
                 SettingsRow("Handles", "Your names and subscriptions", Icons.Outlined.AlternateEmail) { navigate(SettingsPage.HANDLES) }
                 SettingsRow("Inbox and storage", "Storage and archived conversations", Icons.Outlined.Inbox) { navigate(SettingsPage.INBOX) }
                 if (state.has(Features.AVATARS) && model != null) SettingsRow("Profile picture", "Your face instead of initials", Icons.Outlined.Face) { navigate(SettingsPage.PROFILE) }

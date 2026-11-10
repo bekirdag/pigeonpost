@@ -125,17 +125,17 @@
   }
 
   const ICONS = {
-    copy: '<svg viewBox="0 0 20 20" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M13 4.6A2 2 0 0011.2 3.5H5.5a2 2 0 00-2 2v5.7A2 2 0 004.6 13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
-    reply: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M8 5L3.5 9.5 8 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 9.5h7.5a5 5 0 015 5v1" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
-    edit: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M13.6 3.6a2 2 0 012.8 2.8L7 15.8l-3.6.8.8-3.6 9.4-9.4z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M12.2 5l2.8 2.8" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
-    check: '<svg viewBox="0 0 16 12" aria-hidden="true"><path d="M1.5 6.5l3.5 3.5 7-8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-    checks: '<svg viewBox="0 0 20 12" aria-hidden="true"><path d="M1.5 6.5l3.5 3.5 7-8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M9 9.2l.8.8 7-8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    copy: '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2.5"/><path d="M15 9V6.5A2.5 2.5 0 0 0 12.5 4h-6A2.5 2.5 0 0 0 4 6.5v6A2.5 2.5 0 0 0 6.5 15H9"/></svg>',
+    reply: '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>',
+    edit: '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L18.5 9.5a2.1 2.1 0 0 0-4-4L4 16v4Z"/><path d="M13.5 6.5l4 4"/></svg>',
+    check: '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l4.5 4.5L18 7.5"/></svg>',
+    checks: '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12.5l4 4 8-9M10 16.5l1 1 8-10"/></svg>',
     clock: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 4.8V8l2.2 1.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
     gear: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M8.6 2.5h2.8l.4 2a5.6 5.6 0 011.5.9l1.9-.7 1.4 2.4-1.5 1.3a5.6 5.6 0 010 1.7l1.5 1.3-1.4 2.4-1.9-.7a5.6 5.6 0 01-1.5.9l-.4 2H8.6l-.4-2a5.6 5.6 0 01-1.5-.9l-1.9.7-1.4-2.4 1.5-1.3a5.6 5.6 0 010-1.7L3.4 7.1l1.4-2.4 1.9.7a5.6 5.6 0 011.5-.9z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><circle cx="10" cy="10" r="2.2" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>',
     warn: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3l7.5 13h-15z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M10 8v3.5M10 13.8v.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
   };
 
-  // The marks themselves, as a node. `seenAt` labels the green ticks with when.
+  // The marks themselves, as a node. `seenAt` labels the seen ticks with when.
   function tickNode(kind, seenAt) {
     if (!kind) return null;
     const span = document.createElement("span");
@@ -163,12 +163,13 @@
     return span;
   }
 
+  const ACTION_TIPS = { copy: "Copy", edit: "Edit", reply: "Reply" };
   // One small icon button for the row under a bubble.
   function actionButton(kind, label, onClick) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "msg-action " + kind;
-    button.title = label;
+    button.dataset.tip = ACTION_TIPS[kind] || label;
     button.setAttribute("aria-label", label);
     button.innerHTML = ICONS[kind];
     button.addEventListener("click", onClick);
@@ -182,7 +183,9 @@
         await navigator.clipboard.writeText(getText());
         button.classList.add("copied");
         button.innerHTML = ICONS.check;
-        setTimeout(() => { button.classList.remove("copied"); button.innerHTML = ICONS.copy; }, 1400);
+        button.dataset.tip = "Copied";
+        toast("Copied to clipboard");
+        setTimeout(() => { button.classList.remove("copied"); button.innerHTML = ICONS.copy; button.dataset.tip = ACTION_TIPS.copy; }, 1400);
       } catch (_) {
         // Clipboard access can be refused outright; say nothing rather than throw a dialog.
       }
@@ -2316,11 +2319,14 @@
     setTimeout(() => row.classList.remove("flash"), 1600);
   }
 
+  const SEND_HINT = "<kbd>Enter</kbd> to send · <kbd>Shift</kbd>+<kbd>Enter</kbd> new line";
   // Replying to or editing one message. One mode at a time, and it belongs to one conversation.
   let composeMode = null;
   function setComposeMode(mode) {
     composeMode = mode;
     const bar = $("compose-context");
+    $("compose-hint").innerHTML = !mode ? SEND_HINT : mode.kind === "edit" ? "<kbd>Enter</kbd> to save · <kbd>Esc</kbd> to cancel" : "<kbd>Enter</kbd> to send · <kbd>Esc</kbd> to cancel";
+    $("send-btn").setAttribute("aria-label", mode && mode.kind === "edit" ? "Save edit" : "Send");
     if (!mode) {
       bar.hidden = true;
       $("composer").classList.remove("editing");
@@ -2331,7 +2337,7 @@
     $("composer").classList.toggle("editing", mode.kind === "edit");
     $("compose-context-icon").innerHTML = mode.kind === "edit" ? ICONS.edit : ICONS.reply;
     $("compose-context-title").textContent = mode.kind === "edit"
-      ? "Editing message"
+      ? "Edit message"
       : "Replying to " + (mode.m.kind === "out" ? "yourself" : (mode.m.alias || $("peer-name").textContent || displayName(mode.m.address || state.openPeer)));
     $("compose-context-line").textContent = quoteExcerpt(copyTextOf(mode.m), mode.m.attachments);
     $("compose-context-close").setAttribute("aria-label", mode.kind === "edit" ? "Cancel editing" : "Cancel reply");
@@ -4494,6 +4500,7 @@
       const style = getComputedStyle(compose);
       const border = (parseFloat(style.borderTopWidth) || 0) + (parseFloat(style.borderBottomWidth) || 0);
       compose.style.height = Math.min(compose.scrollHeight + border, window.innerHeight * 0.4) + "px";
+      $("compose-count").textContent = compose.value.length > 200 ? compose.value.length + " chars" : "";
       updateSendAvailability();
     };
     compose.addEventListener("input", autosize);
@@ -4514,6 +4521,7 @@
 
     wireAttach();
     wireDrop();
+    window.PigeonpostEmoji?.attach(compose);
     $("composer").addEventListener("submit", (e) => {
       e.preventDefault();
       const text = compose.value.trim();

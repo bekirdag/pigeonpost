@@ -66,7 +66,7 @@
 <h1>nests</h1>
 <nav class="tagnav"><a href="/api-reference">All</a><a href="/api-ref-calendar">calendar</a><a href="/api-ref-meta">meta</a><a href="/api-ref-nests" class="on">nests</a><a href="/api-ref-meetings">meetings</a><a href="/api-ref-accounts">accounts</a><a href="/api-ref-identities">identities</a><a href="/api-ref-messaging">messaging</a><a href="/api-ref-attachments">attachments</a><a href="/api-ref-threads">threads</a><a href="/api-ref-trust">trust</a><a href="/api-ref-calls">calls</a><a href="/api-ref-profile">profile</a><a href="/api-ref-phone">phone</a><a href="/api-ref-contacts">contacts</a><a href="/api-ref-events">events</a><a href="/api-ref-handles">handles</a><a href="/api-ref-purchases">purchases</a><a href="/api-ref-devices">devices</a><a href="/api-ref-mcp">mcp</a><a href="/api-ref-operator">operator</a><a href="/api-ref-groups">groups</a><a href="/api-ref-streams">streams</a><a href="/api-ref-shell">shell</a><a href="/api-ref-mls">mls</a><a href="/api-ref-organizations">organizations</a><a href="/api-ref-device-login">device-login</a></nav>
 <p>Nests (hosted agents) — packages, purchases, slots and paid setups (feature <code>nests</code>, docs/nests/).</p>
-<div class="tw"><table><thead><tr><th>Method</th><th>Path</th><th>Does</th></tr></thead><tbody><tr><td><a href="#listNestPackages"><span class="method">GET</span></a></td><td><code>/v1/nest-packages</code></td><td>The Nest package catalog and this account&#x27;s store binding tokens (feature <code>nests</code>)</td></tr><tr><td><a href="#listNests"><span class="method">GET</span></a></td><td><code>/v1/nests</code></td><td>This account&#x27;s Nest allowance, Nests and paid setups (feature <code>nests</code>)</td></tr><tr><td><a href="#createNest"><span class="method">POST</span></a></td><td><code>/v1/nests</code></td><td>Create a Nest in a free slot of the account&#x27;s package (a person only)</td></tr><tr><td><a href="#enrollNest"><span class="method">POST</span></a></td><td><code>/v1/nests/enroll</code></td><td>A Nest sandbox redeems its one-time enrollment code (no credential)</td></tr><tr><td><a href="#createNestPurchaseIntent"><span class="method">POST</span></a></td><td><code>/v1/nest-purchases/intents</code></td><td>Record a purchase intent before a store sheet or web checkout (a person only)</td></tr><tr><td><a href="#claimNestPurchaseApple"><span class="method">POST</span></a></td><td><code>/v1/nest-purchases/apple</code></td><td>Claim or restore an App Store Nest subscription (a person only)</td></tr><tr><td><a href="#claimNestPurchaseGoogle"><span class="method">POST</span></a></td><td><code>/v1/nest-purchases/google</code></td><td>Claim or restore a Google Play Nest subscription (a person only)</td></tr><tr><td><a href="#retryNestSetup"><span class="method">POST</span></a></td><td><code>/v1/nest-setups/{id}/retry</code></td><td>Retry a paid-but-unprovisioned Nest setup now (a person only)</td></tr></tbody></table></div>
+<div class="tw"><table><thead><tr><th>Method</th><th>Path</th><th>Does</th></tr></thead><tbody><tr><td><a href="#listNestPackages"><span class="method">GET</span></a></td><td><code>/v1/nest-packages</code></td><td>The Nest package catalog and this account&#x27;s store binding tokens (feature <code>nests</code>)</td></tr><tr><td><a href="#listNests"><span class="method">GET</span></a></td><td><code>/v1/nests</code></td><td>This account&#x27;s Nest allowance, Nests and paid setups (feature <code>nests</code>)</td></tr><tr><td><a href="#createNest"><span class="method">POST</span></a></td><td><code>/v1/nests</code></td><td>Create a Nest in a free slot of the account&#x27;s package (a person only)</td></tr><tr><td><a href="#getNest"><span class="method">GET</span></a></td><td><code>/v1/nests/{nest}</code></td><td>One of this account&#x27;s Nests with its status header (feature <code>nests</code>)</td></tr><tr><td><a href="#renameNest"><span class="method">PATCH</span></a></td><td><code>/v1/nests/{nest}</code></td><td>Rename a Nest (a person only)</td></tr><tr><td><a href="#deleteNest"><span class="method">DELETE</span></a></td><td><code>/v1/nests/{nest}</code></td><td>Delete a Nest (a person only; the label typed back as confirmation)</td></tr><tr><td><a href="#listNestFiles"><span class="method">GET</span></a></td><td><code>/v1/nests/{nest}/files</code></td><td>The Nest&#x27;s files, their parse status and coverage, and its storage quota</td></tr><tr><td><a href="#uploadNestFile"><span class="method">POST</span></a></td><td><code>/v1/nests/{nest}/files</code></td><td>Upload one file to the Nest (a person only, at most 25 MiB)</td></tr><tr><td><a href="#deleteNestFile"><span class="method">DELETE</span></a></td><td><code>/v1/nests/{nest}/files/{file}</code></td><td>Remove a file and everything parsed from it (a person only)</td></tr><tr><td><a href="#proposeNestAction"><span class="method">POST</span></a></td><td><code>/v1/nest-approvals</code></td><td>A Nest proposes one typed tool call for its owner to approve (the Nest&#x27;s mailbox credential)</td></tr><tr><td><a href="#listNestApprovals"><span class="method">GET</span></a></td><td><code>/v1/nests/{nest}/approvals</code></td><td>The Nest&#x27;s approval cards, newest first (the last 100)</td></tr><tr><td><a href="#decideNestApproval"><span class="method">POST</span></a></td><td><code>/v1/nests/{nest}/approvals/{approval}/{decision}</code></td><td>Approve or reject exactly the call that was shown (a person only)</td></tr><tr><td><a href="#pauseNest"><span class="method">POST</span></a></td><td><code>/v1/nests/{nest}/pause</code></td><td>Pause a Nest (a person only); mail waits until it is resumed</td></tr><tr><td><a href="#resumeNest"><span class="method">POST</span></a></td><td><code>/v1/nests/{nest}/resume</code></td><td>Resume a Nest its owner paused (a person only)</td></tr><tr><td><a href="#getNestUsage"><span class="method">GET</span></a></td><td><code>/v1/nests/{nest}/usage</code></td><td>This month&#x27;s model tokens, running time and storage, from the Nests ledger</td></tr><tr><td><a href="#exportNest"><span class="method">GET</span></a></td><td><code>/v1/nests/{nest}/export</code></td><td>Download the Nest&#x27;s files, their text and its conversations as a zip (a person only)</td></tr><tr><td><a href="#listOrgNests"><span class="method">GET</span></a></td><td><code>/v1/orgs/{org}/nests</code></td><td>The organization&#x27;s Nests a member may act on (feature <code>nests</code>)</td></tr><tr><td><a href="#createOrgNest"><span class="method">POST</span></a></td><td><code>/v1/orgs/{org}/nests</code></td><td>Create an org-owned Nest on a new org agent address (ManageAgents)</td></tr><tr><td><a href="#enrollNest"><span class="method">POST</span></a></td><td><code>/v1/nests/enroll</code></td><td>A Nest sandbox redeems its one-time enrollment code (no credential)</td></tr><tr><td><a href="#createNestPurchaseIntent"><span class="method">POST</span></a></td><td><code>/v1/nest-purchases/intents</code></td><td>Record a purchase intent before a store sheet or web checkout (a person only)</td></tr><tr><td><a href="#claimNestPurchaseApple"><span class="method">POST</span></a></td><td><code>/v1/nest-purchases/apple</code></td><td>Claim or restore an App Store Nest subscription (a person only)</td></tr><tr><td><a href="#claimNestPurchaseGoogle"><span class="method">POST</span></a></td><td><code>/v1/nest-purchases/google</code></td><td>Claim or restore a Google Play Nest subscription (a person only)</td></tr><tr><td><a href="#retryNestSetup"><span class="method">POST</span></a></td><td><code>/v1/nest-setups/{id}/retry</code></td><td>Retry a paid-but-unprovisioned Nest setup now (a person only)</td></tr></tbody></table></div>
 <p>Base URL <code>https://postbox.pigeonpost.dev</code>. Overview: <a href="/api">HTTP API</a>.</p>
 <section class="op">
 <h2 id="listNestPackages"><span class="method">GET</span> <code class="path">/v1/nest-packages</code><a class="ah" href="#listNestPackages">#</a></h2>
@@ -164,6 +164,10 @@
       &quot;label&quot;: &quot;string&quot;,
       &quot;state&quot;: &quot;string&quot;,
       &quot;funding&quot;: &quot;ops&quot;,
+      &quot;status&quot;: &quot;ready&quot;,
+      &quot;role&quot;: &quot;owner&quot;,
+      &quot;org_id&quot;: &quot;string&quot;,
+      &quot;status_reason&quot;: &quot;string&quot;,
       &quot;paused_reason&quot;: &quot;string&quot;,
       &quot;delete_after&quot;: 0,
       &quot;created_at&quot;: 0
@@ -216,6 +220,396 @@
   -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
   -H &quot;Content-Type: application/json&quot; \
   -d &#x27;{&quot;label&quot;: &quot;string&quot;}&#x27;</code></pre>
+</section>
+<section class="op">
+<h2 id="getNest"><span class="method">GET</span> <code class="path">/v1/nests/{nest}</code><a class="ah" href="#getNest">#</a></h2>
+<p class="op-sum">One of this account&#x27;s Nests with its status header (feature <code>nests</code>)</p>
+<p class="op-facts">Credentials: <code>apiKey</code>, <code>memberToken</code></p>
+<p><code>status</code> is what a client shows above the conversation: <code>ready</code>, <code>working</code> (a run reported <code>working</code> in the last 15 minutes), <code>needs_you</code> (<code>status_reason: payment</code>), <code>paused</code> (<code>over_capacity</code> or by the owner) or <code>unavailable</code> (<code>setting_up</code>, <code>failed</code>). Another account&#x27;s Nest answers 404.</p>
+<h3>Parameters</h3>
+<div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>nest</code></td><td>path</td><td>string</td><td>yes</td><td></td></tr></tbody></table></div>
+<h3>Responses</h3>
+<p class="resp"><code>200</code> The Nest.</p>
+<pre class="lang-json"><code>{
+  &quot;nest_id&quot;: &quot;string&quot;,
+  &quot;address&quot;: &quot;string&quot;,
+  &quot;label&quot;: &quot;string&quot;,
+  &quot;state&quot;: &quot;string&quot;,
+  &quot;funding&quot;: &quot;ops&quot;,
+  &quot;status&quot;: &quot;ready&quot;,
+  &quot;role&quot;: &quot;owner&quot;,
+  &quot;org_id&quot;: &quot;string&quot;,
+  &quot;status_reason&quot;: &quot;string&quot;,
+  &quot;paused_reason&quot;: &quot;string&quot;,
+  &quot;delete_after&quot;: 0,
+  &quot;created_at&quot;: 0
+}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>feature_disabled</code> or <code>credential_not_accepted</code></td></tr><tr><td><code>404</code></td><td><code>no_nest</code></td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/nests/$NEST&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre>
+</section>
+<section class="op">
+<h2 id="renameNest"><span class="method">PATCH</span> <code class="path">/v1/nests/{nest}</code><a class="ah" href="#renameNest">#</a></h2>
+<p class="op-sum">Rename a Nest (a person only)</p>
+<p class="op-facts">Credentials: <code>memberToken</code></p>
+<h3>Parameters</h3>
+<div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>nest</code></td><td>path</td><td>string</td><td>yes</td><td></td></tr></tbody></table></div>
+<h3>Request body</h3><p><code>application/json</code></p>
+<pre class="lang-json"><code>{
+  &quot;label&quot;: &quot;string&quot;
+}</code></pre>
+<h3>Responses</h3>
+<p class="resp"><code>200</code> Renamed.</p>
+<pre class="lang-json"><code>{
+  &quot;nest_id&quot;: &quot;string&quot;,
+  &quot;label&quot;: &quot;string&quot;
+}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td><code>bad_label</code></td></tr><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>feature_disabled</code> or <code>human_required</code></td></tr><tr><td><code>404</code></td><td><code>no_nest</code></td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS -X PATCH &quot;https://postbox.pigeonpost.dev/v1/nests/$NEST&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d &#x27;{&quot;label&quot;: &quot;string&quot;}&#x27;</code></pre>
+</section>
+<section class="op">
+<h2 id="deleteNest"><span class="method">DELETE</span> <code class="path">/v1/nests/{nest}</code><a class="ah" href="#deleteNest">#</a></h2>
+<p class="op-sum">Delete a Nest (a person only; the label typed back as confirmation)</p>
+<p class="op-facts">Credentials: <code>memberToken</code></p>
+<p>Destroys the runtime and the encrypted volume, revokes the mailbox credential and closes open approvals. Export first. A package slot is free again at once.</p>
+<h3>Parameters</h3>
+<div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>nest</code></td><td>path</td><td>string</td><td>yes</td><td></td></tr></tbody></table></div>
+<h3>Request body</h3><p><code>application/json</code></p>
+<pre class="lang-json"><code>{
+  &quot;confirm&quot;: &quot;string&quot;
+}</code></pre>
+<h3>Responses</h3>
+<p class="resp"><code>200</code> Deleted.</p>
+<pre class="lang-json"><code>{
+  &quot;nest_id&quot;: &quot;string&quot;,
+  &quot;state&quot;: &quot;string&quot;
+}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td><code>confirm_required</code></td></tr><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>feature_disabled</code> or <code>human_required</code></td></tr><tr><td><code>404</code></td><td><code>no_nest</code></td></tr><tr><td><code>502</code></td><td><code>nestd_failed</code>: nothing was revoked; retry</td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS -X DELETE &quot;https://postbox.pigeonpost.dev/v1/nests/$NEST&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d &#x27;{&quot;confirm&quot;: &quot;string&quot;}&#x27;</code></pre>
+</section>
+<section class="op">
+<h2 id="listNestFiles"><span class="method">GET</span> <code class="path">/v1/nests/{nest}/files</code><a class="ah" href="#listNestFiles">#</a></h2>
+<p class="op-sum">The Nest&#x27;s files, their parse status and coverage, and its storage quota</p>
+<p class="op-facts">Credentials: <code>apiKey</code>, <code>memberToken</code></p>
+<h3>Parameters</h3>
+<div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>nest</code></td><td>path</td><td>string</td><td>yes</td><td></td></tr></tbody></table></div>
+<h3>Responses</h3>
+<p class="resp"><code>200</code> The files.</p>
+<pre class="lang-json"><code>{
+  &quot;files&quot;: [
+    {
+      &quot;file_id&quot;: &quot;string&quot;,
+      &quot;name&quot;: &quot;string&quot;,
+      &quot;bytes&quot;: 0,
+      &quot;sha256&quot;: &quot;string&quot;,
+      &quot;kind&quot;: &quot;text&quot;,
+      &quot;status&quot;: &quot;uploading&quot;,
+      &quot;reason&quot;: &quot;string&quot;,
+      &quot;coverage&quot;: {
+        &quot;units_total&quot;: 0,
+        &quot;units_text&quot;: 0
+      },
+      &quot;chars&quot;: 0,
+      &quot;warnings&quot;: [
+        &quot;string&quot;
+      ],
+      &quot;created_at&quot;: 0
+    }
+  ],
+  &quot;used_bytes&quot;: 0,
+  &quot;quota_bytes&quot;: 0
+}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>feature_disabled</code> or <code>credential_not_accepted</code></td></tr><tr><td><code>404</code></td><td><code>no_nest</code></td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/nests/$NEST/files&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre>
+</section>
+<section class="op">
+<h2 id="uploadNestFile"><span class="method">POST</span> <code class="path">/v1/nests/{nest}/files</code><a class="ah" href="#uploadNestFile">#</a></h2>
+<p class="op-sum">Upload one file to the Nest (a person only, at most 25 MiB)</p>
+<p class="op-facts">Credentials: <code>memberToken</code></p>
+<p>Raw bytes in the body; the display name, percent-encoded UTF-8, in <code>x-file-name</code>. The Nests host quarantines the file and parses it (PDF, DOCX, TXT/MD, CSV, XLSX, ZIP) in a separate sandbox with no network. Only verified text reaches the Nest. Archive entries with unsafe paths, archive bombs and nested archives are skipped and listed in <code>warnings</code>.</p>
+<h3>Parameters</h3>
+<div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>nest</code></td><td>path</td><td>string</td><td>yes</td><td></td></tr><tr><td><code>x-file-name</code></td><td>header</td><td>string</td><td>yes</td><td></td></tr></tbody></table></div>
+<h3>Request body</h3><p><code>application/octet-stream</code></p>
+<h3>Responses</h3>
+<p class="resp"><code>201</code> Stored and parsed (or rejected with a reason).</p>
+<pre class="lang-json"><code>{
+  &quot;file_id&quot;: &quot;string&quot;,
+  &quot;name&quot;: &quot;string&quot;,
+  &quot;bytes&quot;: 0,
+  &quot;sha256&quot;: &quot;string&quot;,
+  &quot;kind&quot;: &quot;text&quot;,
+  &quot;status&quot;: &quot;uploading&quot;,
+  &quot;reason&quot;: &quot;string&quot;,
+  &quot;coverage&quot;: {
+    &quot;units_total&quot;: 0,
+    &quot;units_text&quot;: 0
+  },
+  &quot;chars&quot;: 0,
+  &quot;warnings&quot;: [
+    &quot;string&quot;
+  ],
+  &quot;created_at&quot;: 0
+}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td><code>bad_name</code></td></tr><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>feature_disabled</code> or <code>human_required</code></td></tr><tr><td><code>404</code></td><td><code>no_nest</code></td></tr><tr><td><code>409</code></td><td><code>too_many_files</code></td></tr><tr><td><code>413</code></td><td><code>too_large</code></td></tr><tr><td><code>429</code></td><td><code>rate_limited</code></td></tr><tr><td><code>502</code></td><td><code>upload_failed</code>: nothing was stored</td></tr><tr><td><code>507</code></td><td><code>storage_full</code></td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/nests/$NEST/files&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
+  -H &quot;Content-Type: application/octet-stream&quot; \
+  --data-binary @file</code></pre>
+</section>
+<section class="op">
+<h2 id="deleteNestFile"><span class="method">DELETE</span> <code class="path">/v1/nests/{nest}/files/{file}</code><a class="ah" href="#deleteNestFile">#</a></h2>
+<p class="op-sum">Remove a file and everything parsed from it (a person only)</p>
+<p class="op-facts">Credentials: <code>memberToken</code></p>
+<h3>Parameters</h3>
+<div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>nest</code></td><td>path</td><td>string</td><td>yes</td><td></td></tr><tr><td><code>file</code></td><td>path</td><td>string</td><td>yes</td><td></td></tr></tbody></table></div>
+<h3>Responses</h3>
+<p class="resp"><code>200</code> Removed.</p>
+<pre class="lang-json"><code>{
+  &quot;file_id&quot;: &quot;string&quot;,
+  &quot;removed&quot;: false
+}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>feature_disabled</code> or <code>human_required</code></td></tr><tr><td><code>404</code></td><td><code>no_nest</code> or <code>no_file</code></td></tr><tr><td><code>502</code></td><td><code>nestd_failed</code></td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS -X DELETE &quot;https://postbox.pigeonpost.dev/v1/nests/$NEST/files/$FILE&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre>
+</section>
+<section class="op">
+<h2 id="proposeNestAction"><span class="method">POST</span> <code class="path">/v1/nest-approvals</code><a class="ah" href="#proposeNestAction">#</a></h2>
+<p class="op-sum">A Nest proposes one typed tool call for its owner to approve (the Nest&#x27;s mailbox credential)</p>
+<p class="op-facts">Credentials: <code>capToken</code></p>
+<p>Tools: <code>send_message {to, body}</code>. Nothing is carried out until the owner approves exactly this call. A newer proposal for the same tool and recipient replaces a pending one. Unknown tools (including anything in the never-auto set) are refused.</p>
+<h3>Request body</h3><p><code>application/json</code></p>
+<pre class="lang-json"><code>{
+  &quot;tool&quot;: &quot;send_message&quot;,
+  &quot;args&quot;: {}
+}</code></pre>
+<h3>Responses</h3>
+<p class="resp"><code>201</code> The approval card.</p>
+<pre class="lang-json"><code>{
+  &quot;approval_id&quot;: &quot;string&quot;,
+  &quot;status&quot;: &quot;string&quot;,
+  &quot;args_hash&quot;: &quot;string&quot;,
+  &quot;expires_at&quot;: 0
+}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td><code>unknown_tool</code>, <code>bad_args</code>, <code>bad_recipient</code> or <code>bad_body</code></td></tr><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>credential_not_accepted</code> or <code>not_a_nest</code></td></tr><tr><td><code>429</code></td><td><code>too_many_pending</code></td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/nest-approvals&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d &#x27;{&quot;tool&quot;: &quot;send_message&quot;, &quot;args&quot;: {}}&#x27;</code></pre>
+</section>
+<section class="op">
+<h2 id="listNestApprovals"><span class="method">GET</span> <code class="path">/v1/nests/{nest}/approvals</code><a class="ah" href="#listNestApprovals">#</a></h2>
+<p class="op-sum">The Nest&#x27;s approval cards, newest first (the last 100)</p>
+<p class="op-facts">Credentials: <code>apiKey</code>, <code>memberToken</code></p>
+<h3>Parameters</h3>
+<div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>nest</code></td><td>path</td><td>string</td><td>yes</td><td></td></tr></tbody></table></div>
+<h3>Responses</h3>
+<p class="resp"><code>200</code> The cards.</p>
+<pre class="lang-json"><code>{
+  &quot;approvals&quot;: [
+    {
+      &quot;approval_id&quot;: &quot;string&quot;,
+      &quot;tool&quot;: &quot;string&quot;,
+      &quot;call&quot;: {},
+      &quot;args_hash&quot;: &quot;string&quot;,
+      &quot;status&quot;: &quot;pending&quot;,
+      &quot;created_at&quot;: 0,
+      &quot;expires_at&quot;: 0,
+      &quot;decided_at&quot;: 0,
+      &quot;result&quot;: &quot;string&quot;
+    }
+  ]
+}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>feature_disabled</code> or <code>credential_not_accepted</code></td></tr><tr><td><code>404</code></td><td><code>no_nest</code></td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/nests/$NEST/approvals&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre>
+</section>
+<section class="op">
+<h2 id="decideNestApproval"><span class="method">POST</span> <code class="path">/v1/nests/{nest}/approvals/{approval}/{decision}</code><a class="ah" href="#decideNestApproval">#</a></h2>
+<p class="op-sum">Approve or reject exactly the call that was shown (a person only)</p>
+<p class="op-facts">Credentials: <code>memberToken</code></p>
+<p>The body echoes the <code>args_hash</code> the person saw. A changed call (<code>approval_changed</code>), a replaced, decided or expired card (<code>approval_closed</code>) and a recipient outside the destination policy (<code>recipient_not_allowed</code>: only the owner&#x27;s own mailboxes and contacts they allowed) are refused. An approved card is carried out once by the postbox, never by the Nest.</p>
+<h3>Parameters</h3>
+<div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>nest</code></td><td>path</td><td>string</td><td>yes</td><td></td></tr><tr><td><code>approval</code></td><td>path</td><td>string</td><td>yes</td><td></td></tr><tr><td><code>decision</code></td><td>path</td><td>string</td><td>yes</td><td>One of <code>approve</code>, <code>reject</code>.</td></tr></tbody></table></div>
+<h3>Request body</h3><p><code>application/json</code></p>
+<pre class="lang-json"><code>{
+  &quot;args_hash&quot;: &quot;string&quot;
+}</code></pre>
+<h3>Responses</h3>
+<p class="resp"><code>200</code> Decided (and, for approve, carried out).</p>
+<pre class="lang-json"><code>{
+  &quot;approval_id&quot;: &quot;string&quot;,
+  &quot;status&quot;: &quot;approved&quot;,
+  &quot;result&quot;: &quot;string&quot;
+}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>human_required</code>, <code>feature_disabled</code> or <code>recipient_not_allowed</code></td></tr><tr><td><code>404</code></td><td><code>no_nest</code> or <code>no_approval</code></td></tr><tr><td><code>409</code></td><td><code>approval_changed</code> or <code>approval_closed</code></td></tr><tr><td><code>429</code></td><td><code>rate_limited</code> (50 sends per Nest a day)</td></tr><tr><td><code>502</code></td><td><code>tool_failed</code></td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/nests/$NEST/approvals/$APPROVAL/$DECISION&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d &#x27;{&quot;args_hash&quot;: &quot;string&quot;}&#x27;</code></pre>
+</section>
+<section class="op">
+<h2 id="pauseNest"><span class="method">POST</span> <code class="path">/v1/nests/{nest}/pause</code><a class="ah" href="#pauseNest">#</a></h2>
+<p class="op-sum">Pause a Nest (a person only); mail waits until it is resumed</p>
+<p class="op-facts">Credentials: <code>memberToken</code></p>
+<h3>Parameters</h3>
+<div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>nest</code></td><td>path</td><td>string</td><td>yes</td><td></td></tr></tbody></table></div>
+<h3>Responses</h3>
+<p class="resp"><code>200</code> Paused.</p>
+<pre class="lang-json"><code>{
+  &quot;nest_id&quot;: &quot;string&quot;,
+  &quot;state&quot;: &quot;string&quot;
+}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>feature_disabled</code> or <code>human_required</code></td></tr><tr><td><code>404</code></td><td><code>no_nest</code></td></tr><tr><td><code>502</code></td><td><code>nestd_failed</code></td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/nests/$NEST/pause&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre>
+</section>
+<section class="op">
+<h2 id="resumeNest"><span class="method">POST</span> <code class="path">/v1/nests/{nest}/resume</code><a class="ah" href="#resumeNest">#</a></h2>
+<p class="op-sum">Resume a Nest its owner paused (a person only)</p>
+<p class="op-facts">Credentials: <code>memberToken</code></p>
+<p>A Nest paused for funding (<code>needs_payment</code>) or over its package (<code>over_capacity</code>) resumes only when that is resolved.</p>
+<h3>Parameters</h3>
+<div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>nest</code></td><td>path</td><td>string</td><td>yes</td><td></td></tr></tbody></table></div>
+<h3>Responses</h3>
+<p class="resp"><code>200</code> Running.</p>
+<pre class="lang-json"><code>{
+  &quot;nest_id&quot;: &quot;string&quot;,
+  &quot;state&quot;: &quot;string&quot;
+}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>402</code></td><td><code>needs_payment</code></td></tr><tr><td><code>403</code></td><td><code>feature_disabled</code> or <code>human_required</code></td></tr><tr><td><code>404</code></td><td><code>no_nest</code></td></tr><tr><td><code>409</code></td><td><code>over_capacity</code></td></tr><tr><td><code>502</code></td><td><code>nestd_failed</code></td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/nests/$NEST/resume&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre>
+</section>
+<section class="op">
+<h2 id="getNestUsage"><span class="method">GET</span> <code class="path">/v1/nests/{nest}/usage</code><a class="ah" href="#getNestUsage">#</a></h2>
+<p class="op-sum">This month&#x27;s model tokens, running time and storage, from the Nests ledger</p>
+<p class="op-facts">Credentials: <code>apiKey</code>, <code>memberToken</code></p>
+<h3>Parameters</h3>
+<div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>nest</code></td><td>path</td><td>string</td><td>yes</td><td></td></tr></tbody></table></div>
+<h3>Responses</h3>
+<p class="resp"><code>200</code> Usage.</p>
+<pre class="lang-json"><code>{
+  &quot;nest_id&quot;: &quot;string&quot;,
+  &quot;period&quot;: &quot;string&quot;,
+  &quot;input_tokens&quot;: {},
+  &quot;output_tokens&quot;: {},
+  &quot;requests&quot;: 0,
+  &quot;running_secs&quot;: 0,
+  &quot;files_bytes&quot;: 0,
+  &quot;disk&quot;: {},
+  &quot;package&quot;: {}
+}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>feature_disabled</code> or <code>credential_not_accepted</code></td></tr><tr><td><code>404</code></td><td><code>no_nest</code></td></tr><tr><td><code>502</code></td><td><code>nestd_failed</code></td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/nests/$NEST/usage&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre>
+</section>
+<section class="op">
+<h2 id="exportNest"><span class="method">GET</span> <code class="path">/v1/nests/{nest}/export</code><a class="ah" href="#exportNest">#</a></h2>
+<p class="op-sum">Download the Nest&#x27;s files, their text and its conversations as a zip (a person only)</p>
+<p class="op-facts">Credentials: <code>memberToken</code></p>
+<h3>Parameters</h3>
+<div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>nest</code></td><td>path</td><td>string</td><td>yes</td><td></td></tr></tbody></table></div>
+<h3>Responses</h3>
+<p class="resp"><code>200</code> The zip.</p>
+<p><code>application/zip</code></p>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>feature_disabled</code> or <code>human_required</code></td></tr><tr><td><code>404</code></td><td><code>no_nest</code></td></tr><tr><td><code>413</code></td><td><code>export_too_large</code> (over 512 MiB of files: contact support)</td></tr><tr><td><code>502</code></td><td><code>nestd_failed</code></td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/nests/$NEST/export&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre>
+</section>
+<section class="op">
+<h2 id="listOrgNests"><span class="method">GET</span> <code class="path">/v1/orgs/{org}/nests</code><a class="ah" href="#listOrgNests">#</a></h2>
+<p class="op-sum">The organization&#x27;s Nests a member may act on (feature <code>nests</code>)</p>
+<p class="op-facts">Credentials: <code>memberToken</code></p>
+<p>Nest admins (owner, admin, agent_admin) see every org Nest; other members see the ones they hold a live <code>operate_nest</code> delegation for. Includes the org&#x27;s Nest allowance.</p>
+<h3>Parameters</h3>
+<div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>org</code></td><td>path</td><td>string</td><td>yes</td><td></td></tr></tbody></table></div>
+<h3>Responses</h3>
+<p class="resp"><code>200</code> The Nests.</p>
+<pre class="lang-json"><code>{
+  &quot;nests&quot;: [
+    {
+      &quot;nest_id&quot;: &quot;string&quot;,
+      &quot;address&quot;: &quot;string&quot;,
+      &quot;label&quot;: &quot;string&quot;,
+      &quot;state&quot;: &quot;string&quot;,
+      &quot;role&quot;: &quot;owner&quot;
+    }
+  ],
+  &quot;allowance&quot;: {
+    &quot;slots&quot;: 0,
+    &quot;used&quot;: 0
+  },
+  &quot;package&quot;: {}
+}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>feature_disabled</code> or <code>not_org_member</code></td></tr><tr><td><code>404</code></td><td><code>not_found</code></td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/orgs/$ORG/nests&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre>
+</section>
+<section class="op">
+<h2 id="createOrgNest"><span class="method">POST</span> <code class="path">/v1/orgs/{org}/nests</code><a class="ah" href="#createOrgNest">#</a></h2>
+<p class="op-sum">Create an org-owned Nest on a new org agent address (ManageAgents)</p>
+<p class="op-facts">Credentials: <code>memberToken</code></p>
+<p>Uses one of the org&#x27;s agent addresses (10 × seats) and, separately, a free slot of a Nest package the organization bought. Each listed member gets the <code>operate_nest</code> delegation.</p>
+<h3>Parameters</h3>
+<div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>org</code></td><td>path</td><td>string</td><td>yes</td><td></td></tr></tbody></table></div>
+<h3>Request body</h3><p><code>application/json</code></p>
+<pre class="lang-json"><code>{
+  &quot;handle&quot;: &quot;string&quot;,
+  &quot;label&quot;: &quot;string&quot;,
+  &quot;operators&quot;: [
+    &quot;string&quot;
+  ]
+}</code></pre>
+<h3>Responses</h3>
+<p class="resp"><code>201</code> Created; the sandbox enrolls within seconds.</p>
+<pre class="lang-json"><code>{
+  &quot;nest_id&quot;: &quot;string&quot;,
+  &quot;address&quot;: &quot;string&quot;,
+  &quot;handle&quot;: &quot;string&quot;,
+  &quot;state&quot;: &quot;string&quot;
+}</code></pre>
+<h3>Errors</h3>
+<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td><code>bad_label</code>, <code>invalid_member</code> or an invalid handle</td></tr><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>402</code></td><td><code>no_nest_slot</code></td></tr><tr><td><code>403</code></td><td><code>feature_disabled</code> or the role does not allow it</td></tr><tr><td><code>409</code></td><td><code>agent_limit</code> or <code>handle_taken</code></td></tr></tbody></table></div>
+<h3>Example</h3>
+<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/orgs/$ORG/nests&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d &#x27;{&quot;handle&quot;: &quot;string&quot;, &quot;label&quot;: &quot;string&quot;, &quot;operators&quot;: [&quot;string&quot;]}&#x27;</code></pre>
 </section>
 <section class="op">
 <h2 id="enrollNest"><span class="method">POST</span> <code class="path">/v1/nests/enroll</code><a class="ah" href="#enrollNest">#</a></h2>
@@ -334,6 +728,10 @@
       &quot;label&quot;: &quot;string&quot;,
       &quot;state&quot;: &quot;string&quot;,
       &quot;funding&quot;: &quot;ops&quot;,
+      &quot;status&quot;: &quot;ready&quot;,
+      &quot;role&quot;: &quot;owner&quot;,
+      &quot;org_id&quot;: &quot;string&quot;,
+      &quot;status_reason&quot;: &quot;string&quot;,
       &quot;paused_reason&quot;: &quot;string&quot;,
       &quot;delete_after&quot;: 0,
       &quot;created_at&quot;: 0
@@ -425,6 +823,10 @@
       &quot;label&quot;: &quot;string&quot;,
       &quot;state&quot;: &quot;string&quot;,
       &quot;funding&quot;: &quot;ops&quot;,
+      &quot;status&quot;: &quot;ready&quot;,
+      &quot;role&quot;: &quot;owner&quot;,
+      &quot;org_id&quot;: &quot;string&quot;,
+      &quot;status_reason&quot;: &quot;string&quot;,
       &quot;paused_reason&quot;: &quot;string&quot;,
       &quot;delete_after&quot;: 0,
       &quot;created_at&quot;: 0
@@ -513,6 +915,10 @@
       &quot;label&quot;: &quot;string&quot;,
       &quot;state&quot;: &quot;string&quot;,
       &quot;funding&quot;: &quot;ops&quot;,
+      &quot;status&quot;: &quot;ready&quot;,
+      &quot;role&quot;: &quot;owner&quot;,
+      &quot;org_id&quot;: &quot;string&quot;,
+      &quot;status_reason&quot;: &quot;string&quot;,
       &quot;paused_reason&quot;: &quot;string&quot;,
       &quot;delete_after&quot;: 0,
       &quot;created_at&quot;: 0

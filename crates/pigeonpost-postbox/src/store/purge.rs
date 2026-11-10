@@ -97,6 +97,13 @@ pub(crate) const TABLES: &[(&str, Rule)] = &[
     ("nest_store_purchases", Block(A, "account_id = ?1")),
     ("nest_setups", Block(A, "account_id = ?1")),
     ("nest_purchase_intents", Remove(A, "account_id = ?1")),
+    // File metadata of a live Nest: its content is on the Nest, which ops deletes first.
+    (
+        "nest_files",
+        Block(A, "account_id = ?1 AND deleted_at IS NULL"),
+    ),
+    // Approval cards carry message text a Nest proposed for the owner.
+    ("nest_approvals", Block(A, "account_id = ?1")),
     ("apple_plan_names", Block(A, "account_id = ?1")),
     ("plan_names", Block(A, "account_id = ?1")),
     ("test_handle_claims", Block(A, "account_id = ?1")),

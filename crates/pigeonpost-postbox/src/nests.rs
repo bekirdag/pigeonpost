@@ -59,8 +59,9 @@ use std::sync::Mutex;
 pub(crate) const CODE_SECS: u64 = 900;
 /// The signed message a sandbox proves its device key with.
 pub(crate) const ENROLL_CONTEXT: &str = "pigeonpost-nest-enroll-v1\0";
-/// The only verb a Phase A Nest is granted for its owner's own mailboxes.
-const GRANTED_VERB: &str = "answer_question";
+/// What a new Nest grants its owner's own mailboxes: questions as request envelopes (Phase A) and
+/// plain conversation (`chat`, Phase B3).
+const GRANTED_VERBS: &[&str] = &["answer_question", crate::verbs::NEST_CHAT];
 const MAX_ALLOW_SENDERS: usize = 8;
 /// At most one wake per Nest in this many seconds.
 pub(crate) const WAKE_DEBOUNCE_SECS: u64 = 10;
@@ -101,6 +102,9 @@ pub(crate) struct Runtime {
     pub(crate) output_tokens: u64,
     /// Last wake sent per Nest, for the debounce.
     woken: Mutex<HashMap<String, u64>>,
+    /// Phase B6: the Nests host's key-encryption key, released to nestd over the private link
+    /// (`POSTBOX_NESTS_KEK_FILE`, 64 hex characters). Never logged, never sent anywhere else.
+    pub(crate) kek: Option<zeroize::Zeroizing<String>>,
 }
 
 impl Default for Runtime {
@@ -111,6 +115,7 @@ impl Default for Runtime {
             input_tokens: 1_000_000,
             output_tokens: 100_000,
             woken: Mutex::new(HashMap::new()),
+            kek: None,
         }
     }
 }
@@ -182,6 +187,7 @@ impl Runtime {
             input_tokens: env_num("POSTBOX_NESTS_INPUT_TOKENS", d.input_tokens),
             output_tokens: env_num("POSTBOX_NESTS_OUTPUT_TOKENS", d.output_tokens),
             woken: Mutex::new(HashMap::new()),
+            kek: read_kek(),
         }
     }
 
@@ -260,6 +266,218 @@ impl Runtime {
             }
         }
     }
+}
+
+impl Runtime {
+    /// Upload one file's bytes to nestd (`PUT /v1/nests/{id}/files/{file}`), Phase B4. Longer
+    /// timeout than lifecycle calls: nestd parses the file in its own sandbox before answering.
+    pub(crate) async fn put_file(
+        &self,
+        nest_id: &str,
+        file_id: &str,
+        name: &str,
+        data: Vec<u8>,
+    ) -> Result<(u16, Value), NestdError> {
+        let path = format!("/v1/nests/{nest_id}/files/{file_id}");
+        match &self.transport {
+            Transport::Disabled => Err(NestdError::Unavailable),
+            Transport::Capture { calls, fail } => {
+                calls.lock().expect("capture lock").push(NestdCall {
+                    method: "PUT".into(),
+                    path,
+                    body: Some(json!({ "bytes": data.len(), "name": name })),
+                });
+                if fail.load(Ordering::SeqCst) {
+                    return Ok((500, json!({ "error": "capture_failure" })));
+                }
+                // The parser itself is tested in pigeonpost-nests; this answers as it would.
+                let m = pigeonpost_core_parse_stub(&data);
+                Ok((200, m))
+            }
+            Transport::Http { url, token, client } => {
+                let encoded: String = name
+                    .bytes()
+                    .map(|b| {
+                        if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {
+                            (b as char).to_string()
+                        } else {
+                            format!("%{b:02X}")
+                        }
+                    })
+                    .collect();
+                let resp = client
+                    .put(format!("{url}{path}"))
+                    .bearer_auth(token)
+                    .header("content-type", "application/octet-stream")
+                    .header("x-nest-file-name", encoded)
+                    .timeout(std::time::Duration::from_secs(180))
+                    .body(data)
+                    .send()
+                    .await
+                    .map_err(|e| NestdError::Failed(e.without_url().to_string()))?;
+                let status = resp.status().as_u16();
+                let value = resp.json::<Value>().await.unwrap_or(Value::Null);
+                Ok((status, value))
+            }
+        }
+    }
+}
+
+impl Runtime {
+    /// Download bytes from nestd (the export zip, Phase B5). Bounded by nestd's own export limit.
+    pub(crate) async fn get_bytes(&self, path: &str) -> Result<(u16, Vec<u8>), NestdError> {
+        match &self.transport {
+            Transport::Disabled => Err(NestdError::Unavailable),
+            Transport::Capture { calls, fail } => {
+                calls.lock().expect("capture lock").push(NestdCall {
+                    method: "GET".into(),
+                    path: path.to_string(),
+                    body: None,
+                });
+                if fail.load(Ordering::SeqCst) {
+                    return Ok((500, Vec::new()));
+                }
+                // An empty zip: end-of-central-directory record only.
+                let mut zip = b"PK\x05\x06".to_vec();
+                zip.extend_from_slice(&[0u8; 18]);
+                Ok((200, zip))
+            }
+            Transport::Http { url, token, client } => {
+                let resp = client
+                    .get(format!("{url}{path}"))
+                    .bearer_auth(token)
+                    .timeout(std::time::Duration::from_secs(600))
+                    .send()
+                    .await
+                    .map_err(|e| NestdError::Failed(e.without_url().to_string()))?;
+                let status = resp.status().as_u16();
+                let bytes = resp
+                    .bytes()
+                    .await
+                    .map_err(|e| NestdError::Failed(e.without_url().to_string()))?;
+                Ok((status, bytes.to_vec()))
+            }
+        }
+    }
+}
+
+/// Tests only: what nestd answers for an upload, without parsing (text-like bytes parse, others
+/// are rejected), so postbox tests do not depend on the Nests crate.
+fn pigeonpost_core_parse_stub(data: &[u8]) -> Value {
+    let text = std::str::from_utf8(data).is_ok() && !data.contains(&0);
+    json!({
+        "kind": if text { "text" } else { "unknown" },
+        "status": if text { "parsed" } else { "rejected" },
+        "reason": if text { Value::Null } else { json!("unsupported file type") },
+        "bytes": data.len(),
+        "coverage": { "units_total": 1, "units_text": if text { 1 } else { 0 } },
+        "parts": if text { 1 } else { 0 },
+        "chars": if text { data.len() } else { 0 },
+        "warnings": [],
+    })
+}
+
+/// Is `address` the mailbox of a Nest that has not been deleted?
+pub(crate) async fn is_nest_mailbox(state: &AppState, address: &str) -> bool {
+    let address = address.to_string();
+    state
+        .store
+        .group_read(move |c| -> GResult<bool> {
+            Ok(c.query_row(
+                "SELECT EXISTS(SELECT 1 FROM nests WHERE address = ?1 AND deleted_at IS NULL)",
+                [&address],
+                |r| r.get(0),
+            )?)
+        })
+        .await
+        .unwrap_or(false)
+}
+
+/// The KEK file named by `POSTBOX_NESTS_KEK_FILE`, if it holds exactly 64 hex characters.
+fn read_kek() -> Option<zeroize::Zeroizing<String>> {
+    let path = std::env::var("POSTBOX_NESTS_KEK_FILE").ok()?;
+    let text = zeroize::Zeroizing::new(std::fs::read_to_string(path.trim()).ok()?);
+    let hex = text.trim();
+    if hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        Some(zeroize::Zeroizing::new(hex.to_ascii_lowercase()))
+    } else {
+        tracing::warn!(
+            "POSTBOX_NESTS_KEK_FILE does not hold a 64-hex-character key; Nests stay locked"
+        );
+        None
+    }
+}
+
+/// Deleted Nests nestd must not keep (or bring back from a restore): the newest 1000.
+async fn tombstones(state: &AppState) -> Vec<String> {
+    state
+        .store
+        .group_read(|c| -> GResult<Vec<String>> {
+            let mut stmt = c.prepare(
+                "SELECT id FROM nests WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC LIMIT 1000",
+            )?;
+            let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+            Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+        })
+        .await
+        .unwrap_or_default()
+}
+
+/// One unlock call: release the KEK and replay tombstones. Idempotent on nestd.
+pub(crate) async fn unlock_once(state: &AppState) -> Result<Value, NestdError> {
+    let Some(kek) = state.nests.kek.as_ref() else {
+        return Err(NestdError::Unavailable);
+    };
+    let body = json!({ "kek": kek.as_str(), "tombstones": tombstones(state).await });
+    match state
+        .nests
+        .call(reqwest::Method::POST, "/v1/unlock", Some(body))
+        .await?
+    {
+        (200, v) => Ok(v),
+        (status, v) => Err(NestdError::Failed(format!(
+            "nestd answered {status}: {}",
+            v["error"].as_str().unwrap_or("error")
+        ))),
+    }
+}
+
+/// Phase B6: keep the Nests host unlocked and its deletions in line with ours. Every minute, so a
+/// rebooted host waits at most a minute, and a restored host destroys revoked Nests promptly.
+pub(crate) fn start_unlocker(state: AppState) {
+    if !state.nests.configured() || state.nests.kek.is_none() {
+        return;
+    }
+    tokio::spawn(async move {
+        let mut timer = tokio::time::interval(std::time::Duration::from_secs(60));
+        timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut was_ok = false;
+        loop {
+            timer.tick().await;
+            match unlock_once(&state).await {
+                Ok(v) => {
+                    if !was_ok {
+                        tracing::info!("Nests host unlocked");
+                    }
+                    if let Some(t) = v["tombstoned"].as_array().filter(|t| !t.is_empty()) {
+                        tracing::warn!(
+                            count = t.len(),
+                            "Nests host destroyed Nests the postbox had deleted"
+                        );
+                    }
+                    was_ok = true;
+                }
+                Err(e) => {
+                    let detail = match e {
+                        NestdError::Unavailable => "not configured".to_string(),
+                        NestdError::Failed(d) => d,
+                    };
+                    tracing::warn!(%detail, "Nests host unlock failed");
+                    was_ok = false;
+                }
+            }
+        }
+    });
 }
 
 // ---- wake on mail -------------------------------------------------------------------------------
@@ -559,6 +777,7 @@ async fn create_inner(
             ),
             quota_gib: None,
             audit_service: Some(service),
+            address: None,
         },
         Some((headers, peer)),
     )
@@ -589,6 +808,9 @@ pub(crate) struct Provision {
     pub budgets: (i64, i64),
     pub quota_gib: Option<u64>,
     pub audit_service: Option<&'static str>,
+    /// An existing mailbox to run the Nest as (an organization's agent, Nests B7) instead of
+    /// minting one. Its credential is still rotated by the enrollment, as for a minted one.
+    pub address: Option<String>,
 }
 
 /// Create one Nest: reserve the slot, mint its mailbox, grant the named senders, issue the one-time
@@ -607,6 +829,7 @@ pub(crate) async fn provision(
         budgets,
         quota_gib,
         audit_service,
+        address: existing,
     } = p;
     if !state.nests.configured() {
         return Err(GErr::new(
@@ -673,13 +896,18 @@ pub(crate) async fn provision(
     }
 
     // 2. The mailbox. Its capability token is dropped here, unread: nobody ever holds it.
-    let minted = crate::do_create_identity(
-        state,
-        Some(account.clone()),
-        Some(format!("nest: {label}")),
-        None,
-    )
-    .await;
+    let minted = match existing {
+        Some(a) => Ok(json!({ "address": a })),
+        None => {
+            crate::do_create_identity(
+                state,
+                Some(account.clone()),
+                Some(format!("nest: {label}")),
+                None,
+            )
+            .await
+        }
+    };
     let address = match minted {
         Ok(v) => v["address"].as_str().unwrap_or_default().to_string(),
         Err(e) => {
@@ -698,7 +926,23 @@ pub(crate) async fn provision(
         }
     };
 
-    // 3. The named senders, granted the one verb this phase answers.
+    // The row names its mailbox before any grant is written: a `chat` grant is only accepted on a
+    // mailbox that is a Nest.
+    {
+        let (id, addr) = (nest_id.clone(), address.clone());
+        state
+            .store
+            .group_tx(move |tx| -> GResult<()> {
+                tx.execute(
+                    "UPDATE nests SET address = ?2, updated_at = ?3 WHERE id = ?1",
+                    params![id, addr, now as i64],
+                )?;
+                Ok(())
+            })
+            .await?;
+    }
+
+    // 3. The named senders, granted what a Nest answers (questions and conversation).
     let me = state
         .store
         .get(address.clone())
@@ -719,7 +963,7 @@ pub(crate) async fn provision(
             None,
             Some(crate::ADMISSION_ALLOW.to_string()),
             Some(crate::AUTONOMY_AUTO.to_string()),
-            Some(vec![GRANTED_VERB.to_string()]),
+            Some(GRANTED_VERBS.iter().map(|v| v.to_string()).collect()),
             crate::TrustActor::Human,
         )
         .await?;

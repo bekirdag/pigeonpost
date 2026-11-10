@@ -71,3 +71,138 @@ Workspace hours are shown, not yet metered (B5).
   Apple purchases must carry the account's `appAccountToken`, Google purchases its obfuscated id.
 - Replaced (upgraded) Google tokens are retired and cannot be revived by a late verification;
   refunds cut the paid-through to the refund time.
+
+## B3 — chat with a Nest
+
+- **Verb.** Plain prose to a Nest mailbox from a sender its owner granted `chat` is decided `auto`
+  with verb `chat` (`verbs::decide_for`). It applies only when all of these hold:
+  - the recipient is a live Nest;
+  - the body is not a request envelope;
+  - it is 1–8000 characters.
+
+  Anywhere else prose stays held for a person. The `chat` grant itself is refused on a mailbox
+  that is not a Nest. A new Nest grants its owner's own mailboxes `answer_question` and `chat`;
+  strangers get nothing, so their mail stays data.
+- **agentd.** `chat` is runnable only on a `runtime = "nest"` route; a runtime with tools never
+  takes prose as work. The Nest runner's route enables `answer_question` and `chat`, read-only,
+  one run at a time.
+- **Runner.** A chat turn arrives as structured JSON (`nest_turn: 1`). The runner sends:
+  - a chat system prompt;
+  - the stored conversation with that sender;
+  - the new text in the user role.
+
+  History is one file per sender (hashed address) on the Nest's encrypted volume: the newest 40
+  turns, at most 24k characters replayed. A replied-to message and an edit notice ride in the
+  system role as labelled data.
+- **No-AI profile.** A Nest with no model allowance (Empty Nest) gets `402 no_model` from the
+  broker, and the runner replies that no AI is connected. It never says the allowance ran out.
+- **Status header.** `GET /v1/nests/{nest}` (and each item of `GET /v1/nests`) carries `status`:
+  - `ready`, which includes idle-stopped;
+  - `working`, when a run reported `working` in the last 15 minutes;
+  - `needs_you`, when it is unfunded (`payment`);
+  - `paused`;
+  - `unavailable`, while setting up or after a failure.
+- **Model route.** The broker upstream is configuration (`upstream_url`, `model`). Today it is
+  mswarm's self-hosted load balancer with `qwen-latest-flash-next`, the owner's choice "for now".
+- **End to end:** `tests/nests/e2e.mjs chat` (two turns; with a real model the codeword must be
+  remembered) and `tests/nests/e2e.mjs stranger` (no answer in 30 s).
+
+## B4 — files and tools
+
+- **Upload.** `POST /v1/nests/{nest}/files`: a person only; at most 25 MiB, 60 uploads an hour,
+  1000 files per Nest, within the Nest's storage quota. The name is display text and never a path.
+  The bytes go to nestd over the private link and are stored as `files/quarantine/<id>` on the
+  Nest's encrypted volume.
+- **Parser sandbox.** nestd parses every file in a separate gVisor container from the runner image
+  (`pigeonpost-nest-parser`):
+  - no network, read-only root, uid 10001, no capabilities;
+  - the input read-only at `/in`, an empty output directory at `/out`;
+  - 256 MiB memory, 16 processes, 1 CPU, killed after 120 s.
+
+  It never runs inside the Nest's own sandbox, so a parser exploit cannot reach the Nest's mailbox
+  or broker credentials.
+- **Formats and bounds** (`crates/pigeonpost-nests/src/parse.rs`).
+  - The kind comes from the bytes: text/Markdown, CSV, PDF (a small FlateDecode/text-operator
+    extractor; encrypted files are refused), DOCX, XLSX, ZIP.
+  - Limits: 2M output characters; ZIP at most 500 entries, 100 MiB inflated, a 200:1 ratio per
+    entry, one nesting level. Lying size headers, links and unsafe entry names (`..`, absolute,
+    drive, backslash) are skipped.
+  - Output names are always `part-NNNN.txt`.
+  - nestd then verifies the output: the manifest parses, there are no stray files or links, and the
+    size is bounded. Otherwise it discards everything.
+  - Coverage (pages/sheets/entries with text) and warnings are reported to the person.
+- **Using files.** In chat, the runner adds the best-matching excerpts from `files/parsed/` to the
+  system turn, fenced as untrusted file content with the file's name. File text is never the user's
+  turn, and the model is told never to follow instructions inside files.
+- **Tools and approvals.** A Nest never performs an external write.
+  - The runner may end a reply with one ```` ```pigeonpost-action ```` block. It turns that into a
+    proposal (`POST /v1/nest-approvals`, the Nest's mailbox credential) and tells the person that
+    approval is needed.
+  - Tool vocabulary: `send_message {to, body}` only. The never-auto categories do not exist as tools.
+  - The card binds `args_hash` (SHA-256 of the canonical call). A newer proposal for the same
+    recipient supersedes the pending one, which is how an edited request invalidates an old approval.
+  - Approving needs a person and the hash they saw. Cards are single-use and expire after 24 h; at
+    most 20 are open per Nest.
+  - The postbox carries the call out as the tool broker under its destination policy: the owner's
+    own mailboxes or contacts they allowed, never a wildcard or the Nest itself; 50 sends a day.
+- **Tests.**
+  - Archive traversal names, bombs, nesting, entry limits, hostile bytes.
+  - Output verification (strays, links, missing parts).
+  - The parser sandbox profile.
+  - Prompt injection: a file's instruction produces at most a card the destination policy refuses.
+  - Approval binding: superseded, changed hash, single use, automation and other people refused.
+
+## B5 — management
+
+| Route | Who | What |
+|---|---|---|
+| `POST /v1/nests/{nest}/pause`, `/resume` | the owner, a person | Pause holds mail until resume. A Nest paused for funding (`needs_payment`) or over its package (`over_capacity`) cannot be resumed by its owner; the funding sweep resumes it once it is paid for. The sweep never lifts an owner's own pause. |
+| `PATCH /v1/nests/{nest}` | the owner, a person | Rename. |
+| `DELETE /v1/nests/{nest}` | the owner, a person | Requires `{confirm: <label>}`. Runtime, volume and mailbox credential are destroyed, open approvals closed, the slot freed. Deleting one's last Nest never brings a new one back. |
+| `GET /v1/nests/{nest}/usage` | the account | This month's model tokens (used/limit), requests and running seconds, taken from the Nests ledger, plus stored file bytes and the package's pooled hours. |
+| `GET /v1/nests/{nest}/export` | the owner, a person | A zip built on the Nests host from the Nest's own volume: `files/` originals under sanitized, de-duplicated display names, `text/` parsed text, `conversations/`, `index.json`. It is built in memory, never on the unencrypted host disk, one export at a time, at most 512 MiB of files. |
+
+Clients show files, usage and pause/delete with export on every platform (client work follows the
+server PRs).
+
+## B6 — data safety
+
+- **Backups:** borg append-only to raijin's HDD over WireGuard, nightly ([backups.md](backups.md));
+  this replaces the plan's "restic to a Wodo target". Each archive now writes a success marker.
+- **Off-host LUKS unlock:** volume keys are wrapped (ChaCha20-Poly1305, bound to the Nest id)
+  under a host KEK held only by the postbox (`POSTBOX_NESTS_KEK_FILE`). The postbox releases it
+  every minute over WireGuard (`POST /v1/unlock`). nestd is locked until then; a wrong KEK is
+  refused by fingerprint. A copy of nests-1's disk, a VMware snapshot or a backup no longer
+  contains a usable key. A live compromise of running nestd (which holds the KEK in memory) is not
+  covered, and that is stated plainly.
+- **Tombstones:** each unlock carries the postbox's deleted Nest ids; nestd destroys any it still
+  has, so a restore cannot bring a revoked Nest back.
+- **Monitoring:** nestd `/metrics` on loopback (no ids or content). Prometheus, Alertmanager and
+  node_exporter run on nests-1; alerts arrive as Pigeonpost messages through the alert relay.
+  Rules are in `deploy/nests/monitoring/`.
+- **Restore rehearsal:** RPO ≤ 24 h (nightly), RTO ≤ 4 h. Rehearsed on deploy; evidence is in the ledger.
+
+## B7 — organization-owned Nests
+
+- **Ownership.** An org Nest's mailbox is an **org agent** under the org's internal account, with a
+  handle in the org's namespace. It therefore uses one of the org's agent addresses (10 × seats,
+  unchanged). Separately it needs a free slot of a Nest package bought by the **organization**
+  (`entitlements.subject_kind = 'org'`, Nest plan codes). Address accounting and compute
+  entitlement never stand in for each other. An org Nest package never changes the org's seats.
+- **Who acts** (`nest_access.rs`), resolved from live state on every request:
+  - Nest admins (owner, admin, agent_admin of an active org) manage: pause, resume, rename,
+    delete, export.
+  - Operators are active members holding a live `operate_nest` delegation on the Nest's mailbox.
+    They chat, upload files, approve its actions and read usage.
+  - Anyone else gets 404.
+- **Chat authority.** An org Nest ignores contact grants. A message is acted on only when its
+  sender (a person's mailbox, or their org member mailbox) is a Nest admin or a live operator. This
+  is checked per sender on every inbox read.
+- **Offboarding.** Removing a member, or revoking the delegation, ends that person's access to
+  every route at once. Their earlier messages are no longer acted on. The Nest and its data stay
+  with the organization.
+- **Routes.** `GET|POST /v1/orgs/{org}/nests`. The per-Nest routes (`/v1/nests/{nest}/…`) serve
+  both kinds of Nest.
+- **Billing.** Org Nest packages arrive as org entitlements through the internal API, the same
+  path as org seat plans. The enterprise portal's purchase flow for them is a follow-up
+  (build plan §12 OD-23).
