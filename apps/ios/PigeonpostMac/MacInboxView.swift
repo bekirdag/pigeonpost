@@ -63,7 +63,9 @@ struct MacInboxView: View {
         SettingsSheet(openOn: "plans").frame(width: 520, height: 620)
     }
 
-    var body: some View {
+    /// The window's content with its group and announcement wiring. Separate from `body` because
+    /// one modifier chain of this length is more than the compiler can type-check in time.
+    private var inboxContent: some View {
         @Bindable var inbox = inbox
 
         return DesktopInboxView(
@@ -108,6 +110,10 @@ struct MacInboxView: View {
         // screen has closed ("You were removed from this group…"), which `CallHost` hands over as
         // `inbox.toast`. The iPhone and iPad show it from `ConversationsView`; the Mac never did.
         .toast($inbox.toast)
+    }
+
+    var body: some View {
+        inboxContent
         .task {
             if let staged = Fixtures.openPeer, peer == nil { peer = staged }
             switch Fixtures.sheet {
