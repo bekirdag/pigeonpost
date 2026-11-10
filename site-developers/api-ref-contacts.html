@@ -82,14 +82,14 @@
 <p class="op-facts">Credentials: <code>memberToken</code></p>
 <p>Each hash is the first 16 bytes of <code>SHA-256(&quot;pigeonpost:phone:v1:&quot; || E.164)</code> as 32 lowercase hex characters (docs/contacts-and-phone.md §3). Nothing of the upload is stored. Only verified, discoverable, existing mailboxes are returned, never the caller&#x27;s own numbers or anyone who blocked one of the caller&#x27;s mailboxes. A person only. Limits: 500 hashes per request, 20 requests per hour per account and 30 per IP, 1,000 new hashes per day (200 for accounts under a day old) and 5,000 per 30 days.</p>
 <h3>Request body</h3><p><code>application/json</code></p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;hashes&quot;: [
     &quot;string&quot;
   ]
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Matches.</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;matches&quot;: [
     {
       &quot;hash&quot;: &quot;string&quot;,
@@ -101,14 +101,14 @@
   &quot;checked&quot;: 0,
   &quot;new&quot;: 0,
   &quot;remaining_today&quot;: 0
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td><code>bad_request</code></td></tr><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>human_required</code>, <code>credential_not_accepted</code>, <code>discovery_locked</code> (with <code>until</code>)</td></tr><tr><td><code>404</code></td><td><code>feature_disabled</code></td></tr><tr><td><code>429</code></td><td><code>rate_limited</code> with <code>Retry-After</code> and <code>limit</code> (<code>requests</code>, <code>ip</code>, <code>daily</code>, <code>monthly</code>, <code>resend</code>, <code>number</code>, <code>account</code>, <code>pending</code>).</td></tr><tr><td><code>503</code></td><td><code>discovery_busy</code> (platform-wide circuit breaker, with <code>Retry-After</code>)</td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/contacts/discover&quot; \
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/contacts/discover&quot; \
   -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
   -H &quot;Content-Type: application/json&quot; \
-  -d &#x27;{&quot;hashes&quot;: [&quot;string&quot;]}&#x27;</code></pre>
+  -d &#x27;{&quot;hashes&quot;: [&quot;string&quot;]}&#x27;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="sendSmsInvite"><span class="method">POST</span> <code class="path">/v1/contacts/invites</code><a class="ah" href="#sendSmsInvite">#</a></h2>
@@ -116,25 +116,25 @@
 <p class="op-facts">Credentials: <code>memberToken</code></p>
 <p>The sender must have a verified number. <code>confirm</code> must be true. Per sender: 5 a day, 20 per 30 days. Per receiving number (all senders): 1 per 7 days, 3 per 30 days; never after an opt-out. <code>not_sent.reason</code> is <code>already_invited</code> (you, within 30 days) or <code>unavailable</code> (deliberately merged: opted out, invited recently by others, or not supported).</p>
 <h3>Request body</h3><p><code>application/json</code></p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;phone&quot;: &quot;string&quot;,
   &quot;confirm&quot;: false,
   &quot;identity&quot;: &quot;string&quot;
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Sent or not.</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;status&quot;: &quot;sent&quot;,
   &quot;invite_id&quot;: &quot;string&quot;,
   &quot;reason&quot;: &quot;already_invited&quot;
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td><code>confirm_required</code>, <code>invalid_phone</code>, <code>bad_request</code></td></tr><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>human_required</code>, <code>credential_not_accepted</code>, <code>phone_required</code></td></tr><tr><td><code>404</code></td><td><code>feature_disabled</code></td></tr><tr><td><code>429</code></td><td><code>rate_limited</code> with <code>Retry-After</code> and <code>limit</code> (<code>requests</code>, <code>ip</code>, <code>daily</code>, <code>monthly</code>, <code>resend</code>, <code>number</code>, <code>account</code>, <code>pending</code>).</td></tr><tr><td><code>503</code></td><td><code>sms_unavailable</code> — the SMS provider is not configured or down, or a platform SMS budget is spent.</td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/contacts/invites&quot; \
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/contacts/invites&quot; \
   -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
   -H &quot;Content-Type: application/json&quot; \
-  -d &#x27;{&quot;phone&quot;: &quot;string&quot;, &quot;confirm&quot;: false, &quot;identity&quot;: &quot;string&quot;}&#x27;</code></pre>
+  -d &#x27;{&quot;phone&quot;: &quot;string&quot;, &quot;confirm&quot;: false, &quot;identity&quot;: &quot;string&quot;}&#x27;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="smsOptOut"><span class="method">POST</span> <code class="path">/v1/sms/opt-out</code><a class="ah" href="#smsOptOut">#</a></h2>
@@ -142,20 +142,20 @@
 <p class="op-facts">Credentials: none</p>
 <p>Always answers <code>{&quot;ok&quot;: true}</code>, so a code reveals nothing. Rate-limited per IP.</p>
 <h3>Request body</h3><p><code>application/json</code></p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;code&quot;: &quot;string&quot;
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Done (or nothing to do).</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;ok&quot;: false
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>429</code></td><td><code>rate_limited</code></td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/sms/opt-out&quot; \
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/sms/opt-out&quot; \
   -H &quot;Content-Type: application/json&quot; \
-  -d &#x27;{&quot;code&quot;: &quot;string&quot;}&#x27;</code></pre>
+  -d &#x27;{&quot;code&quot;: &quot;string&quot;}&#x27;</code></pre><!--/email_off-->
 </section>
     <footer class="pagefoot">
       <nav>

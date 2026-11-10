@@ -80,8 +80,8 @@
 <p>These are JSON APIs with no page at <code>/</code>. Start at <code>/health</code>.</p>
 <h2 id="loft">Loft<a class="ah" href="#loft">#</a></h2>
 <div class="tw"><table><thead><tr><th>Method</th><th>Path</th><th>Does</th></tr></thead><tbody><tr><td><code>GET</code></td><td><code>/health</code></td><td>Liveness</td></tr><tr><td><code>GET</code></td><td><code>/ready</code></td><td>Readiness</td></tr><tr><td><code>GET</code></td><td><code>/v1/info</code></td><td>Exact canonical origin, public key, capacity, utilisation, retention, and limits</td></tr><tr><td><code>POST</code></td><td><code>/v1/publish</code></td><td>Deliver a wrapped message. Optional <code>token</code> presentation</td></tr><tr><td><code>POST</code></td><td><code>/v1/fetch</code></td><td>Fetch messages. Requires a fetch proof bound to this loft</td></tr><tr><td><code>POST</code></td><td><code>/v1/policy</code></td><td>Publish the recipient policy senders must satisfy</td></tr><tr><td><code>GET</code>/<code>PUT</code></td><td><code>/v1/agent/{address}</code></td><td>The agent record: which lofts to deliver to</td></tr></tbody></table></div>
-<pre class="lang-bash"><code>curl -s http://127.0.0.1:7717/v1/info</code></pre>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-bash"><code>curl -s http://127.0.0.1:7717/v1/info</code></pre><!--/email_off-->
+<!--email_off--><pre class="lang-json"><code>{
   &quot;software&quot;: &quot;pigeonpost-loft&quot;,
   &quot;version&quot;: &quot;…&quot;,
   &quot;protocol&quot;: &quot;pigeonpost/3&quot;,
@@ -94,15 +94,15 @@
   &quot;max_event_bytes&quot;: 2097152,
   &quot;event_count&quot;: 42,
   &quot;accepting&quot;: true
-}</code></pre>
+}</code></pre><!--/email_off-->
 <p><code>/v1/fetch</code> requires a proof signed by the recipient key and <strong>bound to the loft being asked</strong>, so a proof captured by one loft cannot be replayed at another. A proof for the wrong loft is answered <code>401</code> with a uniform message — the error does not reveal whether the address exists.</p>
 <h2 id="registry">Registry<a class="ah" href="#registry">#</a></h2>
 <div class="tw"><table><thead><tr><th>Method</th><th>Path</th><th>Does</th></tr></thead><tbody><tr><td><code>GET</code></td><td><code>/health</code></td><td>Liveness</td></tr><tr><td><code>POST</code></td><td><code>/v1/identity/challenge</code></td><td>Begin a challenge-bound provider proof</td></tr><tr><td><code>POST</code></td><td><code>/v1/register</code></td><td>Claim a handle. Body: <code>handle</code>, <code>pubkey</code>, <code>signature</code>, <code>proof</code></td></tr><tr><td><code>POST</code></td><td><code>/v1/rotate</code></td><td>Append an authenticated handle-key rotation</td></tr><tr><td><code>POST</code></td><td><code>/v1/directory/add</code></td><td>Append an authenticated directory addition</td></tr><tr><td><code>POST</code></td><td><code>/v1/directory/remove</code></td><td>Append an authenticated directory removal</td></tr><tr><td><code>GET</code></td><td><code>/v1/resolve/{namespace}/{name}</code></td><td>Resolve, with an inclusion proof</td></tr><tr><td><code>GET</code></td><td><code>/v1/log/checkpoint</code></td><td>Signed tree head</td></tr><tr><td><code>GET</code></td><td><code>/v1/log/consistency</code></td><td>Prove the log only ever appended</td></tr><tr><td><code>GET</code></td><td><code>/v1/log/entries</code></td><td>Read a bounded, continuous log range</td></tr><tr><td><code>GET</code></td><td><code>/v1/log/dump</code></td><td>The entire log, as a file</td></tr><tr><td><code>GET</code></td><td><code>/v1/compliance-keys</code></td><td>Read the bounded key projection plus witnessed head</td></tr><tr><td><code>GET</code></td><td><code>/v1/compliance-keys/{key_id}</code></td><td>Read one compliance-key publication with proof</td></tr></tbody></table></div>
-<pre class="lang-bash"><code>curl -s http://127.0.0.1:7718/v1/log/checkpoint</code></pre>
+<!--email_off--><pre class="lang-bash"><code>curl -s http://127.0.0.1:7718/v1/log/checkpoint</code></pre><!--/email_off-->
 <p>Verify the inclusion proof yourself. A resolve you did not verify is a resolve you trusted, and the whole design exists so you do not have to.</p>
 <h2 id="directory">Directory<a class="ah" href="#directory">#</a></h2>
 <div class="tw"><table><thead><tr><th>Method</th><th>Path</th><th>Does</th></tr></thead><tbody><tr><td><code>GET</code></td><td><code>/health</code></td><td>Liveness</td></tr><tr><td><code>GET</code></td><td><code>/directory.json</code></td><td>The signed pool document</td></tr><tr><td><code>POST</code></td><td><code>/v1/directory/submit</code></td><td>Submit a loft to the pool</td></tr><tr><td><code>POST</code></td><td><code>/v1/directory/drain</code></td><td>Announce an exit</td></tr><tr><td><code>GET</code></td><td><code>/v1/probe</code></td><td>Probe results</td></tr><tr><td><code>GET</code></td><td><code>/v1/probe/measurements.json</code></td><td>Canonical signed measurement document</td></tr></tbody></table></div>
-<pre class="lang-bash"><code>curl -s http://127.0.0.1:7719/directory.json</code></pre>
+<!--email_off--><pre class="lang-bash"><code>curl -s http://127.0.0.1:7719/directory.json</code></pre><!--/email_off-->
 <p>Every entry carries the operator&#x27;s signature, measured utilisation, and probe health, so the numbers used to weight selection can be checked rather than believed. Pin the directory&#x27;s signing key out of band.</p>
     <footer class="pagefoot">
       <nav>

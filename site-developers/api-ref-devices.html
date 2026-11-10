@@ -81,26 +81,26 @@
 <p class="op-sum">Register a push token for the acting mailbox</p>
 <p class="op-facts">Credentials: <code>apiKey</code>, <code>capToken</code>, <code>memberToken</code></p>
 <h3>Request body</h3><p><code>application/json</code></p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;token&quot;: &quot;string&quot;,
   &quot;platform&quot;: &quot;apns&quot;,
   &quot;environment&quot;: &quot;production&quot;,
   &quot;identity&quot;: &quot;string&quot;,
   &quot;kind&quot;: &quot;alert&quot;,
   &quot;os&quot;: &quot;ios&quot;
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Registered.</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;ok&quot;: true
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td><code>unknown_platform</code>, <code>unknown_kind</code>, <code>unknown_os</code>, <code>invalid_device_token</code>, <code>no_identity</code>, <code>identity_required</code></td></tr><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>wrong_identity</code> (capability token bound to another mailbox) or <code>not_in_account</code>.</td></tr><tr><td><code>500</code></td><td><code>store_error</code> (or another server-side code such as <code>vault_error</code>).</td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/devices&quot; \
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/devices&quot; \
   -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
   -H &quot;Content-Type: application/json&quot; \
-  -d &#x27;{&quot;token&quot;: &quot;string&quot;, &quot;platform&quot;: &quot;apns&quot;, &quot;environment&quot;: &quot;production&quot;, &quot;identity&quot;: &quot;string&quot;, &quot;kind&quot;: &quot;alert&quot;, &quot;os&quot;: &quot;ios&quot;}&#x27;</code></pre>
+  -d &#x27;{&quot;token&quot;: &quot;string&quot;, &quot;platform&quot;: &quot;apns&quot;, &quot;environment&quot;: &quot;production&quot;, &quot;identity&quot;: &quot;string&quot;, &quot;kind&quot;: &quot;alert&quot;, &quot;os&quot;: &quot;ios&quot;}&#x27;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="unregisterDevice"><span class="method">DELETE</span> <code class="path">/v1/devices/{token}</code><a class="ah" href="#unregisterDevice">#</a></h2>
@@ -110,15 +110,15 @@
 <div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>token</code></td><td>path</td><td>string</td><td>yes</td><td></td></tr></tbody></table></div>
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Done.</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;ok&quot;: true,
   &quot;removed&quot;: null
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>500</code></td><td><code>store_error</code> (or another server-side code such as <code>vault_error</code>).</td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X DELETE &quot;https://postbox.pigeonpost.dev/v1/devices/$TOKEN&quot; \
-  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre>
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X DELETE &quot;https://postbox.pigeonpost.dev/v1/devices/$TOKEN&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre><!--/email_off-->
 </section>
     <footer class="pagefoot">
       <nav>

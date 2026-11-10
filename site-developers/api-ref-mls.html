@@ -84,20 +84,20 @@
 <h3>Parameters</h3>
 <div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>id</code></td><td>path</td><td>string</td><td>yes</td><td></td></tr><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr><tr><td><code>x-pigeonpost-device</code></td><td>header</td><td>string</td><td>yes</td><td>A registered, unrevoked MLS device of the acting mailbox.</td></tr></tbody></table></div>
 <h3>Request body</h3><p><code>application/json</code></p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;request_key&quot;: &quot;string&quot;,
   &quot;mailboxes&quot;: []
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Success.</p>
-<pre class="lang-json"><code>{}</code></pre>
+<!--email_off--><pre class="lang-json"><code>{}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td>A group refusal: <code>{error, detail, message}</code> with codes from docs/groups.md (<code>not_member</code>, <code>not_admin</code>, <code>owner_only</code>, <code>posting_restricted</code>, <code>banned</code>, <code>group_full</code>, <code>invalid_link</code>, <code>invite_required</code>, <code>already_member</code>, <code>human_required</code>, <code>group_deleted</code>, <code>revision_conflict</code>, <code>epoch_conflict</code>, <code>key_activation_pending</code>, <code>idempotency_conflict</code>, <code>feature_disabled</code>, …).</td></tr><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td>A group refusal: <code>{error, detail, message}</code> with codes from docs/groups.md (<code>not_member</code>, <code>not_admin</code>, <code>owner_only</code>, <code>posting_restricted</code>, <code>banned</code>, <code>group_full</code>, <code>invalid_link</code>, <code>invite_required</code>, <code>already_member</code>, <code>human_required</code>, <code>group_deleted</code>, <code>revision_conflict</code>, <code>epoch_conflict</code>, <code>key_activation_pending</code>, <code>idempotency_conflict</code>, <code>feature_disabled</code>, …).</td></tr><tr><td><code>404</code></td><td>A group refusal: <code>{error, detail, message}</code> with codes from docs/groups.md (<code>not_member</code>, <code>not_admin</code>, <code>owner_only</code>, <code>posting_restricted</code>, <code>banned</code>, <code>group_full</code>, <code>invalid_link</code>, <code>invite_required</code>, <code>already_member</code>, <code>human_required</code>, <code>group_deleted</code>, <code>revision_conflict</code>, <code>epoch_conflict</code>, <code>key_activation_pending</code>, <code>idempotency_conflict</code>, <code>feature_disabled</code>, …).</td></tr><tr><td><code>409</code></td><td>A group refusal: <code>{error, detail, message}</code> with codes from docs/groups.md (<code>not_member</code>, <code>not_admin</code>, <code>owner_only</code>, <code>posting_restricted</code>, <code>banned</code>, <code>group_full</code>, <code>invalid_link</code>, <code>invite_required</code>, <code>already_member</code>, <code>human_required</code>, <code>group_deleted</code>, <code>revision_conflict</code>, <code>epoch_conflict</code>, <code>key_activation_pending</code>, <code>idempotency_conflict</code>, <code>feature_disabled</code>, …).</td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/groups/$ID/key-packages/claim&quot; \
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/groups/$ID/key-packages/claim&quot; \
   -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
   -H &quot;Content-Type: application/json&quot; \
-  -d &#x27;{&quot;request_key&quot;: &quot;string&quot;, &quot;mailboxes&quot;: []}&#x27;</code></pre>
+  -d &#x27;{&quot;request_key&quot;: &quot;string&quot;, &quot;mailboxes&quot;: []}&#x27;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="postGroupCommit"><span class="method">POST</span> <code class="path">/v1/groups/{id}/commits</code><a class="ah" href="#postGroupCommit">#</a></h2>
@@ -107,7 +107,7 @@
 <h3>Parameters</h3>
 <div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>id</code></td><td>path</td><td>string</td><td>yes</td><td></td></tr><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr><tr><td><code>x-pigeonpost-device</code></td><td>header</td><td>string</td><td>yes</td><td>A registered, unrevoked MLS device of the acting mailbox.</td></tr></tbody></table></div>
 <h3>Request body</h3><p><code>application/json</code></p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;request_key&quot;: &quot;string&quot;,
   &quot;epoch&quot;: 0,
   &quot;commit_id&quot;: &quot;string&quot;,
@@ -117,17 +117,17 @@
   &quot;adds&quot;: [],
   &quot;removes&quot;: [],
   &quot;expected_revision&quot;: 0
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Responses</h3>
 <p class="resp"><code>201</code> Success.</p>
-<pre class="lang-json"><code>{}</code></pre>
+<!--email_off--><pre class="lang-json"><code>{}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td>A group refusal: <code>{error, detail, message}</code> with codes from docs/groups.md (<code>not_member</code>, <code>not_admin</code>, <code>owner_only</code>, <code>posting_restricted</code>, <code>banned</code>, <code>group_full</code>, <code>invalid_link</code>, <code>invite_required</code>, <code>already_member</code>, <code>human_required</code>, <code>group_deleted</code>, <code>revision_conflict</code>, <code>epoch_conflict</code>, <code>key_activation_pending</code>, <code>idempotency_conflict</code>, <code>feature_disabled</code>, …).</td></tr><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td>A group refusal: <code>{error, detail, message}</code> with codes from docs/groups.md (<code>not_member</code>, <code>not_admin</code>, <code>owner_only</code>, <code>posting_restricted</code>, <code>banned</code>, <code>group_full</code>, <code>invalid_link</code>, <code>invite_required</code>, <code>already_member</code>, <code>human_required</code>, <code>group_deleted</code>, <code>revision_conflict</code>, <code>epoch_conflict</code>, <code>key_activation_pending</code>, <code>idempotency_conflict</code>, <code>feature_disabled</code>, …).</td></tr><tr><td><code>404</code></td><td>A group refusal: <code>{error, detail, message}</code> with codes from docs/groups.md (<code>not_member</code>, <code>not_admin</code>, <code>owner_only</code>, <code>posting_restricted</code>, <code>banned</code>, <code>group_full</code>, <code>invalid_link</code>, <code>invite_required</code>, <code>already_member</code>, <code>human_required</code>, <code>group_deleted</code>, <code>revision_conflict</code>, <code>epoch_conflict</code>, <code>key_activation_pending</code>, <code>idempotency_conflict</code>, <code>feature_disabled</code>, …).</td></tr><tr><td><code>409</code></td><td>A group refusal: <code>{error, detail, message}</code> with codes from docs/groups.md (<code>not_member</code>, <code>not_admin</code>, <code>owner_only</code>, <code>posting_restricted</code>, <code>banned</code>, <code>group_full</code>, <code>invalid_link</code>, <code>invite_required</code>, <code>already_member</code>, <code>human_required</code>, <code>group_deleted</code>, <code>revision_conflict</code>, <code>epoch_conflict</code>, <code>key_activation_pending</code>, <code>idempotency_conflict</code>, <code>feature_disabled</code>, …).</td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/groups/$ID/commits&quot; \
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/groups/$ID/commits&quot; \
   -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
   -H &quot;Content-Type: application/json&quot; \
-  -d &#x27;{&quot;request_key&quot;: &quot;string&quot;, &quot;epoch&quot;: 0, &quot;commit_id&quot;: &quot;string&quot;, &quot;commit&quot;: &quot;string&quot;, &quot;envelope_signature&quot;: &quot;string&quot;, &quot;welcome&quot;: &quot;string&quot;, &quot;adds&quot;: [], &quot;removes&quot;: [], &quot;expected_revision&quot;: 0}&#x27;</code></pre>
+  -d &#x27;{&quot;request_key&quot;: &quot;string&quot;, &quot;epoch&quot;: 0, &quot;commit_id&quot;: &quot;string&quot;, &quot;commit&quot;: &quot;string&quot;, &quot;envelope_signature&quot;: &quot;string&quot;, &quot;welcome&quot;: &quot;string&quot;, &quot;adds&quot;: [], &quot;removes&quot;: [], &quot;expected_revision&quot;: 0}&#x27;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="ackGroupEpoch"><span class="method">POST</span> <code class="path">/v1/groups/{id}/epoch-ack</code><a class="ah" href="#ackGroupEpoch">#</a></h2>
@@ -137,19 +137,19 @@
 <h3>Parameters</h3>
 <div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>id</code></td><td>path</td><td>string</td><td>yes</td><td></td></tr><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr><tr><td><code>x-pigeonpost-device</code></td><td>header</td><td>string</td><td>yes</td><td>A registered, unrevoked MLS device of the acting mailbox.</td></tr></tbody></table></div>
 <h3>Request body</h3><p><code>application/json</code></p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;epoch&quot;: 0
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Success.</p>
-<pre class="lang-json"><code>{}</code></pre>
+<!--email_off--><pre class="lang-json"><code>{}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td>A group refusal: <code>{error, detail, message}</code> with codes from docs/groups.md (<code>not_member</code>, <code>not_admin</code>, <code>owner_only</code>, <code>posting_restricted</code>, <code>banned</code>, <code>group_full</code>, <code>invalid_link</code>, <code>invite_required</code>, <code>already_member</code>, <code>human_required</code>, <code>group_deleted</code>, <code>revision_conflict</code>, <code>epoch_conflict</code>, <code>key_activation_pending</code>, <code>idempotency_conflict</code>, <code>feature_disabled</code>, …).</td></tr><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td>A group refusal: <code>{error, detail, message}</code> with codes from docs/groups.md (<code>not_member</code>, <code>not_admin</code>, <code>owner_only</code>, <code>posting_restricted</code>, <code>banned</code>, <code>group_full</code>, <code>invalid_link</code>, <code>invite_required</code>, <code>already_member</code>, <code>human_required</code>, <code>group_deleted</code>, <code>revision_conflict</code>, <code>epoch_conflict</code>, <code>key_activation_pending</code>, <code>idempotency_conflict</code>, <code>feature_disabled</code>, …).</td></tr><tr><td><code>404</code></td><td>A group refusal: <code>{error, detail, message}</code> with codes from docs/groups.md (<code>not_member</code>, <code>not_admin</code>, <code>owner_only</code>, <code>posting_restricted</code>, <code>banned</code>, <code>group_full</code>, <code>invalid_link</code>, <code>invite_required</code>, <code>already_member</code>, <code>human_required</code>, <code>group_deleted</code>, <code>revision_conflict</code>, <code>epoch_conflict</code>, <code>key_activation_pending</code>, <code>idempotency_conflict</code>, <code>feature_disabled</code>, …).</td></tr><tr><td><code>409</code></td><td>A group refusal: <code>{error, detail, message}</code> with codes from docs/groups.md (<code>not_member</code>, <code>not_admin</code>, <code>owner_only</code>, <code>posting_restricted</code>, <code>banned</code>, <code>group_full</code>, <code>invalid_link</code>, <code>invite_required</code>, <code>already_member</code>, <code>human_required</code>, <code>group_deleted</code>, <code>revision_conflict</code>, <code>epoch_conflict</code>, <code>key_activation_pending</code>, <code>idempotency_conflict</code>, <code>feature_disabled</code>, …).</td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/groups/$ID/epoch-ack&quot; \
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/groups/$ID/epoch-ack&quot; \
   -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
   -H &quot;Content-Type: application/json&quot; \
-  -d &#x27;{&quot;epoch&quot;: 0}&#x27;</code></pre>
+  -d &#x27;{&quot;epoch&quot;: 0}&#x27;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="getGroupCryptoState"><span class="method">GET</span> <code class="path">/v1/groups/{id}/crypto</code><a class="ah" href="#getGroupCryptoState">#</a></h2>
@@ -160,12 +160,12 @@
 <div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>id</code></td><td>path</td><td>string</td><td>yes</td><td></td></tr><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr><tr><td><code>x-pigeonpost-device</code></td><td>header</td><td>string</td><td>yes</td><td>A registered, unrevoked MLS device of the acting mailbox.</td></tr></tbody></table></div>
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Success.</p>
-<pre class="lang-json"><code>{}</code></pre>
+<!--email_off--><pre class="lang-json"><code>{}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td>A group refusal: <code>{error, detail, message}</code> with codes from docs/groups.md (<code>not_member</code>, <code>not_admin</code>, <code>owner_only</code>, <code>posting_restricted</code>, <code>banned</code>, <code>group_full</code>, <code>invalid_link</code>, <code>invite_required</code>, <code>already_member</code>, <code>human_required</code>, <code>group_deleted</code>, <code>revision_conflict</code>, <code>epoch_conflict</code>, <code>key_activation_pending</code>, <code>idempotency_conflict</code>, <code>feature_disabled</code>, …).</td></tr><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td>A group refusal: <code>{error, detail, message}</code> with codes from docs/groups.md (<code>not_member</code>, <code>not_admin</code>, <code>owner_only</code>, <code>posting_restricted</code>, <code>banned</code>, <code>group_full</code>, <code>invalid_link</code>, <code>invite_required</code>, <code>already_member</code>, <code>human_required</code>, <code>group_deleted</code>, <code>revision_conflict</code>, <code>epoch_conflict</code>, <code>key_activation_pending</code>, <code>idempotency_conflict</code>, <code>feature_disabled</code>, …).</td></tr><tr><td><code>404</code></td><td>A group refusal: <code>{error, detail, message}</code> with codes from docs/groups.md (<code>not_member</code>, <code>not_admin</code>, <code>owner_only</code>, <code>posting_restricted</code>, <code>banned</code>, <code>group_full</code>, <code>invalid_link</code>, <code>invite_required</code>, <code>already_member</code>, <code>human_required</code>, <code>group_deleted</code>, <code>revision_conflict</code>, <code>epoch_conflict</code>, <code>key_activation_pending</code>, <code>idempotency_conflict</code>, <code>feature_disabled</code>, …).</td></tr><tr><td><code>409</code></td><td>A group refusal: <code>{error, detail, message}</code> with codes from docs/groups.md (<code>not_member</code>, <code>not_admin</code>, <code>owner_only</code>, <code>posting_restricted</code>, <code>banned</code>, <code>group_full</code>, <code>invalid_link</code>, <code>invite_required</code>, <code>already_member</code>, <code>human_required</code>, <code>group_deleted</code>, <code>revision_conflict</code>, <code>epoch_conflict</code>, <code>key_activation_pending</code>, <code>idempotency_conflict</code>, <code>feature_disabled</code>, …).</td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/groups/$ID/crypto&quot; \
-  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre>
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/groups/$ID/crypto&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="resyncGroupDevice"><span class="method">POST</span> <code class="path">/v1/groups/{id}/resync</code><a class="ah" href="#resyncGroupDevice">#</a></h2>
@@ -175,19 +175,19 @@
 <h3>Parameters</h3>
 <div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>id</code></td><td>path</td><td>string</td><td>yes</td><td></td></tr><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr><tr><td><code>x-pigeonpost-device</code></td><td>header</td><td>string</td><td>yes</td><td>A registered, unrevoked MLS device of the acting mailbox.</td></tr></tbody></table></div>
 <h3>Request body</h3><p><code>application/json</code></p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;request_key&quot;: &quot;string&quot;
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Success.</p>
-<pre class="lang-json"><code>{}</code></pre>
+<!--email_off--><pre class="lang-json"><code>{}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td>A group refusal: <code>{error, detail, message}</code> with codes from docs/groups.md (<code>not_member</code>, <code>not_admin</code>, <code>owner_only</code>, <code>posting_restricted</code>, <code>banned</code>, <code>group_full</code>, <code>invalid_link</code>, <code>invite_required</code>, <code>already_member</code>, <code>human_required</code>, <code>group_deleted</code>, <code>revision_conflict</code>, <code>epoch_conflict</code>, <code>key_activation_pending</code>, <code>idempotency_conflict</code>, <code>feature_disabled</code>, …).</td></tr><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td>A group refusal: <code>{error, detail, message}</code> with codes from docs/groups.md (<code>not_member</code>, <code>not_admin</code>, <code>owner_only</code>, <code>posting_restricted</code>, <code>banned</code>, <code>group_full</code>, <code>invalid_link</code>, <code>invite_required</code>, <code>already_member</code>, <code>human_required</code>, <code>group_deleted</code>, <code>revision_conflict</code>, <code>epoch_conflict</code>, <code>key_activation_pending</code>, <code>idempotency_conflict</code>, <code>feature_disabled</code>, …).</td></tr><tr><td><code>404</code></td><td>A group refusal: <code>{error, detail, message}</code> with codes from docs/groups.md (<code>not_member</code>, <code>not_admin</code>, <code>owner_only</code>, <code>posting_restricted</code>, <code>banned</code>, <code>group_full</code>, <code>invalid_link</code>, <code>invite_required</code>, <code>already_member</code>, <code>human_required</code>, <code>group_deleted</code>, <code>revision_conflict</code>, <code>epoch_conflict</code>, <code>key_activation_pending</code>, <code>idempotency_conflict</code>, <code>feature_disabled</code>, …).</td></tr><tr><td><code>409</code></td><td>A group refusal: <code>{error, detail, message}</code> with codes from docs/groups.md (<code>not_member</code>, <code>not_admin</code>, <code>owner_only</code>, <code>posting_restricted</code>, <code>banned</code>, <code>group_full</code>, <code>invalid_link</code>, <code>invite_required</code>, <code>already_member</code>, <code>human_required</code>, <code>group_deleted</code>, <code>revision_conflict</code>, <code>epoch_conflict</code>, <code>key_activation_pending</code>, <code>idempotency_conflict</code>, <code>feature_disabled</code>, …).</td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/groups/$ID/resync&quot; \
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/groups/$ID/resync&quot; \
   -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
   -H &quot;Content-Type: application/json&quot; \
-  -d &#x27;{&quot;request_key&quot;: &quot;string&quot;}&#x27;</code></pre>
+  -d &#x27;{&quot;request_key&quot;: &quot;string&quot;}&#x27;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="listMlsDevices"><span class="method">GET</span> <code class="path">/v1/mls/devices</code><a class="ah" href="#listMlsDevices">#</a></h2>
@@ -198,12 +198,12 @@
 <div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>mailbox</code></td><td>query</td><td>string</td><td></td><td></td></tr><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr></tbody></table></div>
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Success.</p>
-<pre class="lang-json"><code>{}</code></pre>
+<!--email_off--><pre class="lang-json"><code>{}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td>A group refusal: <code>{error, detail, message}</code> with codes from docs/groups.md (<code>not_member</code>, <code>not_admin</code>, <code>owner_only</code>, <code>posting_restricted</code>, <code>banned</code>, <code>group_full</code>, <code>invalid_link</code>, <code>invite_required</code>, <code>already_member</code>, <code>human_required</code>, <code>group_deleted</code>, <code>revision_conflict</code>, <code>epoch_conflict</code>, <code>key_activation_pending</code>, <code>idempotency_conflict</code>, <code>feature_disabled</code>, …).</td></tr><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td>A group refusal: <code>{error, detail, message}</code> with codes from docs/groups.md (<code>not_member</code>, <code>not_admin</code>, <code>owner_only</code>, <code>posting_restricted</code>, <code>banned</code>, <code>group_full</code>, <code>invalid_link</code>, <code>invite_required</code>, <code>already_member</code>, <code>human_required</code>, <code>group_deleted</code>, <code>revision_conflict</code>, <code>epoch_conflict</code>, <code>key_activation_pending</code>, <code>idempotency_conflict</code>, <code>feature_disabled</code>, …).</td></tr><tr><td><code>404</code></td><td>A group refusal: <code>{error, detail, message}</code> with codes from docs/groups.md (<code>not_member</code>, <code>not_admin</code>, <code>owner_only</code>, <code>posting_restricted</code>, <code>banned</code>, <code>group_full</code>, <code>invalid_link</code>, <code>invite_required</code>, <code>already_member</code>, <code>human_required</code>, <code>group_deleted</code>, <code>revision_conflict</code>, <code>epoch_conflict</code>, <code>key_activation_pending</code>, <code>idempotency_conflict</code>, <code>feature_disabled</code>, …).</td></tr><tr><td><code>409</code></td><td>A group refusal: <code>{error, detail, message}</code> with codes from docs/groups.md (<code>not_member</code>, <code>not_admin</code>, <code>owner_only</code>, <code>posting_restricted</code>, <code>banned</code>, <code>group_full</code>, <code>invalid_link</code>, <code>invite_required</code>, <code>already_member</code>, <code>human_required</code>, <code>group_deleted</code>, <code>revision_conflict</code>, <code>epoch_conflict</code>, <code>key_activation_pending</code>, <code>idempotency_conflict</code>, <code>feature_disabled</code>, …).</td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/mls/devices&quot; \
-  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre>
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/mls/devices&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="registerMlsDevice"><span class="method">POST</span> <code class="path">/v1/mls/devices</code><a class="ah" href="#registerMlsDevice">#</a></h2>
@@ -213,21 +213,21 @@
 <h3>Parameters</h3>
 <div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr></tbody></table></div>
 <h3>Request body</h3><p><code>application/json</code></p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;device_id&quot;: &quot;string&quot;,
   &quot;signature_key&quot;: &quot;string&quot;,
   &quot;attestation&quot;: &quot;string&quot;
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Responses</h3>
 <p class="resp"><code>201</code> Success.</p>
-<pre class="lang-json"><code>{}</code></pre>
+<!--email_off--><pre class="lang-json"><code>{}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td>A group refusal: <code>{error, detail, message}</code> with codes from docs/groups.md (<code>not_member</code>, <code>not_admin</code>, <code>owner_only</code>, <code>posting_restricted</code>, <code>banned</code>, <code>group_full</code>, <code>invalid_link</code>, <code>invite_required</code>, <code>already_member</code>, <code>human_required</code>, <code>group_deleted</code>, <code>revision_conflict</code>, <code>epoch_conflict</code>, <code>key_activation_pending</code>, <code>idempotency_conflict</code>, <code>feature_disabled</code>, …).</td></tr><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td>A group refusal: <code>{error, detail, message}</code> with codes from docs/groups.md (<code>not_member</code>, <code>not_admin</code>, <code>owner_only</code>, <code>posting_restricted</code>, <code>banned</code>, <code>group_full</code>, <code>invalid_link</code>, <code>invite_required</code>, <code>already_member</code>, <code>human_required</code>, <code>group_deleted</code>, <code>revision_conflict</code>, <code>epoch_conflict</code>, <code>key_activation_pending</code>, <code>idempotency_conflict</code>, <code>feature_disabled</code>, …).</td></tr><tr><td><code>404</code></td><td>A group refusal: <code>{error, detail, message}</code> with codes from docs/groups.md (<code>not_member</code>, <code>not_admin</code>, <code>owner_only</code>, <code>posting_restricted</code>, <code>banned</code>, <code>group_full</code>, <code>invalid_link</code>, <code>invite_required</code>, <code>already_member</code>, <code>human_required</code>, <code>group_deleted</code>, <code>revision_conflict</code>, <code>epoch_conflict</code>, <code>key_activation_pending</code>, <code>idempotency_conflict</code>, <code>feature_disabled</code>, …).</td></tr><tr><td><code>409</code></td><td>A group refusal: <code>{error, detail, message}</code> with codes from docs/groups.md (<code>not_member</code>, <code>not_admin</code>, <code>owner_only</code>, <code>posting_restricted</code>, <code>banned</code>, <code>group_full</code>, <code>invalid_link</code>, <code>invite_required</code>, <code>already_member</code>, <code>human_required</code>, <code>group_deleted</code>, <code>revision_conflict</code>, <code>epoch_conflict</code>, <code>key_activation_pending</code>, <code>idempotency_conflict</code>, <code>feature_disabled</code>, …).</td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/mls/devices&quot; \
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/mls/devices&quot; \
   -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
   -H &quot;Content-Type: application/json&quot; \
-  -d &#x27;{&quot;device_id&quot;: &quot;string&quot;, &quot;signature_key&quot;: &quot;string&quot;, &quot;attestation&quot;: &quot;string&quot;}&#x27;</code></pre>
+  -d &#x27;{&quot;device_id&quot;: &quot;string&quot;, &quot;signature_key&quot;: &quot;string&quot;, &quot;attestation&quot;: &quot;string&quot;}&#x27;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="revokeMlsDevice"><span class="method">DELETE</span> <code class="path">/v1/mls/devices/{device_id}</code><a class="ah" href="#revokeMlsDevice">#</a></h2>
@@ -238,12 +238,12 @@
 <div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>device_id</code></td><td>path</td><td>string</td><td>yes</td><td></td></tr><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr></tbody></table></div>
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Success.</p>
-<pre class="lang-json"><code>{}</code></pre>
+<!--email_off--><pre class="lang-json"><code>{}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td>A group refusal: <code>{error, detail, message}</code> with codes from docs/groups.md (<code>not_member</code>, <code>not_admin</code>, <code>owner_only</code>, <code>posting_restricted</code>, <code>banned</code>, <code>group_full</code>, <code>invalid_link</code>, <code>invite_required</code>, <code>already_member</code>, <code>human_required</code>, <code>group_deleted</code>, <code>revision_conflict</code>, <code>epoch_conflict</code>, <code>key_activation_pending</code>, <code>idempotency_conflict</code>, <code>feature_disabled</code>, …).</td></tr><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td>A group refusal: <code>{error, detail, message}</code> with codes from docs/groups.md (<code>not_member</code>, <code>not_admin</code>, <code>owner_only</code>, <code>posting_restricted</code>, <code>banned</code>, <code>group_full</code>, <code>invalid_link</code>, <code>invite_required</code>, <code>already_member</code>, <code>human_required</code>, <code>group_deleted</code>, <code>revision_conflict</code>, <code>epoch_conflict</code>, <code>key_activation_pending</code>, <code>idempotency_conflict</code>, <code>feature_disabled</code>, …).</td></tr><tr><td><code>404</code></td><td>A group refusal: <code>{error, detail, message}</code> with codes from docs/groups.md (<code>not_member</code>, <code>not_admin</code>, <code>owner_only</code>, <code>posting_restricted</code>, <code>banned</code>, <code>group_full</code>, <code>invalid_link</code>, <code>invite_required</code>, <code>already_member</code>, <code>human_required</code>, <code>group_deleted</code>, <code>revision_conflict</code>, <code>epoch_conflict</code>, <code>key_activation_pending</code>, <code>idempotency_conflict</code>, <code>feature_disabled</code>, …).</td></tr><tr><td><code>409</code></td><td>A group refusal: <code>{error, detail, message}</code> with codes from docs/groups.md (<code>not_member</code>, <code>not_admin</code>, <code>owner_only</code>, <code>posting_restricted</code>, <code>banned</code>, <code>group_full</code>, <code>invalid_link</code>, <code>invite_required</code>, <code>already_member</code>, <code>human_required</code>, <code>group_deleted</code>, <code>revision_conflict</code>, <code>epoch_conflict</code>, <code>key_activation_pending</code>, <code>idempotency_conflict</code>, <code>feature_disabled</code>, …).</td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X DELETE &quot;https://postbox.pigeonpost.dev/v1/mls/devices/$DEVICE_ID&quot; \
-  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre>
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X DELETE &quot;https://postbox.pigeonpost.dev/v1/mls/devices/$DEVICE_ID&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="uploadKeyPackages"><span class="method">POST</span> <code class="path">/v1/mls/key-packages</code><a class="ah" href="#uploadKeyPackages">#</a></h2>
@@ -253,21 +253,21 @@
 <h3>Parameters</h3>
 <div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr><tr><td><code>x-pigeonpost-device</code></td><td>header</td><td>string</td><td>yes</td><td>A registered, unrevoked MLS device of the acting mailbox.</td></tr></tbody></table></div>
 <h3>Request body</h3><p><code>application/json</code></p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;request_key&quot;: &quot;string&quot;,
   &quot;key_packages&quot;: [],
   &quot;last_resort&quot;: &quot;string&quot;
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Success.</p>
-<pre class="lang-json"><code>{}</code></pre>
+<!--email_off--><pre class="lang-json"><code>{}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td>A group refusal: <code>{error, detail, message}</code> with codes from docs/groups.md (<code>not_member</code>, <code>not_admin</code>, <code>owner_only</code>, <code>posting_restricted</code>, <code>banned</code>, <code>group_full</code>, <code>invalid_link</code>, <code>invite_required</code>, <code>already_member</code>, <code>human_required</code>, <code>group_deleted</code>, <code>revision_conflict</code>, <code>epoch_conflict</code>, <code>key_activation_pending</code>, <code>idempotency_conflict</code>, <code>feature_disabled</code>, …).</td></tr><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td>A group refusal: <code>{error, detail, message}</code> with codes from docs/groups.md (<code>not_member</code>, <code>not_admin</code>, <code>owner_only</code>, <code>posting_restricted</code>, <code>banned</code>, <code>group_full</code>, <code>invalid_link</code>, <code>invite_required</code>, <code>already_member</code>, <code>human_required</code>, <code>group_deleted</code>, <code>revision_conflict</code>, <code>epoch_conflict</code>, <code>key_activation_pending</code>, <code>idempotency_conflict</code>, <code>feature_disabled</code>, …).</td></tr><tr><td><code>404</code></td><td>A group refusal: <code>{error, detail, message}</code> with codes from docs/groups.md (<code>not_member</code>, <code>not_admin</code>, <code>owner_only</code>, <code>posting_restricted</code>, <code>banned</code>, <code>group_full</code>, <code>invalid_link</code>, <code>invite_required</code>, <code>already_member</code>, <code>human_required</code>, <code>group_deleted</code>, <code>revision_conflict</code>, <code>epoch_conflict</code>, <code>key_activation_pending</code>, <code>idempotency_conflict</code>, <code>feature_disabled</code>, …).</td></tr><tr><td><code>409</code></td><td>A group refusal: <code>{error, detail, message}</code> with codes from docs/groups.md (<code>not_member</code>, <code>not_admin</code>, <code>owner_only</code>, <code>posting_restricted</code>, <code>banned</code>, <code>group_full</code>, <code>invalid_link</code>, <code>invite_required</code>, <code>already_member</code>, <code>human_required</code>, <code>group_deleted</code>, <code>revision_conflict</code>, <code>epoch_conflict</code>, <code>key_activation_pending</code>, <code>idempotency_conflict</code>, <code>feature_disabled</code>, …).</td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/mls/key-packages&quot; \
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/mls/key-packages&quot; \
   -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
   -H &quot;Content-Type: application/json&quot; \
-  -d &#x27;{&quot;request_key&quot;: &quot;string&quot;, &quot;key_packages&quot;: [], &quot;last_resort&quot;: &quot;string&quot;}&#x27;</code></pre>
+  -d &#x27;{&quot;request_key&quot;: &quot;string&quot;, &quot;key_packages&quot;: [], &quot;last_resort&quot;: &quot;string&quot;}&#x27;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="countKeyPackages"><span class="method">GET</span> <code class="path">/v1/mls/key-packages/count</code><a class="ah" href="#countKeyPackages">#</a></h2>
@@ -278,12 +278,12 @@
 <div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr><tr><td><code>x-pigeonpost-device</code></td><td>header</td><td>string</td><td>yes</td><td>A registered, unrevoked MLS device of the acting mailbox.</td></tr></tbody></table></div>
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Success.</p>
-<pre class="lang-json"><code>{}</code></pre>
+<!--email_off--><pre class="lang-json"><code>{}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td>A group refusal: <code>{error, detail, message}</code> with codes from docs/groups.md (<code>not_member</code>, <code>not_admin</code>, <code>owner_only</code>, <code>posting_restricted</code>, <code>banned</code>, <code>group_full</code>, <code>invalid_link</code>, <code>invite_required</code>, <code>already_member</code>, <code>human_required</code>, <code>group_deleted</code>, <code>revision_conflict</code>, <code>epoch_conflict</code>, <code>key_activation_pending</code>, <code>idempotency_conflict</code>, <code>feature_disabled</code>, …).</td></tr><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td>A group refusal: <code>{error, detail, message}</code> with codes from docs/groups.md (<code>not_member</code>, <code>not_admin</code>, <code>owner_only</code>, <code>posting_restricted</code>, <code>banned</code>, <code>group_full</code>, <code>invalid_link</code>, <code>invite_required</code>, <code>already_member</code>, <code>human_required</code>, <code>group_deleted</code>, <code>revision_conflict</code>, <code>epoch_conflict</code>, <code>key_activation_pending</code>, <code>idempotency_conflict</code>, <code>feature_disabled</code>, …).</td></tr><tr><td><code>404</code></td><td>A group refusal: <code>{error, detail, message}</code> with codes from docs/groups.md (<code>not_member</code>, <code>not_admin</code>, <code>owner_only</code>, <code>posting_restricted</code>, <code>banned</code>, <code>group_full</code>, <code>invalid_link</code>, <code>invite_required</code>, <code>already_member</code>, <code>human_required</code>, <code>group_deleted</code>, <code>revision_conflict</code>, <code>epoch_conflict</code>, <code>key_activation_pending</code>, <code>idempotency_conflict</code>, <code>feature_disabled</code>, …).</td></tr><tr><td><code>409</code></td><td>A group refusal: <code>{error, detail, message}</code> with codes from docs/groups.md (<code>not_member</code>, <code>not_admin</code>, <code>owner_only</code>, <code>posting_restricted</code>, <code>banned</code>, <code>group_full</code>, <code>invalid_link</code>, <code>invite_required</code>, <code>already_member</code>, <code>human_required</code>, <code>group_deleted</code>, <code>revision_conflict</code>, <code>epoch_conflict</code>, <code>key_activation_pending</code>, <code>idempotency_conflict</code>, <code>feature_disabled</code>, …).</td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/mls/key-packages/count&quot; \
-  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre>
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/mls/key-packages/count&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="listWelcomes"><span class="method">GET</span> <code class="path">/v1/mls/welcomes</code><a class="ah" href="#listWelcomes">#</a></h2>
@@ -294,12 +294,12 @@
 <div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr><tr><td><code>x-pigeonpost-device</code></td><td>header</td><td>string</td><td>yes</td><td>A registered, unrevoked MLS device of the acting mailbox.</td></tr></tbody></table></div>
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Success.</p>
-<pre class="lang-json"><code>{}</code></pre>
+<!--email_off--><pre class="lang-json"><code>{}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td>A group refusal: <code>{error, detail, message}</code> with codes from docs/groups.md (<code>not_member</code>, <code>not_admin</code>, <code>owner_only</code>, <code>posting_restricted</code>, <code>banned</code>, <code>group_full</code>, <code>invalid_link</code>, <code>invite_required</code>, <code>already_member</code>, <code>human_required</code>, <code>group_deleted</code>, <code>revision_conflict</code>, <code>epoch_conflict</code>, <code>key_activation_pending</code>, <code>idempotency_conflict</code>, <code>feature_disabled</code>, …).</td></tr><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td>A group refusal: <code>{error, detail, message}</code> with codes from docs/groups.md (<code>not_member</code>, <code>not_admin</code>, <code>owner_only</code>, <code>posting_restricted</code>, <code>banned</code>, <code>group_full</code>, <code>invalid_link</code>, <code>invite_required</code>, <code>already_member</code>, <code>human_required</code>, <code>group_deleted</code>, <code>revision_conflict</code>, <code>epoch_conflict</code>, <code>key_activation_pending</code>, <code>idempotency_conflict</code>, <code>feature_disabled</code>, …).</td></tr><tr><td><code>404</code></td><td>A group refusal: <code>{error, detail, message}</code> with codes from docs/groups.md (<code>not_member</code>, <code>not_admin</code>, <code>owner_only</code>, <code>posting_restricted</code>, <code>banned</code>, <code>group_full</code>, <code>invalid_link</code>, <code>invite_required</code>, <code>already_member</code>, <code>human_required</code>, <code>group_deleted</code>, <code>revision_conflict</code>, <code>epoch_conflict</code>, <code>key_activation_pending</code>, <code>idempotency_conflict</code>, <code>feature_disabled</code>, …).</td></tr><tr><td><code>409</code></td><td>A group refusal: <code>{error, detail, message}</code> with codes from docs/groups.md (<code>not_member</code>, <code>not_admin</code>, <code>owner_only</code>, <code>posting_restricted</code>, <code>banned</code>, <code>group_full</code>, <code>invalid_link</code>, <code>invite_required</code>, <code>already_member</code>, <code>human_required</code>, <code>group_deleted</code>, <code>revision_conflict</code>, <code>epoch_conflict</code>, <code>key_activation_pending</code>, <code>idempotency_conflict</code>, <code>feature_disabled</code>, …).</td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/mls/welcomes&quot; \
-  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre>
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/mls/welcomes&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="ackWelcome"><span class="method">POST</span> <code class="path">/v1/mls/welcomes/{welcome_id}/ack</code><a class="ah" href="#ackWelcome">#</a></h2>
@@ -309,21 +309,21 @@
 <h3>Parameters</h3>
 <div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>welcome_id</code></td><td>path</td><td>string</td><td>yes</td><td></td></tr><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr><tr><td><code>x-pigeonpost-device</code></td><td>header</td><td>string</td><td>yes</td><td>A registered, unrevoked MLS device of the acting mailbox.</td></tr></tbody></table></div>
 <h3>Request body</h3><p><code>application/json</code></p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;request_key&quot;: &quot;string&quot;,
   &quot;joined&quot;: false,
   &quot;error_code&quot;: &quot;string&quot;
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Success.</p>
-<pre class="lang-json"><code>{}</code></pre>
+<!--email_off--><pre class="lang-json"><code>{}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td>A group refusal: <code>{error, detail, message}</code> with codes from docs/groups.md (<code>not_member</code>, <code>not_admin</code>, <code>owner_only</code>, <code>posting_restricted</code>, <code>banned</code>, <code>group_full</code>, <code>invalid_link</code>, <code>invite_required</code>, <code>already_member</code>, <code>human_required</code>, <code>group_deleted</code>, <code>revision_conflict</code>, <code>epoch_conflict</code>, <code>key_activation_pending</code>, <code>idempotency_conflict</code>, <code>feature_disabled</code>, …).</td></tr><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td>A group refusal: <code>{error, detail, message}</code> with codes from docs/groups.md (<code>not_member</code>, <code>not_admin</code>, <code>owner_only</code>, <code>posting_restricted</code>, <code>banned</code>, <code>group_full</code>, <code>invalid_link</code>, <code>invite_required</code>, <code>already_member</code>, <code>human_required</code>, <code>group_deleted</code>, <code>revision_conflict</code>, <code>epoch_conflict</code>, <code>key_activation_pending</code>, <code>idempotency_conflict</code>, <code>feature_disabled</code>, …).</td></tr><tr><td><code>404</code></td><td>A group refusal: <code>{error, detail, message}</code> with codes from docs/groups.md (<code>not_member</code>, <code>not_admin</code>, <code>owner_only</code>, <code>posting_restricted</code>, <code>banned</code>, <code>group_full</code>, <code>invalid_link</code>, <code>invite_required</code>, <code>already_member</code>, <code>human_required</code>, <code>group_deleted</code>, <code>revision_conflict</code>, <code>epoch_conflict</code>, <code>key_activation_pending</code>, <code>idempotency_conflict</code>, <code>feature_disabled</code>, …).</td></tr><tr><td><code>409</code></td><td>A group refusal: <code>{error, detail, message}</code> with codes from docs/groups.md (<code>not_member</code>, <code>not_admin</code>, <code>owner_only</code>, <code>posting_restricted</code>, <code>banned</code>, <code>group_full</code>, <code>invalid_link</code>, <code>invite_required</code>, <code>already_member</code>, <code>human_required</code>, <code>group_deleted</code>, <code>revision_conflict</code>, <code>epoch_conflict</code>, <code>key_activation_pending</code>, <code>idempotency_conflict</code>, <code>feature_disabled</code>, …).</td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/mls/welcomes/$WELCOME_ID/ack&quot; \
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/mls/welcomes/$WELCOME_ID/ack&quot; \
   -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
   -H &quot;Content-Type: application/json&quot; \
-  -d &#x27;{&quot;request_key&quot;: &quot;string&quot;, &quot;joined&quot;: false, &quot;error_code&quot;: &quot;string&quot;}&#x27;</code></pre>
+  -d &#x27;{&quot;request_key&quot;: &quot;string&quot;, &quot;joined&quot;: false, &quot;error_code&quot;: &quot;string&quot;}&#x27;</code></pre><!--/email_off-->
 </section>
     <footer class="pagefoot">
       <nav>

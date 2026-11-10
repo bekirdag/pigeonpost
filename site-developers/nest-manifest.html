@@ -74,7 +74,7 @@
 <h1>Manifest, operations and configuration</h1>
 <h2 id="nest-release-toml">nest-release.toml<a class="ah" href="#nest-release-toml">#</a></h2>
 <p>The release manifest is a TOML file named <code>nest-release.toml</code>. Every key is required. Unknown keys are refused.</p>
-<pre class="lang-toml"><code>name = &quot;docs-qa&quot;
+<!--email_off--><pre class="lang-toml"><code>name = &quot;docs-qa&quot;
 version = &quot;0.1.0&quot;
 title = &quot;Docs Q&amp;A&quot;
 summary = &quot;Answers questions from the documents bundled with the release.&quot;
@@ -96,7 +96,7 @@ max_chars = 2000
 required = true
 
 [licences]
-docs-qa = &quot;MIT&quot;</code></pre>
+docs-qa = &quot;MIT&quot;</code></pre><!--/email_off-->
 <div class="tw"><table><thead><tr><th>Key</th><th>Type</th><th>Rules</th></tr></thead><tbody><tr><td><code>name</code></td><td>string</td><td>1 to 64 characters. Lowercase a-z, digits 0-9, hyphen -.</td></tr><tr><td><code>version</code></td><td>string</td><td>major.minor.patch format. Digits only.</td></tr><tr><td><code>title</code></td><td>string</td><td>Text.</td></tr><tr><td><code>summary</code></td><td>string</td><td>Text.</td></tr><tr><td><code>licence</code></td><td>string</td><td>SPDX expression for the release.</td></tr><tr><td><code>entrypoint</code></td><td>string</td><td>The program the image runs (e.g. /usr/local/bin/node).</td></tr><tr><td><code>listing_address</code></td><td>string</td><td>Absolute address starting with /. Max 128 characters. Addresses starting with /pigeonpost/ are reserved for Pigeonpost.</td></tr><tr><td><code>egress</code></td><td>array</td><td>List of strings. Only <code>&quot;broker&quot;</code>; <code>[]</code> for no network at all.</td></tr><tr><td><code>capabilities</code></td><td>array</td><td>Must be []. No Linux capabilities.</td></tr><tr><td><code>syscalls</code></td><td>array</td><td>Must be []. Nothing beyond the pool&#x27;s default gVisor profile.</td></tr><tr><td><code>external_writes</code></td><td>boolean</td><td><code>true</code> is blocked at launch</td></tr><tr><td><code>[[operations]]</code></td><td>tables</td><td>At least one; see below</td></tr><tr><td><code>[licences]</code></td><td>table</td><td>Package name to SPDX expression; see below</td></tr></tbody></table></div>
 <h2 id="operations-and-fields">Operations and fields<a class="ah" href="#operations-and-fields">#</a></h2>
 <p>Each <code>[[operations]]</code> table has a <code>name</code> (lower-case dotted words of a-z, 0-9 and <code>_</code>, each starting with a letter; at most 80 characters) and a <code>version</code> (<code>major.minor</code> or <code>major.minor.patch</code>). Define input fields in <code>[[operations.fields]]</code> blocks. Every input field is a string. You must define at least one operation. Each operation needs at least one field.</p>
@@ -109,7 +109,7 @@ docs-qa = &quot;MIT&quot;</code></pre>
 <h2 id="operation-descriptors">Operation descriptors<a class="ah" href="#operation-descriptors">#</a></h2>
 <p>Create one JSON file per operation in <code>operations/&lt;name&gt;.json</code>. This descriptor documents the operation for the listing and for review. Its input fields must match the manifest exactly.</p>
 <div class="tw"><table><thead><tr><th>Key</th><th>What</th></tr></thead><tbody><tr><td><code>operation</code>, <code>version</code></td><td>As in the manifest</td></tr><tr><td><code>summary</code></td><td>One sentence for the listing</td></tr><tr><td><code>input.fields</code></td><td>The same fields as the manifest, in the same order</td></tr><tr><td><code>output</code></td><td>JSON Schema of the result: <code>answer</code>, <code>sources</code>, <code>model_used</code></td></tr><tr><td><code>uses_model</code></td><td>Whether the operation calls the model broker</td></tr><tr><td><code>effects</code></td><td>Each external effect it may ask for: <code>kind</code>, <code>requires_approval</code>, <code>summary</code>, <code>idempotency</code> (how its key is derived)</td></tr></tbody></table></div>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;operation&quot;: &quot;docs.ask&quot;,
   &quot;version&quot;: &quot;1.0&quot;,
   &quot;summary&quot;: &quot;Answers a question using bundled documents.&quot;,
@@ -132,10 +132,10 @@ docs-qa = &quot;MIT&quot;</code></pre>
   },
   &quot;uses_model&quot;: true,
   &quot;effects&quot;: []
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h2 id="configuration-schema">Configuration schema<a class="ah" href="#configuration-schema">#</a></h2>
 <p>Define what a buyer sets at install in the manifest&#x27;s <code>[config_schema]</code> table. It is a small subset of JSON Schema 2020-12: one flat object with <code>additionalProperties = false</code> and at most 32 properties of type string, integer, number or boolean. The keywords are <code>type</code>, <code>title</code>, <code>description</code>, <code>default</code>, <code>enum</code>, <code>minLength</code>, <code>maxLength</code> (at most 4096), <code>minimum</code>, <code>maximum</code>, <code>writeOnly</code> and, at the root, <code>required</code>, <code>title</code>, <code>description</code> and <code>$schema</code>. Strings need <code>maxLength</code> or <code>enum</code>. Any other keyword is refused by name. <code>pigeonpost nest validate</code> applies the same rules as the platform.</p>
-<pre class="lang-toml"><code>[config_schema]
+<!--email_off--><pre class="lang-toml"><code>[config_schema]
 type = &quot;object&quot;
 additionalProperties = false
 required = []
@@ -144,9 +144,9 @@ required = []
 type = &quot;integer&quot;
 minimum = 0
 maximum = 6
-default = 2</code></pre>
+default = 2</code></pre><!--/email_off-->
 <p>The app reads configuration from the job as <code>job.config</code>. It is read-only, has the schema&#x27;s defaults filled in, and is <code>{}</code> when nothing is set. A property with <code>writeOnly = true</code> is a secret: it is never in <code>job.config</code> or the environment. The app asks the broker for it at run time (<code>secret()</code> in the SDKs).</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;type&quot;: &quot;object&quot;,
   &quot;additionalProperties&quot;: false,
   &quot;properties&quot;: {
@@ -157,7 +157,7 @@ default = 2</code></pre>
     }
   },
   &quot;required&quot;: []
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h2 id="checklist">Checklist<a class="ah" href="#checklist">#</a></h2>
 <ul><li>Every key present, no unknown ones; <code>version</code> bumped for this submission.</li><li>Check that <code>egress</code> only contains &quot;broker&quot; or is empty.</li><li>Confirm <code>capabilities</code> and <code>syscalls</code> are empty arrays.</li><li><code>external_writes = false</code> unless you are building for external writes ahead of launch.</li><li>Define at least one operation with at least one field.</li><li>Ensure all input fields in descriptors match the manifest.</li><li>Set <code>additionalProperties</code> to false in the configuration schema.</li></ul>
     <footer class="pagefoot">

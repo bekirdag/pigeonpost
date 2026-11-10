@@ -75,42 +75,42 @@
 <h2 id="the-contract">The contract<a class="ah" href="#the-contract">#</a></h2>
 <p>Your app is one long-running process per worker. It writes a job file to <code>/nest/jobs/in/&lt;job_id&gt;.json</code> and reads your result from <code>/nest/jobs/out/&lt;job_id&gt;.json</code>. You must poll the inbox; SDKs do this every 500 ms. Write the result to a temporary name, rename it to the final path, then delete the inbox file.</p>
 <p>The job file is at most 256 KiB. It has this shape:</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;job_id&quot;: &quot;job_gtk2gs6xeqfhcizg2vz37objye&quot;,
   &quot;operation&quot;: &quot;docs.ask&quot;,
   &quot;operation_version&quot;: &quot;1.0&quot;,
   &quot;payload&quot;: { &quot;question&quot;: &quot;How many days of annual leave do I get?&quot; },
   &quot;config&quot;: { &quot;answer_style&quot;: &quot;short&quot; }
-}</code></pre>
+}</code></pre><!--/email_off-->
 <p>On success, write a result file with this shape:</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;job_id&quot;: &quot;job_gtk2gs6xeqfhcizg2vz37objye&quot;,
   &quot;status&quot;: &quot;succeeded&quot;,
   &quot;answer&quot;: &quot;You get 25 days of paid annual leave per calendar year.&quot;,
   &quot;sources&quot;: [&quot;annual-leave&quot;],
   &quot;model_used&quot;: true
-}</code></pre>
+}</code></pre><!--/email_off-->
 <p>On failure, write a result file with this shape:</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;job_id&quot;: &quot;job_gtk2gs6xeqfhcizg2vz37objye&quot;,
   &quot;status&quot;: &quot;failed&quot;,
   &quot;error_code&quot;: &quot;invalid_operation_payload&quot;
-}</code></pre>
+}</code></pre><!--/email_off-->
 <p>The platform keeps only <code>answer</code>, <code>sources</code> and <code>model_used</code> from successful results, or <code>error_code</code> from failures. Any other field is dropped. <code>answer</code> may be any JSON value; <code>config</code> is present only when the installation has a configuration. A result over 512 KiB, a wrong <code>job_id</code>, or an unreadable file counts as failed with code <code>worker_failed</code>. Common error codes include <code>unknown_operation</code>, <code>invalid_operation_payload</code>, <code>approval_required</code>, and <code>internal_error</code>.</p>
 <h2 id="environment-and-files">Environment and files<a class="ah" href="#environment-and-files">#</a></h2>
 <p>The worker receives these environment variables and files:</p>
 <div class="tw"><table><thead><tr><th>Name</th><th>What</th></tr></thead><tbody><tr><td><code>NEST_BROKER_URL</code></td><td>The broker, <code>http://host:port</code>. Set only when the manifest&#x27;s egress includes <code>broker</code></td></tr><tr><td><code>NEST_ID</code></td><td>This worker&#x27;s id</td></tr><tr><td><code>/nest/run/broker-token</code></td><td>Broker token file (starts with <code>nbt_</code>). It changes each time the worker starts. Read it when you need it.</td></tr></tbody></table></div>
 <h2 id="the-model-broker">The model broker<a class="ah" href="#the-model-broker">#</a></h2>
 <p>Send requests to <code>POST {NEST_BROKER_URL}/v1/chat/completions</code>. Use header <code>Authorization: Bearer &lt;token&gt;</code> where <code>&lt;token&gt;</code> is the content of <code>/nest/run/broker-token</code>. The body looks like this:</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;messages&quot;: [
     {&quot;role&quot;: &quot;system&quot;, &quot;content&quot;: &quot;...&quot;},
     {&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;...&quot;}
   ],
   &quot;max_tokens&quot;: 1024
-}</code></pre>
+}</code></pre><!--/email_off-->
 <p>You must send 1 to 64 messages. Content is text only. The broker picks the model; model, tools and routing fields in the request are ignored. The reply has this shape:</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;id&quot;: &quot;string&quot;,
   &quot;model&quot;: &quot;string&quot;,
   &quot;choices&quot;: [
@@ -124,13 +124,13 @@
     &quot;prompt_tokens&quot;: 100,
     &quot;completion_tokens&quot;: 50
   }
-}</code></pre>
+}</code></pre><!--/email_off-->
 <p>Check your budget with <code>GET /v1/budget</code>. The reply is:</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;period&quot;: &quot;YYYY-MM&quot;,
   &quot;input_tokens&quot;: {&quot;used&quot;: 1000, &quot;limit&quot;: 200000},
   &quot;output_tokens&quot;: {&quot;used&quot;: 500, &quot;limit&quot;: 20000}
-}</code></pre>
+}</code></pre><!--/email_off-->
 <p>Broker limits at launch:</p>
 <div class="tw"><table><thead><tr><th>Limit</th><th>At launch</th></tr></thead><tbody><tr><td>Input tokens per request</td><td>16,384 (estimated as bytes/3 plus 8 per message plus 16)</td></tr><tr><td>Output tokens per request</td><td>1,024 (<code>max_tokens</code> is clamped to this)</td></tr><tr><td>Input tokens per worker per month</td><td>200,000</td></tr><tr><td>Output tokens per worker per month</td><td>20,000</td></tr><tr><td>Concurrency per worker</td><td>One request at a time</td></tr></tbody></table></div>
 <p>The worst case is reserved before the request goes upstream. Actual usage is charged.</p>
@@ -139,7 +139,7 @@
 <h2 id="the-sandbox">The sandbox<a class="ah" href="#the-sandbox">#</a></h2>
 <ul><li>The process runs in gVisor.</li><li>The image is read-only.</li><li>The volume <code>/nest</code> is writable but not executable.</li><li><code>/tmp</code> is a small tmpfs (about 32 MiB at launch).</li><li>The process runs as uid 10001 with no Linux capabilities and no new privileges.</li><li>There is no DNS and no network access except to the broker.</li><li>Container logs are not kept. stdout and stderr go nowhere. Never rely on logs for debugging.</li><li>Memory, CPU and process limits are small (about 256 MiB memory, half a CPU, 64 processes at launch). These may change.</li></ul>
 <h2 id="progress-and-external-effects">Progress and external effects<a class="ah" href="#progress-and-external-effects">#</a></h2>
-<div class="note">Coming with the publisher console: progress reporting and external effects are not in production yet. The SDKs and the local kit already speak them.</div>
+<div class="note">Progress reporting is live. External effects are recorded and approval-gated, but the marketplace pool offers no external writes yet. The SDKs and the local kit speak both.</div>
 <p>Progress is reported via <code>POST /v1/progress</code> with body <code>{job_id, fraction 0..1, message up to 200 characters}</code>. It is best effort and ignored where not offered.</p>
 <p>External effects are reported via <code>POST /v1/effects</code>. You must send an <code>Idempotency-Key</code> header equal to the effect key. The body is <code>{job_id, key, kind, summary, body, requires_approval}</code>.</p>
 <p>Effect answers:</p>
@@ -148,7 +148,7 @@
 <h2 id="sdk-reference">SDK reference<a class="ah" href="#sdk-reference">#</a></h2>
 <p><code>pigeonpost nest init</code> copies the SDK into your app: <code>pigeonpost-nest.mjs</code> (Node 20 or later, ESM, no dependencies) or <code>pigeonpost_nest.py</code> (Python 3, standard library only). Both implement the same contract. A handler that uses the broker and answers without it when it must:</p>
 <p>Node:</p>
-<pre class="lang-js"><code>import { serve, NestError } from &quot;./pigeonpost-nest.mjs&quot;;
+<!--email_off--><pre class="lang-js"><code>import { serve, NestError } from &quot;./pigeonpost-nest.mjs&quot;;
 
 serve({
   &quot;docs.ask@1.0&quot;: async (job) =&gt; {
@@ -169,9 +169,9 @@ serve({
     }
     return { answer: &quot;The model is not available; here is the closest section.&quot;, sources: [], model_used: false };
   },
-});</code></pre>
+});</code></pre><!--/email_off-->
 <p>Python:</p>
-<pre class="lang-python"><code>from pigeonpost_nest import NestError, serve
+<!--email_off--><pre class="lang-python"><code>from pigeonpost_nest import NestError, serve
 
 
 def ask(job):
@@ -192,9 +192,9 @@ def ask(job):
     return {&quot;answer&quot;: &quot;The model is not available; here is the closest section.&quot;, &quot;sources&quot;: [], &quot;model_used&quot;: False}
 
 
-serve({&quot;docs.ask@1.0&quot;: ask})</code></pre>
+serve({&quot;docs.ask@1.0&quot;: ask})</code></pre><!--/email_off-->
 <p>API reference:</p>
-<div class="tw"><table><thead><tr><th>Call</th><th>Node</th><th>Python</th><th>What it does</th></tr></thead><tbody><tr><td>Serve</td><td><code>serve(handlers)</code></td><td><code>serve(handlers)</code></td><td>Runs the worker forever. <code>handlers</code> maps <code>&quot;operation@version&quot;</code> to a function.</td></tr><tr><td>Job fields</td><td><code>job.id</code>, <code>job.operation</code>, <code>job.version</code>, <code>job.payload</code>, <code>job.config</code></td><td>Same names</td><td>Read-only job data from the inbox file.</td></tr><tr><td>Broker available</td><td><code>job.broker.available</code></td><td><code>job.broker.available</code></td><td>True when a broker URL and token are present. A no-AI app never needs one.</td></tr><tr><td>Broker complete</td><td><code>await job.broker.complete({system, user, messages, maxTokens})</code></td><td><code>job.broker.complete(system=..., user=..., messages=..., max_tokens=...)</code></td><td>Sends a chat request. Returns <code>{text, usage: {input, output}}</code>. Retries 409 busy up to 3 times. Raises <code>BrokerError</code> otherwise.</td></tr><tr><td>Budget</td><td><code>await job.broker.budget()</code></td><td><code>job.broker.budget()</code></td><td>Gets current token usage and limits.</td></tr><tr><td>Progress</td><td><code>await job.progress(fraction, message)</code></td><td><code>job.progress(fraction, message)</code></td><td>Best effort. Never fails the job. Max 100 per job.</td></tr><tr><td>Effect</td><td><code>await job.effect({key, kind, summary, body, requiresApproval})</code></td><td><code>job.effect(key=..., kind=..., summary=..., body=..., requires_approval=...)</code></td><td>Requests an external effect. Returns the outcome, or raises <code>NestError</code> with <code>approval_required</code>, <code>effects_unavailable</code>, <code>idempotency_conflict</code>, <code>effect_refused</code> or <code>effect_outcome_unknown</code>.</td></tr><tr><td>Secret</td><td><code>await job.broker.secret(name)</code></td><td><code>job.broker.secret(name)</code></td><td>One of the installation&#x27;s secret settings (<code>writeOnly</code> in <code>config_schema</code>), from the broker for this start of the Nest. Raises <code>BrokerError</code> <code>secret_not_set</code>. Never write it to the volume or a log.</td></tr><tr><td>Errors</td><td><code>NestError(code)</code></td><td><code>NestError(code)</code></td><td>Throw/raise to fail the job with that code. Other exceptions fail with <code>internal_error</code>.</td></tr><tr><td>Return value</td><td><code>{answer, sources?, model_used?}</code> or any other value</td><td>Same</td><td>A value without <code>answer</code> becomes the answer. <code>model_used</code> defaults to whether the broker answered during the job.</td></tr><tr><td>Testing helpers</td><td><code>runOnce(handlers, {root, url})</code></td><td><code>run_once(handlers, root=..., url=...)</code></td><td>Processes waiting jobs once. <code>NEST_ROOT</code> overrides <code>/nest</code>.</td></tr></tbody></table></div>
+<div class="tw"><table><thead><tr><th>Call</th><th>Node</th><th>Python</th><th>What it does</th></tr></thead><tbody><tr><td>Serve</td><td><code>serve(handlers)</code></td><td><code>serve(handlers)</code></td><td>Runs the worker forever. <code>handlers</code> maps <!--email_off--><code>&quot;operation@version&quot;</code><!--/email_off--> to a function.</td></tr><tr><td>Job fields</td><td><code>job.id</code>, <code>job.operation</code>, <code>job.version</code>, <code>job.payload</code>, <code>job.config</code></td><td>Same names</td><td>Read-only job data from the inbox file.</td></tr><tr><td>Broker available</td><td><code>job.broker.available</code></td><td><code>job.broker.available</code></td><td>True when a broker URL and token are present. A no-AI app never needs one.</td></tr><tr><td>Broker complete</td><td><code>await job.broker.complete({system, user, messages, maxTokens})</code></td><td><code>job.broker.complete(system=..., user=..., messages=..., max_tokens=...)</code></td><td>Sends a chat request. Returns <code>{text, usage: {input, output}}</code>. Retries 409 busy up to 3 times. Raises <code>BrokerError</code> otherwise.</td></tr><tr><td>Budget</td><td><code>await job.broker.budget()</code></td><td><code>job.broker.budget()</code></td><td>Gets current token usage and limits.</td></tr><tr><td>Progress</td><td><code>await job.progress(fraction, message)</code></td><td><code>job.progress(fraction, message)</code></td><td>Best effort. Never fails the job. Max 100 per job.</td></tr><tr><td>Effect</td><td><code>await job.effect({key, kind, summary, body, requiresApproval})</code></td><td><code>job.effect(key=..., kind=..., summary=..., body=..., requires_approval=...)</code></td><td>Requests an external effect. Returns the outcome, or raises <code>NestError</code> with <code>approval_required</code>, <code>effects_unavailable</code>, <code>idempotency_conflict</code>, <code>effect_refused</code> or <code>effect_outcome_unknown</code>.</td></tr><tr><td>Secret</td><td><code>await job.broker.secret(name)</code></td><td><code>job.broker.secret(name)</code></td><td>One of the installation&#x27;s secret settings (<code>writeOnly</code> in <code>config_schema</code>), from the broker for this start of the Nest. Raises <code>BrokerError</code> <code>secret_not_set</code>. Never write it to the volume or a log.</td></tr><tr><td>Errors</td><td><code>NestError(code)</code></td><td><code>NestError(code)</code></td><td>Throw/raise to fail the job with that code. Other exceptions fail with <code>internal_error</code>.</td></tr><tr><td>Return value</td><td><code>{answer, sources?, model_used?}</code> or any other value</td><td>Same</td><td>A value without <code>answer</code> becomes the answer. <code>model_used</code> defaults to whether the broker answered during the job.</td></tr><tr><td>Testing helpers</td><td><code>runOnce(handlers, {root, url})</code></td><td><code>run_once(handlers, root=..., url=...)</code></td><td>Processes waiting jobs once. <code>NEST_ROOT</code> overrides <code>/nest</code>.</td></tr></tbody></table></div>
     <footer class="pagefoot">
       <nav>
         <a href="https://pigeonpost.dev">pigeonpost.dev</a>

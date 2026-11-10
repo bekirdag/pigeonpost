@@ -76,7 +76,7 @@
 <p>Every entry is <code>{id, at, actor_kind, actor, action, target, details}</code>. Details are sanitized: no tokens, contact addresses or message content. Every Enterprise API request is itself an entry (<code>api_key.use</code>, with the key id as actor), so the log also records what your automation did.</p>
 <h2 id="the-loop">The loop<a class="ah" href="#the-loop">#</a></h2>
 <ol><li>1. On first run, start from a time: <code>?since=2026-10-27T00:00:00Z</code>.</li><li>2. Follow <code>next_cursor</code> page by page, forwarding entries, and <strong>store the cursor</strong> after each page so a restart resumes where it stopped.</li><li>3. On the last page <code>next_cursor</code> is <code>null</code>. Remember the last entry&#x27;s <code>at</code> and <code>id</code>, wait a little, and ask again with <code>since</code> set to that <code>at</code>, skipping the entries you have already sent (<code>since</code> includes entries at that exact second).</li><li>4. Filter with <code>?action=</code> (a prefix, such as <code>member.</code> or <code>api_key.</code>) if your SIEM only wants some.</li></ol>
-<pre class="lang-python"><code>import json, os, time, urllib.error, urllib.parse, urllib.request
+<!--email_off--><pre class="lang-python"><code>import json, os, time, urllib.error, urllib.parse, urllib.request
 
 BASE = &quot;https://postbox.pigeonpost.dev/org/v1/audit&quot;
 KEY = os.environ[&quot;PIGEONPOST_ORG_KEY&quot;]
@@ -131,7 +131,7 @@ while True:
     state[&quot;cursor&quot;] = page[&quot;next_cursor&quot;]
     save(state)
     if page[&quot;next_cursor&quot;] is None:
-        time.sleep(60)</code></pre>
+        time.sleep(60)</code></pre><!--/email_off-->
 <p>Forward before you save, so a crash between the two re-sends a page rather than losing one; your SIEM can deduplicate on <code>id</code>.</p>
 <h2 id="limits">Limits<a class="ah" href="#limits">#</a></h2>
 <p>A full page every second is well inside the key&#x27;s 600 requests a minute; when the log is quiet the loop makes one request a minute. On <code>429 rate_limited</code> wait <code>Retry-After</code> seconds. A cursor that was altered or comes from a different list is <code>400 invalid_cursor</code>: drop it and resume from <code>since</code>.</p>

@@ -85,7 +85,7 @@
 <div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>status</code></td><td>query</td><td>string</td><td></td><td>Only members in this state. One of <code>invited</code>, <code>active</code>, <code>suspended</code>.</td></tr><tr><td><code>limit</code></td><td>query</td><td>integer</td><td></td><td>Page size, 1..200 (default 50).</td></tr><tr><td><code>cursor</code></td><td>query</td><td>string</td><td></td><td>Opaque <code>next_cursor</code> from the previous page. Pass back exactly.</td></tr></tbody></table></div>
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Success.</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;data&quot;: [
     {
       &quot;id&quot;: &quot;mem_s3mwglzwgvsmymbskikattzcvb&quot;,
@@ -115,12 +115,12 @@
     }
   ],
   &quot;next_cursor&quot;: &quot;eyJhZnRlciI6IjIwMjYtMTAtMjcifQ&quot;
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Code</th><th>When</th></tr></thead><tbody><tr><td><code>400</code></td><td><a href="/org-api-errors#invalid_cursor"><code>invalid_cursor</code></a></td><td>The <code>cursor</code> was not produced by this list, or was altered. Pass back <code>next_cursor</code> exactly as received.</td></tr><tr><td><code>401</code></td><td><a href="/org-api-errors#unauthorized"><code>unauthorized</code></a></td><td>No key, an unknown key, a revoked key or an expired key. One answer for all four, so a caller cannot probe which.</td></tr><tr><td><code>403</code></td><td><a href="/org-api-errors#ip_not_allowed"><code>ip_not_allowed</code></a></td><td>The request came from an address outside the key&#x27;s IP allowlist.</td></tr><tr><td><code>403</code></td><td><a href="/org-api-errors#insufficient_scope"><code>insufficient_scope</code></a></td><td>The key does not hold the scope this route needs. The route&#x27;s scope is listed in the reference.</td></tr><tr><td><code>403</code></td><td><a href="/org-api-errors#forbidden"><code>forbidden</code></a></td><td>The person who created the key no longer has the authority for this action (demoted or removed), or the target is out of a key&#x27;s reach: the owner, or a member holding an admin role.</td></tr><tr><td><code>404</code></td><td><a href="/org-api-errors#feature_disabled"><code>feature_disabled</code></a></td><td>The Enterprise API is not enabled for this org (<code>org_api</code> feature flag).</td></tr><tr><td><code>409</code></td><td><a href="/org-api-errors#org_inactive"><code>org_inactive</code></a></td><td>The org is not live (pending, unprovisioned or suspended).</td></tr><tr><td><code>429</code></td><td><a href="/org-api-errors#rate_limited"><code>rate_limited</code></a></td><td>Over the key&#x27;s rate limit (600 requests a minute, of which 60 writes). Wait for <code>Retry-After</code> seconds.</td></tr><tr><td><code>500</code></td><td><a href="/org-api-errors#store_error"><code>store_error</code></a></td><td>The server could not complete the request. Safe to retry with the same <code>Idempotency-Key</code>.</td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/org/v1/members?status=active&quot; \
-  -H &quot;Authorization: Bearer $PIGEONPOST_ORG_KEY&quot;</code></pre>
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/org/v1/members?status=active&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_ORG_KEY&quot;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="inviteMember"><span class="method">POST</span> <code class="path">/members</code><a class="ah" href="#inviteMember">#</a></h2>
@@ -130,15 +130,15 @@
 <h3>Parameters</h3>
 <div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>Idempotency-Key</code></td><td>header</td><td>string</td><td></td><td>1-255 printable ASCII characters. Scoped to the key and route; a replay within 24 h returns the recorded response with <code>Idempotent-Replayed: true</code>. Reusing it for a different request is <code>409 idempotency_conflict</code>.</td></tr></tbody></table></div>
 <h3>Request body</h3><p><code>application/json</code></p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;first_name&quot;: &quot;Jane&quot;,
   &quot;last_name&quot;: &quot;Doe&quot;,
   &quot;contact&quot;: &quot;jane.doe@example.com&quot;,
   &quot;handle&quot;: &quot;jane&quot;
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Responses</h3>
 <p class="resp"><code>201</code> Created.</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;data&quot;: {
     &quot;member&quot;: {
       &quot;id&quot;: &quot;mem_qh4pnxpiqns7heuhs3whvjj7ok&quot;,
@@ -160,15 +160,15 @@
       &quot;delivery&quot;: &quot;queued&quot;
     }
   }
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Code</th><th>When</th></tr></thead><tbody><tr><td><code>400</code></td><td><a href="/org-api-errors#invalid_handle"><code>invalid_handle</code></a></td><td>A handle is not valid for this org: wrong namespace, bad characters, reserved, or too long. Org handles look like <code>/acme/john</code>; on input the bare name <code>john</code> is accepted too.</td></tr><tr><td><code>400</code></td><td><a href="/org-api-errors#invalid_contact"><code>invalid_contact</code></a></td><td>The invitation contact address is not a valid address.</td></tr><tr><td><code>400</code></td><td><a href="/org-api-errors#bad_request"><code>bad_request</code></a></td><td>The body or a parameter is malformed: not JSON, a wrong type, an unknown enum value, or a field out of range. The message names the field.</td></tr><tr><td><code>401</code></td><td><a href="/org-api-errors#unauthorized"><code>unauthorized</code></a></td><td>No key, an unknown key, a revoked key or an expired key. One answer for all four, so a caller cannot probe which.</td></tr><tr><td><code>403</code></td><td><a href="/org-api-errors#ip_not_allowed"><code>ip_not_allowed</code></a></td><td>The request came from an address outside the key&#x27;s IP allowlist.</td></tr><tr><td><code>403</code></td><td><a href="/org-api-errors#insufficient_scope"><code>insufficient_scope</code></a></td><td>The key does not hold the scope this route needs. The route&#x27;s scope is listed in the reference.</td></tr><tr><td><code>403</code></td><td><a href="/org-api-errors#forbidden"><code>forbidden</code></a></td><td>The person who created the key no longer has the authority for this action (demoted or removed), or the target is out of a key&#x27;s reach: the owner, or a member holding an admin role.</td></tr><tr><td><code>404</code></td><td><a href="/org-api-errors#feature_disabled"><code>feature_disabled</code></a></td><td>The Enterprise API is not enabled for this org (<code>org_api</code> feature flag).</td></tr><tr><td><code>409</code></td><td><a href="/org-api-errors#seat_limit"><code>seat_limit</code></a></td><td>Every seat is in use (owner, active, suspended and invited members all count). Buy seats or remove someone first.</td></tr><tr><td><code>409</code></td><td><a href="/org-api-errors#handle_taken"><code>handle_taken</code></a></td><td>The handle already belongs to a member, an agent, or is held for a successor.</td></tr><tr><td><code>409</code></td><td><a href="/org-api-errors#already_invited"><code>already_invited</code></a></td><td>This contact address already has a live invitation or membership in the org.</td></tr><tr><td><code>409</code></td><td><a href="/org-api-errors#domain_not_verified"><code>domain_not_verified</code></a></td><td>The org only invites addresses on its verified domains (<code>invite_domains_only</code>), and this one is not.</td></tr><tr><td><code>409</code></td><td><a href="/org-api-errors#org_inactive"><code>org_inactive</code></a></td><td>The org is not live (pending, unprovisioned or suspended).</td></tr><tr><td><code>409</code></td><td><a href="/org-api-errors#org_read_only"><code>org_read_only</code></a></td><td>The org is read-only after a lapsed payment: reads work, writes do not.</td></tr><tr><td><code>409</code></td><td><a href="/org-api-errors#idempotency_conflict"><code>idempotency_conflict</code></a></td><td>This <code>Idempotency-Key</code> was already used on this route with a different request (method, path or body).</td></tr><tr><td><code>429</code></td><td><a href="/org-api-errors#rate_limited"><code>rate_limited</code></a></td><td>Over the key&#x27;s rate limit (600 requests a minute, of which 60 writes). Wait for <code>Retry-After</code> seconds.</td></tr><tr><td><code>500</code></td><td><a href="/org-api-errors#store_error"><code>store_error</code></a></td><td>The server could not complete the request. Safe to retry with the same <code>Idempotency-Key</code>.</td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/org/v1/members&quot; \
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/org/v1/members&quot; \
   -H &quot;Authorization: Bearer $PIGEONPOST_ORG_KEY&quot; \
   -H &quot;Idempotency-Key: $(uuidgen)&quot; \
   -H &quot;Content-Type: application/json&quot; \
-  -d &#x27;{&quot;first_name&quot;: &quot;Jane&quot;, &quot;last_name&quot;: &quot;Doe&quot;, &quot;contact&quot;: &quot;jane.doe@example.com&quot;, &quot;handle&quot;: &quot;jane&quot;}&#x27;</code></pre>
+  -d &#x27;{&quot;first_name&quot;: &quot;Jane&quot;, &quot;last_name&quot;: &quot;Doe&quot;, &quot;contact&quot;: &quot;jane.doe@example.com&quot;, &quot;handle&quot;: &quot;jane&quot;}&#x27;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="getMember"><span class="method">GET</span> <code class="path">/members/{member}</code><a class="ah" href="#getMember">#</a></h2>
@@ -179,7 +179,7 @@
 <div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>member</code></td><td>path</td><td>string</td><td>yes</td><td>Member id (<code>mem_…</code>) or the member&#x27;s name inside the org (<code>john</code> for <code>/acme/john</code>).</td></tr></tbody></table></div>
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Success.</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;data&quot;: {
     &quot;id&quot;: &quot;mem_s3mwglzwgvsmymbskikattzcvb&quot;,
     &quot;handle&quot;: &quot;/acme/john&quot;,
@@ -193,12 +193,12 @@
     &quot;joined_at&quot;: &quot;2026-10-21T09:02:11Z&quot;,
     &quot;last_active_at&quot;: &quot;2026-10-27T10:15:00Z&quot;
   }
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Code</th><th>When</th></tr></thead><tbody><tr><td><code>401</code></td><td><a href="/org-api-errors#unauthorized"><code>unauthorized</code></a></td><td>No key, an unknown key, a revoked key or an expired key. One answer for all four, so a caller cannot probe which.</td></tr><tr><td><code>403</code></td><td><a href="/org-api-errors#ip_not_allowed"><code>ip_not_allowed</code></a></td><td>The request came from an address outside the key&#x27;s IP allowlist.</td></tr><tr><td><code>403</code></td><td><a href="/org-api-errors#insufficient_scope"><code>insufficient_scope</code></a></td><td>The key does not hold the scope this route needs. The route&#x27;s scope is listed in the reference.</td></tr><tr><td><code>403</code></td><td><a href="/org-api-errors#forbidden"><code>forbidden</code></a></td><td>The person who created the key no longer has the authority for this action (demoted or removed), or the target is out of a key&#x27;s reach: the owner, or a member holding an admin role.</td></tr><tr><td><code>404</code></td><td><a href="/org-api-errors#not_found"><code>not_found</code></a></td><td>No such member, agent, rule, room, webhook or enrollment in this org.</td></tr><tr><td><code>404</code></td><td><a href="/org-api-errors#feature_disabled"><code>feature_disabled</code></a></td><td>The Enterprise API is not enabled for this org (<code>org_api</code> feature flag).</td></tr><tr><td><code>409</code></td><td><a href="/org-api-errors#org_inactive"><code>org_inactive</code></a></td><td>The org is not live (pending, unprovisioned or suspended).</td></tr><tr><td><code>429</code></td><td><a href="/org-api-errors#rate_limited"><code>rate_limited</code></a></td><td>Over the key&#x27;s rate limit (600 requests a minute, of which 60 writes). Wait for <code>Retry-After</code> seconds.</td></tr><tr><td><code>500</code></td><td><a href="/org-api-errors#store_error"><code>store_error</code></a></td><td>The server could not complete the request. Safe to retry with the same <code>Idempotency-Key</code>.</td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/org/v1/members/john&quot; \
-  -H &quot;Authorization: Bearer $PIGEONPOST_ORG_KEY&quot;</code></pre>
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/org/v1/members/john&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_ORG_KEY&quot;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="updateMember"><span class="method">PATCH</span> <code class="path">/members/{member}</code><a class="ah" href="#updateMember">#</a></h2>
@@ -208,12 +208,12 @@
 <h3>Parameters</h3>
 <div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>member</code></td><td>path</td><td>string</td><td>yes</td><td>Member id (<code>mem_…</code>) or the member&#x27;s name inside the org (<code>john</code> for <code>/acme/john</code>).</td></tr><tr><td><code>Idempotency-Key</code></td><td>header</td><td>string</td><td></td><td>1-255 printable ASCII characters. Scoped to the key and route; a replay within 24 h returns the recorded response with <code>Idempotent-Replayed: true</code>. Reusing it for a different request is <code>409 idempotency_conflict</code>.</td></tr></tbody></table></div>
 <h3>Request body</h3><p><code>application/json</code></p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;last_name&quot;: &quot;Smith-Jones&quot;
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Success.</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;data&quot;: {
     &quot;id&quot;: &quot;mem_s3mwglzwgvsmymbskikattzcvb&quot;,
     &quot;handle&quot;: &quot;/acme/john&quot;,
@@ -227,15 +227,15 @@
     &quot;joined_at&quot;: &quot;2026-10-21T09:02:11Z&quot;,
     &quot;last_active_at&quot;: &quot;2026-10-27T10:15:00Z&quot;
   }
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Code</th><th>When</th></tr></thead><tbody><tr><td><code>400</code></td><td><a href="/org-api-errors#bad_request"><code>bad_request</code></a></td><td>The body or a parameter is malformed: not JSON, a wrong type, an unknown enum value, or a field out of range. The message names the field.</td></tr><tr><td><code>401</code></td><td><a href="/org-api-errors#unauthorized"><code>unauthorized</code></a></td><td>No key, an unknown key, a revoked key or an expired key. One answer for all four, so a caller cannot probe which.</td></tr><tr><td><code>403</code></td><td><a href="/org-api-errors#ip_not_allowed"><code>ip_not_allowed</code></a></td><td>The request came from an address outside the key&#x27;s IP allowlist.</td></tr><tr><td><code>403</code></td><td><a href="/org-api-errors#insufficient_scope"><code>insufficient_scope</code></a></td><td>The key does not hold the scope this route needs. The route&#x27;s scope is listed in the reference.</td></tr><tr><td><code>403</code></td><td><a href="/org-api-errors#forbidden"><code>forbidden</code></a></td><td>The person who created the key no longer has the authority for this action (demoted or removed), or the target is out of a key&#x27;s reach: the owner, or a member holding an admin role.</td></tr><tr><td><code>404</code></td><td><a href="/org-api-errors#not_found"><code>not_found</code></a></td><td>No such member, agent, rule, room, webhook or enrollment in this org.</td></tr><tr><td><code>404</code></td><td><a href="/org-api-errors#feature_disabled"><code>feature_disabled</code></a></td><td>The Enterprise API is not enabled for this org (<code>org_api</code> feature flag).</td></tr><tr><td><code>409</code></td><td><a href="/org-api-errors#org_inactive"><code>org_inactive</code></a></td><td>The org is not live (pending, unprovisioned or suspended).</td></tr><tr><td><code>409</code></td><td><a href="/org-api-errors#org_read_only"><code>org_read_only</code></a></td><td>The org is read-only after a lapsed payment: reads work, writes do not.</td></tr><tr><td><code>409</code></td><td><a href="/org-api-errors#idempotency_conflict"><code>idempotency_conflict</code></a></td><td>This <code>Idempotency-Key</code> was already used on this route with a different request (method, path or body).</td></tr><tr><td><code>429</code></td><td><a href="/org-api-errors#rate_limited"><code>rate_limited</code></a></td><td>Over the key&#x27;s rate limit (600 requests a minute, of which 60 writes). Wait for <code>Retry-After</code> seconds.</td></tr><tr><td><code>500</code></td><td><a href="/org-api-errors#store_error"><code>store_error</code></a></td><td>The server could not complete the request. Safe to retry with the same <code>Idempotency-Key</code>.</td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X PATCH &quot;https://postbox.pigeonpost.dev/org/v1/members/john&quot; \
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X PATCH &quot;https://postbox.pigeonpost.dev/org/v1/members/john&quot; \
   -H &quot;Authorization: Bearer $PIGEONPOST_ORG_KEY&quot; \
   -H &quot;Idempotency-Key: $(uuidgen)&quot; \
   -H &quot;Content-Type: application/json&quot; \
-  -d &#x27;{&quot;last_name&quot;: &quot;Smith-Jones&quot;}&#x27;</code></pre>
+  -d &#x27;{&quot;last_name&quot;: &quot;Smith-Jones&quot;}&#x27;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="removeMember"><span class="method">DELETE</span> <code class="path">/members/{member}</code><a class="ah" href="#removeMember">#</a></h2>
@@ -246,19 +246,19 @@
 <div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>member</code></td><td>path</td><td>string</td><td>yes</td><td>Member id (<code>mem_…</code>) or the member&#x27;s name inside the org (<code>john</code> for <code>/acme/john</code>).</td></tr><tr><td><code>mode</code></td><td>query</td><td>string</td><td></td><td><code>reserve</code> (default) or <code>delete</code>. One of <code>reserve</code>, <code>delete</code>.</td></tr><tr><td><code>Idempotency-Key</code></td><td>header</td><td>string</td><td></td><td>1-255 printable ASCII characters. Scoped to the key and route; a replay within 24 h returns the recorded response with <code>Idempotent-Replayed: true</code>. Reusing it for a different request is <code>409 idempotency_conflict</code>.</td></tr></tbody></table></div>
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Success.</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;data&quot;: {
     &quot;id&quot;: &quot;mem_s3mwglzwgvsmymbskikattzcvb&quot;,
     &quot;removed&quot;: true,
     &quot;mode&quot;: &quot;reserve&quot;
   }
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Code</th><th>When</th></tr></thead><tbody><tr><td><code>401</code></td><td><a href="/org-api-errors#unauthorized"><code>unauthorized</code></a></td><td>No key, an unknown key, a revoked key or an expired key. One answer for all four, so a caller cannot probe which.</td></tr><tr><td><code>403</code></td><td><a href="/org-api-errors#ip_not_allowed"><code>ip_not_allowed</code></a></td><td>The request came from an address outside the key&#x27;s IP allowlist.</td></tr><tr><td><code>403</code></td><td><a href="/org-api-errors#insufficient_scope"><code>insufficient_scope</code></a></td><td>The key does not hold the scope this route needs. The route&#x27;s scope is listed in the reference.</td></tr><tr><td><code>403</code></td><td><a href="/org-api-errors#forbidden"><code>forbidden</code></a></td><td>The person who created the key no longer has the authority for this action (demoted or removed), or the target is out of a key&#x27;s reach: the owner, or a member holding an admin role.</td></tr><tr><td><code>404</code></td><td><a href="/org-api-errors#not_found"><code>not_found</code></a></td><td>No such member, agent, rule, room, webhook or enrollment in this org.</td></tr><tr><td><code>404</code></td><td><a href="/org-api-errors#feature_disabled"><code>feature_disabled</code></a></td><td>The Enterprise API is not enabled for this org (<code>org_api</code> feature flag).</td></tr><tr><td><code>409</code></td><td><a href="/org-api-errors#org_inactive"><code>org_inactive</code></a></td><td>The org is not live (pending, unprovisioned or suspended).</td></tr><tr><td><code>409</code></td><td><a href="/org-api-errors#org_read_only"><code>org_read_only</code></a></td><td>The org is read-only after a lapsed payment: reads work, writes do not.</td></tr><tr><td><code>409</code></td><td><a href="/org-api-errors#idempotency_conflict"><code>idempotency_conflict</code></a></td><td>This <code>Idempotency-Key</code> was already used on this route with a different request (method, path or body).</td></tr><tr><td><code>429</code></td><td><a href="/org-api-errors#rate_limited"><code>rate_limited</code></a></td><td>Over the key&#x27;s rate limit (600 requests a minute, of which 60 writes). Wait for <code>Retry-After</code> seconds.</td></tr><tr><td><code>500</code></td><td><a href="/org-api-errors#store_error"><code>store_error</code></a></td><td>The server could not complete the request. Safe to retry with the same <code>Idempotency-Key</code>.</td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X DELETE &quot;https://postbox.pigeonpost.dev/org/v1/members/john?mode=reserve&quot; \
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X DELETE &quot;https://postbox.pigeonpost.dev/org/v1/members/john?mode=reserve&quot; \
   -H &quot;Authorization: Bearer $PIGEONPOST_ORG_KEY&quot; \
-  -H &quot;Idempotency-Key: $(uuidgen)&quot;</code></pre>
+  -H &quot;Idempotency-Key: $(uuidgen)&quot;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="suspendMember"><span class="method">POST</span> <code class="path">/members/{member}/suspend</code><a class="ah" href="#suspendMember">#</a></h2>
@@ -269,7 +269,7 @@
 <div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>member</code></td><td>path</td><td>string</td><td>yes</td><td>Member id (<code>mem_…</code>) or the member&#x27;s name inside the org (<code>john</code> for <code>/acme/john</code>).</td></tr><tr><td><code>Idempotency-Key</code></td><td>header</td><td>string</td><td></td><td>1-255 printable ASCII characters. Scoped to the key and route; a replay within 24 h returns the recorded response with <code>Idempotent-Replayed: true</code>. Reusing it for a different request is <code>409 idempotency_conflict</code>.</td></tr></tbody></table></div>
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Success.</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;data&quot;: {
     &quot;id&quot;: &quot;mem_s3mwglzwgvsmymbskikattzcvb&quot;,
     &quot;handle&quot;: &quot;/acme/john&quot;,
@@ -283,13 +283,13 @@
     &quot;joined_at&quot;: &quot;2026-10-21T09:02:11Z&quot;,
     &quot;last_active_at&quot;: &quot;2026-10-27T10:15:00Z&quot;
   }
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Code</th><th>When</th></tr></thead><tbody><tr><td><code>401</code></td><td><a href="/org-api-errors#unauthorized"><code>unauthorized</code></a></td><td>No key, an unknown key, a revoked key or an expired key. One answer for all four, so a caller cannot probe which.</td></tr><tr><td><code>403</code></td><td><a href="/org-api-errors#ip_not_allowed"><code>ip_not_allowed</code></a></td><td>The request came from an address outside the key&#x27;s IP allowlist.</td></tr><tr><td><code>403</code></td><td><a href="/org-api-errors#insufficient_scope"><code>insufficient_scope</code></a></td><td>The key does not hold the scope this route needs. The route&#x27;s scope is listed in the reference.</td></tr><tr><td><code>403</code></td><td><a href="/org-api-errors#forbidden"><code>forbidden</code></a></td><td>The person who created the key no longer has the authority for this action (demoted or removed), or the target is out of a key&#x27;s reach: the owner, or a member holding an admin role.</td></tr><tr><td><code>404</code></td><td><a href="/org-api-errors#not_found"><code>not_found</code></a></td><td>No such member, agent, rule, room, webhook or enrollment in this org.</td></tr><tr><td><code>404</code></td><td><a href="/org-api-errors#feature_disabled"><code>feature_disabled</code></a></td><td>The Enterprise API is not enabled for this org (<code>org_api</code> feature flag).</td></tr><tr><td><code>409</code></td><td><a href="/org-api-errors#org_inactive"><code>org_inactive</code></a></td><td>The org is not live (pending, unprovisioned or suspended).</td></tr><tr><td><code>409</code></td><td><a href="/org-api-errors#org_read_only"><code>org_read_only</code></a></td><td>The org is read-only after a lapsed payment: reads work, writes do not.</td></tr><tr><td><code>409</code></td><td><a href="/org-api-errors#idempotency_conflict"><code>idempotency_conflict</code></a></td><td>This <code>Idempotency-Key</code> was already used on this route with a different request (method, path or body).</td></tr><tr><td><code>429</code></td><td><a href="/org-api-errors#rate_limited"><code>rate_limited</code></a></td><td>Over the key&#x27;s rate limit (600 requests a minute, of which 60 writes). Wait for <code>Retry-After</code> seconds.</td></tr><tr><td><code>500</code></td><td><a href="/org-api-errors#store_error"><code>store_error</code></a></td><td>The server could not complete the request. Safe to retry with the same <code>Idempotency-Key</code>.</td></tr><tr><td><code>409</code></td><td><a href="/org-api-errors#invite_pending"><code>invite_pending</code></a></td><td>The member has not accepted their invitation yet; remove the member to withdraw it.</td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/org/v1/members/john/suspend&quot; \
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/org/v1/members/john/suspend&quot; \
   -H &quot;Authorization: Bearer $PIGEONPOST_ORG_KEY&quot; \
-  -H &quot;Idempotency-Key: $(uuidgen)&quot;</code></pre>
+  -H &quot;Idempotency-Key: $(uuidgen)&quot;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="reactivateMember"><span class="method">POST</span> <code class="path">/members/{member}/reactivate</code><a class="ah" href="#reactivateMember">#</a></h2>
@@ -300,7 +300,7 @@
 <div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>member</code></td><td>path</td><td>string</td><td>yes</td><td>Member id (<code>mem_…</code>) or the member&#x27;s name inside the org (<code>john</code> for <code>/acme/john</code>).</td></tr><tr><td><code>Idempotency-Key</code></td><td>header</td><td>string</td><td></td><td>1-255 printable ASCII characters. Scoped to the key and route; a replay within 24 h returns the recorded response with <code>Idempotent-Replayed: true</code>. Reusing it for a different request is <code>409 idempotency_conflict</code>.</td></tr></tbody></table></div>
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Success.</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;data&quot;: {
     &quot;id&quot;: &quot;mem_s3mwglzwgvsmymbskikattzcvb&quot;,
     &quot;handle&quot;: &quot;/acme/john&quot;,
@@ -314,13 +314,13 @@
     &quot;joined_at&quot;: &quot;2026-10-21T09:02:11Z&quot;,
     &quot;last_active_at&quot;: &quot;2026-10-27T10:15:00Z&quot;
   }
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Code</th><th>When</th></tr></thead><tbody><tr><td><code>401</code></td><td><a href="/org-api-errors#unauthorized"><code>unauthorized</code></a></td><td>No key, an unknown key, a revoked key or an expired key. One answer for all four, so a caller cannot probe which.</td></tr><tr><td><code>403</code></td><td><a href="/org-api-errors#ip_not_allowed"><code>ip_not_allowed</code></a></td><td>The request came from an address outside the key&#x27;s IP allowlist.</td></tr><tr><td><code>403</code></td><td><a href="/org-api-errors#insufficient_scope"><code>insufficient_scope</code></a></td><td>The key does not hold the scope this route needs. The route&#x27;s scope is listed in the reference.</td></tr><tr><td><code>403</code></td><td><a href="/org-api-errors#forbidden"><code>forbidden</code></a></td><td>The person who created the key no longer has the authority for this action (demoted or removed), or the target is out of a key&#x27;s reach: the owner, or a member holding an admin role.</td></tr><tr><td><code>404</code></td><td><a href="/org-api-errors#not_found"><code>not_found</code></a></td><td>No such member, agent, rule, room, webhook or enrollment in this org.</td></tr><tr><td><code>404</code></td><td><a href="/org-api-errors#feature_disabled"><code>feature_disabled</code></a></td><td>The Enterprise API is not enabled for this org (<code>org_api</code> feature flag).</td></tr><tr><td><code>409</code></td><td><a href="/org-api-errors#org_inactive"><code>org_inactive</code></a></td><td>The org is not live (pending, unprovisioned or suspended).</td></tr><tr><td><code>409</code></td><td><a href="/org-api-errors#org_read_only"><code>org_read_only</code></a></td><td>The org is read-only after a lapsed payment: reads work, writes do not.</td></tr><tr><td><code>409</code></td><td><a href="/org-api-errors#idempotency_conflict"><code>idempotency_conflict</code></a></td><td>This <code>Idempotency-Key</code> was already used on this route with a different request (method, path or body).</td></tr><tr><td><code>429</code></td><td><a href="/org-api-errors#rate_limited"><code>rate_limited</code></a></td><td>Over the key&#x27;s rate limit (600 requests a minute, of which 60 writes). Wait for <code>Retry-After</code> seconds.</td></tr><tr><td><code>500</code></td><td><a href="/org-api-errors#store_error"><code>store_error</code></a></td><td>The server could not complete the request. Safe to retry with the same <code>Idempotency-Key</code>.</td></tr><tr><td><code>409</code></td><td><a href="/org-api-errors#invite_pending"><code>invite_pending</code></a></td><td>The member has not accepted their invitation yet; remove the member to withdraw it.</td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/org/v1/members/john/reactivate&quot; \
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/org/v1/members/john/reactivate&quot; \
   -H &quot;Authorization: Bearer $PIGEONPOST_ORG_KEY&quot; \
-  -H &quot;Idempotency-Key: $(uuidgen)&quot;</code></pre>
+  -H &quot;Idempotency-Key: $(uuidgen)&quot;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="resendInvite"><span class="method">POST</span> <code class="path">/members/{member}/resend-invite</code><a class="ah" href="#resendInvite">#</a></h2>
@@ -331,7 +331,7 @@
 <div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>member</code></td><td>path</td><td>string</td><td>yes</td><td>Member id (<code>mem_…</code>) or the member&#x27;s name inside the org (<code>john</code> for <code>/acme/john</code>).</td></tr><tr><td><code>Idempotency-Key</code></td><td>header</td><td>string</td><td></td><td>1-255 printable ASCII characters. Scoped to the key and route; a replay within 24 h returns the recorded response with <code>Idempotent-Replayed: true</code>. Reusing it for a different request is <code>409 idempotency_conflict</code>.</td></tr></tbody></table></div>
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Success.</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;data&quot;: {
     &quot;member&quot;: {
       &quot;id&quot;: &quot;mem_qh4pnxpiqns7heuhs3whvjj7ok&quot;,
@@ -353,13 +353,13 @@
       &quot;delivery&quot;: &quot;queued&quot;
     }
   }
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Code</th><th>When</th></tr></thead><tbody><tr><td><code>401</code></td><td><a href="/org-api-errors#unauthorized"><code>unauthorized</code></a></td><td>No key, an unknown key, a revoked key or an expired key. One answer for all four, so a caller cannot probe which.</td></tr><tr><td><code>403</code></td><td><a href="/org-api-errors#ip_not_allowed"><code>ip_not_allowed</code></a></td><td>The request came from an address outside the key&#x27;s IP allowlist.</td></tr><tr><td><code>403</code></td><td><a href="/org-api-errors#insufficient_scope"><code>insufficient_scope</code></a></td><td>The key does not hold the scope this route needs. The route&#x27;s scope is listed in the reference.</td></tr><tr><td><code>403</code></td><td><a href="/org-api-errors#forbidden"><code>forbidden</code></a></td><td>The person who created the key no longer has the authority for this action (demoted or removed), or the target is out of a key&#x27;s reach: the owner, or a member holding an admin role.</td></tr><tr><td><code>404</code></td><td><a href="/org-api-errors#not_found"><code>not_found</code></a></td><td>No such member, agent, rule, room, webhook or enrollment in this org.</td></tr><tr><td><code>404</code></td><td><a href="/org-api-errors#feature_disabled"><code>feature_disabled</code></a></td><td>The Enterprise API is not enabled for this org (<code>org_api</code> feature flag).</td></tr><tr><td><code>409</code></td><td><a href="/org-api-errors#invite_used"><code>invite_used</code></a></td><td>The invitation or enrollment code was already accepted, redeemed or revoked, so it cannot be resent or revoked again.</td></tr><tr><td><code>409</code></td><td><a href="/org-api-errors#seat_limit"><code>seat_limit</code></a></td><td>Every seat is in use (owner, active, suspended and invited members all count). Buy seats or remove someone first.</td></tr><tr><td><code>409</code></td><td><a href="/org-api-errors#org_inactive"><code>org_inactive</code></a></td><td>The org is not live (pending, unprovisioned or suspended).</td></tr><tr><td><code>409</code></td><td><a href="/org-api-errors#org_read_only"><code>org_read_only</code></a></td><td>The org is read-only after a lapsed payment: reads work, writes do not.</td></tr><tr><td><code>409</code></td><td><a href="/org-api-errors#idempotency_conflict"><code>idempotency_conflict</code></a></td><td>This <code>Idempotency-Key</code> was already used on this route with a different request (method, path or body).</td></tr><tr><td><code>429</code></td><td><a href="/org-api-errors#rate_limited"><code>rate_limited</code></a></td><td>Over the key&#x27;s rate limit (600 requests a minute, of which 60 writes). Wait for <code>Retry-After</code> seconds.</td></tr><tr><td><code>500</code></td><td><a href="/org-api-errors#store_error"><code>store_error</code></a></td><td>The server could not complete the request. Safe to retry with the same <code>Idempotency-Key</code>.</td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/org/v1/members/john/resend-invite&quot; \
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/org/v1/members/john/resend-invite&quot; \
   -H &quot;Authorization: Bearer $PIGEONPOST_ORG_KEY&quot; \
-  -H &quot;Idempotency-Key: $(uuidgen)&quot;</code></pre>
+  -H &quot;Idempotency-Key: $(uuidgen)&quot;</code></pre><!--/email_off-->
 </section>
     <footer class="pagefoot">
       <nav>

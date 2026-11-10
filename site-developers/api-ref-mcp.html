@@ -82,15 +82,15 @@
 <p class="op-facts">Credentials: <code>apiKey</code>, <code>capToken</code>, <code>memberToken</code> (optional)</p>
 <p>Methods: <code>initialize</code>, <code>tools/list</code>, <code>ping</code>, <code>tools/call</code>. The bearer token is optional for <code>initialize</code>/<code>tools/list</code>; tool calls authenticate with a capability token, an account API key or a member token. Tool failures (including authentication failures) are reported as error tool-results inside a 200 JSON-RPC response, not as HTTP errors. A notification (no <code>id</code>) gets an empty 202.</p>
 <h3>Request body</h3><p><code>application/json</code></p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;jsonrpc&quot;: &quot;2.0&quot;,
   &quot;id&quot;: &quot;string&quot;,
   &quot;method&quot;: &quot;initialize&quot;,
   &quot;params&quot;: {}
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Responses</h3>
 <p class="resp"><code>200</code> JSON-RPC response.</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;jsonrpc&quot;: &quot;2.0&quot;,
   &quot;id&quot;: null,
   &quot;result&quot;: null,
@@ -98,15 +98,15 @@
     &quot;code&quot;: 0,
     &quot;message&quot;: &quot;string&quot;
   }
-}</code></pre>
+}</code></pre><!--/email_off-->
 <p class="resp"><code>202</code> Notification accepted; no body.</p>
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td>Body was not JSON (<code>invalid_request</code>).</td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/mcp&quot; \
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/mcp&quot; \
   -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
   -H &quot;Content-Type: application/json&quot; \
-  -d &#x27;{&quot;jsonrpc&quot;: &quot;2.0&quot;, &quot;id&quot;: &quot;string&quot;, &quot;method&quot;: &quot;initialize&quot;, &quot;params&quot;: {}}&#x27;</code></pre>
+  -d &#x27;{&quot;jsonrpc&quot;: &quot;2.0&quot;, &quot;id&quot;: &quot;string&quot;, &quot;method&quot;: &quot;initialize&quot;, &quot;params&quot;: {}}&#x27;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="chatgptMcp"><span class="method">POST</span> <code class="path">/chatgpt</code><a class="ah" href="#chatgptMcp">#</a></h2>
@@ -116,15 +116,15 @@
 <h3>Parameters</h3>
 <div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>MCP-Protocol-Version</code></td><td>header</td><td>string</td><td></td><td>One of <code>2025-03-26</code>, <code>2025-06-18</code>, <code>2025-11-25</code>.</td></tr></tbody></table></div>
 <h3>Request body</h3><p><code>application/json</code></p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;jsonrpc&quot;: &quot;2.0&quot;,
   &quot;id&quot;: &quot;string&quot;,
   &quot;method&quot;: &quot;initialize&quot;,
   &quot;params&quot;: {}
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Responses</h3>
 <p class="resp"><code>200</code> JSON-RPC response.</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;jsonrpc&quot;: &quot;2.0&quot;,
   &quot;id&quot;: null,
   &quot;result&quot;: null,
@@ -132,15 +132,15 @@
     &quot;code&quot;: 0,
     &quot;message&quot;: &quot;string&quot;
   }
-}</code></pre>
+}</code></pre><!--/email_off-->
 <p class="resp"><code>202</code> Notification accepted; no body.</p>
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td>Unsupported MCP protocol version.</td></tr><tr><td><code>401</code></td><td>Authorization required; JSON-RPC body with a <code>WWW-Authenticate</code>-style challenge in <code>_meta</code>.</td></tr><tr><td><code>403</code></td><td>Origin not allowed, or token lacks the required scope.</td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/chatgpt&quot; \
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/chatgpt&quot; \
   -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
   -H &quot;Content-Type: application/json&quot; \
-  -d &#x27;{&quot;jsonrpc&quot;: &quot;2.0&quot;, &quot;id&quot;: &quot;string&quot;, &quot;method&quot;: &quot;initialize&quot;, &quot;params&quot;: {}}&#x27;</code></pre>
+  -d &#x27;{&quot;jsonrpc&quot;: &quot;2.0&quot;, &quot;id&quot;: &quot;string&quot;, &quot;method&quot;: &quot;initialize&quot;, &quot;params&quot;: {}}&#x27;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="oauthProtectedResource"><span class="method">GET</span> <code class="path">/.well-known/oauth-protected-resource</code><a class="ah" href="#oauthProtectedResource">#</a></h2>
@@ -148,7 +148,7 @@
 <p class="op-facts">Credentials: none</p>
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Metadata for the ChatGPT MCP resource.</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;resource&quot;: &quot;string&quot;,
   &quot;resource_name&quot;: &quot;string&quot;,
   &quot;authorization_servers&quot;: [
@@ -161,9 +161,9 @@
     &quot;string&quot;
   ],
   &quot;resource_documentation&quot;: &quot;string&quot;
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/.well-known/oauth-protected-resource&quot;</code></pre>
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/.well-known/oauth-protected-resource&quot;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="oauthProtectedResourceChatgpt"><span class="method">GET</span> <code class="path">/.well-known/oauth-protected-resource/chatgpt</code><a class="ah" href="#oauthProtectedResourceChatgpt">#</a></h2>
@@ -171,7 +171,7 @@
 <p class="op-facts">Credentials: none</p>
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Metadata for the ChatGPT MCP resource.</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;resource&quot;: &quot;string&quot;,
   &quot;resource_name&quot;: &quot;string&quot;,
   &quot;authorization_servers&quot;: [
@@ -184,9 +184,9 @@
     &quot;string&quot;
   ],
   &quot;resource_documentation&quot;: &quot;string&quot;
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/.well-known/oauth-protected-resource/chatgpt&quot;</code></pre>
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/.well-known/oauth-protected-resource/chatgpt&quot;</code></pre><!--/email_off-->
 </section>
     <footer class="pagefoot">
       <nav>

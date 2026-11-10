@@ -1,0 +1,43 @@
+#!/bin/sh
+# nests-uptime-probe: are the services Pigeonpost depends on reachable from the public internet?
+# Installed as /usr/local/sbin/nests-uptime-probe and run every minute by nests-uptime-probe.timer.
+# Writes nests_uptime_up{target="..."} (one per target) and nests_uptime_probe_seconds for
+# node_exporter's textfile collector. Same atomic write as nests-postbox-probe: a temp name in the
+# same directory (leading dot, no .prom suffix, ignored by the collector), then a rename, so a
+# scrape never sees a partial file.
+# Exits 0 when a target is down (the metric says so); non-zero only when writing fails.
+#
+# The User-Agent is browser-like because some of these sit behind a proxy that turns away
+# obvious scripts; a refusal there would read as an outage.
+
+set -u
+
+DIR="${TEXTFILE_DIR:-/var/lib/prometheus/node-exporter}"
+UA="${UPTIME_PROBE_UA:-Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36}"
+
+# "target URL", one per line.
+TARGETS="${UPTIME_PROBE_TARGETS:-keycloak_pigeonpost https://auth.pigeonpost.dev/realms/pigeonpost-prod/.well-known/openid-configuration
+keycloak_sealunit https://sso.sealunit.com/realms/masaas/.well-known/openid-configuration
+saas_be https://app-pigeonpost.masaas.org/saas-api/health/ready
+billing_bridge https://pigeonpost.dev/api/healthz}"
+
+tmpfile="$DIR/.nests_uptime_probe.prom.$$"
+trap 'rm -f "$tmpfile"' EXIT
+
+{
+    printf '# HELP nests_uptime_up 1 if the target answered 2xx within 10 s.\n'
+    printf '# TYPE nests_uptime_up gauge\n'
+    printf '%s\n' "$TARGETS" | while read -r name url; do
+        [ -n "$name" ] && [ -n "$url" ] || continue
+        up=0
+        if curl -fsS -o /dev/null -A "$UA" --connect-timeout 5 --max-time 10 "$url" 2>/dev/null; then
+            up=1
+        fi
+        printf 'nests_uptime_up{target="%s"} %s\n' "$name" "$up"
+    done
+    printf '# HELP nests_uptime_probe_seconds Unix time of the last probe run.\n'
+    printf '# TYPE nests_uptime_probe_seconds gauge\n'
+    printf 'nests_uptime_probe_seconds %s\n' "$(date +%s)"
+} > "$tmpfile" || exit 1
+chmod 0644 "$tmpfile" || exit 1
+mv -f "$tmpfile" "$DIR/nests_uptime_probe.prom" || exit 1

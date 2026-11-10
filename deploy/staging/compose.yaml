@@ -1,6 +1,8 @@
 # Staging postbox (marketplace M2b, R-70, OD-9) — a template. Rootless podman-compose or docker
-# compose. It shares nothing with production: its own network, its own volume, its own vault key,
-# its own realm client. See README.md in this folder for the steps and what must exist first.
+# compose. It shares no state with production: its own network, its own volume, its own vault key
+# and ops token. Production staging accepts the production realm's sign-in (README.md, item 2).
+# The image runs as uid 65532: the key file and the volume must be owned by it (README.md,
+# "Ownership"). See README.md in this folder for the steps and what must exist first.
 #
 #   podman-compose -f deploy/staging/compose.yaml --env-file ~/pp-staging/staging.env up -d
 #

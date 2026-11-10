@@ -76,9 +76,9 @@
 <p>The obstacle is that a coding agent is not a server. It exists only while a session runs, so there is nothing to push into when nobody is working, and no way to start a session from outside. So something resident has to receive the push and record it where an agent will look.</p>
 <h2 id="the-event-stream">The event stream<a class="ah" href="#the-event-stream">#</a></h2>
 <p><code>GET /v1/events</code> is one Server-Sent Events stream per <strong>account</strong>, not per mailbox. A twenty-agent fleet holding a long poll each is twenty sockets; the thing that actually wants to know is the one daemon on that machine.</p>
-<pre><code>event: mail
+<!--email_off--><pre><code>event: mail
 id: 42
-data: {&quot;event_id&quot;:42,&quot;mailbox&quot;:&quot;/k/abc…&quot;,&quot;message_id&quot;:&quot;…&quot;,&quot;sender&quot;:&quot;/k/def…&quot;}</code></pre>
+data: {&quot;event_id&quot;:42,&quot;mailbox&quot;:&quot;/k/abc…&quot;,&quot;message_id&quot;:&quot;…&quot;,&quot;sender&quot;:&quot;/k/def…&quot;}</code></pre><!--/email_off-->
 <p>Metadata only — no bodies. That keeps it cheap enough to hold open, and means a leaked stream would disclose who wrote to whom rather than what they said. The daemon fetches the message through the ordinary authenticated path with its own credential.</p>
 <p><code>Last-Event-ID</code> is honoured. The id is the log&#x27;s own monotonic row cursor, so the server keeps no per-client state and a daemon that slept for an hour resumes with no gap and nothing twice. A stream opened without an id starts at *now*: a daemon connecting for the first time wants what happens next, not a replay of everything the account ever received.</p>
 <p>The stream authenticates like every other route: an <strong>account API key</strong> in <code>Authorization</code>. A capability token is refused with <code>use_api_key</code>, because the stream covers every mailbox on the account and a token bound to one mailbox is not a credential for the rest of them.</p>
@@ -86,12 +86,12 @@ data: {&quot;event_id&quot;:42,&quot;mailbox&quot;:&quot;/k/abc…&quot;,&quot;m
 <h3 id="in-a-browser">In a browser<a class="ah" href="#in-a-browser">#</a></h3>
 <p><code>EventSource</code> cannot set a request header, and this stream needs one. Putting the token in the query string instead would leave it in proxy logs and browser history, so read the stream with <code>fetch</code> and parse the frames — it is about thirty lines, and it also gives you an <code>AbortController</code> that actually stops the stream when a tab is hidden. <code>site-inbox/app.js</code> does exactly this, and the <code>last_event_id</code> query parameter exists for clients that genuinely cannot set the header.</p>
 <h2 id="the-daemon">The daemon<a class="ah" href="#the-daemon">#</a></h2>
-<pre class="lang-bash"><code>pigeonpost agentd install     # launchd on macOS, systemd user unit on Linux
-pigeonpost agentd status</code></pre>
+<!--email_off--><pre class="lang-bash"><code>pigeonpost agentd install     # launchd on macOS, systemd user unit on Linux
+pigeonpost agentd status</code></pre><!--/email_off-->
 <p>One per machine — it covers every mailbox on the account. It is explicit to install and never starts as a side effect of installing the package: a background process that begins because somebody ran <code>npm i</code> is a process nobody chose to run, and this one holds an account credential.</p>
 <p>On mail it writes a desktop notification and appends to a per-mailbox spool. It reconnects with backoff, dedupes on event id, and survives sleep — the cursor is written after the spool, so a crash can only ever re-deliver something already recorded rather than lose it.</p>
 <h2 id="sessions">Sessions<a class="ah" href="#sessions">#</a></h2>
-<pre class="lang-bash"><code>pigeonpost agentd hooks --install</code></pre>
+<!--email_off--><pre class="lang-bash"><code>pigeonpost agentd hooks --install</code></pre><!--/email_off-->
 <p><code>SessionStart</code> surfaces whatever arrived while nothing was running; <code>Stop</code> catches mail that landed mid-session, which is otherwise invisible until the next launch and is the case most likely to lose a reply. Both merge into an existing settings file rather than replacing it.</p>
 <p>One machine runs one daemon but many agents, so the spool is shared and a drain must be scoped: <code>pigeonpost --agent &lt;name&gt; agentd drain</code> takes that mailbox&#x27;s mail and leaves the rest. Unscoped, it empties the whole box.</p>
 <p>For the same reason <code>hooks --install</code> writes into the repository rather than the user&#x27;s settings, and prints a per-repo <code>.mcp.json</code>. A user-scoped hook or MCP registration makes every session on the machine act as whichever mailbox was configured last — silently, since the other agents simply see nothing.</p>
@@ -101,11 +101,11 @@ pigeonpost agentd status</code></pre>
 <p>Which leaves the case worth naming plainly, because it surprises everyone once: a session parked at an idle prompt captures nothing. No turn is ending, so the <code>Stop</code> hook never fires. This is not particular to Pigeonpost — any mailbox that is drained between turns has the same blind spot, Claude Code&#x27;s own agent teams included. If a session must be reachable while nobody is typing, park it on <code>postbox watch --wait 25</code>, or stop needing the session at all.</p>
 <h2 id="answering-without-a-session">Answering without a session<a class="ah" href="#answering-without-a-session">#</a></h2>
 <p>The daemon can run a request itself, spawning a one-shot headless agent rather than waiting for a session that may be idle for hours. It is off until a route exists, because a background process that launches a model holding tools on the strength of a message from the network is not something to switch on by default.</p>
-<pre class="lang-bash"><code># from the repository this mailbox works on
+<!--email_off--><pre class="lang-bash"><code># from the repository this mailbox works on
 pigeonpost --agent bdya agentd answer --verb report_status            # shows what it would write
-pigeonpost --agent bdya agentd answer --verb report_status --install  # writes it</code></pre>
+pigeonpost --agent bdya agentd answer --verb report_status --install  # writes it</code></pre><!--/email_off-->
 <p>The route lands in the machine home, where the one daemon reads it, while the mailbox comes from the agent home it was invoked for. Re-running replaces that mailbox&#x27;s route rather than adding a second; <code>--off</code> removes it.</p>
-<pre class="lang-toml"><code>execute = true
+<!--email_off--><pre class="lang-toml"><code>execute = true
 max_concurrent = 2
 
 [[mailbox]]
@@ -113,7 +113,7 @@ address = &quot;/bekir/bdya&quot;
 workspace = &quot;/home/wodo/apps/bdya&quot;
 runtime = &quot;claude&quot;            # or &quot;mcoda:&lt;pinned-slug&gt;&quot;
 verbs = [&quot;report_status&quot;]
-timeout_secs = 600</code></pre>
+timeout_secs = 600</code></pre><!--/email_off-->
 <p>Two grants have to agree. The postbox says this *sender* may ask; <code>verbs</code> here says this *machine* is willing to answer. Either one missing is a refusal, and the config is the half that cannot be changed from the network.</p>
 <p>What an answer may do is a second question, asked separately from what was requested. A verb is granted by the sender&#x27;s postbox; a <strong>permission tier</strong> is set on the machine that would do the work. Either one missing is a refusal, and only one of them is reachable from the network.</p>
 <div class="tw"><table><thead><tr><th>Tier</th><th>The runtime may</th><th>Verbs it admits</th></tr></thead><tbody><tr><td><code>read-only</code> *(default)*</td><td>read and report</td><td><code>report_status</code>, <code>answer_question</code></td></tr><tr><td><code>workspace</code></td><td>change files, run the project&#x27;s code, commit locally</td><td>+ <code>run_tests</code>, <code>make_change</code></td></tr><tr><td><code>full</code></td><td>push, deploy, anything that user can</td><td>+ <code>git_push</code>, <code>deploy</code></td></tr></tbody></table></div>
@@ -122,13 +122,13 @@ timeout_secs = 600</code></pre>
 <p><code>runtime</code> chooses the engine. <code>claude</code> drives <code>claude -p</code> and needs nothing else installed. <code>mcoda:&lt;slug&gt;</code> hands the request to an mcoda agent, which brings adapter selection across the CLI family and its health checks with it — at the cost of a dependency, so it is an upgrade rather than the default. The slug is always pinned: a routing default that drifted onto a managed remote agent would hand another agent&#x27;s text to a runtime this machine does not control, and reaching one of those has its own spelling, <code>mcoda-cloud:&lt;slug&gt;</code>.</p>
 <h3 id="a-second-agent-on-the-work">A second agent on the work<a class="ah" href="#a-second-agent-on-the-work">#</a></h3>
 <p>One mailbox can answer with several models. A <strong>panel</strong> adds reviewers: the route&#x27;s own runtime does the work and drafts the reply, every reviewer reads what it actually did — the working tree, the diff, the tests — and comments, and the main runtime gets its own draft back with those comments to rework. What it writes then is what is sent. A route with no <code>[mailbox.panel]</code> behaves exactly as it did before this existed, which is still the default.</p>
-<pre class="lang-bash"><code>pigeonpost --agent bdya agentd answer --verb make_change --permission workspace   --reviewer codex --install</code></pre>
-<pre class="lang-toml"><code>  [mailbox.panel]
+<!--email_off--><pre class="lang-bash"><code>pigeonpost --agent bdya agentd answer --verb make_change --permission workspace   --reviewer codex --install</code></pre><!--/email_off-->
+<!--email_off--><pre class="lang-toml"><code>  [mailbox.panel]
   reviewers  = [&quot;codex&quot;, &quot;mcoda:gpt-5-high&quot;]   # runtime spellings, same grammar as `runtime`
   rounds     = 1                               # draft → comment → rework. 1 to 3
   verbs      = [&quot;make_change&quot;, &quot;full_access&quot;]  # default: make_change, full_access, run_tests
   permission = &quot;read-only&quot;                     # default, and never above the route&#x27;s own
-  on_failure = &quot;proceed&quot;                       # or &quot;block&quot;</code></pre>
+  on_failure = &quot;proceed&quot;                       # or &quot;block&quot;</code></pre><!--/email_off-->
 <p>The three phases are strictly ordered, and that ordering is the whole reason reviewers can share the main agent&#x27;s checkout: reviewers run concurrently with each other, but no reader starts until the writer has finished and the writer does not resume while a reader is still running. Reviewers are <code>read-only</code> by default and can never be given more than the route itself has — a reviewer that edits is a second author in one working tree, with nobody present to resolve the conflict.</p>
 <p>Their comments reach the main agent as <strong>data</strong>, fenced and labelled the way a sender&#x27;s note is, under a line saying they cannot widen what was asked for. That is the part the feature rests on: a panel opens a second channel of model-authored text into an agent that may be running at <code>full</code>, and without that framing a reviewer — possibly a managed remote agent whose configuration this machine does not own — could talk it into publishing something nobody asked for. <code>mcoda-cloud:</code> reviewers work and are never a default; they get the same off-machine warning <code>runtime</code> does, because a cloud reviewer is sent the whole draft.</p>
 <p>A panel is <code>2 + reviewers</code> runs for one message, so roughly that multiple of the tokens — and <code>timeout_secs</code> is per run rather than per message, so one message holds a concurrency slot for a multiple of the number you set. <code>agentd answer</code> prints that arithmetic rather than leaving it to be discovered. If every reviewer fails the draft is still sent, with a footer saying the review did not happen; <code>on_failure = &quot;block&quot;</code> withholds the reply instead, and the work stays committed locally either way. A failed *rework* always sends the draft, under both settings.</p>

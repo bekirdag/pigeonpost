@@ -83,7 +83,7 @@
 <p>Only meetings where this account consented to notes and has not removed its copy, before the retention date. Briefs are ciphertext; see docs/meeting-summaries.md.</p>
 <h3>Responses</h3>
 <p class="resp"><code>200</code> The list.</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;meetings&quot;: [
     {
       &quot;id&quot;: &quot;string&quot;,
@@ -98,12 +98,12 @@
       &quot;failure&quot;: &quot;string&quot;
     }
   ]
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>credential_not_accepted</code> (a mailbox token or connector)</td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/meetings&quot; \
-  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre>
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/meetings&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="listMeetingNotesKeys"><span class="method">GET</span> <code class="path">/v1/meetings/keys</code><a class="ah" href="#listMeetingNotesKeys">#</a></h2>
@@ -111,7 +111,7 @@
 <p class="op-facts">Credentials: <code>apiKey</code>, <code>memberToken</code></p>
 <h3>Responses</h3>
 <p class="resp"><code>200</code> The keys.</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;keys&quot;: [
     {
       &quot;key_id&quot;: &quot;string&quot;,
@@ -121,12 +121,12 @@
       &quot;last_used_at&quot;: 0
     }
   ]
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>credential_not_accepted</code></td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/meetings/keys&quot; \
-  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre>
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/meetings/keys&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="putMeetingNotesKey"><span class="method">PUT</span> <code class="path">/v1/meetings/keys/{key_id}</code><a class="ah" href="#putMeetingNotesKey">#</a></h2>
@@ -135,23 +135,23 @@
 <h3>Parameters</h3>
 <div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>key_id</code></td><td>path</td><td>string</td><td>yes</td><td></td></tr></tbody></table></div>
 <h3>Request body</h3><p><code>application/json</code></p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;public_key&quot;: &quot;string&quot;,
   &quot;label&quot;: &quot;string&quot;
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Registered.</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;key_id&quot;: &quot;string&quot;,
   &quot;registered&quot;: false
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td><code>bad_request</code></td></tr><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>credential_not_accepted</code></td></tr><tr><td><code>404</code></td><td><code>feature_disabled</code></td></tr><tr><td><code>409</code></td><td><code>key_exists</code> (this id holds a different key)</td></tr><tr><td><code>429</code></td><td><code>rate_limited</code></td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X PUT &quot;https://postbox.pigeonpost.dev/v1/meetings/keys/$KEY_ID&quot; \
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X PUT &quot;https://postbox.pigeonpost.dev/v1/meetings/keys/$KEY_ID&quot; \
   -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
   -H &quot;Content-Type: application/json&quot; \
-  -d &#x27;{&quot;public_key&quot;: &quot;string&quot;, &quot;label&quot;: &quot;string&quot;}&#x27;</code></pre>
+  -d &#x27;{&quot;public_key&quot;: &quot;string&quot;, &quot;label&quot;: &quot;string&quot;}&#x27;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="deleteMeetingNotesKey"><span class="method">DELETE</span> <code class="path">/v1/meetings/keys/{key_id}</code><a class="ah" href="#deleteMeetingNotesKey">#</a></h2>
@@ -161,14 +161,14 @@
 <div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>key_id</code></td><td>path</td><td>string</td><td>yes</td><td></td></tr></tbody></table></div>
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Deleted.</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;deleted&quot;: false
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>credential_not_accepted</code></td></tr><tr><td><code>404</code></td><td><code>not_found</code></td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X DELETE &quot;https://postbox.pigeonpost.dev/v1/meetings/keys/$KEY_ID&quot; \
-  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre>
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X DELETE &quot;https://postbox.pigeonpost.dev/v1/meetings/keys/$KEY_ID&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="getMeetingBrief"><span class="method">GET</span> <code class="path">/v1/meetings/{id}</code><a class="ah" href="#getMeetingBrief">#</a></h2>
@@ -179,7 +179,7 @@
 <div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>id</code></td><td>path</td><td>string</td><td>yes</td><td></td></tr></tbody></table></div>
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Status, plus ciphertext when <code>state</code> is <code>ready</code>.</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;id&quot;: &quot;string&quot;,
   &quot;kind&quot;: &quot;direct&quot;,
   &quot;state&quot;: &quot;active&quot;,
@@ -201,12 +201,12 @@
       &quot;wrapped&quot;: &quot;string&quot;
     }
   ]
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>credential_not_accepted</code></td></tr><tr><td><code>404</code></td><td><code>not_found</code></td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/meetings/$ID&quot; \
-  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre>
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/meetings/$ID&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="removeMeetingBrief"><span class="method">DELETE</span> <code class="path">/v1/meetings/{id}</code><a class="ah" href="#removeMeetingBrief">#</a></h2>
@@ -216,15 +216,15 @@
 <div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>id</code></td><td>path</td><td>string</td><td>yes</td><td></td></tr></tbody></table></div>
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Removed.</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;removed&quot;: false,
   &quot;brief_deleted&quot;: false
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>credential_not_accepted</code></td></tr><tr><td><code>404</code></td><td><code>not_found</code></td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X DELETE &quot;https://postbox.pigeonpost.dev/v1/meetings/$ID&quot; \
-  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre>
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X DELETE &quot;https://postbox.pigeonpost.dev/v1/meetings/$ID&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre><!--/email_off-->
 </section>
     <footer class="pagefoot">
       <nav>

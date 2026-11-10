@@ -82,43 +82,43 @@
 <p class="op-facts">Credentials: <code>memberToken</code></p>
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Offer.</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;eligible&quot;: false,
   &quot;namespace&quot;: &quot;string&quot;,
   &quot;source&quot;: &quot;string&quot;,
   &quot;expires_at&quot;: 0,
   &quot;mailbox&quot;: &quot;string&quot;
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>500</code></td><td><code>store_error</code> (or another server-side code such as <code>vault_error</code>).</td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/claims/test&quot; \
-  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre>
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/claims/test&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="testerHandleClaim"><span class="method">POST</span> <code class="path">/v1/claims/test</code><a class="ah" href="#testerHandleClaim">#</a></h2>
 <p class="op-sum">Claim a complimentary namespace (approved testers only)</p>
 <p class="op-facts">Credentials: <code>memberToken</code></p>
 <h3>Request body</h3><p><code>application/json</code></p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;namespace&quot;: &quot;string&quot;
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Claimed (idempotent for the same name).</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;eligible&quot;: false,
   &quot;namespace&quot;: &quot;string&quot;,
   &quot;source&quot;: &quot;string&quot;,
   &quot;expires_at&quot;: 0,
   &quot;mailbox&quot;: &quot;string&quot;
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td><code>invalid_namespace</code></td></tr><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>tester_required</code></td></tr><tr><td><code>409</code></td><td><code>name_reserved</code>, <code>tester_already_named</code>, <code>namespace_taken</code></td></tr><tr><td><code>500</code></td><td><code>reserved_names_unavailable</code>, <code>store_error</code></td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/claims/test&quot; \
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/claims/test&quot; \
   -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
   -H &quot;Content-Type: application/json&quot; \
-  -d &#x27;{&quot;namespace&quot;: &quot;string&quot;}&#x27;</code></pre>
+  -d &#x27;{&quot;namespace&quot;: &quot;string&quot;}&#x27;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="appleClaimState"><span class="method">GET</span> <code class="path">/v1/claims/apple</code><a class="ah" href="#appleClaimState">#</a></h2>
@@ -127,7 +127,7 @@
 <p>404 <code>not_found</code> when App Store verification is not configured.</p>
 <h3>Responses</h3>
 <p class="resp"><code>200</code> State.</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;product_id&quot;: &quot;string&quot;,
   &quot;product_ids&quot;: [
     &quot;string&quot;
@@ -148,12 +148,12 @@
       &quot;active&quot;: false
     }
   ]
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>404</code></td><td><code>not_found</code></td></tr><tr><td><code>500</code></td><td><code>store_error</code> (or another server-side code such as <code>vault_error</code>).</td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/claims/apple&quot; \
-  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre>
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/claims/apple&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="claimApple"><span class="method">POST</span> <code class="path">/v1/claims/apple</code><a class="ah" href="#claimApple">#</a></h2>
@@ -161,28 +161,28 @@
 <p class="op-facts">Credentials: <code>memberToken</code></p>
 <p>404 <code>not_found</code> when App Store verification is not configured. The transaction is verified with Apple; nothing in the body is trusted.</p>
 <h3>Request body</h3><p><code>application/json</code></p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;transaction_id&quot;: &quot;string&quot;,
   &quot;namespace&quot;: &quot;string&quot;
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Claimed. Single-handle products return <code>{namespace, mailbox, expires_at, environment}</code>;
 plan products return <code>{plan, namespace, mailbox}</code>.
 </p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;namespace&quot;: &quot;string&quot;,
   &quot;mailbox&quot;: &quot;string&quot;,
   &quot;expires_at&quot;: 0,
   &quot;environment&quot;: &quot;string&quot;,
   &quot;plan&quot;: null
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td><code>member_token_required</code>, <code>purchase_unknown</code>, <code>purchase_not_ours</code>, <code>purchase_account_required</code>, <code>name_required</code>, <code>invalid_namespace</code></td></tr><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>402</code></td><td><code>purchase_expired</code>, <code>purchase_refunded</code></td></tr><tr><td><code>404</code></td><td><code>not_found</code></td></tr><tr><td><code>409</code></td><td><code>purchase_already_used</code>, <code>purchase_already_named</code>, <code>namespace_taken</code>, <code>name_reserved</code>, <code>handle_limit_reached</code>, <code>handle_already_subscribed</code>, <code>plan_capacity_reached</code></td></tr><tr><td><code>500</code></td><td><code>appstore_unavailable</code>, <code>reserved_names_unavailable</code>, <code>store_error</code></td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/claims/apple&quot; \
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/claims/apple&quot; \
   -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
   -H &quot;Content-Type: application/json&quot; \
-  -d &#x27;{&quot;transaction_id&quot;: &quot;string&quot;, &quot;namespace&quot;: &quot;string&quot;}&#x27;</code></pre>
+  -d &#x27;{&quot;transaction_id&quot;: &quot;string&quot;, &quot;namespace&quot;: &quot;string&quot;}&#x27;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="googlePlayCatalog"><span class="method">GET</span> <code class="path">/v1/claims/google</code><a class="ah" href="#googlePlayCatalog">#</a></h2>
@@ -190,7 +190,7 @@ plan products return <code>{plan, namespace, mailbox}</code>.
 <p class="op-facts">Credentials: <code>memberToken</code></p>
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Catalog.</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;available&quot;: false,
   &quot;product_ids&quot;: [
     &quot;string&quot;
@@ -201,58 +201,58 @@ plan products return <code>{plan, namespace, mailbox}</code>.
   &quot;handles&quot;: [
     {}
   ]
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>500</code></td><td><code>store_error</code> (or another server-side code such as <code>vault_error</code>).</td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/claims/google&quot; \
-  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre>
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/claims/google&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="googlePlayClaim"><span class="method">POST</span> <code class="path">/v1/claims/google</code><a class="ah" href="#googlePlayClaim">#</a></h2>
 <p class="op-sum">Redeem a Google Play purchase token (optionally naming the handle)</p>
 <p class="op-facts">Credentials: <code>memberToken</code></p>
 <h3>Request body</h3><p><code>application/json</code></p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;purchase_token&quot;: &quot;string&quot;,
   &quot;namespace&quot;: &quot;string&quot;
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Purchase recorded.</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;purchase&quot;: {},
   &quot;mailbox&quot;: &quot;string&quot;
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td><code>invalid_namespace</code>, <code>reserved</code>, <code>purchase_not_found</code>, <code>invalid_purchase</code></td></tr><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>purchase_account_mismatch</code></td></tr><tr><td><code>409</code></td><td><code>duplicate_subscription</code>, <code>handle_limit</code>, <code>purchase_inactive</code>, <code>purchase_replaced</code></td></tr><tr><td><code>500</code></td><td><code>store_error</code> (or another server-side code such as <code>vault_error</code>).</td></tr><tr><td><code>503</code></td><td><code>billing_unavailable</code></td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/claims/google&quot; \
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/claims/google&quot; \
   -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
   -H &quot;Content-Type: application/json&quot; \
-  -d &#x27;{&quot;purchase_token&quot;: &quot;string&quot;, &quot;namespace&quot;: &quot;string&quot;}&#x27;</code></pre>
+  -d &#x27;{&quot;purchase_token&quot;: &quot;string&quot;, &quot;namespace&quot;: &quot;string&quot;}&#x27;</code></pre><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="googlePlayAssign"><span class="method">POST</span> <code class="path">/v1/claims/google/assign</code><a class="ah" href="#googlePlayAssign">#</a></h2>
 <p class="op-sum">Assign a name to an active, unnamed Google Play subscription</p>
 <p class="op-facts">Credentials: <code>memberToken</code></p>
 <h3>Request body</h3><p><code>application/json</code></p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;product_id&quot;: &quot;string&quot;,
   &quot;namespace&quot;: &quot;string&quot;
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Purchase recorded.</p>
-<pre class="lang-json"><code>{
+<!--email_off--><pre class="lang-json"><code>{
   &quot;purchase&quot;: {},
   &quot;mailbox&quot;: &quot;string&quot;
-}</code></pre>
+}</code></pre><!--/email_off-->
 <h3>Errors</h3>
 <div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>400</code></td><td><code>no_unassigned_purchase</code>, <code>invalid_namespace</code>, <code>reserved</code>, <code>purchase_not_found</code>, <code>invalid_purchase</code></td></tr><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>purchase_account_mismatch</code></td></tr><tr><td><code>409</code></td><td><code>duplicate_subscription</code>, <code>handle_limit</code>, <code>purchase_inactive</code>, <code>purchase_replaced</code></td></tr><tr><td><code>500</code></td><td><code>store_error</code> (or another server-side code such as <code>vault_error</code>).</td></tr><tr><td><code>503</code></td><td><code>billing_unavailable</code></td></tr></tbody></table></div>
 <h3>Example</h3>
-<pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/claims/google/assign&quot; \
+<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/claims/google/assign&quot; \
   -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
   -H &quot;Content-Type: application/json&quot; \
-  -d &#x27;{&quot;product_id&quot;: &quot;string&quot;, &quot;namespace&quot;: &quot;string&quot;}&#x27;</code></pre>
+  -d &#x27;{&quot;product_id&quot;: &quot;string&quot;, &quot;namespace&quot;: &quot;string&quot;}&#x27;</code></pre><!--/email_off-->
 </section>
     <footer class="pagefoot">
       <nav>

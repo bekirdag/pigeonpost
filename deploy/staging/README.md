@@ -25,11 +25,14 @@ The owner (or an agent with the owner's go-ahead) creates these; none of them is
 
 1. **A domain** `<staging-domain>` with a DNS record for the host, and a TLS certificate for it on
    the host's existing reverse proxy.
-2. **A realm client** for staging: a new Keycloak client (or a separate realm) with redirect URI
-   `https://<staging-domain>/*`. Never the production client. Its issuer, audience and client id
-   go in `OIDC_ISSUER`, `OIDC_AUDIENCE`, `OIDC_CLIENT_ID`.
+2. **Sign-in.** Production staging accepts the production realm's tokens, so publishers sign in
+   with their normal Pigeonpost account: `OIDC_ISSUER=https://auth.pigeonpost.dev/realms/pigeonpost-prod`
+   and `OIDC_AUDIENCE=masaas-api`. Everything else stays separate (its own vault key, database
+   volume and ops token, below), and payments are refused. A staging that should not accept
+   production accounts uses its own realm client instead.
 3. **A fresh vault key file**, never copied from production:
-   `openssl rand -hex 32 > ~/pp-staging/secrets/master.key && chmod 600 ~/pp-staging/secrets/master.key`.
+   `openssl rand -hex 32 > ~/pp-staging/secrets/master.key && chmod 600 ~/pp-staging/secrets/master.key`,
+   then give it to uid 65532 (see "Ownership" below).
 4. **An ops service token** for the internal API (build plane, analysis plane, operator):
    `echo "svc_$(openssl rand -hex 32)"` into `POSTBOX_SVC_TOKEN_OPS`.
 5. **A test-pool control token** (`openssl rand -hex 32`) for `POSTBOX_MARKETPLACE_TEST_NESTS_TOKEN`;
@@ -61,7 +64,11 @@ The owner (or an agent with the owner's go-ahead) creates these; none of them is
          podman-compose -f deploy/staging/compose.yaml up -d --build
 
 5. Point the reverse proxy for `<staging-domain>` at `127.0.0.1:18480` (a new server block; never
-   proxy `18481`).
+   proxy `18481`). In production (`staging.pigeonpost.dev`) TLS ends at wodomini, which holds
+   the certificate (certbot webroot; pass `--account` because that host has more than one
+   certbot account) and forwards to raijin's shared web-apps nginx listener on port 48880; a
+   `server_name staging.pigeonpost.dev` block there proxies to `127.0.0.1:18480`. Add a block;
+   never change the listener's port or the other blocks on it.
 
 6. Turn the marketplace flag on, on staging only.
 
@@ -72,6 +79,23 @@ The owner (or an agent with the owner's go-ahead) creates these; none of them is
 
 7. Point the build plane and the analysis plane at the staging postbox: base URL
    `http://127.0.0.1:18481` for the internal API and the staging ops token.
+
+## Ownership
+
+The postbox image runs as its nonroot user, uid 65532. The vault key file and the data volume
+must be owned by that uid. If they are not, the postbox cannot read the key or open the database
+and starts anyway, with an ephemeral vault key and no database: everything it stores is lost
+at the next restart.
+
+    # Docker or rootful podman:
+    sudo chown 65532:65532 ~/pp-staging/secrets/master.key
+    sudo chown -R 65532:65532 "$(podman volume inspect --format '{{.Mountpoint}}' pigeonpost-staging_pp-staging-data)"
+    # rootless podman (uid 65532 inside the user namespace):
+    podman unshare chown 65532:65532 ~/pp-staging/secrets/master.key
+    podman unshare chown -R 65532:65532 "$(podman volume inspect --format '{{.Mountpoint}}' pigeonpost-staging_pp-staging-data)"
+
+Then restart the postbox and check its start-up log for the vault key and the database path
+before pointing anything at it.
 
 ## Pointing the test pool at it
 

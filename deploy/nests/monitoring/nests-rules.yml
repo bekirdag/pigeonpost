@@ -57,3 +57,16 @@ groups:
         expr: absent(nests_postbox_public_probe_seconds) or time() - nests_postbox_public_probe_seconds > 300
         for: 2m
         annotations: {summary: "the public postbox probe (nests-postbox-probe.timer) has not reported for over 5 minutes"}
+  # Public endpoints Pigeonpost depends on, probed from nests-1 by nests-uptime-probe.timer:
+  # both Keycloak realms, saas_be and the billing bridge.
+  - name: dependencies
+    rules:
+      - alert: SealUnitEndpointDown
+        expr: nests_uptime_up == 0
+        for: 3m
+        labels: {severity: page}
+        annotations: {summary: "{{ $labels.target }} has not answered 2xx from the internet for 3 minutes"}
+      - alert: UptimeProbeStale
+        expr: time() - nests_uptime_probe_seconds > 300 or absent(nests_uptime_probe_seconds)
+        for: 5m
+        annotations: {summary: "the dependency uptime probe (nests-uptime-probe.timer) has not reported for over 5 minutes"}

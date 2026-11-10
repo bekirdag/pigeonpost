@@ -19,6 +19,7 @@ peer and the egress allowance for `10.66.0.2:8790`.
 | `host/nestd-control.service`, `nestd-broker.service`, `nestd-mock-upstream.service` | `/etc/systemd/system/` (the mock only for tests without mswarm) |
 | `host/journald-nests.conf` | `/etc/systemd/journald.conf.d/nests.conf` |
 | `host/nests-postbox-probe`, `nests-postbox-probe.service`, `.timer` | `/usr/local/sbin/`, `/etc/systemd/system/` — every minute, the postbox's public `/health` into node_exporter's textfile directory |
+| `host/nests-uptime-probe`, `nests-uptime-probe.service`, `.timer` | `/usr/local/sbin/`, `/etc/systemd/system/` — every minute, both Keycloak realms, saas_be and the billing bridge into the same directory |
 | `host/nests-backup`, `nests-restore`, `nests-backup.service`, `.timer` | `/usr/local/sbin/`, `/etc/systemd/system/` — nightly ledger copy + borg archive (ledger, LUKS keys, Nest volume images) to raijin's HDD; [docs/nests/backups.md](../../docs/nests/backups.md) |
 | `host/backup.env.example`, `host/wg-backup.conf.example` | `/etc/nests/backup.env`, `/etc/wireguard/wg-backup.conf` — the backup tunnel (`10.68.0.1` nests-1 ↔ `10.68.0.2` raijin) |
 | `backup-target/*` | raijin only: `wg-nestsbak`, the dedicated borg sshd and the `inet nestsbak` table; see backups.md |
@@ -64,7 +65,7 @@ peer and the egress allowance for `10.66.0.2:8790`.
   total: `sqlite3 /var/lib/nests/ledger/nestd.db "select period, sum(input_used+platform_input), sum(output_used+platform_output) from usage group by period"`.
 - Backups: `journalctl -u nests-backup -n 30`, `nests-restore list`; see backups.md.
 
-## Marketplace pool (M0, not set up on any host yet)
+## Marketplace pool (M0, live on nests-1 since 2026-11-10)
 
 The pool is configured in `[sandbox.marketplace]` and runs publisher code under gVisor on this same
 host, because the owner chose no KVM host (2026-11-09; the plan said Firecracker). Since M1 the
@@ -80,7 +81,26 @@ When it is enabled, in order:
 4. Live isolation probes, on the host as root, against the runner image:
    `NESTS_LIVE_GVISOR=1 NESTS_LIVE_IMAGE=<runner image> cargo test -p pigeonpost-nests --test marketplace_isolation -- --ignored --nocapture`
 
-## Marketplace M1: build, analysis and the shared Nest dispatcher (not set up on any host yet)
+### `[sandbox.marketplace]` in production
+
+- `image` must differ from the first-party runner image in `[sandbox] image`: nestd refuses to
+  start when they are the same. Every marketplace job carries its own attested release image, so
+  the pool image is never what a worker runs; use a pinned no-op image such as
+  `docker.io/library/busybox@sha256:<digest>` (pull it by digest first).
+- `attestation_keys` (the postbox's attestation public key), `worker_gib`, and
+  `[sandbox.marketplace.artifacts]` with `url = "http://<BUILD_WG_ADDR>:8795"` (the build plane,
+  over `wg-nestbuild`). See `host/nestd.toml.example` and
+  [buildd/README.md](buildd/README.md) ("Connect nests-1").
+
+### Build-plane tunnel (`wg-nestbuild`)
+
+Production uses `10.71.0.0/29`: build host `10.71.0.1`, postbox host `10.71.0.2`, nests-1
+`10.71.0.3`. Never `10.69.0.0/24`: that is the marketplace pool's podman network (`nests-mp`) on
+this host. The build host is behind NAT, so it dials out to the postbox host and nests-1
+(`Endpoint` plus `PersistentKeepalive = 25` on its side); see
+[buildd/README.md](buildd/README.md) step 8.
+
+## Marketplace M1: build, analysis and the shared Nest dispatcher (live since 2026-11-10)
 
 With `[sandbox.marketplace]` configured, `pigeonpost-nestd control` also serves the dispatcher
 (`/v1/mp/jobs`, `/v1/mp/jobs/{job}`, `/v1/mp/releases/{release}/quarantine`) behind the same
@@ -147,7 +167,8 @@ credential was revoked at delete time anyway.
   content) and node_exporter (`127.0.0.1:9100`).
 - `nests-rules.yml` covers: nestd down, locked, failed Nests, admission limit, thin pool, volume
   allocation, stale or missing backups, memory (the VMware balloon), root disk,
-  platform-error tokens, and the postbox itself (silent, publicly down, probe stale).
+  platform-error tokens, and the postbox itself (silent, publicly down, probe stale). A second
+  group, `dependencies`, covers the public endpoints Pigeonpost depends on (below).
 - Alertmanager (`127.0.0.1:9093`) posts to `pigeonpost-nestd alert-relay` (`127.0.0.1:9796`).
   The relay sends one Pigeonpost message per notification from a dedicated alerts mailbox.
   Its token is `/etc/nests/alerts.token`, root 0400, passed with `LoadCredential`.
@@ -158,10 +179,22 @@ credential was revoked at delete time anyway.
 **Postbox down (alerts that do not depend on the postbox).**
 - nestd exports `nests_postbox_last_unlock_seconds` (0 until the first unlock after a start); `PostboxSilent` fires when the postbox has not called for more than 5 minutes.
 - `nests-postbox-probe` (timer, every minute) curls https://postbox.pigeonpost.dev/health with a 10 s timeout and writes `nests_postbox_public_up` / `nests_postbox_public_probe_seconds` to node_exporter's textfile directory `/var/lib/prometheus/node-exporter` (Debian's default; check `ARGS` in `/etc/default/prometheus-node-exporter` contains `--collector.textfile.directory=/var/lib/prometheus/node-exporter`, add it if not and restart prometheus-node-exporter). Rules `PostboxPublicDown`, `PostboxProbeStale`.
+- The flag was missing on nests-1 (the textfile metrics never reached Prometheus) and had to be
+  added: `ARGS="... --collector.textfile.directory=/var/lib/prometheus/node-exporter"` in
+  `/etc/default/prometheus-node-exporter`, then `systemctl restart prometheus-node-exporter`.
+  Check with `curl -s 127.0.0.1:9100/metrics | grep -E 'nests_(postbox_public|uptime)_'`.
+- `nests-uptime-probe` (timer, every minute) curls, with a browser-like User-Agent and a 10 s
+  timeout, `keycloak_pigeonpost` (https://auth.pigeonpost.dev/realms/pigeonpost-prod/.well-known/openid-configuration),
+  `keycloak_sealunit` (https://sso.sealunit.com/realms/masaas/.well-known/openid-configuration),
+  `saas_be` (https://app-pigeonpost.masaas.org/saas-api/health/ready) and `billing_bridge`
+  (https://pigeonpost.dev/api/healthz). It writes `nests_uptime_up{target="…"}` and
+  `nests_uptime_probe_seconds` atomically to the same textfile directory. Rules (group
+  `dependencies`): `SealUnitEndpointDown` (`nests_uptime_up == 0` for 3 minutes, severity
+  `page`) and `UptimeProbeStale` (no report for over 5 minutes, or never).
 - Postmark fallback: `[alerts.postmark]` in nestd.toml. The relay sends through Postmark when the postbox send fails (connection error, timeout, 5xx) and always for `Postbox*` alerts. The Postmark server token is never logged.
 
 Deploy:
-1. Install `host/nests-postbox-probe` to `/usr/local/sbin/` (0755), `nests-postbox-probe.service` and `.timer` to `/etc/systemd/system/`; `systemctl daemon-reload && systemctl enable --now nests-postbox-probe.timer`; check `cat /var/lib/prometheus/node-exporter/nests_postbox_probe.prom`.
+1. Install `host/nests-postbox-probe` to `/usr/local/sbin/` (0755), `nests-postbox-probe.service` and `.timer` to `/etc/systemd/system/`; `systemctl daemon-reload && systemctl enable --now nests-postbox-probe.timer`; check `cat /var/lib/prometheus/node-exporter/nests_postbox_probe.prom`. The same for `host/nests-uptime-probe` and `nests-uptime-probe.service`/`.timer` (`systemctl enable --now nests-uptime-probe.timer`; check `cat /var/lib/prometheus/node-exporter/nests_uptime_probe.prom`: four `nests_uptime_up` lines). Both need the textfile flag above.
 2. Postmark token: `install -d -m 0700 -o root -g root /etc/credstore`, then write the token from its source without echoing it: `umask 077; <source> > /etc/credstore/postmark.token; chmod 0400 /etc/credstore/postmark.token` (root:root). The relay unit has `LoadCredential=postmark.token` with no path: systemd looks it up in /etc/credstore and starts the relay without it when it is missing, so the line is harmless when no fallback is configured.
 3. Add `[alerts.postmark]` (see nestd.toml.example), install the new `nests-alert-relay.service`, `systemctl daemon-reload && systemctl restart nests-alert-relay`. With `[alerts.postmark]` set but no token, the relay refuses to start (by design).
 4. Copy `monitoring/nests-rules.yml` to `/etc/nests/monitoring/`, `promtool check rules /etc/nests/monitoring/nests-rules.yml`, `systemctl reload prometheus`.
