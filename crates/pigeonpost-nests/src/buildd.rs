@@ -1986,7 +1986,7 @@ mod tests {
             assert_eq!(*seen.lock().unwrap(), ["bld_aaaaaaaaaaaaaaaaaaaaaaaaaa"]);
         }
         assert_eq!(podman.key_seen.lock().unwrap().as_deref(), Some(key));
-        let calls = podman.calls.lock().unwrap();
+        let calls = podman.calls.lock().unwrap().clone();
         let fetch = calls
             .iter()
             .find(|c| c.iter().any(|a| a == "fetch"))
@@ -2004,7 +2004,6 @@ mod tests {
                 .count(),
             1
         );
-        drop(calls);
         assert!(!cfg
             .work_root
             .join("sbd_aaaaaaaaaaaaaaaaaaaaaaaaaa")
