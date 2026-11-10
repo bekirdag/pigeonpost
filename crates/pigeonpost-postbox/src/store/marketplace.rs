@@ -112,7 +112,11 @@ CREATE TABLE IF NOT EXISTS nest_listings (
     description       TEXT NOT NULL DEFAULT '',
     template_id       TEXT REFERENCES nest_templates(id),
     moderation_reason TEXT,
-    published_at      INTEGER
+    published_at      INTEGER,
+    -- M2b: the listing's price terms. Launch terms are one-off and monthly; the amount stays zero
+    -- until payments land (saas_be offers mirror these fields).
+    price_currency    TEXT NOT NULL DEFAULT 'TRY' CHECK (price_currency IN ('TRY','USD','EUR')),
+    price_term        TEXT NOT NULL DEFAULT 'one_off' CHECK (price_term IN ('one_off','monthly'))
 );
 CREATE INDEX IF NOT EXISTS nest_listings_by_publisher ON nest_listings(publisher_id);
 CREATE UNIQUE INDEX IF NOT EXISTS nest_listings_address ON nest_listings(address)
@@ -254,7 +258,10 @@ CREATE TABLE IF NOT EXISTS nest_jobs (
     worker      TEXT,
     deadline_at INTEGER NOT NULL,
     created_at  INTEGER NOT NULL,
-    updated_at  INTEGER NOT NULL
+    updated_at  INTEGER NOT NULL,
+    -- M2b: the installation whose pinned release and configuration the job runs (an account's or
+    -- an org's); null for a first-party listing used without one.
+    installation_id TEXT
 );
 CREATE INDEX IF NOT EXISTS nest_jobs_by_execution ON nest_jobs(execution);
 CREATE INDEX IF NOT EXISTS nest_jobs_by_release ON nest_jobs(release_id, execution);
@@ -332,6 +339,8 @@ CREATE TABLE IF NOT EXISTS nest_builds (
     requested_by   TEXT NOT NULL,
     created_at     INTEGER NOT NULL,
     updated_at     INTEGER NOT NULL,
+    -- M2b: the registered source connection the build plane fetches through, if any.
+    source_id      TEXT,
     UNIQUE (template_id, version)
 );
 CREATE INDEX IF NOT EXISTS nest_builds_by_status ON nest_builds(status, created_at);
@@ -341,7 +350,7 @@ CREATE INDEX IF NOT EXISTS nest_builds_by_status ON nest_builds(status, created_
 CREATE TABLE IF NOT EXISTS nest_installations (
     id                  TEXT PRIMARY KEY,
     listing_id          TEXT NOT NULL REFERENCES nest_listings(id),
-    owner_kind          TEXT NOT NULL CHECK (owner_kind IN ('account')),
+    owner_kind          TEXT NOT NULL CHECK (owner_kind IN ('account','org')),
     owner_id            TEXT NOT NULL,
     buyer_context       TEXT NOT NULL,
     release_id          TEXT NOT NULL REFERENCES nest_releases(id),
@@ -353,7 +362,11 @@ CREATE TABLE IF NOT EXISTS nest_installations (
     installed_by        TEXT NOT NULL,
     created_at          INTEGER NOT NULL,
     updated_at          INTEGER NOT NULL,
-    uninstalled_at      INTEGER
+    uninstalled_at      INTEGER,
+    -- M2b, org installations only: the org agent mailbox operators are delegated on
+    -- (`operate_nest`), as for an org Nest. Null for an account's installation.
+    agent_address       TEXT,
+    CHECK ((owner_kind = 'org') = (agent_address IS NOT NULL))
 );
 CREATE UNIQUE INDEX IF NOT EXISTS nest_installations_live
     ON nest_installations(listing_id, owner_kind, owner_id) WHERE status = 'active';
@@ -402,6 +415,133 @@ CREATE TRIGGER IF NOT EXISTS release_security_events_no_update BEFORE UPDATE ON 
 BEGIN SELECT RAISE(ABORT, 'release_security_events are append-only'); END;
 CREATE TRIGGER IF NOT EXISTS release_security_events_no_delete BEFORE DELETE ON release_security_events
 BEGIN SELECT RAISE(ABORT, 'release_security_events are append-only'); END;
+";
+
+/// Marketplace M2b: visibility grants, source connections and hosted test Nests. Additive tables.
+pub(super) const SCHEMA_M2B: &str = "
+-- Who may see, install and invoke an `invite_only` or `organization` listing (R-52). An invite
+-- names a mailbox address and binds to the account that accepts it; an organization grant names
+-- an org, and holds for its active members while the org is live. Each of the three uses is its
+-- own switch. Revoked rows stay as the record.
+CREATE TABLE IF NOT EXISTS nest_listing_grants (
+    id              TEXT PRIMARY KEY,
+    listing_id      TEXT NOT NULL REFERENCES nest_listings(id),
+    kind            TEXT NOT NULL CHECK (kind IN ('invite','organization')),
+    invitee_address TEXT,
+    account_id      TEXT,
+    org_id          TEXT,
+    can_discover    INTEGER NOT NULL CHECK (can_discover IN (0, 1)),
+    can_install     INTEGER NOT NULL CHECK (can_install IN (0, 1)),
+    can_invoke      INTEGER NOT NULL CHECK (can_invoke IN (0, 1)),
+    status          TEXT NOT NULL CHECK (status IN ('pending','active','declined','revoked')),
+    created_by      TEXT NOT NULL,
+    created_at      INTEGER NOT NULL,
+    updated_at      INTEGER NOT NULL,
+    accepted_at     INTEGER,
+    revoked_by      TEXT,
+    revoked_at      INTEGER,
+    CHECK ((kind = 'invite') = (invitee_address IS NOT NULL)),
+    CHECK ((kind = 'organization') = (org_id IS NOT NULL)),
+    CHECK (status <> 'pending' OR kind = 'invite')
+);
+CREATE INDEX IF NOT EXISTS nest_listing_grants_by_listing ON nest_listing_grants(listing_id, status);
+CREATE INDEX IF NOT EXISTS nest_listing_grants_by_account ON nest_listing_grants(account_id, status);
+CREATE INDEX IF NOT EXISTS nest_listing_grants_by_address ON nest_listing_grants(invitee_address, status);
+CREATE UNIQUE INDEX IF NOT EXISTS nest_listing_grants_live_invite
+    ON nest_listing_grants(listing_id, invitee_address) WHERE kind = 'invite' AND status IN ('pending','active');
+CREATE UNIQUE INDEX IF NOT EXISTS nest_listing_grants_live_org
+    ON nest_listing_grants(listing_id, org_id) WHERE kind = 'organization' AND status = 'active';
+
+-- A publisher's registered source (R-62): a public https repository, or one the build host reads
+-- with a deploy key Pigeonpost generated. The private key is sealed with the vault, bound to its
+-- row, handed only to the build plane for a queued build, and wiped when the source is deleted.
+CREATE TABLE IF NOT EXISTS publisher_sources (
+    id                 TEXT PRIMARY KEY,
+    publisher_id       TEXT NOT NULL REFERENCES publisher_profiles(id),
+    kind               TEXT NOT NULL CHECK (kind IN ('https','deploy_key')),
+    repository         TEXT NOT NULL,
+    host               TEXT NOT NULL,
+    label              TEXT NOT NULL,
+    public_key         TEXT,
+    key_fingerprint    TEXT,
+    private_key_sealed BLOB,
+    status             TEXT NOT NULL CHECK (status IN ('active','deleted')),
+    created_by         TEXT NOT NULL,
+    created_at         INTEGER NOT NULL,
+    updated_at         INTEGER NOT NULL,
+    deleted_at         INTEGER,
+    CHECK (kind = 'deploy_key' OR (public_key IS NULL AND private_key_sealed IS NULL)),
+    CHECK (status = 'deleted' OR kind = 'https' OR private_key_sealed IS NOT NULL),
+    CHECK (status = 'active' OR private_key_sealed IS NULL)
+);
+CREATE INDEX IF NOT EXISTS publisher_sources_by_publisher ON publisher_sources(publisher_id, status);
+
+-- Hosted test Nests (R-70), on a staging postbox only: a release that passed intake, run in the
+-- test pool with synthetic jobs until it expires. Never production data, never a buyer.
+CREATE TABLE IF NOT EXISTS nest_test_envs (
+    id            TEXT PRIMARY KEY,
+    publisher_id  TEXT NOT NULL REFERENCES publisher_profiles(id),
+    release_id    TEXT NOT NULL REFERENCES nest_releases(id),
+    build_id      TEXT,
+    label         TEXT NOT NULL,
+    buyer_context TEXT NOT NULL,
+    generation    INTEGER NOT NULL DEFAULT 1,
+    status        TEXT NOT NULL CHECK (status IN ('active','expired','deleted')),
+    created_by    TEXT NOT NULL,
+    created_at    INTEGER NOT NULL,
+    updated_at    INTEGER NOT NULL,
+    expires_at    INTEGER NOT NULL,
+    warned_at     INTEGER,
+    ended_at      INTEGER
+);
+CREATE INDEX IF NOT EXISTS nest_test_envs_by_publisher ON nest_test_envs(publisher_id, status);
+CREATE INDEX IF NOT EXISTS nest_test_envs_by_expiry ON nest_test_envs(status, expires_at);
+
+-- A person's report about a listing (M2b), for staff moderation. One open report per reporter
+-- and listing; staff close it with a note.
+CREATE TABLE IF NOT EXISTS nest_listing_reports (
+    id          TEXT PRIMARY KEY,
+    listing_id  TEXT NOT NULL REFERENCES nest_listings(id),
+    reporter    TEXT NOT NULL,
+    reason      TEXT NOT NULL CHECK (reason IN ('malicious','misleading','broken','privacy','illegal','spam','other')),
+    detail      TEXT NOT NULL DEFAULT '',
+    status      TEXT NOT NULL CHECK (status IN ('open','closed')),
+    created_at  INTEGER NOT NULL,
+    closed_by   TEXT,
+    closed_at   INTEGER,
+    resolution  TEXT
+);
+CREATE INDEX IF NOT EXISTS nest_listing_reports_by_status ON nest_listing_reports(status, created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS nest_listing_reports_open
+    ON nest_listing_reports(listing_id, reporter) WHERE status = 'open';
+
+-- Synthetic jobs on a test Nest. Their payloads are the publisher's own test data.
+CREATE TABLE IF NOT EXISTS nest_test_jobs (
+    id                TEXT PRIMARY KEY,
+    test_nest_id      TEXT NOT NULL REFERENCES nest_test_envs(id),
+    generation        INTEGER NOT NULL,
+    operation         TEXT NOT NULL,
+    operation_version TEXT NOT NULL,
+    payload           TEXT NOT NULL,
+    state             TEXT NOT NULL CHECK (state IN ('queued','running','succeeded','failed','stopped')),
+    result            TEXT,
+    error_code        TEXT,
+    worker            TEXT,
+    created_by        TEXT NOT NULL,
+    created_at        INTEGER NOT NULL,
+    updated_at        INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS nest_test_jobs_by_env ON nest_test_jobs(test_nest_id, created_at);
+
+-- What happened to a test Nest: ids, states and error codes only. Its log for the publisher.
+CREATE TABLE IF NOT EXISTS nest_test_events (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    test_nest_id TEXT NOT NULL REFERENCES nest_test_envs(id),
+    kind         TEXT NOT NULL,
+    detail       TEXT NOT NULL,
+    created_at   INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS nest_test_events_by_env ON nest_test_events(test_nest_id, id);
 ";
 
 /// Who has a stake in a release, for a staff review. `first_party` is set when the publisher is
@@ -576,7 +716,53 @@ pub(crate) fn publisher_event_in(
     for a in &accounts {
         super::events::append_in(c, a, kind, None, data, now)?;
     }
+    // M2b: an org publisher's events also reach the org's webhooks (ids and states only).
+    let org: Option<String> = c
+        .query_row(
+            "SELECT owner_id FROM publisher_profiles WHERE id = ?1 AND owner_kind = 'org'",
+            [publisher],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if let Some(org) = org {
+        let mut body = data.clone();
+        if let Some(o) = body.as_object_mut() {
+            o.insert("publisher_id".into(), serde_json::json!(publisher));
+        }
+        org_webhook_in(c, &org, kind, &body, now)?;
+    }
     Ok(accounts)
+}
+
+/// A marketplace event on one account's `/v1/events` (M2b invites), in the caller's transaction.
+pub(crate) fn account_event_in(
+    c: &Connection,
+    account: &str,
+    kind: &str,
+    data: &serde_json::Value,
+    now: u64,
+) -> Result<(), super::StoreError> {
+    super::events::append_in(c, account, kind, None, data, now)?;
+    Ok(())
+}
+
+/// Record a marketplace event for an org's webhooks (`webhooks::EVENTS`), in the caller's
+/// transaction, when the org has a live webhook. The worker fans it out like the trigger-written
+/// org events. `data` is ids and states only.
+pub(crate) fn org_webhook_in(
+    c: &Connection,
+    org: &str,
+    kind: &str,
+    data: &serde_json::Value,
+    now: u64,
+) -> rusqlite::Result<()> {
+    c.execute(
+        "INSERT INTO webhook_events (id, org_id, type, data, created_at)
+         SELECT 'evt_' || lower(hex(randomblob(16))), ?1, ?2, ?3, ?4
+          WHERE EXISTS (SELECT 1 FROM webhooks WHERE org_id = ?1 AND deleted_at IS NULL)",
+        params![org, kind, data.to_string(), now as i64],
+    )?;
+    Ok(())
 }
 
 #[cfg(test)]

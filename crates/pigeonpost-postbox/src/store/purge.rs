@@ -207,6 +207,26 @@ pub(crate) const TABLES: &[(&str, Rule)] = &[
         Keep("Build provenance of a publisher's releases; the publisher profile blocks"),
     ),
     ("marketplace_worker_tombstones", Unrelated),
+    // Marketplace M2b. An accepted invite only describes the account's access; a report is the
+    // account's own words about a listing.
+    ("nest_listing_grants", Remove(A, "account_id = ?1")),
+    ("nest_listing_reports", Remove(A, "reporter = ?1")),
+    (
+        "publisher_sources",
+        Keep("Catalog record of a publisher; the publisher profile blocks the purge"),
+    ),
+    (
+        "nest_test_envs",
+        Keep("Staging test record of a publisher; the publisher profile blocks the purge"),
+    ),
+    (
+        "nest_test_jobs",
+        Keep("Synthetic jobs of a publisher's test Nest; the publisher profile blocks the purge"),
+    ),
+    (
+        "nest_test_events",
+        Keep("Ids and states of a test Nest; the publisher profile blocks the purge"),
+    ),
     ("plan_names", Block(A, "account_id = ?1")),
     ("test_handle_claims", Block(A, "account_id = ?1")),
     (

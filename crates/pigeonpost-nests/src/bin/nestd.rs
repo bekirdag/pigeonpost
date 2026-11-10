@@ -184,7 +184,13 @@ async fn run_control(args: &[String]) -> Result<(), String> {
                 mp.worker_gib,
             ),
             ctx.cfg.storage.max_total_gib,
-        );
+        )
+        .with_test_pool(mp.test_pool);
+        if mp.test_pool {
+            tracing::warn!(
+                "marketplace pool is a TEST pool: test statements only, no production releases"
+            );
+        }
         // Release images come from the build plane, by digest, when this host lacks them.
         if let Some(a) = mp.artifacts.clone() {
             let token = config::read_secret_file(&a.token_file)?;

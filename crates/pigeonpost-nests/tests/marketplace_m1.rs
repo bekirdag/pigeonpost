@@ -261,6 +261,7 @@ mod dispatcher {
             attestation_keys: vec![],
             worker_gib: 1,
             artifacts: None,
+            test_pool: false,
         };
         let podman = FakePodman::default();
         let pool = MarketplacePool::with_podman(base(), pool_cfg, podman.clone());
@@ -928,6 +929,7 @@ mod dispatcher {
             attestation_keys: vec![],
             worker_gib: 1,
             artifacts: None,
+            test_pool: false,
         };
         Dispatcher::new(
             Arc::new(MarketplacePool::with_podman(

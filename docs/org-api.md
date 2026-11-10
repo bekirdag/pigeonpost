@@ -216,6 +216,8 @@ Events (subscribe with a list, or `["*"]`):
 | `room.created`, `room.deleted` | `room_id` |
 | `billing.status_changed` | `status`, `previous_status` |
 | `meeting.brief_ready`, `security.ssh_session` | Reserved for Phases 7 and 8; not emitted yet. |
+| `nest.publisher.decision`, `nest.build.failed`, `nest.review.stage_changed`, `nest.review.blocked`, `nest.review.decision`, `nest.review.completed`, `nest.listing.updated`, `nest.listing.grant_changed`, `nest.test.changed`, `nest.test.expiring`, `nest.test.expired` | The org's marketplace publisher (behind the `marketplace` flag): `publisher_id` and the ids and states of the review, build, listing, grant or test Nest. |
+| `nest.installation.changed` | `installation_id`, `listing_id`, `change` (installed, configured, updated, rolled_back, uninstalled), `from_release`, `to_release` |
 
 Events are recorded by database triggers in the same transaction as the change, from every path
 (dashboard, API, billing bridge, lifecycle worker), and only for orgs that have a webhook.

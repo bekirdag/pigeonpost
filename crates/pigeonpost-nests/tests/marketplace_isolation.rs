@@ -162,6 +162,7 @@ fn two_buyer_contexts_on_gvisor_cannot_reach_each_other_or_the_host() {
         attestation_keys: vec![],
         worker_gib: 1,
         artifacts: None,
+        test_pool: false,
     };
     let a = start(&root, &pool, CONTEXT_A, "nst_00000000000000a1");
     let b = start(&root, &pool, CONTEXT_B, "nst_00000000000000b1");

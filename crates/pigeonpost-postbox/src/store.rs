@@ -1015,6 +1015,8 @@ impl Store {
         conn.execute_batch(marketplace::SCHEMA)?;
         // Marketplace hardening (W1): signatures, quotas, kills, source builds, worker tombstones.
         conn.execute_batch(crate::marketplace_hardening::SCHEMA)?;
+        // Marketplace M2b: visibility grants, source connections, hosted test Nests.
+        conn.execute_batch(marketplace::SCHEMA_M2B)?;
         for stmt in MIGRATIONS
             .iter()
             .chain(filtering::MIGRATIONS)

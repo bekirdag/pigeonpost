@@ -14,18 +14,20 @@ use reqwest::Method;
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
 
-const OWNER_ACCOUNT: &str = "acct_mpowner";
+pub(crate) const OWNER_ACCOUNT: &str = "acct_mpowner";
 const FIXTURES: &str =
     include_str!("../../../docs/nests/contracts/examples/nest-config-fixtures.json");
 
-fn code(v: &Value) -> &str {
+pub(crate) fn code(v: &Value) -> &str {
     v["error"]["code"].as_str().unwrap_or_default()
 }
 
-async fn setup() -> (Srv, Person) {
+pub(crate) async fn setup() -> (Srv, Person) {
     let srv = serve_with(|s| {
         s.platform_owner = Some(Arc::from(OWNER_ACCOUNT));
-        s.nests = Arc::new(nests::Runtime::capture());
+        let mut rt = nests::Runtime::capture();
+        rt.mp.git_hosts.push("git.example.org".into());
+        s.nests = Arc::new(rt);
     })
     .await;
     let owner = srv.person("mpowner").await;
@@ -34,7 +36,7 @@ async fn setup() -> (Srv, Person) {
 }
 
 /// The platform owner names `reviewer` a staff reviewer.
-async fn reviewer(srv: &Srv, owner: &Person, name: &str) -> Person {
+pub(crate) async fn reviewer(srv: &Srv, owner: &Person, name: &str) -> Person {
     let rev = srv.person(name).await;
     let (s, v) = srv
         .post(
@@ -47,7 +49,7 @@ async fn reviewer(srv: &Srv, owner: &Person, name: &str) -> Person {
     rev
 }
 
-async fn apply(srv: &Srv, who: &Person, body: Value) -> String {
+pub(crate) async fn apply(srv: &Srv, who: &Person, body: Value) -> String {
     let (s, v) = srv
         .post("/v1/publisher-applications", &who.token, body)
         .await;
@@ -55,7 +57,12 @@ async fn apply(srv: &Srv, who: &Person, body: Value) -> String {
     v["data"]["id"].as_str().unwrap().to_string()
 }
 
-async fn certify(srv: &Srv, rev: &Person, publisher: &str, decision: &str) -> (u16, Value) {
+pub(crate) async fn certify(
+    srv: &Srv,
+    rev: &Person,
+    publisher: &str,
+    decision: &str,
+) -> (u16, Value) {
     srv.post(
         &format!("/v1/staff/publisher-applications/{publisher}/decisions"),
         &rev.strong,
@@ -65,18 +72,18 @@ async fn certify(srv: &Srv, rev: &Person, publisher: &str, decision: &str) -> (u
 }
 
 /// A certified personal publisher for `who`.
-async fn certified(srv: &Srv, rev: &Person, who: &Person) -> String {
+pub(crate) async fn certified(srv: &Srv, rev: &Person, who: &Person) -> String {
     let p = apply(srv, who, json!({ "display_name": "Acme Nests" })).await;
     let (s, v) = certify(srv, rev, &p, "approved").await;
     assert_eq!(s, 201, "{v}");
     p
 }
 
-fn d(c: char) -> String {
+pub(crate) fn d(c: char) -> String {
     format!("sha256:{}", c.to_string().repeat(64))
 }
 
-fn manifest(slug: &str, version: &str, schema: Option<Value>) -> Value {
+pub(crate) fn manifest(slug: &str, version: &str, schema: Option<Value>) -> Value {
     let mut m = json!({
         "name": slug,
         "version": version,
@@ -102,7 +109,7 @@ fn manifest(slug: &str, version: &str, schema: Option<Value>) -> Value {
     m
 }
 
-fn build_record(build: &str, manifest: Value, image_char: char) -> Value {
+pub(crate) fn build_record(build: &str, manifest: Value, image_char: char) -> Value {
     let sbom =
         canonical_json(&json!({"bomFormat": "CycloneDX", "specVersion": "1.5", "version": 1}));
     let sbom_digest = digest_of(sbom.as_bytes());
@@ -123,7 +130,7 @@ fn build_record(build: &str, manifest: Value, image_char: char) -> Value {
     })
 }
 
-async fn template(srv: &Srv, who: &Person, publisher: &str, slug: &str) -> String {
+pub(crate) async fn template(srv: &Srv, who: &Person, publisher: &str, slug: &str) -> String {
     let (s, v) = srv
         .post(
             &format!("/v1/publishers/{publisher}/templates"),
@@ -135,7 +142,7 @@ async fn template(srv: &Srv, who: &Person, publisher: &str, slug: &str) -> Strin
     v["data"]["id"].as_str().unwrap().to_string()
 }
 
-async fn request_build(
+pub(crate) async fn request_build(
     srv: &Srv,
     who: &Person,
     publisher: &str,
@@ -155,14 +162,14 @@ async fn request_build(
     .await
 }
 
-struct Built {
-    release: String,
-    review: String,
-    digest: String,
+pub(crate) struct Built {
+    pub(crate) release: String,
+    pub(crate) review: String,
+    pub(crate) digest: String,
 }
 
 /// Request a build and answer it as the build plane would.
-async fn build(
+pub(crate) async fn build(
     srv: &Srv,
     who: &Person,
     publisher: &str,
@@ -191,7 +198,7 @@ async fn build(
     }
 }
 
-fn evidence(stage: &str, decision: &str, findings: Value) -> String {
+pub(crate) fn evidence(stage: &str, decision: &str, findings: Value) -> String {
     let mut facts = json!({ "ran": "synthetic" });
     if stage == "ai_analysis" {
         facts["model"] = json!("qwen-latest-flash-next");
@@ -202,7 +209,7 @@ fn evidence(stage: &str, decision: &str, findings: Value) -> String {
     }))
 }
 
-async fn stage_with(
+pub(crate) async fn stage_with(
     srv: &Srv,
     review: &str,
     stage: &str,
@@ -222,11 +229,11 @@ async fn stage_with(
     .await
 }
 
-async fn stage(srv: &Srv, review: &str, stage: &str, decision: &str) -> (u16, Value) {
+pub(crate) async fn stage(srv: &Srv, review: &str, stage: &str, decision: &str) -> (u16, Value) {
     stage_with(srv, review, stage, decision, json!([])).await
 }
 
-async fn pass_analysis(srv: &Srv, review: &str) {
+pub(crate) async fn pass_analysis(srv: &Srv, review: &str) {
     for (st, dec) in [
         ("deterministic_scan", "passed"),
         ("ai_analysis", "advisory"),
@@ -237,7 +244,7 @@ async fn pass_analysis(srv: &Srv, review: &str) {
     }
 }
 
-async fn approve(srv: &Srv, rev: &Person, b: &Built) -> (u16, Value) {
+pub(crate) async fn approve(srv: &Srv, rev: &Person, b: &Built) -> (u16, Value) {
     srv.post(
         &format!("/v1/staff/reviews/{}/decisions", b.review),
         &rev.strong,
@@ -248,7 +255,7 @@ async fn approve(srv: &Srv, rev: &Person, b: &Built) -> (u16, Value) {
 
 /// A built, analysed and attested release.
 #[allow(clippy::too_many_arguments)]
-async fn attested(
+pub(crate) async fn attested(
     srv: &Srv,
     rev: &Person,
     who: &Person,
@@ -265,7 +272,13 @@ async fn attested(
     b
 }
 
-async fn listing(srv: &Srv, who: &Person, publisher: &str, release: &str, vis: &str) -> String {
+pub(crate) async fn listing(
+    srv: &Srv,
+    who: &Person,
+    publisher: &str,
+    release: &str,
+    vis: &str,
+) -> String {
     let (s, v) = srv
         .post(
             &format!("/v1/publishers/{publisher}/listings"),
@@ -279,7 +292,7 @@ async fn listing(srv: &Srv, who: &Person, publisher: &str, release: &str, vis: &
     v["data"]["id"].as_str().unwrap().to_string()
 }
 
-async fn publish(
+pub(crate) async fn publish(
     srv: &Srv,
     token: &str,
     publisher: &str,
@@ -294,7 +307,7 @@ async fn publish(
     .await
 }
 
-fn schema_team() -> Value {
+pub(crate) fn schema_team() -> Value {
     let fx: Value = serde_json::from_str(FIXTURES).unwrap();
     fx["schemas"]
         .as_array()
@@ -329,7 +342,7 @@ fn issues(v: &Value) -> BTreeSet<(String, String)> {
 }
 
 /// The typed events an account has been sent, as stored for `/v1/events`.
-async fn events_of(srv: &Srv, account: &str) -> Vec<(String, Value)> {
+pub(crate) async fn events_of(srv: &Srv, account: &str) -> Vec<(String, Value)> {
     let who = account.to_string();
     srv.state
         .store
@@ -1189,10 +1202,10 @@ async fn listings_publish_only_attested_releases_and_honour_visibility() {
         .post(
             &format!("/v1/publishers/{p}/listings"),
             &ann.token,
-            json!({ "release_id": unreviewed.release, "title": "X", "summary": "Again", "visibility": "invite_only" }),
+            json!({ "release_id": unreviewed.release, "title": "X", "summary": "Again", "visibility": "secret" }),
         )
         .await;
-    assert_eq!((s, code(&v)), (400, "visibility_not_available"), "{v}");
+    assert_eq!((s, code(&v)), (400, "invalid_request"), "{v}");
 
     // SEC-03: an unattested release is never published; publishing needs step-up.
     let (s, v) = publish(&srv, &ann.strong, &p, &l, json!({})).await;
@@ -1341,7 +1354,7 @@ async fn listings_publish_only_attested_releases_and_honour_visibility() {
 // ---- installations -----------------------------------------------------------------------------------
 
 /// A published listing with the shared fixture's configuration schema.
-async fn published_with_schema(
+pub(crate) async fn published_with_schema(
     srv: &Srv,
     owner: &Person,
     tag: &str,

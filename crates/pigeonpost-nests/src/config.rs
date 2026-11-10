@@ -131,6 +131,11 @@ pub struct MarketplacePoolConfig {
     /// build plane's artifact API). Unset: images must already be on the host.
     #[serde(default)]
     pub artifacts: Option<ArtifactsConfig>,
+    /// Marketplace M2b: a staging postbox's **test pool** for hosted test Nests. It admits only
+    /// test statements (`pigeonpost.nest.release.test.v1`) and refuses production attestations;
+    /// a production pool (the default) does the opposite.
+    #[serde(default)]
+    pub test_pool: bool,
 }
 
 /// `[sandbox.marketplace.artifacts]`: the build plane's read-only artifact API over WireGuard.
@@ -460,6 +465,7 @@ pub(crate) fn test_marketplace_pool(dir: &std::path::Path) -> MarketplacePoolCon
         )],
         worker_gib: 1,
         artifacts: None,
+        test_pool: false,
     }
 }
 

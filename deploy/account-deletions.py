@@ -273,6 +273,23 @@ def erase(conn, request_id, blob_root, evidence):
             conn.execute("DELETE FROM nest_installation_secrets WHERE installation_id IN (SELECT id FROM nest_installations WHERE owner_kind='account' AND owner_id=?)", (account,))
             conn.execute("UPDATE nest_installations SET status='uninstalled', uninstalled_at=COALESCE(uninstalled_at, ?), config='{}', owner_id=?, installed_by=? WHERE owner_kind='account' AND owner_id=?", (now, "erased_" + request_id, "erased_" + request_id, account))
             conn.execute("UPDATE nest_installation_events SET actor=? WHERE actor=?", ("erased_" + request_id, account))
+            # M2b: an org installation outlives the person who installed it, without their name.
+            conn.execute("UPDATE nest_installations SET installed_by=? WHERE installed_by=?", ("erased_" + request_id, account))
+        # Marketplace M2b: the person's invites end; grants and sources they made for a publisher,
+        # test Nests and reports they filed no longer name them; their open reports go.
+        if has(conn, "nest_listing_grants"):
+            conn.execute("UPDATE nest_listing_grants SET status='revoked', revoked_at=COALESCE(revoked_at, ?), updated_at=?, account_id=? WHERE account_id=?", (now, now, "erased_" + request_id, account))
+            conn.execute("UPDATE nest_listing_grants SET created_by=? WHERE created_by=?", ("erased_" + request_id, account))
+            conn.execute("UPDATE nest_listing_grants SET revoked_by=? WHERE revoked_by=?", ("erased_" + request_id, account))
+        if has(conn, "nest_listing_reports"):
+            conn.execute("DELETE FROM nest_listing_reports WHERE reporter=? AND status='open'", (account,))
+            conn.execute("UPDATE nest_listing_reports SET reporter=?, detail='' WHERE reporter=?", ("erased_" + request_id, account))
+            conn.execute("UPDATE nest_listing_reports SET closed_by=? WHERE closed_by=?", ("erased_" + request_id, account))
+        if has(conn, "publisher_sources"):
+            conn.execute("UPDATE publisher_sources SET created_by=? WHERE created_by=?", ("erased_" + request_id, account))
+        if has(conn, "nest_test_envs"):
+            conn.execute("UPDATE nest_test_envs SET created_by=? WHERE created_by=?", ("erased_" + request_id, account))
+            conn.execute("UPDATE nest_test_jobs SET created_by=? WHERE created_by=?", ("erased_" + request_id, account))
         if has(conn, "operation_idempotency"):
             conn.execute("DELETE FROM operation_idempotency WHERE substr(scope, 1, length(?) + 1) = ? || '|'", (account, account))
         for table in ("apple_handle_plans", "apple_plan_names", "nest_store_purchases", "nest_setups"):

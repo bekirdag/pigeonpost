@@ -365,6 +365,60 @@ A separate staging postbox (its own domain, Keycloak client or realm, database a
   tokens, stops the sandboxes and closes the volumes; an unacknowledged stop is resent every
   dispatcher tick (2 s).
 
+## Marketplace M2b: grants, org installations, sources, hosted test Nests
+
+M2b closes the server gaps M2 left: invite-only and organization visibility, org-owned installations, source connections, hosted test Nests on a staging postbox, org webhooks for marketplace events, and the console gaps found by the web UI. Everything stays behind the `marketplace` flag and zero-priced. It replaces M2 deviations 2 (org installations), 3 (visibility), 5 (source connections), 6 (org webhooks) and 7 (hosted test Nests). The staging postbox is set up from `deploy/staging/`.
+
+### Invocation through an org installation
+
+A member sends `x-pigeonpost-installation: <installation id>` with `POST /v1/nest-jobs/quote` and `POST /v1/nest-jobs`. It counts only for the org's Nest admins and members with a live `operate_nest` delegation on the installation's agent address; anyone else gets `404`. Its jobs run in one worker per listing and org (`buyer_context` of `org:<id>`). On an `invite_only` or `organization` listing every quote and job also needs a live grant with `invoke` (`403 grant_required`).
+
+### Events
+
+Org webhooks (`webhooks::EVENTS`) may now subscribe to `nest.publisher.decision`, `nest.build.failed`, `nest.review.stage_changed|blocked|decision|completed`, `nest.listing.updated`, `nest.listing.grant_changed`, `nest.installation.changed`, `nest.test.changed`, `nest.test.expiring` and `nest.test.expired`: an org publisher's events (with `publisher_id`) and the org's own installations. Payloads are ids and states only. An invitee hears `nest.invite.received` and `nest.invite.revoked` on `/v1/events`.
+
+### Routes and policies
+
+| Route | Policy action | Who |
+|---|---|---|
+| GET, POST /v1/publishers/{publisher}/listings/{listing}/grants | PublisherManage | read: the team; create: a certified publisher's admins |
+| DELETE /v1/publishers/{publisher}/listings/{listing}/grants/{grant} | PublisherManage | the publisher's admins |
+| GET /v1/marketplace/invites; POST /v1/marketplace/invites/{grant}/accept, .../decline | NestInstall | a person holding the invited address |
+| GET, POST /v1/orgs/{org}/nest-installations | NestInstall (org View / ManageAgents) | read: active members (admins all, operators theirs); install: a Nest admin |
+| PUT, DELETE /v1/orgs/{org}/nest-installations/{installation}/operators/{member} | NestInstall (org ManageAgents) | a Nest admin |
+| GET, POST /v1/publishers/{publisher}/sources; GET, DELETE .../sources/{source} | PublisherManage | read: the team; change: a certified publisher's admins |
+| GET /internal/v1/marketplace/build-requests/{build}/source-credential | ops service token | the build plane, queued builds only |
+| GET, POST /v1/publishers/{publisher}/test-nests; GET, DELETE .../test-nests/{test_nest}; POST .../reset; GET, POST .../jobs; GET .../jobs/{job}; GET .../logs | PublisherManage | staging postbox only; read: the team; change: certified admins |
+| GET /v1/publishers/{publisher}/listing-stats | PublisherManage | the team; counts only |
+| POST /v1/marketplace/listings/{listing}/reports | NestInstall | a person who can see the listing, 10 a day |
+| GET /v1/staff/listing-reports; POST /v1/staff/listing-reports/{report}/close; GET /v1/staff/listings | NestReview | a reviewer with step-up |
+
+### Data model additions
+
+New tables include nest_listing_grants, publisher_sources (private key sealed with the vault, wiped on delete), nest_test_envs, nest_test_jobs, nest_test_events, and nest_listing_reports. New columns are nest_installations.owner_kind (account or org), nest_installations.agent_address (org installations), nest_jobs.installation_id (jobs run the installation's pinned release and configuration), nest_builds.source_id, and nest_listings.price_currency (TRY, USD, EUR) and price_term (one_off, monthly). The nestd config adds [sandbox.marketplace] test_pool flag and verify_test_admission.
+
+### Exit tests
+
+| ID | What it shows | Where |
+|---|---|---|
+| R-52 | invite and organization grants decide discover, install and invoke separately; revoke stops invocation | invite_grants_decide_discovery_install_and_invocation_separately, organization_grants_follow_live_membership |
+| org install | Nest admins manage, operators read and invoke with x-pigeonpost-installation, offboarding and delegation removal end use, uninstall retires the agent | org_installations_follow_admins_and_operators_and_end_with_offboarding |
+| R-62 | host allowlist, deploy keys sealed and never returned, credential only for queued builds, delete wipes the key | source_connections_seal_deploy_keys_and_feed_builds |
+| R-70 | staging guard, payment refusal, environment header | test_nests_and_the_staging_marks_exist_only_on_a_staging_postbox |
+| R-70 | intake-passed releases only, test pool only, test statements, reset, logs, expiry warning and end | test_nests_run_intake_passed_releases_in_the_test_pool_until_they_expire; nestd dispatch test_pools_and_production_pools_admit_disjoint_statements |
+| webhooks | org publisher and org installation events reach org webhooks, ids only | org_webhooks_hear_publisher_and_installation_events_by_id_only |
+| console | install counts, reports, staff listing list, price terms, roles by member_id | install_counts_reports_staff_listings_price_terms_and_roles_by_member |
+
+### Deviations and limits
+
+1. Org installations use one of the org's agent addresses (10 x seats), like an org Nest, so operators reuse the operate_nest delegation and its offboarding.
+2. Invite-only listings are installed per account; an org installs only organization, public, unlisted or its own publisher's private listings.
+3. A test Nest's log is its event log (ids, states, error codes); worker stdout is not exposed.
+4. Deploy keys are generated by Pigeonpost (Ed25519); a publisher never uploads a private key. GitHub App connections are not built.
+5. Test Nests require the test pool on a staging postbox; a production pool refuses test statements and a test pool refuses production attestations.
+6. Prices stay zero; price.currency and price.term are stored for saas_be offers to mirror.
+7. Tables changed in place again (not merged or deployed).
+
 ## Validation (2026-11-03)
 
 - `check_openapi.py` with the hash-pinned validator from `.github/scripts/openapi/requirements.txt`:

@@ -173,7 +173,7 @@ fn pattern_ok(s: &str, prefix: &str) -> bool {
     })
 }
 
-fn operation_ok(op: &str) -> bool {
+pub(crate) fn operation_ok(op: &str) -> bool {
     !op.is_empty()
         && op.len() <= 80
         && op.split('.').all(|w| {
@@ -183,7 +183,7 @@ fn operation_ok(op: &str) -> bool {
         })
 }
 
-fn version_ok(v: &str) -> bool {
+pub(crate) fn version_ok(v: &str) -> bool {
     let parts: Vec<&str> = v.split('.').collect();
     (2..=3).contains(&parts.len())
         && (3..=32).contains(&v.len())
@@ -468,6 +468,26 @@ struct Offer {
     /// Hardening: `(key_id, signature)` of that attestation, and whether a kill is in force.
     signature: Option<(String, String)>,
     killed: bool,
+    /// The installation the job runs under (M2b): the account's own, or the org's one named in
+    /// `x-pigeonpost-installation` that the caller administers or operates.
+    installation_id: Option<String>,
+    /// Whose worker the job runs in: the account, or `org:<id>` for an org installation.
+    scope: String,
+    /// An `invite_only` or `organization` listing whose grant no longer lets this installation
+    /// invoke it (M2b).
+    grant_denied: bool,
+}
+
+/// `x-pigeonpost-installation`: the org installation a member invokes a listing through (M2b).
+fn installation_hint(headers: &HeaderMap) -> GResult<Option<String>> {
+    match header(headers, "x-pigeonpost-installation") {
+        None => Ok(None),
+        Some(v) if v.starts_with("ins_") && v.len() <= 64 && trace_ok(v) => Ok(Some(v.to_string())),
+        Some(_) => Err(GErr::bad(
+            "invalid_request",
+            "x-pigeonpost-installation: an installation id",
+        )),
+    }
 }
 
 /// The offer behind `address` for `account`. An account's active installation (M2) pins the
@@ -479,11 +499,12 @@ fn load_offer_in(
     operation: &str,
     version: &str,
     account: &str,
+    installation: Option<&str>,
 ) -> rusqlite::Result<Option<Offer>> {
     let found = c
         .query_row(
             "SELECT l.id, l.address, l.status, r.id, r.release_digest, r.image, r.security_state,
-                    o.input_schema
+                    o.input_schema, l.visibility
                FROM nest_listings l JOIN nest_releases r ON r.id = l.release_id
                LEFT JOIN nest_operations o ON o.listing_id = l.id AND o.operation = ?2
                     AND o.operation_version = ?3
@@ -503,13 +524,18 @@ fn load_offer_in(
                     install_required: false,
                     signature: None,
                     killed: false,
+                    installation_id: None,
+                    scope: account.to_string(),
+                    grant_denied: false,
                 })
+                .map(|o| (o, r.get::<_, String>(8)))
             },
         )
         .optional()?;
-    let Some(mut offer) = found else {
+    let Some((mut offer, visibility)) = found else {
         return Ok(None);
     };
+    let visibility = visibility?;
     let first_party: bool = c.query_row(
         "SELECT p.owner_kind = 'platform' FROM nest_listings l
            JOIN publisher_profiles p ON p.id = l.publisher_id WHERE l.id = ?1",
@@ -523,18 +549,88 @@ fn load_offer_in(
         Option<String>,
         String,
         Option<String>,
-    )> = c
-        .query_row(
-            "SELECT r.id, r.release_digest, r.image, r.security_state, r.manifest
-               FROM nest_installations i JOIN nest_releases r ON r.id = i.release_id
-              WHERE i.listing_id = ?1 AND i.owner_kind = 'account' AND i.owner_id = ?2
-                AND i.status = 'active'",
-            params![offer.listing_id, account],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
-        )
-        .optional()?;
+        String,
+        String,
+    )> = match installation {
+        // An org installation (M2b): only for one of its Nest admins or live operators; anyone
+        // else is told nothing about it.
+        Some(iid) => {
+            let Some(i) = crate::marketplace_m2::inst_in(c, iid)? else {
+                return Ok(None);
+            };
+            if i.owner_kind != "org"
+                || i.status != "active"
+                || i.listing_id != offer.listing_id
+                || crate::marketplace_org::org_role_in(c, &i, account, now_unix())?.is_none()
+            {
+                return Ok(None);
+            }
+            c.query_row(
+                "SELECT r.id, r.release_digest, r.image, r.security_state, r.manifest, i.id,
+                        'org:' || i.owner_id
+                   FROM nest_installations i JOIN nest_releases r ON r.id = i.release_id
+                  WHERE i.id = ?1",
+                [iid],
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        r.get(5)?,
+                        r.get(6)?,
+                    ))
+                },
+            )
+            .optional()?
+        }
+        None => c
+            .query_row(
+                "SELECT r.id, r.release_digest, r.image, r.security_state, r.manifest, i.id, ?2
+                   FROM nest_installations i JOIN nest_releases r ON r.id = i.release_id
+                  WHERE i.listing_id = ?1 AND i.owner_kind = 'account' AND i.owner_id = ?2
+                    AND i.status = 'active'",
+                params![offer.listing_id, account],
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        r.get(5)?,
+                        r.get(6)?,
+                    ))
+                },
+            )
+            .optional()?,
+    };
+    // Granted visibility (M2b): the grant's invoke switch is checked on every job, so revoking
+    // it stops use at once.
+    if matches!(visibility.as_str(), "invite_only" | "organization") {
+        let allowed = match pinned.as_ref().map(|p| p.6.as_str()) {
+            Some(scope) if scope.starts_with("org:") => crate::marketplace_grants::org_grant_in(
+                c,
+                &offer.listing_id,
+                &visibility,
+                &scope[4..],
+                crate::marketplace_grants::Use::Invoke,
+            )?,
+            _ => crate::marketplace_grants::account_grant_in(
+                c,
+                &offer.listing_id,
+                &visibility,
+                account,
+                crate::marketplace_grants::Use::Invoke,
+            )?,
+        };
+        offer.grant_denied = !allowed;
+    }
     match pinned {
-        Some((release, digest, image, security, manifest)) => {
+        Some((release, digest, image, security, manifest, iid, scope)) => {
+            offer.installation_id = Some(iid);
+            offer.scope = scope;
             offer.input_schema = manifest
                 .as_deref()
                 .and_then(|m| serde_json::from_str::<Value>(m).ok())
@@ -592,6 +688,12 @@ fn admit<'a>(
             "install this listing before invoking it",
         ));
     }
+    if o.grant_denied {
+        return Err(GErr::forbidden(
+            "grant_required",
+            "your access to this listing does not include invoking it",
+        ));
+    }
     match o.security_state.as_str() {
         "revoked" => return Err(conflict_code("release_revoked", "this release is revoked")),
         "quarantined" => {
@@ -636,7 +738,7 @@ fn admit<'a>(
 
 /// Check a payload against the operation's input fields: declared string fields only, within
 /// their bounds, the required ones present.
-fn validate_payload(schema: &str, payload: &Map<String, Value>) -> GResult<()> {
+pub(crate) fn validate_payload(schema: &str, payload: &Map<String, Value>) -> GResult<()> {
     let bad = |m: &str| GErr::bad("invalid_operation_payload", m.to_string());
     let schema: Value = serde_json::from_str(schema).map_err(|_| bad("unreadable schema"))?;
     let fields = schema["fields"].as_array().cloned().unwrap_or_default();
@@ -699,10 +801,11 @@ async fn quote(
             req.operation_version.clone(),
         );
         let who = account.clone();
+        let hint = installation_hint(&headers)?;
         let offer = state
             .store
             .group_read(move |c| -> GResult<Option<Offer>> {
-                Ok(load_offer_in(c, &to, &op, &ver, &who)?)
+                Ok(load_offer_in(c, &to, &op, &ver, &who, hint.as_deref())?)
             })
             .await?;
         let o = admit(&offer, &state.nests.marketplace)?.clone();
@@ -1000,12 +1103,13 @@ async fn submit_job(State(state): State<AppState>, headers: HeaderMap, body: Byt
         let auth_hash = sha256_hex(req.payment_authorization.as_bytes());
         let (qid, ah) = (req.quote_id.clone(), auth_hash.clone());
         let who = account.clone();
+        let hint = installation_hint(&headers)?;
         type Quote = (String, String, String, String, i64);
         type Auth = (String, String, Option<String>, i64);
         let (offer, quote, auth) = state
             .store
             .group_read(move |c| -> GResult<(Option<Offer>, Option<Quote>, Option<Auth>)> {
-                let offer = load_offer_in(c, &to, &op, &ver, &who)?;
+                let offer = load_offer_in(c, &to, &op, &ver, &who, hint.as_deref())?;
                 let quote = c
                     .query_row(
                         "SELECT account_id, listing_id, operation, operation_version, expires_at
@@ -1077,7 +1181,8 @@ async fn submit_job(State(state): State<AppState>, headers: HeaderMap, body: Byt
         .map_err(|d| deny(d, false))?;
 
         let id = format!("job_{}", crate::groups::rand_b32(16));
-        let context = buyer_context(&o.listing_id, &account);
+        let context = buyer_context(&o.listing_id, &o.scope);
+        let installation = o.installation_id.clone();
         let payload = Value::Object(req.payload.clone());
         let intent = digest_of(
             canonical_json(&json!({
@@ -1137,12 +1242,12 @@ async fn submit_job(State(state): State<AppState>, headers: HeaderMap, body: Byt
                     "INSERT INTO nest_jobs (id, account_id, acting, buyer_context, listing_id, address,
                         release_id, operation, operation_version, quote_id, authorization_sha256,
                         intent_digest, payload, client_trace_id, admission, execution, settlement,
-                        revision, deadline_at, created_at, updated_at)
+                        revision, deadline_at, created_at, updated_at, installation_id)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
-                        'admitted', 'queued', 'none', 1, ?15, ?16, ?16)",
+                        'admitted', 'queued', 'none', 1, ?15, ?16, ?16, ?17)",
                     params![
                         jid, acct, acting, ctx_id, listing, address, rel, op, ver, qid, auth_hash,
-                        intent, payload.to_string(), trace, deadline, now
+                        intent, payload.to_string(), trace, deadline, now, installation
                     ],
                 )?;
                 job_event_in(tx, &jid, "nest.job.admitted", json!({ "execution": "queued" }), now)?;
@@ -1285,8 +1390,7 @@ pub(crate) async fn dispatch_once(state: &AppState) -> usize {
                         j.payload, j.release_id, r.security_state, r.image, r.release_digest,
                         r.manifest, i.config
                    FROM nest_jobs j JOIN nest_releases r ON r.id = j.release_id
-                   LEFT JOIN nest_installations i ON i.listing_id = j.listing_id
-                        AND i.owner_kind = 'account' AND i.owner_id = j.account_id
+                   LEFT JOIN nest_installations i ON i.id = j.installation_id
                         AND i.status = 'active'
                   WHERE j.execution IN ('queued','reconciling') ORDER BY j.created_at, j.id LIMIT 20",
             )?;

@@ -73,6 +73,16 @@ tags:
     description: 'Marketplace M2: what a publisher''s team does: roles, templates, builds, reviews and listings.'
   - name: Nest installations
     description: 'Marketplace M2: a buyer''s pinned use of a listing, with its configuration, updates, rollback and uninstall. Free (test credits only).'
+  - name: Visibility grants
+    description: 'Marketplace M2b: invites by address and organization grants for `invite_only` and `organization` listings. Discover, install and invoke are separate switches, checked live.'
+  - name: Org installations
+    description: 'Marketplace M2b: an organization installs a listing; its Nest admins manage it and members with an `operate_nest` delegation use it.'
+  - name: Source connections
+    description: 'Marketplace M2b: registered repositories for builds, public https or a deploy key Pigeonpost generates (private key sealed, never returned).'
+  - name: Hosted test Nests
+    description: 'Marketplace M2b (R-70): test Nests on a staging postbox only, in the test pool, with synthetic jobs and an expiry.'
+  - name: Marketplace console
+    description: 'Marketplace M2b: install counts, listing reports and the staff listing list.'
 paths:
   /v1/nest-jobs:
     post:
@@ -1268,7 +1278,7 @@ paths:
       - Publisher console
       operationId: createListing
       summary: Create a draft listing
-      description: 'A person acting for a **certified** publisher: the owning account, an org owner or admin, or a `publisher_admin` (`403 publisher_role_required` for `publisher_finance`; `403 publisher_not_certified` / `publisher_revoked` otherwise). The listing serves the release manifest''s `listing_address` (`409 listing_address_taken`). Visibility is `public`, `unlisted` or `private` (`400 visibility_not_available` for `invite_only` and `organization`, which need grants not built yet).'
+      description: 'A person acting for a **certified** publisher: the owning account, an org owner or admin, or a `publisher_admin` (`403 publisher_role_required` for `publisher_finance`; `403 publisher_not_certified` / `publisher_revoked` otherwise). The listing serves the release manifest''s `listing_address` (`409 listing_address_taken`). Visibility is `public`, `unlisted`, `private`, `invite_only` or `organization`; the last two are reached through grants (`…/grants`, M2b). `price` sets the terms (`currency`, `term`); `amount_minor` must be 0 (`400 price_not_available`).'
       x-pigeonpost-status: implemented
       x-pigeonpost-action: PublisherManage
       security:
@@ -1973,6 +1983,1221 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+  "/v1/publishers/{publisher}/listings/{listing}/grants":
+    get:
+      tags:
+        - "Visibility grants"
+      operationId: "listListingGrants"
+      summary: "A listing's grants"
+      description: "The publisher's team. Revoked and declined grants stay as the record."
+      x-pigeonpost-status: "implemented"
+      x-pigeonpost-action: "PublisherManage"
+      security:
+        - memberToken: []
+      parameters:
+        - $ref: "#/components/parameters/Publisher"
+        - $ref: "#/components/parameters/Listing"
+      responses:
+        '200':
+          description: "OK."
+          content:
+            "application/json":
+              schema:
+                type: "object"
+                required:
+                  - "data"
+                  - "next_cursor"
+                properties:
+                  data:
+                    type: "array"
+                    items:
+                      $ref: "#/components/schemas/ListingGrant"
+                  next_cursor:
+                    type:
+                      - "string"
+                      - "null"
+        '400':
+          $ref: "#/components/responses/BadRequest"
+        '401':
+          $ref: "#/components/responses/Unauthorized"
+        '403':
+          $ref: "#/components/responses/Forbidden"
+        '404':
+          $ref: "#/components/responses/NotFound"
+        '409':
+          $ref: "#/components/responses/Conflict"
+    post:
+      tags:
+        - "Visibility grants"
+      operationId: "createListingGrant"
+      summary: "Invite an address, or grant an organization"
+      description: "A certified publisher's admins. `kind: invite` (an `address`: a mailbox address or handle) serves `invite_only` listings; `kind: organization` (an `org_id`) serves `organization` listings (`409 grant_kind_mismatch`). `discover`, `install` and `invoke` default to true; at least one must be. The answer is the same whether the address exists; its holder hears `nest.invite.received` on `/v1/events`. `409 grant_exists` for a live duplicate."
+      x-pigeonpost-status: "implemented"
+      x-pigeonpost-action: "PublisherManage"
+      security:
+        - memberToken: []
+      parameters:
+        - $ref: "#/components/parameters/Publisher"
+        - $ref: "#/components/parameters/Listing"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "object"
+              additionalProperties: false
+              required:
+                - "kind"
+              properties:
+                kind:
+                  type: "string"
+                  enum:
+                    - "invite"
+                    - "organization"
+                address:
+                  type: "string"
+                  maxLength: 200
+                org_id:
+                  type: "string"
+                  maxLength: 64
+                discover:
+                  type: "boolean"
+                install:
+                  type: "boolean"
+                invoke:
+                  type: "boolean"
+      responses:
+        '201':
+          description: "The grant (`pending` for an invite, `active` for an organization)."
+          content:
+            "application/json":
+              schema:
+                type: "object"
+                required:
+                  - "data"
+                properties:
+                  data:
+                    $ref: "#/components/schemas/ListingGrant"
+        '400':
+          $ref: "#/components/responses/BadRequest"
+        '401':
+          $ref: "#/components/responses/Unauthorized"
+        '403':
+          $ref: "#/components/responses/Forbidden"
+        '404':
+          $ref: "#/components/responses/NotFound"
+        '409':
+          $ref: "#/components/responses/Conflict"
+  "/v1/publishers/{publisher}/listings/{listing}/grants/{grant}":
+    delete:
+      tags:
+        - "Visibility grants"
+      operationId: "revokeListingGrant"
+      summary: "Revoke a grant"
+      description: "The publisher's admins. Discovery, new installs and every later job through it stop at once (`403 grant_required`); installations stay readable and can be uninstalled."
+      x-pigeonpost-status: "implemented"
+      x-pigeonpost-action: "PublisherManage"
+      security:
+        - memberToken: []
+      parameters:
+        - $ref: "#/components/parameters/Publisher"
+        - $ref: "#/components/parameters/Listing"
+        - $ref: "#/components/parameters/Grant"
+      responses:
+        '200':
+          description: "OK."
+          content:
+            "application/json":
+              schema:
+                type: "object"
+                required:
+                  - "data"
+                properties:
+                  data:
+                    $ref: "#/components/schemas/ListingGrant"
+        '400':
+          $ref: "#/components/responses/BadRequest"
+        '401':
+          $ref: "#/components/responses/Unauthorized"
+        '403':
+          $ref: "#/components/responses/Forbidden"
+        '404':
+          $ref: "#/components/responses/NotFound"
+        '409':
+          $ref: "#/components/responses/Conflict"
+  "/v1/marketplace/invites":
+    get:
+      tags:
+        - "Visibility grants"
+      operationId: "listMyInvites"
+      summary: "Invites to my mailboxes"
+      description: "A person: pending and active invites to any mailbox address or handle they hold, with the listing's title, summary and publisher name."
+      x-pigeonpost-status: "implemented"
+      x-pigeonpost-action: "NestInstall"
+      security:
+        - memberToken: []
+      responses:
+        '200':
+          description: "OK."
+          content:
+            "application/json":
+              schema:
+                type: "object"
+                required:
+                  - "data"
+                  - "next_cursor"
+                properties:
+                  data:
+                    type: "array"
+                    items:
+                      $ref: "#/components/schemas/ListingGrant"
+                  next_cursor:
+                    type:
+                      - "string"
+                      - "null"
+        '400':
+          $ref: "#/components/responses/BadRequest"
+        '401':
+          $ref: "#/components/responses/Unauthorized"
+        '403':
+          $ref: "#/components/responses/Forbidden"
+        '404':
+          $ref: "#/components/responses/NotFound"
+        '409':
+          $ref: "#/components/responses/Conflict"
+  "/v1/marketplace/invites/{grant}/accept":
+    post:
+      tags:
+        - "Visibility grants"
+      operationId: "acceptInvite"
+      summary: "Accept an invite"
+      description: "The person holding the invited address (anyone else gets 404). Accepting binds the invite to their account; `409 grant_not_live` once it was revoked or declined."
+      x-pigeonpost-status: "implemented"
+      x-pigeonpost-action: "NestInstall"
+      security:
+        - memberToken: []
+      parameters:
+        - $ref: "#/components/parameters/Grant"
+      responses:
+        '200':
+          description: "OK."
+          content:
+            "application/json":
+              schema:
+                type: "object"
+                required:
+                  - "data"
+                properties:
+                  data:
+                    $ref: "#/components/schemas/ListingGrant"
+        '400':
+          $ref: "#/components/responses/BadRequest"
+        '401':
+          $ref: "#/components/responses/Unauthorized"
+        '403':
+          $ref: "#/components/responses/Forbidden"
+        '404':
+          $ref: "#/components/responses/NotFound"
+        '409':
+          $ref: "#/components/responses/Conflict"
+  "/v1/marketplace/invites/{grant}/decline":
+    post:
+      tags:
+        - "Visibility grants"
+      operationId: "declineInvite"
+      summary: "Decline an invite"
+      description: "The person holding the invited address (anyone else gets 404). Accepting binds the invite to their account; `409 grant_not_live` once it was revoked or declined."
+      x-pigeonpost-status: "implemented"
+      x-pigeonpost-action: "NestInstall"
+      security:
+        - memberToken: []
+      parameters:
+        - $ref: "#/components/parameters/Grant"
+      responses:
+        '200':
+          description: "OK."
+          content:
+            "application/json":
+              schema:
+                type: "object"
+                required:
+                  - "data"
+                properties:
+                  data:
+                    $ref: "#/components/schemas/ListingGrant"
+        '400':
+          $ref: "#/components/responses/BadRequest"
+        '401':
+          $ref: "#/components/responses/Unauthorized"
+        '403':
+          $ref: "#/components/responses/Forbidden"
+        '404':
+          $ref: "#/components/responses/NotFound"
+        '409':
+          $ref: "#/components/responses/Conflict"
+  "/v1/orgs/{org}/nest-installations":
+    get:
+      tags:
+        - "Org installations"
+      operationId: "listOrgInstallations"
+      summary: "An organization's installations"
+      description: "An active member: every installation for the org's Nest admins (owner, admin, agent_admin), those they operate for everyone else. Each carries `role` (`admin` or `operator`)."
+      x-pigeonpost-status: "implemented"
+      x-pigeonpost-action: "NestInstall"
+      security:
+        - memberToken: []
+      parameters:
+        - $ref: "#/components/parameters/Org"
+      responses:
+        '200':
+          description: "OK."
+          content:
+            "application/json":
+              schema:
+                type: "object"
+                required:
+                  - "data"
+                  - "next_cursor"
+                properties:
+                  data:
+                    type: "array"
+                    items:
+                      $ref: "#/components/schemas/Installation"
+                  next_cursor:
+                    type:
+                      - "string"
+                      - "null"
+        '400':
+          $ref: "#/components/responses/BadRequest"
+        '401':
+          $ref: "#/components/responses/Unauthorized"
+        '403':
+          $ref: "#/components/responses/Forbidden"
+        '404':
+          $ref: "#/components/responses/NotFound"
+        '409':
+          $ref: "#/components/responses/Conflict"
+    post:
+      tags:
+        - "Org installations"
+      operationId: "installForOrg"
+      summary: "Install a listing for an organization"
+      description: "A Nest admin (`ManageAgents`). The installation takes one of the org's agent addresses (`handle`, in the org's namespace; `409 agent_limit`), and `operators` (member ids) get a live `operate_nest` delegation on it. Visibility: public and unlisted listings; private ones of a publisher the admin acts for; `organization` listings with an organization grant to this org that allows install (`403 grant_required` when it only allows discovery). Members invoke it by sending `x-pigeonpost-installation` with a quote and a job; its jobs run in one worker per listing and org. Removing a member, revoking the delegation or deleting the agent ends that person's use at once; uninstalling deletes the agent address and every delegation on it."
+      x-pigeonpost-status: "implemented"
+      x-pigeonpost-action: "NestInstall"
+      security:
+        - memberToken: []
+      parameters:
+        - $ref: "#/components/parameters/Org"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "object"
+              additionalProperties: false
+              required:
+                - "listing_id"
+                - "handle"
+              properties:
+                listing_id:
+                  type: "string"
+                handle:
+                  type: "string"
+                label:
+                  type: "string"
+                  maxLength: 64
+                configuration:
+                  type: "object"
+                operators:
+                  type: "array"
+                  maxItems: 50
+                  items:
+                    type: "string"
+      responses:
+        '201':
+          description: "OK."
+          content:
+            "application/json":
+              schema:
+                type: "object"
+                required:
+                  - "data"
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Installation"
+        '400':
+          $ref: "#/components/responses/BadRequest"
+        '401':
+          $ref: "#/components/responses/Unauthorized"
+        '403':
+          $ref: "#/components/responses/Forbidden"
+        '404':
+          $ref: "#/components/responses/NotFound"
+        '409':
+          $ref: "#/components/responses/Conflict"
+  "/v1/orgs/{org}/nest-installations/{installation}/operators/{member}":
+    put:
+      tags:
+        - "Org installations"
+      operationId: "addInstallationOperator"
+      summary: "Make a member an operator"
+      description: "A Nest admin. A live `operate_nest` delegation on the installation's agent address; a new one replaces the old."
+      x-pigeonpost-status: "implemented"
+      x-pigeonpost-action: "NestInstall"
+      security:
+        - memberToken: []
+      parameters:
+        - $ref: "#/components/parameters/Org"
+        - $ref: "#/components/parameters/Installation"
+        - $ref: "#/components/parameters/Member"
+      responses:
+        '200':
+          description: "OK."
+          content:
+            "application/json":
+              schema:
+                type: "object"
+                required:
+                  - "data"
+                properties:
+                  data:
+                    type: "object"
+        '400':
+          $ref: "#/components/responses/BadRequest"
+        '401':
+          $ref: "#/components/responses/Unauthorized"
+        '403':
+          $ref: "#/components/responses/Forbidden"
+        '404':
+          $ref: "#/components/responses/NotFound"
+        '409':
+          $ref: "#/components/responses/Conflict"
+    delete:
+      tags:
+        - "Org installations"
+      operationId: "removeInstallationOperator"
+      summary: "Take a member's operator delegation"
+      description: "A Nest admin. Their use ends at once."
+      x-pigeonpost-status: "implemented"
+      x-pigeonpost-action: "NestInstall"
+      security:
+        - memberToken: []
+      parameters:
+        - $ref: "#/components/parameters/Org"
+        - $ref: "#/components/parameters/Installation"
+        - $ref: "#/components/parameters/Member"
+      responses:
+        '200':
+          description: "OK."
+          content:
+            "application/json":
+              schema:
+                type: "object"
+                required:
+                  - "data"
+                properties:
+                  data:
+                    type: "object"
+        '400':
+          $ref: "#/components/responses/BadRequest"
+        '401':
+          $ref: "#/components/responses/Unauthorized"
+        '403':
+          $ref: "#/components/responses/Forbidden"
+        '404':
+          $ref: "#/components/responses/NotFound"
+        '409':
+          $ref: "#/components/responses/Conflict"
+  "/v1/publishers/{publisher}/sources":
+    get:
+      tags:
+        - "Source connections"
+      operationId: "listSources"
+      summary: "A publisher's sources"
+      description: "The team. Never a private key."
+      x-pigeonpost-status: "implemented"
+      x-pigeonpost-action: "PublisherManage"
+      security:
+        - memberToken: []
+      parameters:
+        - $ref: "#/components/parameters/Publisher"
+      responses:
+        '200':
+          description: "OK."
+          content:
+            "application/json":
+              schema:
+                type: "object"
+                required:
+                  - "data"
+                  - "next_cursor"
+                properties:
+                  data:
+                    type: "array"
+                    items:
+                      $ref: "#/components/schemas/PublisherSource"
+                  next_cursor:
+                    type:
+                      - "string"
+                      - "null"
+        '400':
+          $ref: "#/components/responses/BadRequest"
+        '401':
+          $ref: "#/components/responses/Unauthorized"
+        '403':
+          $ref: "#/components/responses/Forbidden"
+        '404':
+          $ref: "#/components/responses/NotFound"
+        '409':
+          $ref: "#/components/responses/Conflict"
+    post:
+      tags:
+        - "Source connections"
+      operationId: "createSource"
+      summary: "Register a source"
+      description: "A certified publisher's admins. `kind: https` (a public `https://host/path`, no credentials) or `kind: deploy_key` (`ssh://git@host/owner/repo` or `git@host:owner/repo`): Pigeonpost generates an Ed25519 key, seals the private half with the vault and answers with the public half to add to the repository read-only. Every host must be on the postbox's allowlist (`403 git_host_not_allowed`). A build names it with `source.source_id`."
+      x-pigeonpost-status: "implemented"
+      x-pigeonpost-action: "PublisherManage"
+      security:
+        - memberToken: []
+      parameters:
+        - $ref: "#/components/parameters/Publisher"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "object"
+              additionalProperties: false
+              required:
+                - "kind"
+                - "repository"
+                - "label"
+              properties:
+                kind:
+                  type: "string"
+                  enum:
+                    - "https"
+                    - "deploy_key"
+                repository:
+                  type: "string"
+                  maxLength: 300
+                label:
+                  type: "string"
+                  minLength: 1
+                  maxLength: 80
+      responses:
+        '201':
+          description: "OK."
+          content:
+            "application/json":
+              schema:
+                type: "object"
+                required:
+                  - "data"
+                properties:
+                  data:
+                    $ref: "#/components/schemas/PublisherSource"
+        '400':
+          $ref: "#/components/responses/BadRequest"
+        '401':
+          $ref: "#/components/responses/Unauthorized"
+        '403':
+          $ref: "#/components/responses/Forbidden"
+        '404':
+          $ref: "#/components/responses/NotFound"
+        '409':
+          $ref: "#/components/responses/Conflict"
+  "/v1/publishers/{publisher}/sources/{source}":
+    get:
+      tags:
+        - "Source connections"
+      operationId: "readSource"
+      summary: "One source"
+      description: "The team."
+      x-pigeonpost-status: "implemented"
+      x-pigeonpost-action: "PublisherManage"
+      security:
+        - memberToken: []
+      parameters:
+        - $ref: "#/components/parameters/Publisher"
+        - $ref: "#/components/parameters/Source"
+      responses:
+        '200':
+          description: "OK."
+          content:
+            "application/json":
+              schema:
+                type: "object"
+                required:
+                  - "data"
+                properties:
+                  data:
+                    $ref: "#/components/schemas/PublisherSource"
+        '400':
+          $ref: "#/components/responses/BadRequest"
+        '401':
+          $ref: "#/components/responses/Unauthorized"
+        '403':
+          $ref: "#/components/responses/Forbidden"
+        '404':
+          $ref: "#/components/responses/NotFound"
+        '409':
+          $ref: "#/components/responses/Conflict"
+    delete:
+      tags:
+        - "Source connections"
+      operationId: "deleteSource"
+      summary: "Delete a source"
+      description: "The admins. The sealed key is wiped; queued builds that named it fail with `source_deleted`."
+      x-pigeonpost-status: "implemented"
+      x-pigeonpost-action: "PublisherManage"
+      security:
+        - memberToken: []
+      parameters:
+        - $ref: "#/components/parameters/Publisher"
+        - $ref: "#/components/parameters/Source"
+      responses:
+        '200':
+          description: "OK."
+          content:
+            "application/json":
+              schema:
+                type: "object"
+                required:
+                  - "data"
+                properties:
+                  data:
+                    $ref: "#/components/schemas/PublisherSource"
+        '400':
+          $ref: "#/components/responses/BadRequest"
+        '401':
+          $ref: "#/components/responses/Unauthorized"
+        '403':
+          $ref: "#/components/responses/Forbidden"
+        '404':
+          $ref: "#/components/responses/NotFound"
+        '409':
+          $ref: "#/components/responses/Conflict"
+  "/v1/publishers/{publisher}/test-nests":
+    get:
+      tags:
+        - "Hosted test Nests"
+      operationId: "listTestNests"
+      summary: "A publisher's test Nests"
+      description: "The team. Staging postbox only: `404 staging_only` elsewhere; `503 test_pool_unavailable` without a test pool."
+      x-pigeonpost-status: "implemented"
+      x-pigeonpost-action: "PublisherManage"
+      security:
+        - memberToken: []
+      parameters:
+        - $ref: "#/components/parameters/Publisher"
+      responses:
+        '200':
+          description: "OK."
+          content:
+            "application/json":
+              schema:
+                type: "object"
+                required:
+                  - "data"
+                  - "next_cursor"
+                properties:
+                  data:
+                    type: "array"
+                    items:
+                      $ref: "#/components/schemas/TestNest"
+                  next_cursor:
+                    type:
+                      - "string"
+                      - "null"
+        '400':
+          $ref: "#/components/responses/BadRequest"
+        '401':
+          $ref: "#/components/responses/Unauthorized"
+        '403':
+          $ref: "#/components/responses/Forbidden"
+        '404':
+          $ref: "#/components/responses/NotFound"
+        '409':
+          $ref: "#/components/responses/Conflict"
+    post:
+      tags:
+        - "Hosted test Nests"
+      operationId: "createTestNest"
+      summary: "Create a test Nest"
+      description: "A certified publisher's admins, from a `release_id` or a `build_id` of theirs that passed intake and failed no stage (approval not needed; `409 intake_required`, `release_not_testable`, `build_not_built`). It lives `days` (default and maximum: the postbox's `POSTBOX_MARKETPLACE_TEST_NEST_DAYS`, 7 unless set), runs in the test pool only and admits only a test statement (`pigeonpost.nest.release.test.v1`), which a production pool refuses. At most 5 live per publisher (`409 too_many_test_nests`). A day before expiry the team gets `nest.test.expiring`; at expiry `nest.test.expired`, and its worker and volume are removed. Staging postbox only: `404 staging_only` elsewhere; `503 test_pool_unavailable` without a test pool."
+      x-pigeonpost-status: "implemented"
+      x-pigeonpost-action: "PublisherManage"
+      security:
+        - memberToken: []
+      parameters:
+        - $ref: "#/components/parameters/Publisher"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "object"
+              additionalProperties: false
+              required: []
+              properties:
+                release_id:
+                  type: "string"
+                build_id:
+                  type: "string"
+                label:
+                  type: "string"
+                  maxLength: 80
+                days:
+                  type: "integer"
+                  minimum: 1
+                  maximum: 30
+      responses:
+        '201':
+          description: "OK."
+          content:
+            "application/json":
+              schema:
+                type: "object"
+                required:
+                  - "data"
+                properties:
+                  data:
+                    $ref: "#/components/schemas/TestNest"
+        '400':
+          $ref: "#/components/responses/BadRequest"
+        '401':
+          $ref: "#/components/responses/Unauthorized"
+        '403':
+          $ref: "#/components/responses/Forbidden"
+        '404':
+          $ref: "#/components/responses/NotFound"
+        '409':
+          $ref: "#/components/responses/Conflict"
+  "/v1/publishers/{publisher}/test-nests/{test_nest}":
+    get:
+      tags:
+        - "Hosted test Nests"
+      operationId: "readTestNest"
+      summary: "One test Nest"
+      description: "The team. Staging postbox only: `404 staging_only` elsewhere; `503 test_pool_unavailable` without a test pool."
+      x-pigeonpost-status: "implemented"
+      x-pigeonpost-action: "PublisherManage"
+      security:
+        - memberToken: []
+      parameters:
+        - $ref: "#/components/parameters/Publisher"
+        - $ref: "#/components/parameters/TestNestId"
+      responses:
+        '200':
+          description: "OK."
+          content:
+            "application/json":
+              schema:
+                type: "object"
+                required:
+                  - "data"
+                properties:
+                  data:
+                    $ref: "#/components/schemas/TestNest"
+        '400':
+          $ref: "#/components/responses/BadRequest"
+        '401':
+          $ref: "#/components/responses/Unauthorized"
+        '403':
+          $ref: "#/components/responses/Forbidden"
+        '404':
+          $ref: "#/components/responses/NotFound"
+        '409':
+          $ref: "#/components/responses/Conflict"
+    delete:
+      tags:
+        - "Hosted test Nests"
+      operationId: "deleteTestNest"
+      summary: "Delete a test Nest"
+      description: "The admins. Open jobs stop; the worker and its volume are removed (`runtime_removed`). Staging postbox only: `404 staging_only` elsewhere; `503 test_pool_unavailable` without a test pool."
+      x-pigeonpost-status: "implemented"
+      x-pigeonpost-action: "PublisherManage"
+      security:
+        - memberToken: []
+      parameters:
+        - $ref: "#/components/parameters/Publisher"
+        - $ref: "#/components/parameters/TestNestId"
+      responses:
+        '200':
+          description: "OK."
+          content:
+            "application/json":
+              schema:
+                type: "object"
+                required:
+                  - "data"
+                properties:
+                  data:
+                    type: "object"
+        '400':
+          $ref: "#/components/responses/BadRequest"
+        '401':
+          $ref: "#/components/responses/Unauthorized"
+        '403':
+          $ref: "#/components/responses/Forbidden"
+        '404':
+          $ref: "#/components/responses/NotFound"
+        '409':
+          $ref: "#/components/responses/Conflict"
+  "/v1/publishers/{publisher}/test-nests/{test_nest}/reset":
+    post:
+      tags:
+        - "Hosted test Nests"
+      operationId: "resetTestNest"
+      summary: "Reset a test Nest"
+      description: "The admins. Open jobs stop, the worker and its data are removed, and the next job starts on a fresh one (`generation` + 1). The expiry does not move. Staging postbox only: `404 staging_only` elsewhere; `503 test_pool_unavailable` without a test pool."
+      x-pigeonpost-status: "implemented"
+      x-pigeonpost-action: "PublisherManage"
+      security:
+        - memberToken: []
+      parameters:
+        - $ref: "#/components/parameters/Publisher"
+        - $ref: "#/components/parameters/TestNestId"
+      responses:
+        '200':
+          description: "OK."
+          content:
+            "application/json":
+              schema:
+                type: "object"
+                required:
+                  - "data"
+                properties:
+                  data:
+                    $ref: "#/components/schemas/TestNest"
+        '400':
+          $ref: "#/components/responses/BadRequest"
+        '401':
+          $ref: "#/components/responses/Unauthorized"
+        '403':
+          $ref: "#/components/responses/Forbidden"
+        '404':
+          $ref: "#/components/responses/NotFound"
+        '409':
+          $ref: "#/components/responses/Conflict"
+  "/v1/publishers/{publisher}/test-nests/{test_nest}/jobs":
+    get:
+      tags:
+        - "Hosted test Nests"
+      operationId: "listTestNestJobs"
+      summary: "A test Nest's jobs"
+      description: "The team. Staging postbox only: `404 staging_only` elsewhere; `503 test_pool_unavailable` without a test pool."
+      x-pigeonpost-status: "implemented"
+      x-pigeonpost-action: "PublisherManage"
+      security:
+        - memberToken: []
+      parameters:
+        - $ref: "#/components/parameters/Publisher"
+        - $ref: "#/components/parameters/TestNestId"
+      responses:
+        '200':
+          description: "OK."
+          content:
+            "application/json":
+              schema:
+                type: "object"
+                required:
+                  - "data"
+                  - "next_cursor"
+                properties:
+                  data:
+                    type: "array"
+                    items:
+                      $ref: "#/components/schemas/TestNestJob"
+                  next_cursor:
+                    type:
+                      - "string"
+                      - "null"
+        '400':
+          $ref: "#/components/responses/BadRequest"
+        '401':
+          $ref: "#/components/responses/Unauthorized"
+        '403':
+          $ref: "#/components/responses/Forbidden"
+        '404':
+          $ref: "#/components/responses/NotFound"
+        '409':
+          $ref: "#/components/responses/Conflict"
+    post:
+      tags:
+        - "Hosted test Nests"
+      operationId: "invokeTestNest"
+      summary: "Run a synthetic job"
+      description: "The admins. The operation's input schema is enforced; no quote, no payment, no buyer. At most 500 a day per test Nest (`429 rate_limited`); `409 test_nest_ended` after expiry or deletion. Staging postbox only: `404 staging_only` elsewhere; `503 test_pool_unavailable` without a test pool."
+      x-pigeonpost-status: "implemented"
+      x-pigeonpost-action: "PublisherManage"
+      security:
+        - memberToken: []
+      parameters:
+        - $ref: "#/components/parameters/Publisher"
+        - $ref: "#/components/parameters/TestNestId"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "object"
+              additionalProperties: false
+              required:
+                - "operation"
+                - "operation_version"
+                - "payload"
+              properties:
+                operation:
+                  type: "string"
+                operation_version:
+                  type: "string"
+                payload:
+                  type: "object"
+      responses:
+        '202':
+          description: "OK."
+          content:
+            "application/json":
+              schema:
+                type: "object"
+                required:
+                  - "data"
+                properties:
+                  data:
+                    $ref: "#/components/schemas/TestNestJob"
+        '400':
+          $ref: "#/components/responses/BadRequest"
+        '401':
+          $ref: "#/components/responses/Unauthorized"
+        '403':
+          $ref: "#/components/responses/Forbidden"
+        '404':
+          $ref: "#/components/responses/NotFound"
+        '409':
+          $ref: "#/components/responses/Conflict"
+  "/v1/publishers/{publisher}/test-nests/{test_nest}/jobs/{job}":
+    get:
+      tags:
+        - "Hosted test Nests"
+      operationId: "readTestNestJob"
+      summary: "One synthetic job"
+      description: "The team. Retries a queued job's hand-over and collects a running one's result. Staging postbox only: `404 staging_only` elsewhere; `503 test_pool_unavailable` without a test pool."
+      x-pigeonpost-status: "implemented"
+      x-pigeonpost-action: "PublisherManage"
+      security:
+        - memberToken: []
+      parameters:
+        - $ref: "#/components/parameters/Publisher"
+        - $ref: "#/components/parameters/TestNestId"
+        - $ref: "#/components/parameters/Job"
+      responses:
+        '200':
+          description: "OK."
+          content:
+            "application/json":
+              schema:
+                type: "object"
+                required:
+                  - "data"
+                properties:
+                  data:
+                    $ref: "#/components/schemas/TestNestJob"
+        '400':
+          $ref: "#/components/responses/BadRequest"
+        '401':
+          $ref: "#/components/responses/Unauthorized"
+        '403':
+          $ref: "#/components/responses/Forbidden"
+        '404':
+          $ref: "#/components/responses/NotFound"
+        '409':
+          $ref: "#/components/responses/Conflict"
+  "/v1/publishers/{publisher}/test-nests/{test_nest}/logs":
+    get:
+      tags:
+        - "Hosted test Nests"
+      operationId: "readTestNestLogs"
+      summary: "A test Nest's log"
+      description: "The team: created, job, reset, expiring, expired and deleted entries, with ids, states and error codes only. Staging postbox only: `404 staging_only` elsewhere; `503 test_pool_unavailable` without a test pool."
+      x-pigeonpost-status: "implemented"
+      x-pigeonpost-action: "PublisherManage"
+      security:
+        - memberToken: []
+      parameters:
+        - $ref: "#/components/parameters/Publisher"
+        - $ref: "#/components/parameters/TestNestId"
+      responses:
+        '200':
+          description: "OK."
+          content:
+            "application/json":
+              schema:
+                type: "object"
+                required:
+                  - "data"
+                properties:
+                  data:
+                    type: "object"
+        '400':
+          $ref: "#/components/responses/BadRequest"
+        '401':
+          $ref: "#/components/responses/Unauthorized"
+        '403':
+          $ref: "#/components/responses/Forbidden"
+        '404':
+          $ref: "#/components/responses/NotFound"
+        '409':
+          $ref: "#/components/responses/Conflict"
+  "/v1/publishers/{publisher}/listing-stats":
+    get:
+      tags:
+        - "Marketplace console"
+      operationId: "listingStats"
+      summary: "Installation counts per listing"
+      description: "The team. Counts only (active, active by accounts and by orgs, total, uninstalled); never who installed."
+      x-pigeonpost-status: "implemented"
+      x-pigeonpost-action: "PublisherManage"
+      security:
+        - memberToken: []
+      parameters:
+        - $ref: "#/components/parameters/Publisher"
+      responses:
+        '200':
+          description: "OK."
+          content:
+            "application/json":
+              schema:
+                type: "object"
+                required:
+                  - "data"
+                properties:
+                  data:
+                    type: "object"
+        '400':
+          $ref: "#/components/responses/BadRequest"
+        '401':
+          $ref: "#/components/responses/Unauthorized"
+        '403':
+          $ref: "#/components/responses/Forbidden"
+        '404':
+          $ref: "#/components/responses/NotFound"
+        '409':
+          $ref: "#/components/responses/Conflict"
+  "/v1/marketplace/listings/{listing}/reports":
+    post:
+      tags:
+        - "Marketplace console"
+      operationId: "reportListing"
+      summary: "Report a listing"
+      description: "A person who can see the listing. `reason` is one of malicious, misleading, broken, privacy, illegal, spam, other; `detail` at most 500 characters. One open report per person and listing (`409 already_reported`); 10 a day (`429 rate_limited`)."
+      x-pigeonpost-status: "implemented"
+      x-pigeonpost-action: "NestInstall"
+      security:
+        - memberToken: []
+      parameters:
+        - $ref: "#/components/parameters/Listing"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "object"
+              additionalProperties: false
+              required:
+                - "reason"
+              properties:
+                reason:
+                  type: "string"
+                  enum:
+                    - "malicious"
+                    - "misleading"
+                    - "broken"
+                    - "privacy"
+                    - "illegal"
+                    - "spam"
+                    - "other"
+                detail:
+                  type: "string"
+                  maxLength: 500
+      responses:
+        '201':
+          description: "OK."
+          content:
+            "application/json":
+              schema:
+                type: "object"
+                required:
+                  - "data"
+                properties:
+                  data:
+                    type: "object"
+        '400':
+          $ref: "#/components/responses/BadRequest"
+        '401':
+          $ref: "#/components/responses/Unauthorized"
+        '403':
+          $ref: "#/components/responses/Forbidden"
+        '404':
+          $ref: "#/components/responses/NotFound"
+        '409':
+          $ref: "#/components/responses/Conflict"
+  "/v1/staff/listing-reports":
+    get:
+      tags:
+        - "Staff"
+      operationId: "staffListListingReports"
+      summary: "The listing report queue"
+      description: "A reviewer with step-up. `status=open` (default) or `closed`, oldest first, paged with `cursor`. Reporters are not named."
+      x-pigeonpost-status: "implemented"
+      x-pigeonpost-action: "NestReview"
+      security:
+        - memberToken: []
+      parameters:
+        - name: "cursor"
+          in: "query"
+          required: false
+          schema:
+            type: "string"
+            maxLength: 20
+        - name: "status"
+          in: "query"
+          required: false
+          schema:
+            type: "string"
+            enum:
+              - "open"
+              - "closed"
+      responses:
+        '200':
+          description: "OK."
+          content:
+            "application/json":
+              schema:
+                type: "object"
+                required:
+                  - "data"
+                properties:
+                  data:
+                    type: "object"
+        '400':
+          $ref: "#/components/responses/BadRequest"
+        '401':
+          $ref: "#/components/responses/Unauthorized"
+        '403':
+          $ref: "#/components/responses/Forbidden"
+        '404':
+          $ref: "#/components/responses/NotFound"
+        '409':
+          $ref: "#/components/responses/Conflict"
+  "/v1/staff/listing-reports/{report}/close":
+    post:
+      tags:
+        - "Staff"
+      operationId: "staffCloseListingReport"
+      summary: "Close a report"
+      description: "A reviewer with step-up, with a `resolution`. Moderation itself is `POST /v1/staff/listings/{listing}/moderation`."
+      x-pigeonpost-status: "implemented"
+      x-pigeonpost-action: "NestReview"
+      security:
+        - memberToken: []
+      parameters:
+        - $ref: "#/components/parameters/Report"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "object"
+              additionalProperties: false
+              required:
+                - "resolution"
+              properties:
+                resolution:
+                  type: "string"
+                  minLength: 1
+                  maxLength: 500
+      responses:
+        '200':
+          description: "OK."
+          content:
+            "application/json":
+              schema:
+                type: "object"
+                required:
+                  - "data"
+                properties:
+                  data:
+                    type: "object"
+        '400':
+          $ref: "#/components/responses/BadRequest"
+        '401':
+          $ref: "#/components/responses/Unauthorized"
+        '403':
+          $ref: "#/components/responses/Forbidden"
+        '404':
+          $ref: "#/components/responses/NotFound"
+        '409':
+          $ref: "#/components/responses/Conflict"
+  "/v1/staff/listings":
+    get:
+      tags:
+        - "Staff"
+      operationId: "staffListListings"
+      summary: "Every listing, for moderation"
+      description: "A reviewer with step-up. Filter by `status` and `publisher`; newest first; paged with `cursor`; each with its open report count."
+      x-pigeonpost-status: "implemented"
+      x-pigeonpost-action: "NestReview"
+      security:
+        - memberToken: []
+      parameters:
+        - name: "cursor"
+          in: "query"
+          required: false
+          schema:
+            type: "string"
+            maxLength: 20
+        - name: "status"
+          in: "query"
+          required: false
+          schema:
+            type: "string"
+            enum:
+              - "draft"
+              - "published"
+              - "suspended"
+              - "withdrawn"
+        - name: "publisher"
+          in: "query"
+          required: false
+          schema:
+            type: "string"
+            maxLength: 64
+      responses:
+        '200':
+          description: "OK."
+          content:
+            "application/json":
+              schema:
+                type: "object"
+                required:
+                  - "data"
+                properties:
+                  data:
+                    type: "object"
+        '400':
+          $ref: "#/components/responses/BadRequest"
+        '401':
+          $ref: "#/components/responses/Unauthorized"
+        '403':
+          $ref: "#/components/responses/Forbidden"
+        '404':
+          $ref: "#/components/responses/NotFound"
+        '409':
+          $ref: "#/components/responses/Conflict"
 components:
   securitySchemes:
     memberToken:
@@ -2076,6 +3301,56 @@ components:
       schema:
         type: string
         pattern: '^rvw_[a-z2-7]{26}$'
+    Grant:
+      name: "grant"
+      in: "path"
+      required: true
+      description: "Grant id."
+      schema:
+        type: "string"
+        pattern: "^gnt_[a-z2-7]{26}$"
+    Org:
+      name: "org"
+      in: "path"
+      required: true
+      description: "Organization id."
+      schema:
+        type: "string"
+        minLength: 1
+        maxLength: 64
+    Member:
+      name: "member"
+      in: "path"
+      required: true
+      description: "Org member id."
+      schema:
+        type: "string"
+        minLength: 1
+        maxLength: 64
+    Source:
+      name: "source"
+      in: "path"
+      required: true
+      description: "Source id."
+      schema:
+        type: "string"
+        pattern: "^src_[a-z2-7]{26}$"
+    TestNestId:
+      name: "test_nest"
+      in: "path"
+      required: true
+      description: "Test Nest id."
+      schema:
+        type: "string"
+        pattern: "^tnt_[a-z2-7]{26}$"
+    Report:
+      name: "report"
+      in: "path"
+      required: true
+      description: "Listing report id."
+      schema:
+        type: "string"
+        pattern: "^lrp_[a-z2-7]{26}$"
   headers:
     IdempotentReplayed:
       description: '`true` when this is the recorded response to an earlier request with the same `Idempotency-Key`.'
@@ -2153,6 +3428,272 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
   schemas:
+    ListingPriceTerms:
+      type: object
+      additionalProperties: false
+      description: Price terms a publisher sets (M2b). `amount_minor` must be 0 until payments land (`400 price_not_available`).
+      properties:
+        amount_minor:
+          type: integer
+          const: 0
+        currency:
+          type: string
+          enum:
+          - TRY
+          - USD
+          - EUR
+        term:
+          type: string
+          enum:
+          - one_off
+          - monthly
+    ListingPrice:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "amount_minor"
+        - "currency"
+        - "term"
+        - "funding"
+      description: "Price terms (M2b). Launch terms are `one_off` and `monthly`; the amount is 0 until payments land."
+      properties:
+        amount_minor:
+          type: "integer"
+          const: 0
+        currency:
+          type: "string"
+          enum:
+            - "TRY"
+            - "USD"
+            - "EUR"
+        term:
+          type: "string"
+          enum:
+            - "one_off"
+            - "monthly"
+        funding:
+          type: "string"
+          const: "test_credits"
+    ListingGrant:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "id"
+        - "listing_id"
+        - "kind"
+        - "discover"
+        - "install"
+        - "invoke"
+        - "status"
+        - "created_at"
+        - "updated_at"
+      properties:
+        id:
+          type: "string"
+        listing_id:
+          type: "string"
+        kind:
+          type: "string"
+          enum:
+            - "invite"
+            - "organization"
+        address:
+          type:
+            - "string"
+            - "null"
+        org_id:
+          type:
+            - "string"
+            - "null"
+        discover:
+          type: "boolean"
+        install:
+          type: "boolean"
+        invoke:
+          type: "boolean"
+        status:
+          type: "string"
+          enum:
+            - "pending"
+            - "active"
+            - "declined"
+            - "revoked"
+        created_at:
+          type: "string"
+          format: "date-time"
+        updated_at:
+          type: "string"
+          format: "date-time"
+        accepted_at:
+          type:
+            - "string"
+            - "null"
+          format: "date-time"
+        revoked_at:
+          type:
+            - "string"
+            - "null"
+          format: "date-time"
+        listing:
+          type: "object"
+          description: "On `GET /v1/marketplace/invites`: title, summary, status, publisher name."
+    PublisherSource:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "id"
+        - "publisher_id"
+        - "kind"
+        - "repository"
+        - "host"
+        - "label"
+        - "status"
+        - "created_at"
+        - "updated_at"
+      properties:
+        id:
+          type: "string"
+        publisher_id:
+          type: "string"
+        kind:
+          type: "string"
+          enum:
+            - "https"
+            - "deploy_key"
+        repository:
+          type: "string"
+        host:
+          type: "string"
+        label:
+          type: "string"
+        deploy_key:
+          type:
+            - "object"
+            - "null"
+          description: "The public key to add read-only, its SHA-256 fingerprint and `access: read_only`. Never the private key."
+          properties:
+            public_key:
+              type: "string"
+            fingerprint:
+              type: "string"
+            access:
+              type: "string"
+              const: "read_only"
+        status:
+          type: "string"
+          enum:
+            - "active"
+            - "deleted"
+        created_at:
+          type: "string"
+          format: "date-time"
+        updated_at:
+          type: "string"
+          format: "date-time"
+        deleted_at:
+          type:
+            - "string"
+            - "null"
+          format: "date-time"
+    TestNest:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "id"
+        - "publisher_id"
+        - "release_id"
+        - "label"
+        - "generation"
+        - "status"
+        - "expires_at"
+        - "environment"
+      properties:
+        id:
+          type: "string"
+        publisher_id:
+          type: "string"
+        release_id:
+          type: "string"
+        build_id:
+          type:
+            - "string"
+            - "null"
+        label:
+          type: "string"
+        generation:
+          type: "integer"
+        status:
+          type: "string"
+          enum:
+            - "active"
+            - "expired"
+            - "deleted"
+        created_at:
+          type: "string"
+          format: "date-time"
+        updated_at:
+          type: "string"
+          format: "date-time"
+        expires_at:
+          type: "string"
+          format: "date-time"
+        ended_at:
+          type:
+            - "string"
+            - "null"
+          format: "date-time"
+        version:
+          type: "string"
+        environment:
+          type: "string"
+          const: "staging"
+    TestNestJob:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "id"
+        - "test_nest_id"
+        - "generation"
+        - "operation"
+        - "operation_version"
+        - "state"
+        - "synthetic"
+      properties:
+        id:
+          type: "string"
+        test_nest_id:
+          type: "string"
+        generation:
+          type: "integer"
+        operation:
+          type: "string"
+        operation_version:
+          type: "string"
+        state:
+          type: "string"
+          enum:
+            - "queued"
+            - "running"
+            - "succeeded"
+            - "failed"
+            - "stopped"
+        result:
+          type:
+            - "object"
+            - "null"
+        error_code:
+          type:
+            - "string"
+            - "null"
+        created_at:
+          type: "string"
+          format: "date-time"
+        updated_at:
+          type: "string"
+          format: "date-time"
+        synthetic:
+          type: "boolean"
+          const: true
     Error:
       type: object
       description: Every refusal. `code` is stable; private resources are never distinguished from missing ones.
@@ -2915,18 +4456,7 @@ components:
         config_schema:
           $ref: '#/components/schemas/NestConfigSchema'
         price:
-          type: object
-          additionalProperties: false
-          required:
-          - amount_minor
-          - funding
-          properties:
-            amount_minor:
-              type: integer
-              const: 0
-            funding:
-              type: string
-              const: test_credits
+          $ref: '#/components/schemas/ListingPrice'
         created_at:
           type: string
           format: date-time
@@ -2997,11 +4527,20 @@ components:
     PublisherRoleGrant:
       type: object
       additionalProperties: false
+      description: The member by `account_id`, or (M2b) by `member_id`, the org member id the org's member list shows. Exactly one of the two.
       required:
-      - account_id
       - role
+      oneOf:
+      - required:
+        - account_id
+      - required:
+        - member_id
       properties:
         account_id:
+          type: string
+          minLength: 1
+          maxLength: 64
+        member_id:
           type: string
           minLength: 1
           maxLength: 64
@@ -3269,6 +4808,10 @@ components:
           - public
           - unlisted
           - private
+          - invite_only
+          - organization
+        price:
+          $ref: '#/components/schemas/ListingPriceTerms'
     ListingPatch:
       type: object
       additionalProperties: false
@@ -3291,6 +4834,10 @@ components:
           - public
           - unlisted
           - private
+          - invite_only
+          - organization
+        price:
+          $ref: '#/components/schemas/ListingPriceTerms'
     ListingPublish:
       type: object
       additionalProperties: false
