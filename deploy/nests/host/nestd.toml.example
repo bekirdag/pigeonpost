@@ -53,13 +53,13 @@ bind = "10.67.255.1:8788"
 # root), handed to the broker by systemd LoadCredential. Owner decision 2026-11-04: the self-hosted
 # load balancer route with the qwen-latest-flash-next load-balanced alias (cost 0). List the
 # aliases with GET https://api.mswarm.org/v1/swarm/self-hosted/agents?include_load_balanced=true
-# (entries with load_balanced=true and model_id qwen-latest-flash-next; this one is the openai-api
-# adapter, shared pool). The plain model id "qwen-latest-flash-next" on the same route also
-# load-balances, if the hashed alias is ever regenerated. For a local test without mswarm, use the
+# The plain model id "qwen-latest-flash-next" load-balances across whichever self-hosted nodes
+# serve it. Use it rather than a hashed `mswarm-lb-…` alias: on 2026-11-10 the alias set here
+# before (…-9dcea7b3d996) had disappeared and the broker got 404 no_compatible_agent. For a local test without mswarm, use the
 # mock: http://127.0.0.1:8789/v1/chat/completions and `systemctl start nestd-mock-upstream`.
 upstream_url = "https://api.mswarm.org/v1/swarm/self-hosted/openai/load-balanced/chat/completions"
 upstream_key_file = "/run/credentials/nestd-broker.service/upstream.key"
-model = "mswarm-lb-mcoda-qwen-latest-flash-next-9dcea7b3d996"
+model = "qwen-latest-flash-next"
 max_input_tokens = 16384
 max_output_tokens = 1024
 upstream_timeout_secs = 120
