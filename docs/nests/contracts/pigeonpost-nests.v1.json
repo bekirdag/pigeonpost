@@ -4,7 +4,7 @@
     "title": "Pigeonpost Nests marketplace core API (proposed)",
     "version": "0.1.0",
     "summary": "Native Nest jobs, payment authorizations and release review status.",
-    "description": "**Status: mostly a proposed design contract.** Operations marked `x-pigeonpost-status: implemented`\nare served by the postbox under the member API (`/v1`) behind the `marketplace` feature flag,\nper account and off by default; none is deployed. The rest are not implemented. A route whose\nphase is not enabled answers `404 feature_disabled`. Each implemented operation names its\npolicy action in `x-pigeonpost-action`; a postbox test keeps the routes and this file in step.\n\nScope: the four core operations of the marketplace build plan, plus the seven M0 routes marked\n`x-pigeonpost-status: implemented`, which the postbox serves. Everything else in the plan\n(catalog, installations, publisher console, credits, mandates, test environments) needs its\nown operation schemas and policy actions before implementation.\n\nConventions (same as the Enterprise API, `openapi/pigeonpost-org.v1.yaml`):\n\n* JSON, `application/json; charset=utf-8`, snake_case; timestamps are ISO 8601 UTC.\n* Success is `{\"data\": …}`; lists are `{\"data\": […], \"next_cursor\": \"…\" | null}`.\n* Errors are `{\"error\": {\"code\", \"message\", \"doc_url\"}}` with stable codes.\n* `Idempotency-Key` is **required** on the two financial or job-creating `POST`s below. It is\n  scoped to the authenticated caller, the acting mailbox and the route, and bound to a hash of\n  the canonical request. A replay returns the original response with `Idempotent-Replayed: true`;\n  the same key with a different request is `409 idempotency_conflict`. Unlike ordinary org API\n  replays (24 h), these keys are kept for the lifetime of the job or financial record.\n* The acting mailbox is chosen with `x-pigeonpost-identity`, checked against the credential\n  exactly as for sending a message.\n\nAuthority is decided by `authorize(actor, action, resource)` in the postbox (`policy.rs`), not by\nthese schemas. A schema validates structure only: it does not establish identity, funding,\nreview state, revocation or time ordering.\n",
+    "description": "**Status: mostly a proposed design contract.** Operations marked `x-pigeonpost-status: implemented`\nare served by the postbox under the member API (`/v1`) behind the `marketplace` feature flag,\nper account and off by default; none is deployed. The rest are not implemented. A route whose\nphase is not enabled answers `404 feature_disabled`. Each implemented operation names its\npolicy action in `x-pigeonpost-action`; a postbox test keeps the routes and this file in step.\n\nScope: the four core operations of the marketplace build plan, plus the seven M0 routes and\nthe M1 reference path (native jobs with zero-priced quotes and payment authorizations, staff\nreview, attestation and quarantine). Operations marked `x-pigeonpost-status: implemented` are\nserved by the postbox. Everything else in the plan (catalog, installations, publisher console,\npaid purchases, test environments) needs its own operation schemas and policy actions before\nimplementation.\n\nM1 moves no money: every quote and payment authorization is zero-priced, and there is no\nwallet and no spend mandate (owner decision 2026-11-09, per-purchase payments).\n\nConventions (same as the Enterprise API, `openapi/pigeonpost-org.v1.yaml`):\n\n* JSON, `application/json; charset=utf-8`, snake_case; timestamps are ISO 8601 UTC.\n* Success is `{\"data\": …}`; lists are `{\"data\": […], \"next_cursor\": \"…\" | null}`.\n* Errors are `{\"error\": {\"code\", \"message\", \"doc_url\"}}` with stable codes.\n* `Idempotency-Key` is **required** on the two financial or job-creating `POST`s below. It is\n  scoped to the authenticated caller, the acting mailbox and the route, and bound to a hash of\n  the canonical request. A replay returns the original response with `Idempotent-Replayed: true`;\n  the same key with a different request is `409 idempotency_conflict`. Unlike ordinary org API\n  replays (24 h), these keys are kept for the lifetime of the job or financial record.\n* The acting mailbox is chosen with `x-pigeonpost-identity`, checked against the credential\n  exactly as for sending a message.\n\nAuthority is decided by `authorize(actor, action, resource)` in the postbox (`policy.rs`), not by\nthese schemas. A schema validates structure only: it does not establish identity, funding,\nreview state, revocation or time ordering.\n",
     "contact": {
       "name": "Pigeonpost",
       "url": "https://developers.pigeonpost.dev"
@@ -60,7 +60,9 @@
         ],
         "operationId": "submitNestJob",
         "summary": "Submit one job to a Nest operation",
-        "description": "Admits one durable job under an exact authorization. The server derives the sender, the\nresolved target and release, the buyer context, the payer and the trace; the body cannot\nsupply them. The target is pinned to the quote's release binding: a handle that moved since\nthe quote never redirects the job.\n\nFree operations still need a zero-priced quote and its payment authorization (which reserves\nnothing), so admission, review state and abuse checks always run.\n\nCredentials: a person (member token), the account key, or the acting mailbox's own\ncapability token. A connector acting for the member gets `credential_not_accepted`.\nA plain message or a group message is never turned into a paid job.\n\nLimits: body at most 256 KiB, JSON depth at most 32, duplicate object keys and non-finite\nnumbers rejected before parsing. `payload` is further validated against the pinned\noperation's input schema.\n",
+        "description": "Admits one durable job under an exact authorization. The server derives the sender, the\nresolved target and release, the buyer context, the payer and the trace; the body cannot\nsupply them. The target is pinned to the quote's release binding: a handle that moved since\nthe quote never redirects the job.\n\nFree operations still need a zero-priced quote and its payment authorization (which reserves\nnothing), so admission, review state and abuse checks always run.\n\nCredentials: a person (member token), the account key, or the acting mailbox's own\ncapability token. A connector acting for the member gets `credential_not_accepted`.\nA plain message or a group message is never turned into a paid job.\n\nLimits: body at most 256 KiB, JSON depth at most 32, duplicate object keys and non-finite\nnumbers rejected before parsing. `payload` is further validated against the pinned\noperation's input schema.\n\nM1: the target is a shared listing address; each paying account gets its own worker (buyer\ncontext) behind it. Only a release with a valid staff attestation over its release digest\nand no quarantine or revocation is admitted. `attachments` must be empty and `reply_to`,\nwhen given, must be the acting mailbox.\n",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "NestInvoke",
         "security": [
           {
             "memberToken": []
@@ -172,7 +174,9 @@
         ],
         "operationId": "getNestJob",
         "summary": "Read one job's current state",
-        "description": "The submitting caller, and anyone the job's reply audience explicitly delegates, can read it.\nAnyone else gets `404 not_found` (no enumeration). Admission, execution, settlement and\nexternal-effect outcomes are separate fields; a finished execution is not automatically\nsettled.\n",
+        "description": "The submitting caller, and anyone the job's reply audience explicitly delegates, can read it.\nAnyone else gets `404 not_found` (no enumeration). Admission, execution, settlement and\nexternal-effect outcomes are separate fields; a finished execution is not automatically\nsettled.\n\nM1: the submitting account reads its jobs; the operation's output is inline in `result`.\n",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "NestJobRead",
         "security": [
           {
             "memberToken": []
@@ -224,6 +228,75 @@
         }
       }
     },
+    "/v1/nest-jobs/quote": {
+      "post": {
+        "tags": [
+          "Nest jobs"
+        ],
+        "operationId": "quoteNestJob",
+        "summary": "Quote one job (zero-priced in M1)",
+        "description": "A server-priced quote for one operation of a listing, bound to the caller's account, the\nlisting, its admitted release and the operation, for five minutes. M1 offers free\noperations only: the amount is always 0 and nothing is reserved. The listing must be\npublished and its release attested and live.\n",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "NestInvoke",
+        "security": [
+          {
+            "memberToken": []
+          },
+          {
+            "apiKey": []
+          },
+          {
+            "capToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NestJobQuoteRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The quote.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/NestJobQuote"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
     "/v1/nest-payment-authorizations": {
       "post": {
         "tags": [
@@ -231,7 +304,9 @@
         ],
         "operationId": "authorizeNestPayment",
         "summary": "Reserve credits for one quoted operation",
-        "description": "Turns a server-priced quote into an opaque, single-use payment authorization and reserves\nthe quoted maximum in the buyer's marketplace wallet. The financial authority (the\nmarketplace module behind the billing bridge) mints the reference, stores only its hash and\nbinds it to the environment, the caller, the payer wallet, the target release and operation,\nthe quote and offer versions, the canonical intent digest, the maximum amount, the expiry\nand either an exact human approval or a spend mandate.\n\nWithout `mandate_id`: a person, signed in recently and strongly when the amount is above the\naccount's approval threshold (`step_up_required` otherwise). Automation gets\n`human_required`. With `mandate_id`: the caller consumes a live mandate that a person created\nearlier with step-up; this is the narrow `ConsumeSpendMandate` policy action, not the\n`spend` verb, which stays never-auto.\n\nThe reference expires after at most five minutes if unused. Once a job consumes it, the\nreservation follows the job, not this expiry.\n",
+        "description": "Turns a server-priced quote into an opaque, single-use payment authorization and reserves\nthe quoted maximum in the buyer's marketplace wallet. The financial authority (the\nmarketplace module behind the billing bridge) mints the reference, stores only its hash and\nbinds it to the environment, the caller, the payer wallet, the target release and operation,\nthe quote and offer versions, the canonical intent digest, the maximum amount, the expiry\nand either an exact human approval or a spend mandate.\n\nWithout `mandate_id`: a person, signed in recently and strongly when the amount is above the\naccount's approval threshold (`step_up_required` otherwise). Automation gets\n`human_required`. With `mandate_id`: the caller consumes a live mandate that a person created\nearlier with step-up; this is the narrow `ConsumeSpendMandate` policy action, not the\n`spend` verb, which stays never-auto.\n\nThe reference expires after at most five minutes if unused. Once a job consumes it, the\nreservation follows the job, not this expiry.\n\n**M1 as implemented:** zero-priced quotes only, so nothing is reserved (`reservation_id` is\nnull and `amount_minor` is 0) and no money moves. There is no wallet and no mandate\n(per-purchase payments, owner decision 2026-11-09): a request with `mandate_id` is refused\nwith `invalid_request`. The reference is stored as a hash only. A retry with the same\n`Idempotency-Key` returns a fresh reference for the same unused authorization (the earlier\none stops working), so a lost response never leaves a usable copy behind.\n",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "NestInvoke",
         "security": [
           {
             "memberToken": []
@@ -726,6 +801,200 @@
         }
       }
     },
+    "/v1/staff/reviews/{review}": {
+      "get": {
+        "tags": [
+          "Staff"
+        ],
+        "operationId": "staffReadReview",
+        "summary": "Read a release review with its stages",
+        "description": "The full review of one release for staff: its digests and every recorded stage with its\nevidence digest. A person with a live reviewer role and step-up, with no stake in the\npublisher; a first-party (platform) release may be reviewed by staff (`first_party: true`).\n",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "NestReview",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Review"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The review.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/StaffReview"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/v1/staff/reviews/{review}/decisions": {
+      "post": {
+        "tags": [
+          "Staff"
+        ],
+        "operationId": "staffDecideReview",
+        "summary": "Decide a release review",
+        "description": "A staff decision on an open review. `release_digest` must be the digest under review. An\napproval needs the intake, deterministic scan and behaviour test stages passed and the AI\nreview recorded (it is advisory and never decides), and also needs `NestAttest`: it writes\nthe attestation over the release digest and publishes the release's first-party listing.\nOnly attested releases are admitted to the marketplace pool. A reviewer who owns, filed,\nbelongs to or built the publisher's release is refused (`staff_conflict`), except that staff\nmay review a first-party (platform) release, recorded as `first_party: true`.\n",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "NestReview",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Review"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StaffReviewDecisionCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The decision, with the attestation when approved.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/StaffReviewDecision"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/v1/staff/releases/{release}/security": {
+      "post": {
+        "tags": [
+          "Staff"
+        ],
+        "operationId": "staffReleaseSecurity",
+        "summary": "Quarantine, lift a quarantine, or revoke a release",
+        "description": "A staff security action. Quarantine and revocation stop the release's running workers on\nthe worker host, stop its queued and running jobs (`stopped_security`) and refuse new ones;\nevery action is recorded as a release security event. Revocation is permanent.\n",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "NestQuarantine",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "release",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^rel_[a-z2-7]{26}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReleaseSecurityChange"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The release's security state after the action.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ReleaseSecurityState"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
     "/v1/marketplace/listings/{listing}": {
       "get": {
         "tags": [
@@ -938,7 +1207,7 @@
         }
       },
       "Conflict": {
-        "description": "State or binding conflict (`role_already_held`, `application_exists`, `idempotency_conflict`, `quote_expired`, `authorization_expired`, `authorization_reused`, `authorization_intent_mismatch`, `environment_mismatch`, `currency_mismatch`, `review_required`, `release_revoked`, `security_quarantined`, `access_expired`, `recovery_window_closed`).",
+        "description": "State or binding conflict (`role_already_held`, `application_exists`, `idempotency_conflict`, `quote_expired`, `authorization_expired`, `authorization_reused`, `authorization_intent_mismatch`, `environment_mismatch`, `currency_mismatch`, `review_required`, `release_revoked`, `security_quarantined`, `access_expired`, `recovery_window_closed`, `review_closed`, `stages_incomplete`, `release_digest_mismatch`, `invalid_request` for a security action that does not apply).",
         "content": {
           "application/json": {
             "schema": {
@@ -1054,6 +1323,9 @@
                   "security_quarantined",
                   "access_expired",
                   "recovery_window_closed",
+                  "review_closed",
+                  "stages_incomplete",
+                  "release_digest_mismatch",
                   "payload_too_large",
                   "rate_limited",
                   "financial_authority_unavailable",
@@ -1276,6 +1548,13 @@
               "type": "string"
             },
             "description": "Result artifacts readable by this caller."
+          },
+          "result": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "M1. The operation's output, inline, once execution succeeded; null before."
           },
           "error_code": {
             "type": [
@@ -1805,8 +2084,10 @@
             "type": "string",
             "enum": [
               "account",
-              "org"
-            ]
+              "org",
+              "platform"
+            ],
+            "description": "`platform` is Pigeonpost's own first-party publisher (M1), made by the build plane; an application is always `account` or `org`."
           },
           "owner_id": {
             "type": "string"
@@ -1830,6 +2111,353 @@
           "updated_at": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "NestJobQuoteRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "to",
+          "operation",
+          "operation_version"
+        ],
+        "properties": {
+          "to": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 320,
+            "description": "The shared listing address."
+          },
+          "operation": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$",
+            "maxLength": 80
+          },
+          "operation_version": {
+            "type": "string",
+            "pattern": "^[0-9]+\\.[0-9]+(\\.[0-9]+)?$",
+            "maxLength": 32
+          }
+        }
+      },
+      "NestJobQuote": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "quote_id",
+          "to",
+          "operation",
+          "operation_version",
+          "amount_minor",
+          "currency",
+          "expires_at"
+        ],
+        "properties": {
+          "quote_id": {
+            "type": "string",
+            "pattern": "^qte_[a-z2-7]{26}$"
+          },
+          "to": {
+            "type": "string"
+          },
+          "operation": {
+            "type": "string"
+          },
+          "operation_version": {
+            "type": "string"
+          },
+          "amount_minor": {
+            "type": "integer",
+            "const": 0,
+            "description": "Zero in M1; no money moves."
+          },
+          "currency": {
+            "type": "string",
+            "pattern": "^[A-Z]{3}$"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "StaffReviewStage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "stage",
+          "decision",
+          "reviewer",
+          "reason",
+          "evidence_digest",
+          "first_party",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "stage": {
+            "type": "string",
+            "enum": [
+              "intake",
+              "deterministic_scan",
+              "ai_analysis",
+              "behavioral_test",
+              "human_review",
+              "attestation"
+            ]
+          },
+          "decision": {
+            "type": "string",
+            "enum": [
+              "passed",
+              "failed",
+              "advisory",
+              "approved",
+              "rejected",
+              "changes_requested"
+            ],
+            "description": "Automated stages pass or fail; the AI review is always `advisory`; only the human review decides."
+          },
+          "reviewer": {
+            "type": "string",
+            "description": "A staff account id, or `system:build-plane` / `system:analysis` for automation."
+          },
+          "reason": {
+            "type": "string"
+          },
+          "evidence_digest": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "first_party": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "StaffReview": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "status",
+          "first_party",
+          "release_id",
+          "publisher_id",
+          "version",
+          "release_digest",
+          "image",
+          "sbom_digest",
+          "source_digest",
+          "security_state",
+          "stages"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^rvw_[a-z2-7]{26}$"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "blocked",
+              "decided",
+              "withdrawn"
+            ]
+          },
+          "first_party": {
+            "type": "boolean"
+          },
+          "release_id": {
+            "type": "string"
+          },
+          "publisher_id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "release_digest": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "image": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sbom_digest": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source_digest": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "security_state": {
+            "type": "string",
+            "enum": [
+              "normal",
+              "quarantined",
+              "revoked"
+            ]
+          },
+          "stages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StaffReviewStage"
+            }
+          }
+        }
+      },
+      "StaffReviewDecisionCreate": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "decision",
+          "reason",
+          "release_digest"
+        ],
+        "properties": {
+          "decision": {
+            "type": "string",
+            "enum": [
+              "approved",
+              "rejected",
+              "changes_requested"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "release_digest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$",
+            "description": "The digest the reviewer is deciding on; it must be the one under review."
+          }
+        }
+      },
+      "StaffReviewDecision": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "decision_id",
+          "decision",
+          "first_party",
+          "attestation"
+        ],
+        "properties": {
+          "decision_id": {
+            "type": "string"
+          },
+          "decision": {
+            "type": "string",
+            "enum": [
+              "approved",
+              "rejected",
+              "changes_requested"
+            ]
+          },
+          "first_party": {
+            "type": "boolean"
+          },
+          "attestation": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "id",
+                  "statement_digest"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "statement_digest": {
+                    "type": "string",
+                    "pattern": "^sha256:[a-f0-9]{64}$"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "ReleaseSecurityChange": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "action",
+          "reason"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "quarantine",
+              "lift",
+              "revoke"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        }
+      },
+      "ReleaseSecurityState": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "release_id",
+          "security_state",
+          "jobs_stopped",
+          "runtime_updated"
+        ],
+        "properties": {
+          "release_id": {
+            "type": "string"
+          },
+          "security_state": {
+            "type": "string",
+            "enum": [
+              "normal",
+              "quarantined",
+              "revoked"
+            ]
+          },
+          "jobs_stopped": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "runtime_updated": {
+            "type": "boolean",
+            "description": "The worker host confirmed that the release's workers stopped (or that the quarantine was lifted)."
           }
         }
       },

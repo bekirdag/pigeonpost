@@ -327,6 +327,7 @@ async fn start_locked(ctx: &Ctx, id: &str) -> Result<(), ApiError> {
             generation,
             volume: root,
             buyer_context: None,
+            image: None,
         })
     })
     .await;
@@ -578,7 +579,15 @@ pub async fn reconcile(ctx: &Ctx) -> Result<(), String> {
         tracing::warn!("locked: waiting for the postbox to release the host key");
         return Ok(());
     }
-    let nests = ctx.db.nests(true)?;
+    // Marketplace workers belong to the dispatcher and its pool (M1): never started, stopped or
+    // adopted here.
+    let workers = ctx.db.mp_worker_ids()?;
+    let nests: Vec<_> = ctx
+        .db
+        .nests(true)?
+        .into_iter()
+        .filter(|n| !workers.contains(&n.id))
+        .collect();
     let present = {
         let s = ctx.sandbox.clone();
         blocking(move || s.list()).await?
@@ -712,8 +721,14 @@ pub async fn idle_stop(ctx: &Ctx) {
     let Ok(nests) = ctx.db.nests(false) else {
         return;
     };
+    let Ok(workers) = ctx.db.mp_worker_ids() else {
+        return;
+    };
     let t = now();
-    for nest in nests.into_iter().filter(|n| n.state == "running") {
+    for nest in nests
+        .into_iter()
+        .filter(|n| n.state == "running" && !workers.contains(&n.id))
+    {
         let last = nest
             .last_active_at
             .unwrap_or(0)
@@ -1267,9 +1282,14 @@ async fn http_create(
 
 async fn http_list(State(ctx): State<Ctx>, headers: HeaderMap) -> ApiResult {
     authorized(&ctx, &headers)?;
+    let workers = ctx.db.mp_worker_ids().map_err(ApiError::internal)?;
     let nests = ctx.db.nests(false).map_err(ApiError::internal)?;
     Ok(Json(json!({
-        "nests": nests.iter().map(|n| status_json(&ctx, n)).collect::<Vec<_>>()
+        "nests": nests
+            .iter()
+            .filter(|n| !workers.contains(&n.id))
+            .map(|n| status_json(&ctx, n))
+            .collect::<Vec<_>>()
     })))
 }
 
@@ -1343,6 +1363,35 @@ mod tests {
             budgets: None,
             quota_gib: None,
         }
+    }
+
+    /// Marketplace workers (M1) live in the `nests` ledger so the broker meters them, but the
+    /// first-party lifecycle never starts, stops or lists them: they belong to the dispatcher.
+    #[tokio::test]
+    async fn the_first_party_lifecycle_leaves_marketplace_workers_alone() {
+        let (c, fake) = ctx();
+        let worker = crate::db::MpWorker {
+            nest_id: "nst_00000000000000e1".into(),
+            listing_id: "lst_1".into(),
+            buyer_context: "ctx-a".into(),
+            release_id: "rel_1".into(),
+        };
+        c.db.mp_admit("rel_1", "x@sha256:00", "sha256:00", "sha256:00")
+            .unwrap();
+        c.db.mp_insert_worker(&worker, 10, 10).unwrap();
+        c.db.set_state(&worker.nest_id, "running", "running", None, None)
+            .unwrap();
+        reconcile(&c).await.unwrap();
+        assert_eq!(fake.state(&worker.nest_id).unwrap(), RuntimeState::Absent);
+        let row = c.db.nest(&worker.nest_id).unwrap().unwrap();
+        assert_eq!((row.state.as_str(), row.generation), ("running", 0));
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            "Bearer nst_secret_token".parse().unwrap(),
+        );
+        let listed = http_list(State(c.clone()), headers).await.unwrap().0;
+        assert_eq!(listed["nests"], json!([]), "{listed}");
     }
 
     #[tokio::test]

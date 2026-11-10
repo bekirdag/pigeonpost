@@ -66,8 +66,8 @@ peer and the egress allowance for `10.66.0.2:8790`.
 ## Marketplace pool (M0, not set up on any host yet)
 
 The pool is configured in `[sandbox.marketplace]` and runs publisher code under gVisor on this same
-host, because the owner chose no KVM host (2026-11-09; the plan said Firecracker). `nestd` does not
-use it until M1. The nestd ledger stays on SQLite, and OpenBao and SeaweedFS are not used yet (one
+host, because the owner chose no KVM host (2026-11-09; the plan said Firecracker). Since M1 the
+shared Nest dispatcher runs its workers there (below). The nestd ledger stays on SQLite, and OpenBao and SeaweedFS are not used yet (one
 host). See [the deviations](../../docs/nests/contracts/README.md).
 
 When it is enabled, in order:
@@ -78,6 +78,30 @@ When it is enabled, in order:
    apply. They do nothing while the bridge does not exist.
 4. Live isolation probes, on the host as root, against the runner image:
    `NESTS_LIVE_GVISOR=1 NESTS_LIVE_IMAGE=<runner image> cargo test -p pigeonpost-nests --test marketplace_isolation -- --ignored --nocapture`
+
+## Marketplace M1: build, analysis and the shared Nest dispatcher (not set up on any host yet)
+
+With `[sandbox.marketplace]` configured, `pigeonpost-nestd control` also serves the dispatcher
+(`/v1/mp/jobs`, `/v1/mp/jobs/{job}`, `/v1/mp/releases/{release}/quarantine`) behind the same
+control token. It runs only releases whose staff attestation the postbox sends with each job, one
+worker per listing and buyer context under `<volume_root>/<context>/<worker>`, and the first-party
+reconcile, idle stop and list leave those workers alone. Design, routes and deviations:
+[docs/nests/contracts/README.md](../../docs/nests/contracts/README.md) ("Marketplace M1").
+
+The build and analysis planes are `pigeonpost-nest-release`, run by an unprivileged user (the build
+refuses rootful podman). The reference release's source tree is `reference/hr-policy-qa/`.
+
+1. A fetch-only podman network for `cargo vendor` (the build step itself has `--network=none`), and
+   the base images the Containerfile pins, pulled by digest beforehand (`--pull=never`).
+2. `pigeonpost-nest-release build --config build.toml --src reference/hr-policy-qa --work <empty dir>`
+   with `runtime`, `fetch_network`, `fetch_image` (pinned) and `image_name`; prints the build record
+   for `POST /internal/v1/marketplace/builds`.
+3. `pigeonpost-nest-release scan --src …` and `ai-review --route review.toml --src …` (model
+   `qwen-latest-flash-next` on the self-hosted route only); each prints a stage record for
+   `POST /internal/v1/marketplace/reviews/{review}/stages`. The behaviour test under gVisor:
+   `NESTS_LIVE_GVISOR=1 NESTS_LIVE_RELEASE_IMAGE=<image> cargo test -p pigeonpost-nests --test marketplace_m1 -- --ignored live_behaviour`.
+4. A staff reviewer approves in the postbox (`POST /v1/staff/reviews/{review}/decisions`), which
+   attests the release digest and publishes the listing.
 
 ## Rotate the control token
 

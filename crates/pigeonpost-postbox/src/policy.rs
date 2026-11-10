@@ -114,9 +114,11 @@ pub(crate) enum Action {
     #[cfg_attr(not(test), allow(dead_code))]
     NestManage,
     /// Submit a job to a Nest operation (`/v1/nest-jobs`): needs admission and, when the offer is
-    /// paid, a valid payment for this job.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// paid, a valid payment for this job. M1 also uses it for the zero-priced quote and payment
+    /// authorization that precede a job: no money moves, so no purchase action is involved.
     NestInvoke,
+    /// Read one's own job (`GET /v1/nest-jobs/{job}`, M1): the submitting account only.
+    NestJobRead,
     /// Pay for one marketplace purchase. There is no wallet and no stored balance (owner decision
     /// 2026-11-09), so this replaces the plan's top-up and spend-mandate actions and is never
     /// automatic: no mandate exists for automation to consume.
@@ -132,10 +134,8 @@ pub(crate) enum Action {
     /// Record a review decision on a release; also what a reviewer reads to get there.
     NestReview,
     /// Sign the attestation of an approved release.
-    #[cfg_attr(not(test), allow(dead_code))]
     NestAttest,
     /// Quarantine or revoke a live release.
-    #[cfg_attr(not(test), allow(dead_code))]
     NestQuarantine,
     /// Prepare a publisher payout batch. The separate preparer/approver rule is design only and is
     /// not implemented in M0.
@@ -279,8 +279,9 @@ pub(crate) enum Resource<'a> {
     /// [`Facts::listing_visible`].
     NestListing(&'a str),
     /// An operation offered by a listing, by listing id. Admission is [`Facts::job_admitted`].
-    #[cfg_attr(not(test), allow(dead_code))]
     NestOperation(&'a str),
+    /// One job, by id. Whether this caller submitted it is [`Facts::job_visible`].
+    NestJob(&'a str),
     /// One installed Nest, by id. The owner, org role or live delegation is
     /// [`Facts::nest_permitted`].
     #[cfg_attr(not(test), allow(dead_code))]
@@ -395,7 +396,9 @@ impl Action {
             Action::NestView => Requirement::AccountHolder,
             Action::NestOwn | Action::NestPurchase | Action::NestApprove => Requirement::Human,
             Action::NestToolRequest => Requirement::Mailbox,
-            Action::NestOperate | Action::NestInvoke => Requirement::NotConnector,
+            Action::NestOperate | Action::NestInvoke | Action::NestJobRead => {
+                Requirement::NotConnector
+            }
             Action::NestDiscover => Requirement::Anyone,
             Action::NestInstall
             | Action::NestConfigure
@@ -470,6 +473,8 @@ pub(crate) struct Facts {
     pub nest_permitted: bool,
     /// The job passed admission and any payment it needs is valid for it.
     pub job_admitted: bool,
+    /// The caller's account submitted this job.
+    pub job_visible: bool,
 }
 
 /// Why a request was refused. Stable; mapped to an HTTP status and error code.
@@ -732,6 +737,9 @@ pub(crate) fn authorize_with(
         }
         (Actor::Principal(_), Resource::NestOperation(_)) => {
             action == Action::NestInvoke && facts.job_admitted
+        }
+        (Actor::Principal(_), Resource::NestJob(_)) => {
+            action == Action::NestJobRead && facts.job_visible
         }
         (Actor::Principal(_), Resource::InstalledNest(_)) => {
             matches!(
@@ -2085,6 +2093,68 @@ mod tests {
             assert_eq!(
                 authorize(&actor, Action::NestInvoke, &op, &admitted),
                 Err(DenyReason::CredentialNotAccepted)
+            );
+        }
+    }
+
+    /// M1: a job is read by the account that submitted it, through any credential but a
+    /// connector; nothing else grants it, and reading grants nothing else.
+    #[test]
+    fn a_job_is_read_by_its_submitter_only() {
+        let me = human("a1", None);
+        let (key, conn, mb) = (api_key("a1"), connector("a1"), mailbox(Some("a1")));
+        let job = Resource::NestJob("job_1");
+        let mine = Facts {
+            job_visible: true,
+            ..facts()
+        };
+        let everything_else = Facts {
+            job_admitted: true,
+            nest_permitted: true,
+            publisher_permitted: true,
+            listing_visible: true,
+            platform_owner: true,
+            staff_roles: vec![StaffRole::Reviewer, StaffRole::Finance],
+            ..facts()
+        };
+        for ok in [&me, &key, &mb] {
+            assert!(authorize(&Actor::Principal(ok), Action::NestJobRead, &job, &mine).is_ok());
+            assert_eq!(
+                authorize(
+                    &Actor::Principal(ok),
+                    Action::NestJobRead,
+                    &job,
+                    &everything_else
+                ),
+                Err(DenyReason::NotPermitted)
+            );
+        }
+        assert_eq!(
+            authorize(&Actor::Principal(&conn), Action::NestJobRead, &job, &mine),
+            Err(DenyReason::CredentialNotAccepted)
+        );
+        for actor in [
+            Actor::Anonymous,
+            Actor::Service("ops"),
+            Actor::OrgKey {
+                key_id: "k",
+                org_id: "o",
+            },
+        ] {
+            assert_eq!(
+                authorize(&actor, Action::NestJobRead, &job, &mine),
+                Err(DenyReason::CredentialNotAccepted)
+            );
+        }
+        // Being able to read a job does not admit one, nor reach anything else.
+        for (action, resource) in [
+            (Action::NestInvoke, Resource::NestOperation("lst_1")),
+            (Action::NestInvoke, Resource::NestJob("job_1")),
+            (Action::NestManage, Resource::NestJob("job_1")),
+        ] {
+            assert_eq!(
+                authorize(&Actor::Principal(&me), action, &resource, &mine),
+                Err(DenyReason::NotPermitted)
             );
         }
     }

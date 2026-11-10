@@ -520,10 +520,17 @@ async fn listings_show_only_what_the_caller_may_see() {
 #[test]
 fn the_routes_and_the_contract_match() {
     use std::collections::BTreeSet;
-    let source = include_str!("marketplace.rs");
+    // M0's routes and M1's member routes (`marketplace_m1.rs`) together.
+    let m0 = include_str!("marketplace.rs");
+    let m1 = include_str!("marketplace_m1.rs");
+    let source = format!("{m0}\n{m1}");
     let served: BTreeSet<(String, String)> =
-        crate::foundations_tests::routes_in(source, "pub(crate) fn router(")
+        crate::foundations_tests::routes_in(m0, "pub(crate) fn router(")
             .into_iter()
+            .chain(crate::foundations_tests::routes_in(
+                m1,
+                "pub(crate) fn router(",
+            ))
             .collect();
     let spec: Value = serde_json::from_str(include_str!(
         "../../../docs/nests/contracts/pigeonpost-nests.v1.json"

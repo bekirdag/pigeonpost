@@ -222,6 +222,11 @@ impl Runtime {
         !matches!(self.transport, Transport::Disabled)
     }
 
+    /// A real nestd over HTTP (not disabled, not a test capture): background work may run.
+    pub(crate) fn is_http(&self) -> bool {
+        matches!(self.transport, Transport::Http { .. })
+    }
+
     /// One call to nestd: `(status, JSON body)` for any answer, an error when there was none.
     pub(crate) async fn call(
         &self,
@@ -239,6 +244,16 @@ impl Runtime {
                 });
                 if fail.load(Ordering::SeqCst) {
                     return Ok((500, json!({ "error": "capture_failure" })));
+                }
+                // The marketplace dispatcher (M1): a polled job has finished on the worker host.
+                if method == reqwest::Method::GET && path.starts_with("/v1/mp/jobs/") {
+                    return Ok((
+                        200,
+                        json!({
+                            "state": "succeeded",
+                            "result": { "answer": "captured", "sources": [], "model_used": false },
+                        }),
+                    ));
                 }
                 let state = match (method.as_str(), path.rsplit('/').next()) {
                     ("POST", Some("pause")) => "paused",

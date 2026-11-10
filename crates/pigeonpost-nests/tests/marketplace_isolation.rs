@@ -87,6 +87,7 @@ fn start(
         generation: 1,
         volume,
         buyer_context: Some(context.into()),
+        image: None,
     };
     let mut argv = MarketplacePool::<pigeonpost_nests::sandbox::HostPodman>::run_args(
         &base(),

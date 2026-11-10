@@ -94,6 +94,9 @@ mod internal_api;
 mod limits;
 mod mail_layout;
 mod marketplace;
+mod marketplace_m1;
+#[cfg(test)]
+mod marketplace_m1_tests;
 #[cfg(test)]
 mod marketplace_tests;
 mod mcp;
@@ -534,6 +537,8 @@ async fn serve(cfg: Config) {
     appstore_routes::start_reconciliation(state.clone());
     nest_commerce::start_reconciliation(state.clone());
     nests::start_unlocker(state.clone());
+    // Marketplace M1: hand admitted jobs to nestd and collect their results.
+    marketplace_m1::start_dispatcher(state.clone());
     start_internal_listener(&state).await;
     // Disappearing-message expiry and group maintenance (SDS §17.2, §4.3), every 30 s.
     ephemeral::start_worker(state.clone());
@@ -1051,6 +1056,8 @@ fn build_router(state: AppState) -> Router {
         .merge(nest_org::router())
         // Marketplace foundations (build plan M0), behind the `marketplace` flag.
         .merge(marketplace::router())
+        // Marketplace M1: native jobs, staff review and quarantine, behind the same flag.
+        .merge(marketplace_m1::router())
         // Phase 3B: calendar and scheduled meetings (SDS §14B.5, docs/calendar.md).
         .route(
             "/v1/calendars",

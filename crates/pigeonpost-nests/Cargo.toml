@@ -25,6 +25,11 @@ path = "src/bin/parser.rs"
 name = "pigeonpost-nest-runner"
 path = "src/bin/runner.rs"
 
+# Marketplace M1: the build and analysis planes.
+[[bin]]
+name = "pigeonpost-nest-release"
+path = "src/bin/release.rs"
+
 [dependencies]
 axum = "0.8"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "signal", "sync", "process"] }

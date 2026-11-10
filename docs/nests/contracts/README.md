@@ -1,9 +1,10 @@
 # Nests marketplace core contracts (proposed)
 
 **Status:** design contracts for the Nests marketplace build plan. Operations marked
-`x-pigeonpost-status: implemented` are served by the postbox (`crates/pigeonpost-postbox/src/marketplace.rs`)
-behind the per-account `marketplace` flag, off by default, and none of them is deployed. The other
-operations are proposed only. See "Marketplace M0" below.
+`x-pigeonpost-status: implemented` are served by the postbox (`crates/pigeonpost-postbox/src/marketplace.rs`
+for M0, `marketplace_m1.rs` for M1) behind the per-account `marketplace` flag, off by default, and
+none of them is deployed. The other operations are proposed only. See "Marketplace M0" and
+"Marketplace M1" below.
 
 These files are the aligned version of the core contracts in the owner's external marketplace
 expansion (v5, 2026-11-03). v5 was written without full knowledge of the current system; this
@@ -142,9 +143,9 @@ After editing the YAML:
 3. validate: `python .github/scripts/openapi/check_openapi.py docs/nests/contracts/pigeonpost-nests.v1.yaml`.
 
 The CI `openapi` job validates this file along with the two production specs. A postbox test
-(`marketplace_tests::the_routes_and_the_contract_match`) fails when a route in `marketplace.rs` and
-an operation marked implemented stop matching, or when an operation names a policy action its
-handlers do not use.
+(`marketplace_tests::the_routes_and_the_contract_match`) fails when a route in `marketplace.rs` or
+`marketplace_m1.rs` and an operation marked implemented stop matching, or when an operation names a
+policy action its handlers do not use.
 
 ## Marketplace M0: what is built and how it departs from the plan
 
@@ -178,6 +179,64 @@ Owner decisions from 2026-11-09. These are not to be reopened.
 6. **Models**: Self-hosted only. No third-party model route is added for marketplace work.
 7. **Flag name**: Uses `marketplace` per account, instead of this README's earlier `nests_marketplace`.
 8. **Database schema**: The `nests` table does not have an owner_kind column. Org-owned Nests are already identified through orgs.internal_account_id, so the column would duplicate a fact that can drift. New tables that can belong to a person or an org carry owner_kind and owner_id.
+
+## Marketplace M1: the reference path
+
+M1 builds a first-party reference release (HR policy Q&A, `deploy/nests/reference/hr-policy-qa`) from a pinned source tree, analyses it, has staff approve and attest it, and serves native jobs to many buyers from one shared listing, one worker per buyer context. Everything is behind the per-account `marketplace` flag, off by default; the internal routes also need it on for the platform owner's account (`POSTBOX_PLATFORM_OWNER_ACCOUNT`). Nothing is deployed. No money moves: every quote and payment authorization is zero-priced, and the schema refuses any other amount.
+
+### Routes and policies
+
+| Route | Policy action | Who |
+| :--- | :--- | :--- |
+| POST /v1/nest-jobs/quote | NestInvoke | a person, an account key or a mailbox capability token; never a connector |
+| POST /v1/nest-payment-authorizations | NestInvoke | same; zero-priced, single use, five minutes, required Idempotency-Key |
+| POST /v1/nest-jobs | NestInvoke | same, with the quote's authorization and a required Idempotency-Key |
+| GET /v1/nest-jobs/{job} | NestJobRead (new, NotConnector) | the submitting account only; others get 404 |
+| GET /v1/staff/reviews/{review} | NestReview | a reviewer with step-up and no stake in the publisher |
+| POST /v1/staff/reviews/{review}/decisions | NestReview, and NestAttest for an approval | same |
+| POST /v1/staff/releases/{release}/security | NestQuarantine | same; actions quarantine, lift, revoke |
+| POST /internal/v1/marketplace/builds | ops service token | the build plane |
+| POST /internal/v1/marketplace/reviews/{review}/stages | ops service token | the analysis plane |
+
+### How a release gets to a job
+
+1. `pigeonpost-nest-release build` vendors dependencies in a fetch container on a fetch-only network, then runs a rootless `podman build --network=none --pull=never --no-cache --cap-drop=ALL` under runsc or crun. It writes a CycloneDX 1.5 SBOM from Cargo.lock and the file list, and one release digest over the source, vendored sources, manifest, SBOM and image digests.
+2. The build record goes to POST /internal/v1/marketplace/builds. The postbox checks every digest, records the release under Pigeonpost's own publisher (owner kind `platform`), opens a review case, records the intake stage and creates the listing as a draft.
+3. `pigeonpost-nest-release scan` runs the offline static scans (secrets, capabilities, syscalls, egress and external writes in the manifest, every locked package's licence against an allowlist). The behaviour test plants honeytokens and searches every channel out of the release, plain and encoded. `pigeonpost-nest-release ai-review` asks the self-hosted model `qwen-latest-flash-next` and nothing else; its decision is always `advisory`. Each stage is a review_decisions row with its evidence and evidence digest.
+4. A staff reviewer with step-up approves over the exact release digest. The approval needs intake, scan and behaviour passed and the AI review recorded. It writes the attestation (canonical JSON statement and its digest) to release_attestations, and publishes the listing with its operations.
+5. A buyer quotes, authorizes and submits. Admission checks the listing, the attestation, the security state, the operation's input fields, the quote and the single-use authorization. The job is admitted with execution `queued` and settlement `none`.
+6. The postbox dispatcher hands the job, with the attestation statement, to nestd (POST /v1/mp/jobs). nestd verifies the statement, starts or reuses the worker for that listing and buyer context in the marketplace pool, writes the job to the worker's own volume and reads the result back from it. The worker's only network peer is the broker.
+7. Quarantine or revocation stops running jobs (`stopped_security`), refuses new ones, records a release security event and tells nestd, which stops the release's workers and fences their broker tokens. Revocation is permanent, in the postbox and in nestd.
+
+### Exit tests
+
+| ID | What it shows | Where |
+| :--- | :--- | :--- |
+| SEC-01 | staff approve and attest a first-party release over its digest, with step-up; third-party publishers keep the conflict rule | marketplace_m1_tests.rs staff_approve_and_attest_a_first_party_release, third_party_publishers_keep_the_conflict_rule; store/marketplace.rs first_party_releases_may_be_reviewed_by_staff_and_third_parties_keep_the_rule |
+| SEC-02 | the honeytoken behaviour test passes the reference release, catches an exfiltrating one, and a failed stage blocks the review | nests tests/marketplace_m1.rs; marketplace_m1_tests.rs analysis_stages_are_honest_and_a_failure_blocks_the_review |
+| SEC-05 | quarantine stops jobs and workers, lift works, revocation is permanent | marketplace_m1_tests.rs quarantine_and_revocation; nests tests/marketplace_m1.rs quarantine_stops_workers_and_revocation_is_permanent |
+| JOB-01 | quote, authorize, submit, dispatch, collect | a_job_runs_end_to_end_on_the_shared_listing |
+| JOB-02 | Idempotency-Key required, exact replays, conflict on reuse | idempotency_keys_are_required_and_bind_the_request |
+| JOB-03 | zero-priced, single-use, bound authorizations; no mandates | payment_authorizations_are_single_use_and_bound |
+| JOB-04 | strict requests: server-owned fields, duplicates, depth, size, payload, deadline | job_requests_are_strict; nests a_resubmitted_job_is_one_job (dedupe at the host) |
+| JOB-05 | agents carry jobs with their own token; a job is its submitter's | jobs_are_for_their_submitter_and_agents_may_carry_them |
+| JOB-06 | only attested, live releases take jobs | only_attested_live_releases_take_jobs; nests only_attested_releases_are_admitted |
+| AI-01 | the AI review uses the self-hosted model only and is advisory | nests analysis tests; marketplace_m1_tests.rs analysis_stages_are_honest_and_a_failure_blocks_the_review |
+| ISO-01 (shared listing) | one listing, one worker per buyer context, no shared mount, label, container or broker token | nests tests/marketplace_m1.rs one_listing_serves_each_buyer_from_its_own_worker; a_job_runs_end_to_end_on_the_shared_listing |
+| live (ignored) | real rootless build and the behaviour test under gVisor on a Nests host | nests tests/marketplace_m1.rs live_build_of_the_reference_release, live_behaviour_test_on_gvisor |
+
+### Deviations from the build plan
+
+1. **Build plane:** no separate KVM build VM exists. The build runs on nests-1 as a separate rootless podman build under gVisor (runsc) or crun, with a network only for the dependency fetch and none for the build.
+2. **Analysis plane:** also on nests-1, as a command run by an operator, not a separate VM. The behaviour test runs in-process in CI and under gVisor only in the ignored live test.
+3. **No signing keys:** OpenBao is skipped, so the attestation is a canonical JSON statement with a SHA-256 digest, written by a staff decision and checked again by admission and by nestd. It is not a cryptographic signature.
+4. **Reviewer:** the owner is the only reviewer. Staff may review a first-party (platform) release; the decision and attestation record first_party = true. Every third-party publisher keeps the M0 conflict rule. Having built a release still conflicts, first party or not.
+5. **No `nest_job` verb:** the verb table in `verbs.rs` is unchanged (a test now pins that). A job's authority is admission and its payment authorization at POST /v1/nest-jobs, which an agent reaches with its own capability token. A nest_job envelope fails closed like any unknown verb.
+6. **Payments:** zero-priced quotes and authorizations only. There is no wallet and no mandate; mandate_id is refused. A retry of an authorization with the same Idempotency-Key rotates the reference instead of storing it.
+7. **Events:** job and security events are rows (nest_job_events, release_security_events) and audit entries. They are not yet published on /v1/events.
+8. **Results:** the operation's output is inline in a new `result` field of NestJob; result attachments stay empty in M1.
+9. **Worker volumes:** plain directories under the marketplace pool's volume_root, not LUKS volumes, and the worker's ledger row lives in nestd's `nests` table so the broker meters it; the first-party lifecycle skips these rows.
+10. **Schema:** M0's tables are changed in place (platform owner kind, review stages, release build columns, listing address), because M0 is neither merged nor deployed.
 
 ## Validation (2026-11-03)
 

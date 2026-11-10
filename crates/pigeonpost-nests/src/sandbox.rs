@@ -19,6 +19,9 @@ pub struct Spec {
     pub volume: PathBuf,
     /// The buyer this sandbox serves, for the marketplace pool only. First-party Nests have none.
     pub buyer_context: Option<String>,
+    /// The attested release image this sandbox runs, `name@sha256:…`, for the marketplace pool
+    /// only (build plan M1). `None` runs the pool's configured image. First-party Nests have none.
+    pub image: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -234,7 +237,7 @@ impl Sandbox for GvisorPodman {
             return Err("invalid nest id".into());
         }
         // Publisher code never lands in the first-party pool by a wrong code path.
-        if spec.buyer_context.is_some() {
+        if spec.buyer_context.is_some() || spec.image.is_some() {
             return Err("a buyer context belongs in the marketplace pool".into());
         }
         self.stop(&spec.nest_id)?;
@@ -495,6 +498,17 @@ pub fn valid_buyer_context(id: &str) -> bool {
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-')
 }
 
+/// `name@sha256:<64 hex>`, and nothing that could read as an option.
+pub fn pinned_image(image: &str) -> bool {
+    image.split_once("@sha256:").is_some_and(|(name, digest)| {
+        !name.is_empty()
+            && !name.starts_with('-')
+            && !name.contains(char::is_whitespace)
+            && digest.len() == 64
+            && digest.bytes().all(|b| b.is_ascii_hexdigit())
+    })
+}
+
 /// How the pool runs `podman`. A trait so the isolation rules run in tests with no container
 /// runtime on the machine.
 pub trait Podman: Send + Sync {
@@ -633,7 +647,7 @@ impl<P: Podman> MarketplacePool<P> {
             ),
             "--env".into(),
             format!("NEST_ID={}", spec.nest_id),
-            pool.image.clone(),
+            spec.image.clone().unwrap_or_else(|| pool.image.clone()),
         ]
     }
 
@@ -648,6 +662,11 @@ impl<P: Podman> MarketplacePool<P> {
             .ok_or("the marketplace pool needs a buyer context")?;
         if !valid_buyer_context(context) {
             return Err("invalid buyer context".into());
+        }
+        if let Some(image) = &spec.image {
+            if !pinned_image(image) {
+                return Err("a release image must be pinned by digest".into());
+            }
         }
         // The real paths, so a symlink cannot make one context's directory another's.
         let root = std::fs::canonicalize(&self.pool.volume_root)
@@ -822,6 +841,7 @@ mod tests {
             generation: 7,
             volume: PathBuf::from("/var/lib/nests/mnt/nst_00000000000000bb"),
             buyer_context: None,
+            image: None,
         };
         let a = GvisorPodman::run_args(&cfg, &spec).join(" ");
         for must in [
@@ -953,6 +973,7 @@ mod tests {
                 generation: 1,
                 volume: self.volume(context, nest),
                 buyer_context: Some(context.into()),
+                image: None,
             }
         }
         fn runs(&self) -> Vec<Vec<String>> {
@@ -1089,6 +1110,7 @@ mod tests {
             generation: 2,
             volume: rig.volume("buyer-b", NEST_A),
             buyer_context: Some("buyer-b".into()),
+            image: None,
         };
         let err = rig.pool.start(&moved).unwrap_err();
         assert!(err.contains("another buyer context"), "{err}");
@@ -1120,6 +1142,7 @@ mod tests {
                 generation: 1,
                 volume: volume.clone(),
                 buyer_context: Some("buyer-a".into()),
+                image: None,
             };
             assert!(rig.pool.start(&spec).is_err(), "{volume:?} must be refused");
         }
@@ -1131,6 +1154,7 @@ mod tests {
                 generation: 1,
                 volume: rig.root.join("mp"),
                 buyer_context: Some(context.into()),
+                image: None,
             };
             assert!(rig.pool.start(&spec).is_err(), "{context:?}");
         }
@@ -1158,6 +1182,30 @@ mod tests {
             .pool
             .run_parser(&rig.root, &rig.root, std::time::Duration::from_secs(1))
             .is_err());
+    }
+
+    /// M1: a release image is for the marketplace pool only, and only pinned by digest.
+    #[test]
+    fn release_images_are_pinned_and_never_reach_the_first_party_pool() {
+        let rig = rig();
+        let mut spec = rig.spec("buyer-a", NEST_A);
+        for bad in [
+            "localhost/x:latest",
+            "localhost/x@sha256:abc",
+            "--privileged@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        ] {
+            spec.image = Some(bad.into());
+            assert!(rig.pool.start(&spec).is_err(), "{bad}");
+        }
+        assert!(rig.runs().is_empty());
+        let pinned = format!("localhost/release@sha256:{}", "a".repeat(64));
+        spec.image = Some(pinned.clone());
+        rig.pool.start(&spec).unwrap();
+        assert_eq!(rig.runs()[0].last(), Some(&pinned));
+        // The first-party pool refuses a release image even without a buyer context.
+        let first_party = GvisorPodman::new(rig.pool.base.clone());
+        spec.buyer_context = None;
+        assert!(first_party.start(&spec).is_err());
     }
 
     /// The firewall that makes "network only to the broker" true. The bridge is separate from the

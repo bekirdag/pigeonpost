@@ -163,8 +163,27 @@ async fn run_control(args: &[String]) -> Result<(), String> {
         .await
         .map_err(|e| format!("bind {bind}: {e}"))?;
     tracing::info!(%bind, "nest control listening");
+    // Marketplace M1: the shared Nest dispatcher, only when `[sandbox.marketplace]` is set. It
+    // shares the control token and the ledger; its workers run in the marketplace pool.
+    let mut app = control::router(ctx.clone());
+    if let Some(pool) = sandbox::marketplace_from_config(&ctx.cfg.sandbox)? {
+        let mp = ctx.cfg.sandbox.marketplace.clone().expect("checked above");
+        let d = pigeonpost_nests::dispatch::Dispatcher::new(
+            Arc::from(pool),
+            ctx.db.clone(),
+            mp.volume_root.clone(),
+            ctx.cfg.storage.sandbox_uid,
+        );
+        app = app.merge(pigeonpost_nests::dispatch::router(
+            pigeonpost_nests::dispatch::Http {
+                dispatcher: Arc::new(d),
+                token_sha256: ctx.token_sha256.clone(),
+            },
+        ));
+        tracing::info!("marketplace dispatcher enabled");
+    }
     // Nests keep running across a control-service restart; reconcile adopts them again.
-    axum::serve(listener, control::router(ctx))
+    axum::serve(listener, app)
         .with_graceful_shutdown(shutdown())
         .await
         .map_err(|e| e.to_string())
