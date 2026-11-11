@@ -73,7 +73,9 @@ function fixture() {
       if (r === "/holds/hold_1/capture") {
         return json(res, 200, { sale_id: "sale_1", amount_cents: 2500, commission_bps: 1000, commission_cents: 250, publisher_cents: 2250 });
       }
-      if (r === "/holds/hold_1/release") return json(res, 409, { code: "CONFLICT", message: "captured" });
+      if (r === "/holds/hold_1/release") return json(res, 409, { code: "hold_captured", message: "captured" });
+      if (r === "/holds/hold_3/capture") return json(res, 409, { code: "hold_expired", message: "expired" });
+      if (r === "/holds/hold_4/capture") return json(res, 404, { message: "Marketplace is not enabled." });
       if (r === "/holds/hold_2/release") return json(res, 200, { released: true });
       return json(res, 404, { message: `unexpected ${req.method} ${r}` });
     }
@@ -245,6 +247,17 @@ test("the postbox's hold, capture, release and balance routes need the internal 
   assert.equal(captured.status, 409);
   assert.equal(captured.body.code, "hold_captured");
   assert.deepEqual((await internal("POST", "/internal/credits/holds/hold_2/release", { reason: "deadline_passed" })).body, { released: true });
+  // saas_be's own codes pass through; a refusal without one keeps no definite code.
+  const expired = await internal("POST", "/internal/credits/holds/hold_3/capture", { job_ref: "job_a" });
+  assert.deepEqual([expired.status, expired.body.code], [409, "hold_expired"]);
+  const off = await internal("POST", "/internal/credits/holds/hold_4/capture", { job_ref: "job_a" });
+  assert.equal(off.status, 404);
+  assert.equal(off.body.code, "upstream_rejected");
+  // The job's deadline goes to saas_be on the hold.
+  const dated = await internal("POST", "/internal/credits/holds", { ...hold, deadline: "2026-11-18T10:00:00Z" });
+  assert.equal(dated.status, 201);
+  assert.equal(crCalls(s, "/holds").at(-1).body.deadline, "2026-11-18T10:00:00Z");
+  assert.equal((await internal("POST", "/internal/credits/holds", { ...hold, deadline: "soon" })).status, 400);
 
   const bal = await internal("GET", "/internal/credits/balances/account/acct_rich000000");
   assert.equal(bal.status, 200);

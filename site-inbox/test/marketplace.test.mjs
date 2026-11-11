@@ -958,3 +958,13 @@ test("staff see a publisher-hosted integration's per-job prices in review", asyn
   assert.match(p.$("#mp-sr-integration").textContent, /Service address \/wodo\/hr/);
   assert.match(p.$("#mp-sr-prices").textContent, /hr\.research \$25\.00/);
 });
+
+test("a result that could not reach the inbox says it is available on the job page", async (t) => {
+  const jobs = [{ job_id: "job_9", listing_id: "lst_a", operation: "hr.research", execution: "succeeded", delivery: "undeliverable", created_at: "2026-11-11T10:00:00Z", result: { summary: "ok", files: [] }, charge: null }];
+  const p = catalogPage(t, { detail: HOSTED, listings: [{ ...LISTING, hosting: "publisher" }], extra: (method, path) => (method === "GET" && path === "/v1/marketplace/hosted-jobs" ? { data: jobs } : undefined) });
+  await openDetail(p);
+  await tick();
+  const row = p.$('#mp-jobs [data-job="job_9"]').textContent;
+  assert.match(row, /available on the job page/);
+  assert.doesNotMatch(row, /in your inbox$/);
+});

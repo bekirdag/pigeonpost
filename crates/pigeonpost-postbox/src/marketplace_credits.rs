@@ -790,6 +790,7 @@ pub(crate) async fn hold(
     listing: &str,
     operation: &str,
     job: &str,
+    deadline_at: i64,
 ) -> GResult<Option<i64>> {
     let (l, o) = (listing.to_string(), operation.to_string());
     let price = state
@@ -825,8 +826,9 @@ pub(crate) async fn hold(
         .call(
             reqwest::Method::POST,
             "/internal/credits/holds",
+            // The job's deadline: saas_be lets the hold expire a day after it.
             json!({ "owner": owner(account), "offer_id": offer, "job_ref": job,
-                    "idempotency_key": job }),
+                    "idempotency_key": job, "deadline": crate::marketplace::iso(deadline_at) }),
         )
         .await;
     let j = job.to_string();
@@ -859,8 +861,9 @@ pub(crate) async fn hold(
             }
             Ok(Some(price.cents))
         }
-        Ok((status, v)) if (400..500).contains(&status) => {
-            // A definite refusal: nothing is held.
+        Ok((status, v)) if nothing_held(status, &v) => {
+            // saas_be's definite refusal (too little credit, an offer credits cannot pay):
+            // nothing is held.
             state
                 .store
                 .group_tx(move |tx| -> GResult<()> {
@@ -882,15 +885,17 @@ pub(crate) async fn hold(
                 )
                 .with("buy_url", buy_url()));
             }
-            tracing::warn!(job, status, "credit hold refused");
-            Err(if status == 404 {
-                not_on_sale()
-            } else {
-                billing_unavailable()
-            })
+            tracing::warn!(
+                job,
+                status,
+                "credit hold refused: offer not payable with credit"
+            );
+            Err(not_on_sale())
         }
         _ => {
-            // No answer, or a server error: the hold may exist. The worker settles it.
+            // No answer, a server error, or a refusal that is not saas_be's definite answer (a 404
+            // while credits are switched off, a 401 after a token rotation, a 429): the hold may
+            // exist. The worker settles it.
             state
                 .store
                 .group_tx(move |tx| -> GResult<()> {
@@ -909,15 +914,55 @@ pub(crate) async fn hold(
     }
 }
 
-/// In the transaction that queues the job: its hold now pays for it.
-pub(crate) fn attach_in(tx: &Transaction<'_>, job: &str, now: i64) -> rusqlite::Result<()> {
-    tx.execute(
+/// In the transaction that queues the job: its hold now pays for it. Exactly one confirmed hold
+/// must move to `held`; anything else is an error, so the queueing transaction rolls back and no
+/// job is queued without a hold.
+pub(crate) fn attach_in(tx: &Transaction<'_>, job: &str, now: i64) -> GResult<()> {
+    let changed = tx.execute(
         "UPDATE nest_hosted_charges SET state = 'held', updated_at = ?2
-          WHERE job_id = ?1 AND state = 'holding'",
+          WHERE job_id = ?1 AND state = 'holding' AND hold_id IS NOT NULL",
         params![job, now],
     )?;
-    Ok(())
+    if changed == 1 {
+        Ok(())
+    } else {
+        tracing::warn!(
+            job,
+            changed,
+            "no confirmed credit hold to queue the job under"
+        );
+        Err(billing_unavailable())
+    }
 }
+
+/// saas_be's refusal codes that are final answers (`marketplace-credits.service.ts`): only these
+/// stop a retry. Every other refusal is treated as transient.
+const DEFINITE: [&str; 6] = [
+    "insufficient_credit",
+    "offer_not_payable_with_credit",
+    "hold_expired",
+    "hold_released",
+    "hold_captured",
+    "job_ref_mismatch",
+];
+
+fn definite(v: &Value) -> Option<&'static str> {
+    let code = v["code"].as_str()?;
+    DEFINITE.iter().copied().find(|c| *c == code)
+}
+
+/// A hold request that saas_be refused for good, so no hold exists for that key: holds are
+/// idempotent by key and a replay is answered before credit or the offer is checked, so `402
+/// insufficient_credit` and `409 offer_not_payable_with_credit` mean none was ever made.
+fn nothing_held(status: u16, v: &Value) -> bool {
+    matches!(
+        (status, definite(v)),
+        (402, Some("insufficient_credit")) | (409, Some("offer_not_payable_with_credit"))
+    )
+}
+
+/// Retries past this many attempts (several hours with the backoff) are logged as errors.
+const ALERT_AFTER_ATTEMPTS: i64 = 10;
 
 /// The job was not queued after all: release its hold.
 pub(crate) async fn abandon(state: &AppState, job: &str) {
@@ -1074,10 +1119,32 @@ pub(crate) async fn settle_once(state: &AppState) -> usize {
 enum Outcome {
     Captured(Value),
     Released,
-    /// No hold existed (a replayed hold was refused): nothing to release.
+    /// saas_be answered for good that no hold exists for this key: nothing to release.
     NothingHeld,
-    Refused(String),
+    /// saas_be refused the capture for good (`hold_expired`, `hold_released`,
+    /// `job_ref_mismatch`): nothing was charged, and the hold is released (idempotent there).
+    CaptureRefused(String),
+    /// The hold was captured, so it cannot be released: the job was paid for.
+    AlreadyCaptured,
+    /// Anything that is not one of saas_be's definite answers: try again later.
     Retry(String),
+}
+
+/// What a bridge answer that is not a success means: a definite code, or retry with what we saw.
+fn refusal(answer: &Result<(u16, Value), BridgeError>) -> Result<&'static str, String> {
+    match answer {
+        Ok((s, v)) => definite(v).ok_or_else(|| {
+            format!(
+                "bridge_{s}{}",
+                v["code"]
+                    .as_str()
+                    .filter(|c| c.len() <= 40)
+                    .map(|c| format!("_{c}"))
+                    .unwrap_or_default()
+            )
+        }),
+        Err(BridgeError::Unavailable) => Err("bridge_unavailable".into()),
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1093,84 +1160,104 @@ async fn settle(
 ) -> bool {
     let bridge = &state.mp_bridge;
     // An unconfirmed hold: replay it (same idempotency key, so saas_be answers with the hold it
-    // made, or makes one) to learn its id, then release it.
+    // made, or makes one) to learn its id, then release it. Only saas_be's definite "no hold for
+    // this key" ends it without a release; any other refusal is retried.
     let hold = match hold {
         Some(h) => Some(h),
-        None => match bridge
-            .call(
-                reqwest::Method::POST,
-                "/internal/credits/holds",
-                json!({ "owner": owner(account), "offer_id": offer, "job_ref": job,
-                        "idempotency_key": job }),
-            )
-            .await
-        {
-            Ok((200 | 201, v)) => v["hold_id"].as_str().map(str::to_string),
-            Ok((s, _)) if (400..500).contains(&s) => None,
-            _ => {
-                record(
-                    state,
-                    job,
-                    Outcome::Retry("bridge_unavailable".into()),
-                    attempts,
+        None => {
+            let answer = bridge
+                .call(
+                    reqwest::Method::POST,
+                    "/internal/credits/holds",
+                    json!({ "owner": owner(account), "offer_id": offer, "job_ref": job,
+                            "idempotency_key": job }),
                 )
                 .await;
-                return false;
+            match &answer {
+                Ok((200 | 201, v)) if v["hold_id"].as_str().is_some_and(|h| !h.is_empty()) => {
+                    let h = v["hold_id"].as_str().unwrap_or_default().to_string();
+                    let (j, hid) = (job.to_string(), h.clone());
+                    let _ = state
+                        .store
+                        .group_tx(move |tx| -> GResult<()> {
+                            tx.execute(
+                                "UPDATE nest_hosted_charges SET hold_id = ?2 WHERE job_id = ?1
+                                   AND hold_id IS NULL",
+                                params![j, hid],
+                            )?;
+                            Ok(())
+                        })
+                        .await;
+                    Some(h)
+                }
+                Ok((s, v)) if nothing_held(*s, v) => None,
+                _ => {
+                    let why = match refusal(&answer) {
+                        Ok(code) => format!("hold_replay_{code}"),
+                        Err(code) => code,
+                    };
+                    record(state, job, Outcome::Retry(why), attempts).await;
+                    return false;
+                }
             }
-        },
+        }
     };
     let outcome = match (st, hold) {
         (_, None) => Outcome::NothingHeld,
         ("capture_pending", Some(h)) => {
-            match bridge
+            let answer = bridge
                 .call(
                     reqwest::Method::POST,
                     &format!("/internal/credits/holds/{h}/capture"),
                     json!({ "job_ref": job }),
                 )
-                .await
-            {
-                Ok((200 | 201, v)) => Outcome::Captured(v),
-                Ok((s @ (400 | 404 | 409 | 422), v)) => Outcome::Refused(
-                    v["code"]
-                        .as_str()
-                        .map(str::to_string)
-                        .unwrap_or_else(|| format!("capture_{s}")),
-                ),
-                Ok((s, _)) => Outcome::Retry(format!("bridge_{s}")),
-                Err(BridgeError::Unavailable) => Outcome::Retry("bridge_unavailable".into()),
+                .await;
+            match &answer {
+                Ok((200 | 201, v)) if v["sale_id"].as_str().is_some() => {
+                    Outcome::Captured(v.clone())
+                }
+                _ => match refusal(&answer) {
+                    Ok(code @ ("hold_expired" | "hold_released" | "job_ref_mismatch")) => {
+                        Outcome::CaptureRefused(code.to_string())
+                    }
+                    Ok(code) => Outcome::Retry(format!("capture_{code}")),
+                    Err(code) => Outcome::Retry(code),
+                },
             }
         }
         (_, Some(h)) => {
-            match bridge
+            let answer = bridge
                 .call(
                     reqwest::Method::POST,
                     &format!("/internal/credits/holds/{h}/release"),
                     json!({ "reason": reason.unwrap_or_else(|| "released".into()) }),
                 )
-                .await
-            {
-                Ok((200 | 201, _)) => Outcome::Released,
-                // A captured hold cannot be released; it was paid for.
-                Ok((409, _)) => Outcome::Refused("hold_captured".into()),
-                Ok((s @ (400 | 404 | 422), v)) => Outcome::Refused(
-                    v["code"]
-                        .as_str()
-                        .map(str::to_string)
-                        .unwrap_or_else(|| format!("release_{s}")),
-                ),
-                Ok((s, _)) => Outcome::Retry(format!("bridge_{s}")),
-                Err(BridgeError::Unavailable) => Outcome::Retry("bridge_unavailable".into()),
+                .await;
+            match &answer {
+                Ok((200 | 201, v)) if v["released"] == true => Outcome::Released,
+                _ => match refusal(&answer) {
+                    Ok("hold_captured") => Outcome::AlreadyCaptured,
+                    Ok(code) => Outcome::Retry(format!("release_{code}")),
+                    Err(code) => Outcome::Retry(code),
+                },
             }
         }
     };
     let settled = !matches!(outcome, Outcome::Retry(_));
-    if let Outcome::Refused(code) = &outcome {
-        tracing::warn!(
+    match &outcome {
+        Outcome::CaptureRefused(code) => {
+            tracing::warn!(job, code, "credit capture refused; releasing the hold")
+        }
+        Outcome::AlreadyCaptured => {
+            tracing::warn!(job, "credit release refused: the hold was captured")
+        }
+        Outcome::Retry(code) if attempts + 1 >= ALERT_AFTER_ATTEMPTS => tracing::error!(
             job,
             code,
-            "credit charge refused for good; staff will see it"
-        );
+            attempts = attempts + 1,
+            "credit charge still unsettled after many attempts; check the bridge and saas_be"
+        ),
+        _ => {}
     }
     record(state, job, outcome, attempts).await;
     settled
@@ -1196,16 +1283,26 @@ async fn record(state: &AppState, job: &str, outcome: Outcome, attempts: i64) {
                     ],
                 )?,
                 Outcome::Released | Outcome::NothingHeld => tx.execute(
-                    "UPDATE nest_hosted_charges SET state = 'released', last_error = NULL,
-                        settled_at = ?2, updated_at = ?2
+                    "UPDATE nest_hosted_charges SET state = 'released', settled_at = ?2,
+                        last_error = CASE WHEN release_reason = 'capture_refused'
+                                     THEN last_error ELSE NULL END,
+                        updated_at = ?2
                       WHERE job_id = ?1 AND state = 'release_pending'",
                     params![j, now],
                 )?,
-                Outcome::Refused(code) => tx.execute(
-                    "UPDATE nest_hosted_charges SET state = 'refused', last_error = ?2,
-                        settled_at = ?3, updated_at = ?3
-                      WHERE job_id = ?1 AND state IN ('capture_pending','release_pending')",
+                // Nothing was charged: queue the release now, and keep why for staff.
+                Outcome::CaptureRefused(code) => tx.execute(
+                    "UPDATE nest_hosted_charges SET state = 'release_pending',
+                        release_reason = 'capture_refused', last_error = ?2, attempts = 0,
+                        next_attempt_at = ?3, updated_at = ?3
+                      WHERE job_id = ?1 AND state = 'capture_pending'",
                     params![j, code, now],
+                )?,
+                Outcome::AlreadyCaptured => tx.execute(
+                    "UPDATE nest_hosted_charges SET state = 'refused', last_error = 'hold_captured',
+                        settled_at = ?2, updated_at = ?2
+                      WHERE job_id = ?1 AND state = 'release_pending'",
+                    params![j, now],
                 )?,
                 Outcome::Retry(code) => tx.execute(
                     "UPDATE nest_hosted_charges SET attempts = attempts + 1, last_error = ?2,
@@ -1243,6 +1340,59 @@ mod tests {
         ] {
             assert_ne!(a, other);
         }
+    }
+
+    /// The queueing transaction fails, so it rolls back, unless exactly one confirmed hold is
+    /// there to move to `held`.
+    #[test]
+    fn a_job_is_never_queued_without_a_confirmed_hold() {
+        let mut c = Connection::open_in_memory().unwrap();
+        c.execute_batch(crate::store::marketplace_hosted::SCHEMA)
+            .unwrap();
+        let tx = c.transaction().unwrap();
+        assert!(attach_in(&tx, "job_a", 1).is_err(), "no hold row");
+        tx.execute(
+            "INSERT INTO nest_hosted_charges (job_id, account_id, listing_id, offer_id,
+                amount_cents, state, next_attempt_at, created_at, updated_at)
+             VALUES ('job_a', 'acct_a', 'lst_a', 'mpo_a', 2500, 'holding', 0, 1, 1)",
+            [],
+        )
+        .unwrap();
+        assert!(
+            attach_in(&tx, "job_a", 1).is_err(),
+            "hold not confirmed yet"
+        );
+        tx.execute(
+            "UPDATE nest_hosted_charges SET hold_id = 'hold_1' WHERE job_id = 'job_a'",
+            [],
+        )
+        .unwrap();
+        assert!(attach_in(&tx, "job_a", 1).is_ok());
+        assert!(attach_in(&tx, "job_a", 1).is_err(), "already held");
+    }
+
+    #[test]
+    fn only_saas_be_definite_codes_end_a_retry() {
+        assert!(nothing_held(402, &json!({ "code": "insufficient_credit" })));
+        assert!(nothing_held(
+            409,
+            &json!({ "code": "offer_not_payable_with_credit" })
+        ));
+        for (s, v) in [
+            (404, json!({ "code": "upstream_rejected" })),
+            (404, json!({})),
+            (401, json!({ "code": "unauthorized" })),
+            (409, json!({ "code": "idempotency_key_reused" })),
+            (429, json!({ "code": "rate_limited" })),
+            (402, json!({ "code": "payment_required" })),
+        ] {
+            assert!(!nothing_held(s, &v), "{s} {v}");
+        }
+        assert_eq!(
+            definite(&json!({ "code": "hold_expired" })),
+            Some("hold_expired")
+        );
+        assert_eq!(definite(&json!({ "code": "not_found" })), None);
     }
 
     #[test]

@@ -128,6 +128,10 @@
     const HOSTED_NOTICE = "Hosted by the publisher — Pigeonpost reviewed the publisher and this integration, not the code; your inputs are sent to the publisher.";
     const JOB_TEXT = { queued: "Sending to the publisher", running: "With the publisher", succeeded: "Done — the result is in your inbox",
       failed: "Failed", expired: "Ran out of time", cancelled: "Cancelled" };
+    // Inbox delivery gave up after its last attempt: the result is still kept on the job.
+    const jobText = (j) => (j.execution === "succeeded" && j.delivery === "undeliverable"
+      ? "Done — it couldn't be delivered to your inbox; the result is available on the job page"
+      : JOB_TEXT[j.execution] || j.execution);
     const CHARGE_TEXT = { held: "reserved", charged: "paid", released: "returned to your credit" };
     const RUN_ERRORS = {
       insufficient_credit: "Your credit is too low for this run. Buy credits, then run it again.",
@@ -215,7 +219,7 @@
       if (!st.jobs) { box.append(el("p", { class: "muted", text: "Loading…" })); return box; }
       if (!st.jobs.length) { box.append(el("p", { class: "muted", text: "Nothing run yet." })); return box; }
       box.append(el("ul", { class: "mp-list", "aria-label": "Runs" }, st.jobs.map((j) => el("li", { class: "mp-row", "data-job": j.job_id },
-        el("span", { text: `${MP.when(j.created_at)} · ${j.operation} · ${JOB_TEXT[j.execution] || j.execution}` }),
+        el("span", { text: `${MP.when(j.created_at)} · ${j.operation} · ${jobText(j)}` }),
         j.charge ? el("span", { class: "muted", "data-charge": j.charge.status, text: ` · ${MP.money(j.charge.amount_cents, "USD")} ${CHARGE_TEXT[j.charge.status] || j.charge.status}` }) : null,
         j.result && j.result.summary ? el("span", { class: "muted", text: ` · ${j.result.summary.slice(0, 200)}` }) : null,
         ["queued", "running"].includes(j.execution) ? el("button", { type: "button", class: "btn btn-small", "data-cancel-job": j.job_id, onclick: async () => {

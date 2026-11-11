@@ -137,6 +137,8 @@ const COLUMNS: &[(&str, &str, &str)] = &[
     ),
     // A publisher-hosted listing's service mailbox, as the integration named it.
     ("nest_listings", "service_address", "TEXT"),
+    // When a hosted job's next delivery attempt to the buyer is due (backoff, like dispatch).
+    ("nest_hosted_jobs", "delivery_next_at", "INTEGER"),
     // What a review is of: a built release (the M1 stages) or a publisher-hosted integration
     // (publisher and integration review by staff only).
     (
@@ -156,17 +158,55 @@ fn has_column(c: &Connection, table: &str, column: &str) -> rusqlite::Result<boo
 
 /// Run after the marketplace schemas. Idempotent: every column add checks what is stored first.
 pub(crate) fn migrate(c: &Connection) -> rusqlite::Result<()> {
+    // Columns on tables that exist, then the new tables, then the columns of those new tables
+    // (`nest_hosted_jobs.delivery_next_at` came after its table was first created).
+    add_columns(c)?;
+    c.execute_batch(SCHEMA)?;
+    add_columns(c)
+}
+
+fn add_columns(c: &Connection) -> rusqlite::Result<()> {
     for (table, column, def) in COLUMNS {
-        if !has_column(c, table, column)? {
+        let exists: bool = c.query_row(
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type = 'table' AND name = ?1",
+            [table],
+            |r| r.get(0),
+        )?;
+        if exists && !has_column(c, table, column)? {
             c.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {def}"))?;
         }
     }
-    c.execute_batch(SCHEMA)
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use rusqlite::Connection;
+
+    /// A postbox that already has the first version of `nest_hosted_jobs` (no delivery backoff)
+    /// gains the column in place, rows kept.
+    #[test]
+    fn an_existing_hosted_job_table_gains_the_delivery_backoff_column() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "CREATE TABLE nest_listings (id TEXT PRIMARY KEY, title TEXT);
+             CREATE TABLE nest_releases (id TEXT PRIMARY KEY);
+             CREATE TABLE review_cases (id TEXT PRIMARY KEY, status TEXT);
+             CREATE TABLE nest_hosted_jobs (id TEXT PRIMARY KEY, account_id TEXT, created_at INTEGER,
+                 state TEXT, next_attempt_at INTEGER, delivery TEXT);
+             INSERT INTO nest_hosted_jobs (id, delivery) VALUES ('job_a', 'pending');",
+        )
+        .unwrap();
+        super::migrate(&c).unwrap();
+        let next: Option<i64> = c
+            .query_row(
+                "SELECT delivery_next_at FROM nest_hosted_jobs WHERE id = 'job_a'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(next, None);
+    }
 
     #[test]
     fn the_migration_upgrades_live_tables_in_place_and_keeps_their_rows() {
@@ -181,6 +221,7 @@ mod tests {
         .unwrap();
         super::migrate(&c).unwrap();
         super::migrate(&c).unwrap();
+        assert!(super::has_column(&c, "nest_hosted_jobs", "delivery_next_at").unwrap());
         let hosting: String = c
             .query_row(
                 "SELECT hosting FROM nest_listings WHERE id = 'lst_a'",

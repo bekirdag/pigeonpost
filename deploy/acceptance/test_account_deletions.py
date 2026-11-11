@@ -183,6 +183,25 @@ class AccountDeletionTests(unittest.TestCase):
         self.assertEqual([r[0] for r in self.db.execute("SELECT id FROM events")], ["ev2"])
         self.assertEqual(self.db.execute("SELECT count(*) FROM event_attendees").fetchone()[0], 0)
 
+    def test_unsettled_credit_charges_block_erasure_and_keep_their_owner(self):
+        self.db.execute("CREATE TABLE nest_hosted_charges (job_id TEXT, account_id TEXT, state TEXT)")
+        self.db.execute("INSERT INTO nest_hosted_charges VALUES ('job_1','a','captured')")
+        self.db.execute("INSERT INTO nest_hosted_charges VALUES ('job_2','a','release_pending')")
+        self.db.execute("INSERT INTO nest_hosted_charges VALUES ('job_3','b','held')")
+        self.db.commit()
+        with self.assertRaises(ValueError) as caught:
+            ops.erase(self.db, self.request, self.root, self.evidence)
+        self.assertIn("still being settled", str(caught.exception))
+        self.assertEqual(self.db.execute("SELECT account_id FROM nest_hosted_charges WHERE job_id='job_2'").fetchone()[0], "a")
+        # Settled by the worker: erasure proceeds and the charges no longer name the person.
+        self.db.execute("UPDATE nest_hosted_charges SET state='released' WHERE job_id='job_2'")
+        self.db.commit()
+        ops.erase(self.db, self.request, self.root, self.evidence)
+        owners = dict(self.db.execute("SELECT job_id, account_id FROM nest_hosted_charges"))
+        self.assertEqual(owners["job_1"], "erased_" + self.request)
+        self.assertEqual(owners["job_2"], "erased_" + self.request)
+        self.assertEqual(owners["job_3"], "b", "another account's hold is untouched")
+
     def test_past_events_and_an_explicit_waiver_do_not_block(self):
         self._calendar_tables()
         self.evidence["calendar_cancellations_waived"] = True

@@ -71,8 +71,21 @@ function validOwner(o) {
 
 // ---- saas_be credit routes --------------------------------------------------------------------------
 
-function cr(method, path, body) {
+/// saas_be's own refusal codes (`hold_expired`, `hold_captured`, `insufficient_credit`, ...) are
+/// passed on as the error's `code`: the postbox stops retrying only on those, and treats every
+/// other refusal (a 404 while credits are off, a 401 after a token rotation, a 429) as transient.
+async function cr(method, path, body) {
   if (!config.marketplace.enabled) fail(503, "Credits are not open yet.", "not_configured");
+  try {
+    return await crRequest(method, path, body);
+  } catch (error) {
+    const code = error.upstream?.code;
+    if (typeof code === "string" && /^[a-z][a-z_]{0,63}$/.test(code)) error.code = code;
+    throw error;
+  }
+}
+
+function crRequest(method, path, body) {
   return saas.request(`${config.masaasSaasApiBase}/v1/internal/tenants/${encodeURIComponent(config.tenantId)}/marketplace/credits${path}`, {
     method,
     headers: { accept: "application/json", authorization: `Bearer ${config.marketplace.bridgeToken}`,
@@ -271,13 +284,18 @@ export function createCredits(dir) {
   // ---- postbox (internal) ----------------------------------------------------------------------------
 
   async function hold(body) {
-    strict(body, ["owner", "offer_id", "job_ref", "idempotency_key"]);
+    strict(body, ["owner", "offer_id", "job_ref", "idempotency_key", "deadline"], ["owner", "offer_id", "job_ref", "idempotency_key"]);
     if (!validOwner(body.owner)) fail(400, "owner is invalid.", "invalid_request");
+    // The job's deadline: saas_be lets the hold expire one day after it (default 8 days).
+    if (body.deadline !== undefined && !(typeof body.deadline === "string" && iso(body.deadline) && body.deadline.length <= 40)) {
+      fail(400, "deadline must be an ISO 8601 time.", "invalid_request");
+    }
     for (const key of ["offer_id", "job_ref", "idempotency_key"]) if (!REF.test(String(body[key] || ""))) fail(400, `${key} is invalid.`, "invalid_request");
     let h;
     try {
       h = await cr("POST", "/holds", { owner: { owner_kind: body.owner.owner_kind, owner_id: body.owner.owner_id },
-        offer_id: body.offer_id, job_ref: body.job_ref, idempotency_key: body.idempotency_key });
+        offer_id: body.offer_id, job_ref: body.job_ref, idempotency_key: body.idempotency_key,
+        ...(body.deadline !== undefined ? { deadline: body.deadline } : {}) });
     } catch (error) {
       if (error.status === 402) {
         const u = error.upstream || {};
@@ -305,13 +323,10 @@ export function createCredits(dir) {
     if (!REF.test(holdId || "")) fail(404, "Hold not found", "not_found");
     strict(body, ["reason"]);
     if (typeof body.reason !== "string" || !/^[a-z][a-z0-9_]{0,63}$/.test(body.reason)) fail(400, "reason is invalid.", "invalid_request");
-    try {
-      const r = await cr("POST", `/holds/${encodeURIComponent(holdId)}/release`, { reason: body.reason });
-      if (r?.released !== true) invalid("release");
-    } catch (error) {
-      if (error.status === 409) fail(409, "This hold was captured and cannot be released.", "hold_captured");
-      throw error;
-    }
+    // A captured hold is `409 hold_captured` (saas_be's code, passed on); any other refusal keeps
+    // its own code so the postbox can tell a definite answer from a transient one.
+    const r = await cr("POST", `/holds/${encodeURIComponent(holdId)}/release`, { reason: body.reason });
+    if (r?.released !== true) invalid("release");
     return { released: true };
   }
 

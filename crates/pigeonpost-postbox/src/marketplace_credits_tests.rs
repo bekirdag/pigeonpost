@@ -43,6 +43,12 @@ struct Mock {
     lose_hold_answers: usize,
     /// Answer this many captures with 503 before doing anything.
     fail_captures: usize,
+    /// Answer this many captures, then holds, with a 404 that carries no saas_be code (credits
+    /// switched off, a config rewrite): transient, never final.
+    off_captures: usize,
+    off_holds: usize,
+    /// The `deadline` of each hold request.
+    deadlines: Vec<Option<String>>,
 }
 
 type Shared = Arc<Mutex<Mock>>;
@@ -88,6 +94,16 @@ async fn hold(
     }
     let mut m = m.lock().unwrap();
     m.hold_calls += 1;
+    m.deadlines.push(b["deadline"].as_str().map(str::to_string));
+    if m.off_holds > 0 {
+        m.off_holds -= 1;
+        return (
+            S::NOT_FOUND,
+            axum::Json(
+                json!({ "error": "Marketplace is not enabled.", "code": "upstream_rejected" }),
+            ),
+        );
+    }
     let key = b["idempotency_key"]
         .as_str()
         .unwrap_or_default()
@@ -150,6 +166,13 @@ async fn settle(
             m.fail_captures -= 1;
             return (S::SERVICE_UNAVAILABLE, axum::Json(json!({})));
         }
+        if m.off_captures > 0 {
+            m.off_captures -= 1;
+            return (
+                S::NOT_FOUND,
+                axum::Json(json!({ "error": "not enabled", "code": "upstream_rejected" })),
+            );
+        }
     } else {
         m.release_calls += 1;
     }
@@ -172,8 +195,17 @@ async fn settle(
             m.available += r.amount;
             m.holds.get_mut(&key).unwrap().state = "released";
         }
-        ("release", "released") => {}
-        _ => return (S::CONFLICT, axum::Json(json!({ "code": "hold_not_open" }))),
+        ("release", "released" | "expired") => {}
+        // saas_be's own codes for a closed hold.
+        ("capture", st @ ("released" | "expired")) => {
+            let code = if st == "expired" {
+                "hold_expired"
+            } else {
+                "hold_released"
+            };
+            return (S::CONFLICT, axum::Json(json!({ "code": code })));
+        }
+        _ => return (S::CONFLICT, axum::Json(json!({ "code": "hold_captured" }))),
     }
     if action == "capture" {
         let commission = (r.amount * 1000 + 5000) / 10_000;
@@ -662,4 +694,195 @@ async fn free_operations_skip_billing_and_priced_ones_need_it() {
     assert_eq!((s, code(&v)), (503, "not_on_sale"), "{v}");
     let (_, v) = w.srv.get("/v1/marketplace/hosted-jobs", &w.bob.token).await;
     assert_eq!(v["data"], json!([]));
+}
+
+async fn skip_backoff(w: &World, id: &str) {
+    sql(
+        &w.srv,
+        "UPDATE nest_hosted_charges SET next_attempt_at = 0 WHERE job_id = ?1",
+        vec![id.to_string()],
+    )
+    .await;
+}
+
+async fn charge_error(w: &World, id: &str) -> Option<String> {
+    let id = id.to_string();
+    w.srv
+        .state
+        .store
+        .group_read(move |c| -> Result<Option<String>, crate::groups::GErr> {
+            Ok(c.query_row(
+                "SELECT last_error FROM nest_hosted_charges WHERE job_id = ?1",
+                [&id],
+                |r| r.get(0),
+            )?)
+        })
+        .await
+        .unwrap()
+}
+
+/// A 4xx that is not one of saas_be's definite codes (credits switched off, a config rewrite, a
+/// token rotation) is retried, never taken as final: the job is captured once it clears; and a
+/// hold replay never concludes "nothing held" from such an answer.
+#[tokio::test]
+async fn transient_refusals_are_retried_not_final() {
+    let (w, m, listing) = priced("x", 10_000).await;
+    m.lock().unwrap().off_captures = 3;
+    let id = started(&w, &listing).await;
+    let (s, _) = result(&w.srv, &w.service.cap, &id, pdf_result("ok")).await;
+    assert_eq!(s, 200);
+    deliver_once(&w.srv.state).await;
+    for _ in 0..3 {
+        settle_once(&w.srv.state).await;
+        assert_eq!(charge_state(&w, &id).await, "capture_pending");
+        let err = charge_error(&w, &id).await.unwrap_or_default();
+        assert!(err.starts_with("bridge_404"), "{err}");
+        skip_backoff(&w, &id).await;
+    }
+    settle_once(&w.srv.state).await;
+    assert_eq!(charge_state(&w, &id).await, "captured");
+    assert_eq!(m.lock().unwrap().sales.len(), 1);
+
+    // A hold answered with a non-definite 404: the buyer gets 503 and the row stays to be settled.
+    m.lock().unwrap().off_holds = 1;
+    let (s, v) = run(&w, &listing, json!({ "role": "CFO" })).await;
+    assert_eq!((s, code(&v)), (503, "billing_unavailable"), "{v}");
+    let lost: String = w
+        .srv
+        .state
+        .store
+        .group_read(|c| -> Result<String, crate::groups::GErr> {
+            Ok(c.query_row(
+                "SELECT job_id FROM nest_hosted_charges WHERE state = 'release_pending'",
+                [],
+                |r| r.get(0),
+            )?)
+        })
+        .await
+        .unwrap();
+    // The replay meets the same answer twice before billing answers.
+    m.lock().unwrap().off_holds = 2;
+    for _ in 0..2 {
+        settle_once(&w.srv.state).await;
+        assert_eq!(charge_state(&w, &lost).await, "release_pending");
+        skip_backoff(&w, &lost).await;
+    }
+    settle_once(&w.srv.state).await;
+    assert_eq!(charge_state(&w, &lost).await, "released");
+    assert_eq!(
+        m.lock().unwrap().available,
+        7500,
+        "the replayed hold was released"
+    );
+}
+
+/// A capture saas_be refuses for good (the hold expired) charges nothing and queues a release.
+#[tokio::test]
+async fn a_refused_capture_queues_a_release() {
+    let (w, m, listing) = priced("e", 10_000).await;
+    let id = started(&w, &listing).await;
+    m.lock().unwrap().holds.get_mut(&id).unwrap().state = "expired";
+    let (s, _) = result(&w.srv, &w.service.cap, &id, pdf_result("ok")).await;
+    assert_eq!(s, 200);
+    deliver_once(&w.srv.state).await;
+    settle_once(&w.srv.state).await;
+    assert_eq!(charge_state(&w, &id).await, "release_pending");
+    assert_eq!(charge_error(&w, &id).await.as_deref(), Some("hold_expired"));
+    settle_once(&w.srv.state).await;
+    assert_eq!(charge_state(&w, &id).await, "released");
+    assert_eq!(job(&w, &id).await["charge"]["status"], "released");
+    let m = m.lock().unwrap();
+    assert!(m.sales.is_empty());
+    assert_eq!(m.release_calls, 1);
+}
+
+/// The job's deadline travels with the hold (saas_be expires the hold a day after it).
+#[tokio::test]
+async fn the_hold_carries_the_job_deadline() {
+    let (w, m, listing) = priced("d", 10_000).await;
+    let (s, v) = run(&w, &listing, json!({ "role": "CTO" })).await;
+    assert_eq!(s, 201, "{v}");
+    let deadline = v["data"]["deadline_at"].as_str().unwrap().to_string();
+    let sent = m.lock().unwrap().deadlines.last().cloned().flatten();
+    assert_eq!(sent, Some(deadline.clone()));
+    let at = chrono::DateTime::parse_from_rfc3339(&deadline)
+        .unwrap()
+        .timestamp();
+    // The operation asks for 48 hours (under the 7-day cap).
+    assert!(
+        (at - now_unix() as i64 - 48 * 3600).abs() < 120,
+        "{deadline}"
+    );
+}
+
+/// Switching the marketplace off refuses new jobs only: a job already running still gets its
+/// result, delivers it and is captured.
+#[tokio::test]
+async fn the_marketplace_flag_stops_new_jobs_not_running_ones() {
+    let (w, m, listing) = priced("o", 10_000).await;
+    let id = started(&w, &listing).await;
+    let (s, _) = w
+        .srv
+        .call(
+            Method::PUT,
+            "/internal/v1/features/marketplace",
+            Some(crate::org_tests::OPS),
+            Some(json!({ "scope": "global", "enabled": false })),
+        )
+        .await;
+    assert_eq!(s, 200);
+    let (s, v) = run(&w, &listing, json!({ "role": "CFO" })).await;
+    assert_ne!(s, 201, "{v}");
+    let (s, v) = result(&w.srv, &w.service.cap, &id, pdf_result("ok")).await;
+    assert_eq!(s, 200, "{v}");
+    deliver_once(&w.srv.state).await;
+    settle_once(&w.srv.state).await;
+    assert_eq!(charge_state(&w, &id).await, "captured");
+    assert_eq!(m.lock().unwrap().sales.len(), 1);
+}
+
+async fn job_int(w: &World, q: &'static str, id: &str) -> i64 {
+    let id = id.to_string();
+    w.srv
+        .state
+        .store
+        .group_read(move |c| -> Result<i64, crate::groups::GErr> {
+            Ok(c.query_row(q, [&id], |r| r.get(0))?)
+        })
+        .await
+        .unwrap()
+}
+
+/// A result that cannot reach the buyer's inbox is retried with backoff, not on every pass.
+#[tokio::test]
+async fn delivery_backs_off_between_attempts() {
+    let (url, _m) = bridge(0).await;
+    let w = world_with("b", Some((url, BRIDGE_TOKEN))).await;
+    let (listing, _) = live_listing(&w).await;
+    let id = started(&w, &listing).await;
+    let (s, _) = result(&w.srv, &w.service.cap, &id, pdf_result("ok")).await;
+    assert_eq!(s, 200);
+    // The buyer's mailbox is gone: the send fails.
+    sql(
+        &w.srv,
+        "UPDATE nest_hosted_jobs SET deliver_to = '/k/nobody' WHERE id = ?1",
+        vec![id.clone()],
+    )
+    .await;
+    deliver_once(&w.srv.state).await;
+    let next = job_int(
+        &w,
+        "SELECT COALESCE(delivery_next_at, 0) FROM nest_hosted_jobs WHERE id = ?1",
+        &id,
+    )
+    .await;
+    assert!(next >= now_unix() as i64 + 50, "backed off: {next}");
+    deliver_once(&w.srv.state).await;
+    let tries = job_int(
+        &w,
+        "SELECT delivery_attempts FROM nest_hosted_jobs WHERE id = ?1",
+        &id,
+    )
+    .await;
+    assert_eq!(tries, 1, "not tried again before the backoff");
 }

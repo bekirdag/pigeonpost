@@ -221,14 +221,19 @@ hold. Credits do not expire; the unspent part of a purchase is refundable within
   - `GET /v1/credits/history?limit&cursor`: purchases, holds, sales, refunds and adjustments, newest
     first, reduced to what a person reads.
 - Spend (postbox → bridge, `BRIDGE_INTERNAL_TOKEN`, private link only):
-  `POST /internal/credits/holds {owner, offer_id, job_ref, idempotency_key}` (`201 {hold_id,
+  `POST /internal/credits/holds {owner, offer_id, job_ref, idempotency_key, deadline?}` (the job's
+  ISO deadline; saas_be lets the hold expire a day after it, 8 days by default; `201 {hold_id,
   amount_cents, expires_at}`, or `402 insufficient_credit` with `available_cents` and
   `required_cents`; the price comes from the immutable `per_job` offer, never the caller),
   `POST /internal/credits/holds/{hold}/capture {job_ref}` (the sale, with `commission_bps`,
   `commission_cents`, `publisher_cents`), `POST /internal/credits/holds/{hold}/release {reason}`
   (`409 hold_captured` for a captured hold), `GET /internal/credits/balances/{owner_kind}/{owner_id}`.
-  All idempotent in saas_be. The postbox holds before it queues a job (key = job id), captures once
-  the succeeded result is delivered, releases on every other ending, and retries both from its
+  All idempotent in saas_be. saas_be's own refusal codes are passed on as `code`; the postbox stops
+  retrying only on its definite ones (`insufficient_credit`, `offer_not_payable_with_credit`,
+  `hold_expired`, `hold_released`, `hold_captured`, `job_ref_mismatch`) and retries every other
+  refusal (a 404 while credits are off, 401/403 after a token rotation, 429). The postbox holds
+  before it queues a job (key = job id), captures once the succeeded result is delivered (a capture
+  refused for good is released instead), releases on every other ending, and retries from its
   worker until answered.
 - The `/internal/credits/*` routes answer 404 under the public `/api` prefix, and everything answers
   404 (internal) or 503 (member) until both marketplace tokens are set.

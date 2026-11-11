@@ -38,7 +38,7 @@
 
 use crate::groups::{GErr, GResult};
 use crate::marketplace::{caller, deny, facts, into_response, iso, not_found, parse};
-use crate::marketplace_m1::{canonical_json, conflict_code, digest_of, flag_gate};
+use crate::marketplace_m1::{canonical_json, conflict_code, digest_of};
 use crate::marketplace_m2::{
     certified, gate, new_id, publisher_read, release_in, staff_gate, text, wake, Need, Rel,
 };
@@ -971,13 +971,20 @@ async fn run_job(
             .group_read(move |c| admissible_in(c, &acct, want.as_deref()).map(|_| ()))
             .await?;
         // Credits: hold the price before the job exists (idempotency key: the job id).
+        let now = now_unix() as i64;
         let held = if per_job {
-            crate::marketplace_credits::hold(&state, &account, &req.listing_id, &req.operation, &id)
-                .await?
+            crate::marketplace_credits::hold(
+                &state,
+                &account,
+                &req.listing_id,
+                &req.operation,
+                &id,
+                now + hours * 3600,
+            )
+            .await?
         } else {
             None
         };
-        let now = now_unix() as i64;
         let paid = held.is_some();
         let (jid, acct, want) = (id.clone(), account.clone(), req.deliver_to.clone());
         let (lid, oname, over) = (
@@ -1479,7 +1486,8 @@ async fn post_result(
                 .and_then(|v| v.to_str().ok()),
         )
         .await?;
-        flag_gate(&state).await?;
+        // Not behind the marketplace flag: a job admitted before it was switched off still gets
+        // its result (and its buyer is still charged or refunded).
         let j = job.clone();
         let row: Option<(String, String, String)> = state
             .store
@@ -1692,16 +1700,18 @@ fn buyer_message(title: &str, job: &str, st: &str, summary: Option<&str>, files:
 /// attached. A refusal is retried; after the last attempt the result stays on the job.
 pub(crate) async fn deliver_once(state: &AppState) -> usize {
     type Due = (String, String, String, Option<String>, String, i64);
+    let now = now_unix() as i64;
     let due: Vec<Due> = state
         .store
         .group_read(move |c| -> GResult<Vec<Due>> {
             let mut stmt = c.prepare(
                 "SELECT j.id, j.deliver_to, j.state, j.summary, l.title, j.delivery_attempts
                    FROM nest_hosted_jobs j JOIN nest_listings l ON l.id = j.listing_id
-                  WHERE j.delivery = 'pending' LIMIT 50",
+                  WHERE j.delivery = 'pending' AND COALESCE(j.delivery_next_at, 0) <= ?1
+                  ORDER BY COALESCE(j.delivery_next_at, 0) LIMIT 50",
             )?;
             let rows = stmt
-                .query_map([], |r| {
+                .query_map([now], |r| {
                     Ok((
                         r.get(0)?,
                         r.get(1)?,
@@ -1813,11 +1823,14 @@ pub(crate) async fn deliver_once(state: &AppState) -> usize {
                             delivery_attempts = delivery_attempts + 1, updated_at = ?3 WHERE id = ?1",
                         params![j, m, now],
                     )?,
+                    // Backed off like dispatch (1 minute, doubling, at most an hour): the last
+                    // attempt is a few hours after the first.
                     None => tx.execute(
                         "UPDATE nest_hosted_jobs SET delivery = CASE WHEN ?2 + 1 >= ?3
                             THEN 'undeliverable' ELSE 'pending' END,
+                            delivery_next_at = ?5,
                             delivery_attempts = delivery_attempts + 1, updated_at = ?4 WHERE id = ?1",
-                        params![j, attempts, MAX_DELIVERIES, now],
+                        params![j, attempts, MAX_DELIVERIES, now, now + backoff(attempts)],
                     )?,
                 };
                 Ok(())
@@ -1828,18 +1841,19 @@ pub(crate) async fn deliver_once(state: &AppState) -> usize {
     n
 }
 
-/// Every 20 seconds while the flag is on: dispatch, expire, deliver, then settle credit holds.
+/// Every 20 seconds: dispatch, expire, deliver, then settle credit holds. Not behind the
+/// marketplace flag: switching it off refuses new jobs (`caller` checks it), but jobs already
+/// admitted still reach their service, their results still reach their buyers, and every hold is
+/// still captured or released.
 pub(crate) fn start_worker(state: AppState) {
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(std::time::Duration::from_secs(20));
         loop {
             tick.tick().await;
-            if flag_gate(&state).await.is_ok() {
-                dispatch_once(&state).await;
-                expire_once(&state).await;
-                deliver_once(&state).await;
-                crate::marketplace_credits::work_once(&state).await;
-            }
+            dispatch_once(&state).await;
+            expire_once(&state).await;
+            deliver_once(&state).await;
+            crate::marketplace_credits::work_once(&state).await;
         }
     });
 }

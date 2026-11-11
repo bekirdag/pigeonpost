@@ -151,6 +151,13 @@ def erase(conn, request_id, blob_root, evidence):
         if has(conn, "org_agents") and conn.execute(
                 "SELECT 1 FROM org_agents WHERE deleted_at IS NULL AND identity IN (" + marks + ")", tuple(addresses)).fetchone():
             raise ValueError("A mailbox is a live organization agent; remove it from the organization first")
+        # Credits v1: a paid job's hold that is not yet captured or released is found again by its
+        # owner id (the postbox's worker replays and settles it). Erasure waits for it; settlement
+        # takes minutes, the erasure deadline is weeks.
+        if has(conn, "nest_hosted_charges") and conn.execute(
+                "SELECT 1 FROM nest_hosted_charges WHERE account_id=? AND state NOT IN ('captured','released','refused')",
+                (account,)).fetchone():
+            raise ValueError("Account has paid jobs whose credit is still being settled; retry once the postbox worker has settled them")
         if not evidence.get("calendar_cancellations_waived", False):
             blocked = calendar_blockers(conn, addresses, account, now)
             if blocked:
@@ -298,8 +305,9 @@ def erase(conn, request_id, blob_root, evidence):
             conn.execute("UPDATE nest_hosted_jobs SET account_id=?, input='{}', summary=NULL, deliver_to=? WHERE account_id=?", ("erased_" + request_id, "erased_" + request_id, account))
         if has(conn, "nest_hosted_charges"):
             # Credits v1: a paid job's charge is the account's money record; the money itself (the
-            # hold, sale or release) stays with the financial authority under its retention.
-            conn.execute("UPDATE nest_hosted_charges SET account_id=? WHERE account_id=?", ("erased_" + request_id, account))
+            # hold, sale or release) stays with the financial authority under its retention. Only
+            # settled charges reach here (unsettled ones block erasure above).
+            conn.execute("UPDATE nest_hosted_charges SET account_id=? WHERE account_id=? AND state IN ('captured','released','refused')", ("erased_" + request_id, account))
         if has(conn, "nest_hosted_prices"):
             conn.execute("UPDATE nest_hosted_prices SET updated_by=? WHERE updated_by=?", ("erased_" + request_id, account))
         if has(conn, "nest_mp_purchases"):
