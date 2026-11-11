@@ -7,7 +7,7 @@
 ARG LINUX_BUILD_IMAGE=docker.io/library/rust:1.91.1-alpine3.22@sha256:8efbfb788786eeb127adc581394349c5fb567712156e0f8c2e499acadbc23756
 FROM ${LINUX_BUILD_IMAGE}
 
-ARG MUSL_VERSION=1.2.5-r12
+ARG MUSL_VERSION=1.2.5-r13
 RUN apk add --no-cache \
       musl=${MUSL_VERSION} \
       musl-dev=${MUSL_VERSION}
