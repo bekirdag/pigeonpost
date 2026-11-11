@@ -306,5 +306,26 @@ class TestLoadManifest(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             GC.load_manifest(path)
 
+class TestUploadHost(unittest.TestCase):
+    def op(self, url):
+        return {"method": "PUT", "url": url, "offset": 0, "length": 4, "requestHeaders": []}
+
+    def test_accepts_https_apple_hosts(self):
+        method, url, _, _, _ = GC._validated(self.op("https://store-033.blobstore.apple.com/x?sig=1"), 4)
+        self.assertEqual(method, "PUT")
+        GC._validated(self.op("https://assets.itunes.apple.com/up?sig=1"), 4)
+
+    def test_rejects_other_hosts_and_plain_http(self):
+        for url in ("https://apple.com.evil.example/x?s=1", "http://a.apple.com/x?s=1",
+                    "https://user@a.apple.com/x?s=1", "https://a.apple.com/x"):
+            with self.assertRaises(RuntimeError):
+                GC._validated(self.op(url), 4)
+
+    def test_keeps_the_iap_range_checks(self):
+        bad = dict(self.op("https://a.apple.com/x?s=1"), length=9)
+        with self.assertRaises(RuntimeError):
+            GC._validated(bad, 4)
+
+
 if __name__ == "__main__":
     unittest.main()
