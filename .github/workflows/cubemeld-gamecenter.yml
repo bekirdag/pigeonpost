@@ -1,0 +1,88 @@
+name: Cubemeld Game Center
+
+# Manual and fail-closed: the audit is read-only by default. APPLY enables Game Center for the
+# app if needed and creates the achievements and leaderboards listed in Cubemeld's manifest at
+# a pinned commit, with their localizations and Git/checksum-pinned achievement images. It never
+# deletes, archives, or changes an existing achievement's points or visibility. The
+# production-release environment holds the existing Wodo App Store Connect key.
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: "Exact 40-character Cubemeld source commit whose Game Center manifest to use."
+        required: true
+        type: string
+      apply:
+        description: "Create missing achievements, leaderboards, localizations and images."
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cubemeld-game-center
+  cancel-in-progress: false
+
+# Linux jobs use GitHub-hosted runners unless the repository variable PIGEONPOST_SELF_HOSTED_CI is
+# 'true' (docs/ci-runners.md: the wodo-ci pool is opt-in until it can carry this load). Fork PRs
+# never select the self-hosted pool, whatever the variable says.
+jobs:
+  gamecenter:
+    name: audit or provision Game Center
+    runs-on: ${{ vars.PIGEONPOST_SELF_HOSTED_CI == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-latest' }}
+    timeout-minutes: 15
+    environment: production-release
+    steps:
+      - name: Check out the release broker
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Prepare the self-hosted worker (no-op on GitHub-hosted runners)
+        uses: ./.github/actions/self-hosted-prereqs
+        with:
+          apt-packages: ruby
+
+      - name: Test the fail-closed App Store broker
+        run: python3 .github/scripts/test_cubemeld_gamecenter.py
+
+      - name: Check out Cubemeld's immutable manifest
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: bekirdag/cubeio_ios_game
+          ref: ${{ inputs.source_ref }}
+          path: cubemeld
+          ssh-key: ${{ secrets.CUBEMELD_DEPLOY_KEY }}
+          persist-credentials: false
+
+      - name: Require an immutable Cubemeld source commit
+        shell: bash
+        working-directory: cubemeld
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$SOURCE_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            echo '::error::source_ref must be an exact lowercase 40-character commit SHA.'
+            exit 1
+          fi
+          actual_ref="$(git rev-parse HEAD)"
+          if [[ "$actual_ref" != "$SOURCE_REF" ]]; then
+            echo '::error::Cubemeld checkout does not match source_ref.'
+            exit 1
+          fi
+
+      - name: Audit or provision Game Center
+        env:
+          KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+          KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          APPLY: ${{ inputs.apply }}
+          GAMECENTER_MANIFEST_PATH: cubemeld/fastlane/gamecenter/achievements.json
+        working-directory: .github/scripts
+        run: |
+          # The manifest path is relative to the workspace root.
+          GAMECENTER_MANIFEST_PATH="$GITHUB_WORKSPACE/$GAMECENTER_MANIFEST_PATH" python3 cubemeld_gamecenter.py
