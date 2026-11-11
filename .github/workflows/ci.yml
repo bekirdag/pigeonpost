@@ -247,6 +247,8 @@ jobs:
           # transport's name in saas_be's API; the message it sends is a Pigeonpost invitation.
           # store-adapter/src/sales.js (and its test) calls the same saas_be route to tell a person
           # about a "Talk to sales" request; only the route's path segment uses the word.
+          # store-adapter/src/credits.js (and its test) passes the buyer's billing contact address to
+          # saas_be's credit checkout, which hands it to iyzico; the field name is that contract's.
           # mail_layout.rs renders those contact-address messages: it names the published logo
           # path on pigeonpost.dev and the client meta tags by their fixed spellings.
           # The vendored LiveKit client bundles sdp-transform, whose SDP grammar names the
@@ -272,6 +274,8 @@ jobs:
               ':(exclude)crates/pigeonpost-nests/src/config.rs' \
               ':(exclude)store-adapter/src/sales.js' \
               ':(exclude)store-adapter/test/sales.test.mjs' \
+              ':(exclude)store-adapter/src/credits.js' \
+              ':(exclude)store-adapter/test/credits.test.mjs' \
               ':(exclude)crates/pigeonpost-postbox/src/mail_layout.rs' \
               ':(exclude)apps/ios/Tests/main.swift' \
               ':(exclude)apps/ios/Shared/Auth/Session.swift' \

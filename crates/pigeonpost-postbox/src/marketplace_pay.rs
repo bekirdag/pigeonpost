@@ -94,7 +94,7 @@ impl Default for Bridge {
 }
 
 /// Why a bridge call produced no answer.
-enum BridgeError {
+pub(crate) enum BridgeError {
     Unavailable,
 }
 
@@ -136,7 +136,7 @@ impl Bridge {
         }
     }
 
-    async fn call(
+    pub(crate) async fn call(
         &self,
         method: reqwest::Method,
         path: &str,
@@ -158,7 +158,7 @@ impl Bridge {
     }
 }
 
-fn billing_unavailable() -> GErr {
+pub(crate) fn billing_unavailable() -> GErr {
     GErr::new(
         StatusCode::SERVICE_UNAVAILABLE,
         "billing_unavailable",
@@ -183,7 +183,7 @@ fn bridge_code(v: &Value) -> &'static str {
     }
 }
 
-fn bridge_refusal(status: u16, v: &Value) -> GErr {
+pub(crate) fn bridge_refusal(status: u16, v: &Value) -> GErr {
     let message = v["error"]
         .as_str()
         .unwrap_or("payments refused this")
@@ -509,6 +509,8 @@ async fn retire_others(state: &AppState, listing: &str, keep: Option<&str>) {
 /// now serves. A failure does not undo the publication; the listing is just not on sale until the
 /// sweep (or the publisher) mirrors it.
 pub(crate) async fn after_publish(state: &AppState, listing: &str) {
+    // A publisher-hosted listing is priced per job (credits v1): its offers are mirrored there.
+    crate::marketplace_credits::after_publish(state, listing).await;
     if let Err(e) = sync_offer(state, listing).await {
         tracing::warn!(
             listing,
@@ -648,6 +650,15 @@ async fn set_price(
             return Err(GErr::bad("invalid_request", "term: one_off or monthly"));
         }
         listing_of(&state, &listing, &pid).await?;
+        // A publisher-hosted listing is sold only for credits, per job of an operation
+        // (`PUT …/operations/{operation}/price`, credits v1).
+        if crate::marketplace_credits::is_hosted(&state, &listing).await? {
+            return Err(conflict_code(
+                "per_job_only",
+                "a publisher-hosted listing is priced per job of each operation; use \
+                 PUT /v1/publishers/{publisher}/listings/{listing}/operations/{operation}/price",
+            ));
+        }
         // Mirror first: nothing is stored unless the financial authority accepts the price.
         let lid = listing.clone();
         let previous = state

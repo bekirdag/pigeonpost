@@ -170,6 +170,18 @@
       return s;
     }
 
+    /// A publisher-hosted integration: its service mailbox, operations and what buyers will pay.
+    function integrationBlock(x) {
+      const prices = Array.isArray(x.prices) ? x.prices : [];
+      return el("div", { class: "mp-integration", id: "mp-sr-integration" },
+        el("h5", { text: "Publisher-hosted integration" }),
+        el("p", { text: `Service address ${x.service_address || ""}` }, x.service_owned ? null : el("strong", { class: "pp-warn", text: " · no longer the publisher's mailbox" })),
+        el("p", { class: "muted", text: `Operations: ${(x.operations || []).map((o) => o.title || o.name).join(", ") || "none"}` }),
+        el("p", { id: "mp-sr-prices", text: prices.length
+          ? `Per-job prices (paid from buyers' credit): ${prices.map((p) => `${p.operation} ${MP.money(p.amount_cents, "USD")}`).join(", ")}`
+          : "Per-job prices: none set (free)." }));
+    }
+
     function reviewDetail() {
       const r = st.review;
       const row = st.reviews.find((x) => x.id === r.id) || {};
@@ -183,6 +195,7 @@
           el("dt", { text: "SBOM digest" }), el("dd", {}, el("code", { text: r.sbom_digest || "" })),
           el("dt", { text: "Source digest" }), el("dd", {}, el("code", { text: r.source_digest || "" })),
           el("dt", { text: "Security state" }), el("dd", { id: "mp-sr-security", text: r.security_state || "" })),
+        r.integration ? integrationBlock(r.integration) : null,
         el("h5", { text: "Stages and evidence" }),
         (r.stages || []).length ? el("ol", { class: "mp-stages", "aria-label": "Recorded stages" }, r.stages.map((g) => el("li", { "data-stage": g.stage },
           el("strong", { text: STAGE_TEXT[g.stage] || g.stage }), `: ${g.decision}`,

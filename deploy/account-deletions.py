@@ -296,6 +296,12 @@ def erase(conn, request_id, blob_root, evidence):
             # Publisher-hosted jobs: the buyer's input, result summary and delivery mailbox go;
             # ids and states stay for the publisher's and staff's records.
             conn.execute("UPDATE nest_hosted_jobs SET account_id=?, input='{}', summary=NULL, deliver_to=? WHERE account_id=?", ("erased_" + request_id, "erased_" + request_id, account))
+        if has(conn, "nest_hosted_charges"):
+            # Credits v1: a paid job's charge is the account's money record; the money itself (the
+            # hold, sale or release) stays with the financial authority under its retention.
+            conn.execute("UPDATE nest_hosted_charges SET account_id=? WHERE account_id=?", ("erased_" + request_id, account))
+        if has(conn, "nest_hosted_prices"):
+            conn.execute("UPDATE nest_hosted_prices SET updated_by=? WHERE updated_by=?", ("erased_" + request_id, account))
         if has(conn, "nest_mp_purchases"):
             conn.execute("UPDATE nest_mp_purchases SET account_id=?, owner_id=? WHERE account_id=?", ("erased_" + request_id, "erased_" + request_id, account))
         if has(conn, "nest_listing_prices"):

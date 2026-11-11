@@ -94,6 +94,9 @@ mod internal_api;
 mod limits;
 mod mail_layout;
 mod marketplace;
+mod marketplace_credits;
+#[cfg(test)]
+mod marketplace_credits_tests;
 mod marketplace_env;
 mod marketplace_grants;
 mod marketplace_hardening;

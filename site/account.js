@@ -281,6 +281,7 @@
         <button class="btn btn-small" id="ac-logout">Sign out</button>
       </div>
       <div class="ac-card" id="ac-products"></div>
+      <section class="ac-card" id="credits" aria-labelledby="cr-title" hidden></section>
       <div class="ac-card" id="ac-publisher" hidden></div>
       <div class="ac-card" id="ac-staff" hidden></div>
       ${searchBlock()}
@@ -341,6 +342,8 @@
       login(undefined, undefined, challenge);
     };
     if (marketplace) mountMarketplace(stepUp);
+    // Credits (credits v1) pay for third-party services, so they come with the marketplace.
+    if (marketplace) mountCredits();
     window.PPProducts.mount(box, {
       features,
       stepUp,
@@ -372,6 +375,37 @@
     const target = back === "publisher" ? $("#ac-publisher") : back === "staff" ? $("#ac-staff") : productsHash || back === "services" ? box : null;
     if (target && target.scrollIntoView) target.scrollIntoView({ block: "start" });
   }
+
+  // ---- credits (credits v1) --------------------------------------------------------------------
+  //
+  // credits.js renders the card with this page's own bridge helpers; it holds no token. The
+  // payment page is iyzico's; it returns here with `?credits=<intent>#credits`.
+  let credits = null;
+  function mountCredits() {
+    const box = $("#credits");
+    if (!box || !window.PPCredits) return;
+    box.hidden = false;
+    credits = window.PPCredits.mount(box, {
+      bridgeGet: (path) => apiGet(path),
+      bridgeAction: (path, body, method) => apiAction(path, body, method),
+      billingProfileId: async () => (await ensureOverview()).profileId || null,
+      goBilling: () => focusStep("#ac-billing", 'input[name="legal_name"]'),
+      randomHex32: () => randomString(16),
+      search: window.location.search,
+      clearReturn: (key) => {
+        const params = new URLSearchParams(window.location.search);
+        params.delete(key);
+        history.replaceState({}, "", window.location.pathname + (params.size ? "?" + params : "") + window.location.hash);
+      },
+      navigate: (url) => { window.location.href = url; },
+      preferredCurrency: defaultCurrency(),
+    });
+    if ((window.location.hash === "#credits" || new URLSearchParams(window.location.search).has("credits")) && box.scrollIntoView) {
+      box.scrollIntoView({ block: "start" });
+    }
+  }
+  // A run elsewhere on the page spent or freed credit: show the new balance.
+  window.addEventListener("pp-credits-changed", () => { if (credits) credits.reload(); });
 
   // ---- marketplace publisher console and staff dashboard -------------------------------------
   //

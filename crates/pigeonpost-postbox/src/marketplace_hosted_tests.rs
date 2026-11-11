@@ -2,7 +2,8 @@
 //! ownership, the staff integration review (no attestation), publishing and the catalog's
 //! `hosting`, jobs dispatched to the service as one exact message that never names the buyer,
 //! result authentication and idempotency, delivery to the buyer with the PDF attached, and the
-//! refusal of priced listings until prepaid credits exist. Synthetic accounts and files only.
+//! refusal of a leftover card price (credits are in `marketplace_credits_tests`). Synthetic
+//! accounts and files only.
 
 use crate::marketplace_hosted::{deliver_once, dispatch_once, JOB_MESSAGE_TYPE};
 use crate::marketplace_m2_tests::{certified, code, events_of, publish, reviewer, template};
@@ -11,9 +12,9 @@ use crate::*;
 use reqwest::Method;
 use serde_json::{json, Value};
 
-const PDF: &[u8] = b"%PDF-1.4\n1 0 obj << >> endobj\ntrailer << >>\n%%EOF\n";
+pub(crate) const PDF: &[u8] = b"%PDF-1.4\n1 0 obj << >> endobj\ntrailer << >>\n%%EOF\n";
 
-fn b64(bytes: &[u8]) -> String {
+pub(crate) fn b64(bytes: &[u8]) -> String {
     const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::new();
     for c in bytes.chunks(3) {
@@ -31,9 +32,9 @@ fn b64(bytes: &[u8]) -> String {
     out
 }
 
-struct Mailbox {
-    address: String,
-    cap: String,
+pub(crate) struct Mailbox {
+    pub(crate) address: String,
+    pub(crate) cap: String,
 }
 
 async fn mailbox(srv: &Srv, who: &Person, label: &str) -> Mailbox {
@@ -47,7 +48,7 @@ async fn mailbox(srv: &Srv, who: &Person, label: &str) -> Mailbox {
     }
 }
 
-async fn sql(srv: &Srv, q: &'static str, args: Vec<String>) {
+pub(crate) async fn sql(srv: &Srv, q: &'static str, args: Vec<String>) {
     srv.state
         .store
         .group_tx(move |tx| -> Result<(), crate::groups::GErr> {
@@ -58,22 +59,30 @@ async fn sql(srv: &Srv, q: &'static str, args: Vec<String>) {
         .unwrap();
 }
 
-struct World {
-    srv: Srv,
-    rev: Person,
-    ann: Person,
-    bob: Person,
-    publisher: String,
-    template: String,
-    service: Mailbox,
-    bob_box: Mailbox,
+pub(crate) struct World {
+    pub(crate) srv: Srv,
+    pub(crate) rev: Person,
+    pub(crate) ann: Person,
+    pub(crate) bob: Person,
+    pub(crate) publisher: String,
+    pub(crate) template: String,
+    pub(crate) service: Mailbox,
+    pub(crate) bob_box: Mailbox,
 }
 
 async fn world(tag: &str) -> World {
+    world_with(tag, None).await
+}
+
+/// The hosted world, optionally with a billing bridge stand-in at `bridge` (credits tests).
+pub(crate) async fn world_with(tag: &str, bridge: Option<(String, &'static str)>) -> World {
     let srv = serve_with(|s| {
         s.platform_owner = Some(Arc::from("acct_mpowner"));
         s.nests = Arc::new(nests::Runtime::capture());
         s.blobs = Some(Arc::new(blobs::Blobs::for_test("hosted")));
+        if let Some((url, token)) = &bridge {
+            s.mp_bridge = Arc::new(marketplace_pay::Bridge::http(url, token));
+        }
     })
     .await;
     srv.global_flag("marketplace").await;
@@ -121,7 +130,7 @@ fn integration(w: &World, service: &str, version: &str) -> Value {
 }
 
 /// Submit, approve, list and publish: `(listing id, review id)`.
-async fn live_listing(w: &World) -> (String, String) {
+pub(crate) async fn live_listing(w: &World) -> (String, String) {
     let (s, v) = w
         .srv
         .post(
@@ -165,7 +174,7 @@ async fn live_listing(w: &World) -> (String, String) {
     (listing, review)
 }
 
-async fn run(w: &World, listing: &str, input: Value) -> (u16, Value) {
+pub(crate) async fn run(w: &World, listing: &str, input: Value) -> (u16, Value) {
     w.srv
         .post(
             "/v1/marketplace/hosted-jobs",
@@ -176,18 +185,18 @@ async fn run(w: &World, listing: &str, input: Value) -> (u16, Value) {
         .await
 }
 
-async fn inbox(srv: &Srv, cap: &str) -> Vec<Value> {
+pub(crate) async fn inbox(srv: &Srv, cap: &str) -> Vec<Value> {
     let (s, v) = srv.get("/v1/inbox?include_read=true", cap).await;
     assert_eq!(s, 200, "{v}");
     v["messages"].as_array().cloned().unwrap_or_default()
 }
 
-async fn result(srv: &Srv, token: &str, job: &str, body: Value) -> (u16, Value) {
+pub(crate) async fn result(srv: &Srv, token: &str, job: &str, body: Value) -> (u16, Value) {
     srv.post(&format!("/v1/nest-jobs/{job}/result"), token, body)
         .await
 }
 
-fn pdf_result(summary: &str) -> Value {
+pub(crate) fn pdf_result(summary: &str) -> Value {
     json!({ "status": "succeeded", "summary": summary,
             "files": [{ "name": "report.pdf", "media_type": "application/pdf",
                         "content_b64": b64(PDF) }] })
@@ -437,10 +446,10 @@ async fn a_hosted_job_goes_to_the_publisher_and_its_pdf_comes_back_to_the_buyer(
     assert_eq!(v["data"][0]["job_id"], job.as_str());
 }
 
-/// No charge path exists yet: a priced publisher-hosted listing takes no jobs; and a service
-/// mailbox that leaves the publisher stops dispatch.
+/// A leftover card price is not a way to run a publisher-hosted service (they are sold per job,
+/// for credits); and a service mailbox that leaves the publisher stops dispatch.
 #[tokio::test]
-async fn priced_listings_take_no_jobs_and_a_lost_service_mailbox_fails_the_job() {
+async fn card_priced_listings_take_no_jobs_and_a_lost_service_mailbox_fails_the_job() {
     let w = world("c").await;
     let (listing, _) = live_listing(&w).await;
     let (s, v) = run(&w, &listing, json!({ "role": "CFO" })).await;
@@ -468,5 +477,5 @@ async fn priced_listings_take_no_jobs_and_a_lost_service_mailbox_fails_the_job()
     )
     .await;
     let (s, v) = run(&w, &listing, json!({ "role": "CFO" })).await;
-    assert_eq!((s, code(&v)), (402, "payment_unavailable"), "{v}");
+    assert_eq!((s, code(&v)), (409, "not_on_sale"), "{v}");
 }

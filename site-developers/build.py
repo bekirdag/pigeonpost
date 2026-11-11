@@ -2700,7 +2700,23 @@ A job with no result by its deadline expires, and the buyer is told.
 
 ## Pricing
 
-Paid publisher-hosted listings cannot be run yet: paid runs will be funded by prepaid credits, which come later. A priced publisher-hosted listing answers `402 payment_unavailable`. Free listings run now.
+Publishers price each operation **per job, in US dollars**. Buyers pay from prepaid Pigeonpost credits, which they buy in packs of $10, $25, $50 or $100 on their account page; credits are kept and spent in USD. Piyote, the merchant of record, keeps **10%** of each job; the other 90% is payable to you.
+
+```http
+PUT /v1/publishers/{publisher}/listings/{listing}/operations/{operation}/price
+Authorization: Bearer <your member token, recent strong sign-in>
+Content-Type: application/json
+```
+
+```json
+{ "amount_cents": 2500, "currency": "USD" }
+```
+
+- `amount_cents` is 1 to 1000000 (up to $10,000 a job). `DELETE` on the same path makes the operation free; `GET` shows the price and whether it is on sale.
+- When a buyer runs a priced operation, the price is held on their credit before the job is sent to you. It is charged only after your `succeeded` result has been delivered to the buyer. It is released if you post `failed`, the job expires, your service mailbox stops being yours, or the buyer cancels first.
+- A buyer without enough credit gets `402 insufficient_credit`, and nothing is sent to you.
+- A paid job's deadline is at most 7 days (168 hours), whatever `deadline_hours` says.
+- Free operations (no price) run without credits. A publisher-hosted listing has no one-off or monthly price.
 """)
 
 # ---- Enterprise API ----------------------------------------------------------------

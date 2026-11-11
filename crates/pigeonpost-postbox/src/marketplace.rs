@@ -617,6 +617,10 @@ async fn read_listing(
                 let mut found = found;
                 if let Some(row) = found.as_mut() {
                     row.body["price"] = crate::marketplace_pay::price_json_in(c, &lid)?;
+                    // Credits v1: a publisher-hosted operation's per-job price, on each operation.
+                    if row.body["hosting"] == "publisher" {
+                        crate::marketplace_credits::price_operations_in(c, &lid, &mut row.body)?;
+                    }
                 }
                 Ok(found)
             })

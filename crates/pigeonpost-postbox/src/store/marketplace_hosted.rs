@@ -4,8 +4,10 @@
 //! columns are added with `ALTER TABLE … ADD COLUMN`, each guarded by `pragma table_info`, and the
 //! two job tables are new (`CREATE TABLE IF NOT EXISTS`).
 //!
-//! No payment is stored here. Paid third-party jobs will be funded by prepaid credits, designed
-//! separately; until then a priced publisher-hosted listing takes no jobs.
+//! Credits v1 (`marketplace_credits`) adds three new tables: a per-job USD price per operation,
+//! the immutable `per_job` offers mirrored to saas_be for those prices, and one charge row per paid
+//! job (the hold, then its capture or release, retried like an outbox). The money itself (balances,
+//! holds, sales) lives in saas_be; these rows only say what the postbox asked for and what it heard.
 
 use rusqlite::Connection;
 
@@ -61,6 +63,67 @@ CREATE TABLE IF NOT EXISTS nest_hosted_job_files (
     PRIMARY KEY (job_id, idx)
 );
 CREATE INDEX IF NOT EXISTS nest_hosted_job_files_by_sha ON nest_hosted_job_files(sha256);
+
+-- Credits v1: what one job of a publisher-hosted operation costs, in USD cents, as its publisher
+-- set it. No row: the operation is free. `nest_listing_prices` cannot hold this (its term CHECK is
+-- one_off/monthly), so it is a table of its own.
+CREATE TABLE IF NOT EXISTS nest_hosted_prices (
+    listing_id   TEXT NOT NULL REFERENCES nest_listings(id),
+    operation    TEXT NOT NULL,
+    amount_cents INTEGER NOT NULL CHECK (amount_cents BETWEEN 1 AND 1000000),
+    currency     TEXT NOT NULL DEFAULT 'USD' CHECK (currency = 'USD'),
+    updated_by   TEXT NOT NULL,
+    updated_at   INTEGER NOT NULL,
+    PRIMARY KEY (listing_id, operation)
+);
+
+-- The `per_job` offers mirrored to saas_be for those prices. Immutable there, so a new price (or
+-- release line) is a new offer id and the previous one is retired. `pending`: not mirrored yet
+-- (`last_error` says why; the worker retries); `active`: holds name it; `retiring`: saas_be has
+-- not confirmed the retirement yet (the worker retries); `retired`.
+CREATE TABLE IF NOT EXISTS nest_hosted_offers (
+    offer_id     TEXT PRIMARY KEY,
+    listing_id   TEXT NOT NULL REFERENCES nest_listings(id),
+    operation    TEXT NOT NULL,
+    publisher_id TEXT NOT NULL,
+    release_line TEXT NOT NULL,
+    amount_cents INTEGER NOT NULL CHECK (amount_cents > 0),
+    state        TEXT NOT NULL CHECK (state IN ('pending','active','retiring','retired')),
+    last_error   TEXT,
+    created_at   INTEGER NOT NULL,
+    updated_at   INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS nest_hosted_offers_by_listing ON nest_hosted_offers(listing_id, operation, state);
+
+-- One paid job's charge, an outbox for saas_be: the hold placed before the job was queued (its
+-- idempotency key is the job id), then exactly one capture (a succeeded result delivered) or one
+-- release (failed, expired, service mailbox lost, cancelled, or the job never started). The worker
+-- retries `capture_pending`/`release_pending` (and an unconfirmed `holding`) until saas_be answers,
+-- so a job is never charged twice and a hold never leaks. `refused`: saas_be refused the capture
+-- or release for good (staff look at `last_error`). No card data, no balance: saas_be has those.
+CREATE TABLE IF NOT EXISTS nest_hosted_charges (
+    job_id           TEXT PRIMARY KEY,
+    account_id       TEXT NOT NULL,
+    listing_id       TEXT NOT NULL,
+    offer_id         TEXT NOT NULL,
+    amount_cents     INTEGER NOT NULL CHECK (amount_cents > 0),
+    hold_id          TEXT,
+    hold_expires_at  INTEGER,
+    state            TEXT NOT NULL CHECK (state IN ('holding','held','capture_pending','captured',
+                         'release_pending','released','refused')),
+    release_reason   TEXT,
+    sale_id          TEXT,
+    commission_cents INTEGER,
+    publisher_cents  INTEGER,
+    attempts         INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at  INTEGER NOT NULL,
+    last_error       TEXT,
+    created_at       INTEGER NOT NULL,
+    updated_at       INTEGER NOT NULL,
+    settled_at       INTEGER
+);
+CREATE INDEX IF NOT EXISTS nest_hosted_charges_by_state ON nest_hosted_charges(state, next_attempt_at);
+CREATE INDEX IF NOT EXISTS nest_hosted_charges_by_account ON nest_hosted_charges(account_id);
 ";
 
 /// `(table, column, definition)` added to live tables.

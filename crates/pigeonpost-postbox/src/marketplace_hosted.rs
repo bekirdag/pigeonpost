@@ -30,9 +30,11 @@
 //!   attachment store and sent to the buyer's mailbox from the marketplace mailbox, attached.
 //!   Retrying the same result is answered with the stored one; a different one is refused.
 //!
-//! **No money moves here.** Paid third-party jobs will be funded by prepaid credits, designed
-//! separately: until then a publisher-hosted listing with a price takes no jobs
-//! (`402 payment_unavailable`).
+//! **Money**: an operation the publisher priced per job is paid with prepaid credits
+//! (`marketplace_credits`): a hold before the job is queued (`402 insufficient_credit` without
+//! enough credit), a capture once the succeeded result reaches the buyer, a release on every other
+//! ending. A free operation skips billing. A buyer may cancel a job before its result arrives
+//! (`POST /v1/marketplace/hosted-jobs/{job}/cancel`), which releases its hold.
 
 use crate::groups::{GErr, GResult};
 use crate::marketplace::{caller, deny, facts, into_response, iso, not_found, parse};
@@ -82,6 +84,13 @@ pub(crate) fn router() -> Router<AppState> {
         )
         .route("/v1/marketplace/hosted-jobs", get(list_jobs).post(run_job))
         .route("/v1/marketplace/hosted-jobs/{job}", get(read_job))
+        .route("/v1/marketplace/hosted-jobs/{job}/cancel", post(cancel_job))
+        .route(
+            "/v1/publishers/{publisher}/listings/{listing}/operations/{operation}/price",
+            get(crate::marketplace_credits::read_job_price)
+                .put(crate::marketplace_credits::set_job_price)
+                .delete(crate::marketplace_credits::clear_job_price),
+        )
         .route(
             "/v1/marketplace/hosted-jobs/{job}/files/{index}",
             get(download),
@@ -472,6 +481,8 @@ pub(crate) fn staff_view_in(c: &Connection, case: &str, release: &str) -> GResul
             "service_mailbox": mailbox,
             "service_owned": owned,
             "operations": rel.manifest["operations"],
+            // Credits: the per-job prices the template's listings carry.
+            "prices": crate::marketplace_credits::template_prices_in(c, Some(&rel.template_id))?,
         }),
     ))
 }
@@ -643,7 +654,8 @@ struct Listing {
     visibility: String,
     granted: bool,
     rel: Option<Rel>,
-    priced: bool,
+    /// A card price (`nest_listing_prices`): publisher-hosted listings are sold per job instead.
+    card_priced: bool,
 }
 
 #[derive(Deserialize)]
@@ -763,7 +775,47 @@ fn job_json_in(c: &Connection, id: &str) -> rusqlite::Result<Option<Value>> {
         "created_at": iso(created),
         "updated_at": iso(updated),
         "finished_at": finished.map(iso),
+        // Credits: what this job holds or cost (`null`: a free operation).
+        "charge": crate::marketplace_credits::charge_json_in(c, id)?,
     })))
+}
+
+/// Whether the account may queue another job now: the mailbox the result goes to (one of its own;
+/// default its first) and room under [`MAX_OPEN_JOBS`].
+fn admissible_in(c: &Connection, account: &str, want: Option<&str>) -> GResult<String> {
+    let deliver: Option<String> = match want {
+        Some(w) => mailbox_in(c, w)?
+            .filter(|(_, a)| a.as_deref() == Some(account))
+            .map(|(a, _)| a),
+        None => c
+            .query_row(
+                "SELECT address FROM identities WHERE account_id = ?1
+                  ORDER BY created_at, address LIMIT 1",
+                [account],
+                |r| r.get(0),
+            )
+            .optional()?,
+    };
+    let deliver = deliver.ok_or_else(|| {
+        GErr::conflict(
+            "no_mailbox",
+            "results are sent to one of your mailboxes; create one first",
+        )
+    })?;
+    let open: i64 = c.query_row(
+        "SELECT COUNT(*) FROM nest_hosted_jobs WHERE account_id = ?1
+           AND state IN ('queued','running')",
+        [account],
+        |r| r.get(0),
+    )?;
+    if open >= MAX_OPEN_JOBS {
+        return Err(GErr::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            "rate_limited",
+            "too many jobs are still running; wait for one to finish",
+        ));
+    }
+    Ok(deliver)
 }
 
 fn event_in(c: &Connection, job: &str, kind: &str, now: i64) -> GResult<Option<String>> {
@@ -852,7 +904,7 @@ async fn run_job(
                     visibility,
                     granted,
                     rel: release_in(c, &release)?,
-                    priced: crate::marketplace_pay::is_priced_in(c, &lid)?,
+                    card_priced: crate::marketplace_pay::is_priced_in(c, &lid)?,
                 }))
             })
             .await?;
@@ -861,7 +913,7 @@ async fn run_job(
             visibility,
             granted,
             rel,
-            priced,
+            card_priced,
         }) = found
         else {
             return Err(not_found());
@@ -875,15 +927,6 @@ async fn run_job(
             return Err(not_found());
         }
         let rel = rel.ok_or_else(not_found)?;
-        // TODO(prepaid credits): paid third-party jobs are funded by prepaid USD credits, designed
-        // separately. Until that lands no charge path exists, so a priced listing takes no jobs.
-        if priced {
-            return Err(GErr::new(
-                StatusCode::PAYMENT_REQUIRED,
-                "payment_unavailable",
-                "paid publisher-hosted services cannot be run yet",
-            ));
-        }
         let op = rel.manifest["operations"]
             .as_array()
             .and_then(|ops| {
@@ -899,53 +942,54 @@ async fn run_job(
             .ok_or_else(|| GErr::bad("unknown_operation", "this listing has no such operation"))?;
         let schema = json!({ "fields": op["fields"] }).to_string();
         crate::marketplace_m1::validate_payload(&schema, &req.input)?;
-        let hours = op["deadline_hours"]
+        let (l, o) = (req.listing_id.clone(), req.operation.clone());
+        let per_job = state
+            .store
+            .group_read(move |c| crate::marketplace_credits::job_price_in(c, &l, &o))
+            .await?
+            .is_some();
+        // Third-party services are sold only for credits, per job: a leftover card price is not
+        // a way to run one.
+        if card_priced && !per_job {
+            return Err(conflict_code(
+                "not_on_sale",
+                "this service has no per-job price yet; its publisher must set one",
+            ));
+        }
+        let mut hours = op["deadline_hours"]
             .as_i64()
             .unwrap_or(DEFAULT_DEADLINE_HOURS);
-        let now = now_unix() as i64;
+        if per_job {
+            // The hold must outlive the job (saas_be holds last 8 days).
+            hours = hours.min(crate::marketplace_credits::PRICED_MAX_DEADLINE_HOURS);
+        }
         let id = new_id("job");
+        // What the queueing transaction checks again, checked before any credit is held.
+        let (acct, want) = (account.clone(), req.deliver_to.clone());
+        state
+            .store
+            .group_read(move |c| admissible_in(c, &acct, want.as_deref()).map(|_| ()))
+            .await?;
+        // Credits: hold the price before the job exists (idempotency key: the job id).
+        let held = if per_job {
+            crate::marketplace_credits::hold(&state, &account, &req.listing_id, &req.operation, &id)
+                .await?
+        } else {
+            None
+        };
+        let now = now_unix() as i64;
+        let paid = held.is_some();
         let (jid, acct, want) = (id.clone(), account.clone(), req.deliver_to.clone());
         let (lid, oname, over) = (
             req.listing_id.clone(),
             req.operation.clone(),
             op["version"].as_str().unwrap_or("").to_string(),
         );
-        let (v, wake_to) = state
+        let queued = state
             .store
             .group_tx(move |tx| -> GResult<(Value, Option<String>)> {
                 publishable_in(tx, &rel)?;
-                let deliver: Option<String> = match &want {
-                    Some(w) => mailbox_in(tx, w)?
-                        .filter(|(_, a)| a.as_deref() == Some(acct.as_str()))
-                        .map(|(a, _)| a),
-                    None => tx
-                        .query_row(
-                            "SELECT address FROM identities WHERE account_id = ?1
-                              ORDER BY created_at, address LIMIT 1",
-                            [&acct],
-                            |r| r.get(0),
-                        )
-                        .optional()?,
-                };
-                let deliver = deliver.ok_or_else(|| {
-                    GErr::conflict(
-                        "no_mailbox",
-                        "results are sent to one of your mailboxes; create one first",
-                    )
-                })?;
-                let open: i64 = tx.query_row(
-                    "SELECT COUNT(*) FROM nest_hosted_jobs WHERE account_id = ?1
-                       AND state IN ('queued','running')",
-                    [&acct],
-                    |r| r.get(0),
-                )?;
-                if open >= MAX_OPEN_JOBS {
-                    return Err(GErr::new(
-                        StatusCode::TOO_MANY_REQUESTS,
-                        "rate_limited",
-                        "too many jobs are still running; wait for one to finish",
-                    ));
-                }
+                let deliver = admissible_in(tx, &acct, want.as_deref())?;
                 tx.execute(
                     "INSERT INTO nest_hosted_jobs (id, account_id, listing_id, release_id,
                         publisher_id, operation, operation_version, input, deliver_to,
@@ -966,10 +1010,22 @@ async fn run_job(
                         now + hours * 3600
                     ],
                 )?;
+                if paid {
+                    crate::marketplace_credits::attach_in(tx, &jid, now)?;
+                }
                 let w = event_in(tx, &jid, "nest.job.admitted", now)?;
                 Ok((job_json_in(tx, &jid)?.unwrap_or(Value::Null), w))
             })
-            .await?;
+            .await;
+        let (v, wake_to) = match queued {
+            Ok(q) => q,
+            Err(e) => {
+                if paid {
+                    crate::marketplace_credits::abandon(&state, &id).await;
+                }
+                return Err(e);
+            }
+        };
         if let Some(a) = wake_to {
             state.event_hub.wake(&a);
         }
@@ -1027,6 +1083,51 @@ async fn read_job(
             .await
             .map(|v| Json(json!({ "data": v }))),
     )
+}
+
+/// `POST /v1/marketplace/hosted-jobs/{job}/cancel` — the buyer stops a job before its result
+/// arrives. Its credit hold is released; a result the service posts afterwards is refused
+/// (`409 job_closed`).
+async fn cancel_job(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(job): Path<String>,
+) -> Response {
+    let result = async {
+        own_job(&state, &headers, &job).await?;
+        let (principal, account) = caller(&state, &headers).await?;
+        authorize(
+            &Actor::Principal(&principal),
+            Action::NestInstall,
+            &Resource::Account(&account),
+            &facts(&state),
+        )
+        .map_err(|d| deny(d, true))?;
+        let now = now_unix() as i64;
+        let j = job.clone();
+        let (v, w) = state
+            .store
+            .group_tx(move |tx| -> GResult<(Value, Option<String>)> {
+                let changed = tx.execute(
+                    "UPDATE nest_hosted_jobs SET state = 'cancelled', error_code = 'cancelled',
+                        finished_at = ?2, revision = revision + 1, updated_at = ?2
+                      WHERE id = ?1 AND state IN ('queued','running')",
+                    params![j, now],
+                )?;
+                if changed == 0 {
+                    return Err(conflict_code("job_closed", "this job is no longer open"));
+                }
+                let w = event_in(tx, &j, "nest.job.progress", now)?;
+                Ok((job_json_in(tx, &j)?.unwrap_or(Value::Null), w))
+            })
+            .await?;
+        if let Some(a) = w {
+            state.event_hub.wake(&a);
+        }
+        Ok(Json(json!({ "data": v })))
+    }
+    .await;
+    into_response(result)
 }
 
 /// `GET /v1/marketplace/hosted-jobs` — the caller's hosted jobs, newest first.
@@ -1727,7 +1828,7 @@ pub(crate) async fn deliver_once(state: &AppState) -> usize {
     n
 }
 
-/// Every 20 seconds while the flag is on: dispatch, expire, deliver.
+/// Every 20 seconds while the flag is on: dispatch, expire, deliver, then settle credit holds.
 pub(crate) fn start_worker(state: AppState) {
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(std::time::Duration::from_secs(20));
@@ -1737,6 +1838,7 @@ pub(crate) fn start_worker(state: AppState) {
                 dispatch_once(&state).await;
                 expire_once(&state).await;
                 deliver_once(&state).await;
+                crate::marketplace_credits::work_once(&state).await;
             }
         }
     });
@@ -1796,6 +1898,14 @@ async fn staff_jobs(
                         }))
                     })?
                     .collect::<rusqlite::Result<Vec<_>>>()?;
+                // Credits: where each job's charge stands (`refused` needs a look).
+                let mut rows = rows;
+                for row in rows.iter_mut() {
+                    let id = row["job_id"].as_str().unwrap_or_default().to_string();
+                    let (st, err) = crate::marketplace_credits::staff_charge_in(c, &id)?;
+                    row["charge_state"] = json!(st);
+                    row["charge_error"] = json!(err);
+                }
                 Ok(rows)
             })
             .await?;

@@ -11,7 +11,8 @@ stdlib-only developer-site builder needs no YAML library. The mirror must be exa
 export_json.py writes from the YAML; regenerate it with that script after editing a spec.
 
 Usage: check_openapi.py [path ...]
-       (default: openapi/pigeonpost.v1.yaml openapi/pigeonpost-org.v1.yaml)
+       (default: openapi/pigeonpost.v1.yaml openapi/pigeonpost-org.v1.yaml
+        docs/nests/contracts/pigeonpost-nests.v1.yaml)
 """
 
 import json
@@ -21,7 +22,13 @@ import sys
 import yaml
 from openapi_spec_validator import OpenAPIV31SpecValidator
 
-DEFAULT_SPECS = ["openapi/pigeonpost.v1.yaml", "openapi/pigeonpost-org.v1.yaml"]
+# The Nests marketplace contract (prices, hosted jobs, credits) is checked by default too, so a
+# local run catches what CI does.
+DEFAULT_SPECS = [
+    "openapi/pigeonpost.v1.yaml",
+    "openapi/pigeonpost-org.v1.yaml",
+    "docs/nests/contracts/pigeonpost-nests.v1.yaml",
+]
 
 
 class StrictLoader(yaml.SafeLoader):

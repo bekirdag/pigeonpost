@@ -15,7 +15,9 @@ function clean(message) {
   return String(message || "").replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/eyJ[\w-]+\.[\w-]+\.[\w-]*/g, "[token]").slice(0, 300);
 }
 
-export async function request(url, { method = "GET", headers = {}, body, timeoutMs = config.requestTimeoutMs } = {}) {
+/// `keep`: upstream statuses passed on as they are instead of becoming 502 (the credit routes'
+/// `402 insufficient_credit`).
+export async function request(url, { method = "GET", headers = {}, body, timeoutMs = config.requestTimeoutMs, keep = [] } = {}) {
   let res;
   try {
     res = await fetch(url, {
@@ -33,7 +35,7 @@ export async function request(url, { method = "GET", headers = {}, body, timeout
   if (!res.ok) {
     const raw = payload?.message ?? payload?.error?.message ?? payload?.error ?? payload?.detail;
     const message = Array.isArray(raw) ? raw.join("; ") : typeof raw === "object" ? raw?.message : raw;
-    const status = res.status === 401 ? 401 : res.status >= 500 ? 502 : [400, 403, 404, 409, 422, 429].includes(res.status) ? res.status : 502;
+    const status = keep.includes(res.status) ? res.status : res.status === 401 ? 401 : res.status >= 500 ? 502 : [400, 403, 404, 409, 422, 429].includes(res.status) ? res.status : 502;
     // The upstream body stays on the error, not enumerable, for callers that read structured
     // refusals (the marketplace's `nearest` prices); it is never sent to the browser as is.
     const error = Object.assign(new Error(clean(message) || `Billing returned ${res.status}`), { status, code: "upstream_rejected" });

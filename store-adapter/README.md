@@ -135,8 +135,9 @@ list, as it does for Cloud.
 **Marketplace purchases** (paid third-party listings; behind the postbox's `marketplace` flag;
 `src/marketplace.js`)
 
-Launch terms are one-off and monthly only: no wallet, credits or per-job prices. saas_be's
-marketplace finance module is the money authority (offers, quotes, the hosted iyzico form, single-use
+Card terms are one-off and monthly. Publisher-hosted jobs are sold for prepaid credits instead
+(per-job prices, see **Credits** below; the owner's rule is that third-party services are sold only
+for credits, so the card checkout here is on its way out). saas_be's marketplace finance module is the money authority (offers, quotes, the hosted iyzico form, single-use
 payment authorizations, licences, invoices, journal), reached at
 `/v1/internal/tenants/<tenant>/marketplace` with a `marketplace:bridge` token. The postbox owns
 listings, publisher prices and installations.
@@ -148,7 +149,9 @@ listings, publisher prices and installations.
   `422 price_not_invoiceable` with `nearest` (read from `details.nearest`); a currency outside
   `OPEN_CURRENCIES` is `409 currency_unavailable`. The postbox derives offer ids from the immutable
   fields, so any price, term, currency or release-line change is a new id, and re-sends the old one
-  with `status: retired`.
+  with `status: retired`. A `per_job` offer (credits v1, a publisher-hosted operation's price per
+  job) is USD only, is never provisioned, and is mirrored whatever `OPEN_CURRENCIES` says, because
+  no card is charged for it.
 - Buy: `POST /v1/marketplace/checkout {intent_id, listing_id, owner?: {kind: account|org, id},
   billing_profile_id, locale}`:
   1. owner check: the caller's own account, or an org whose billing the caller manages (`can_manage`
@@ -187,6 +190,49 @@ listings, publisher prices and installations.
   staff tools. The bridge holds no finance token and calls none of them.
 - The `/internal/marketplace/*` routes answer 404 under the public `/api` prefix.
 
+**Credits** (credits v1; `src/credits.js`; behind the same two marketplace tokens)
+
+There is a wallet now. Credits are kept and spent in **USD cents**, one balance per owner (an
+account; `org` is reserved). saas_be's marketplace finance journal holds them
+(`/v1/internal/tenants/<tenant>/marketplace/credits`, `marketplace:bridge` scope): purchase
+`Dr funding:iyzico / Cr buyer_credit`, hold `Dr buyer_credit / Cr buyer_hold`, capture
+`Dr buyer_hold / Cr piyote_commission (10%) / Cr publisher_payable` (the rest), release reverses the
+hold. Credits do not expire; the unspent part of a purchase is refundable within 14 days (a
+`marketplace:finance` staff action in saas_be, not here).
+
+- Buy (member token, authenticated exactly as `POST /v1/marketplace/checkout`; the owner is always the
+  signed-in account from `GET /v1/me/handles`, never the body):
+  - `GET /v1/credits/packs`: saas_be's active packs among `usd_10`, `usd_25`, `usd_50`, `usd_100`,
+    and the currencies open for payment (`USD`, `EUR`, `TRY` that are in `OPEN_CURRENCIES`);
+  - `POST /v1/credits/quotes {pack_id, currency}`: saas_be quotes the charge (TRY and EUR converted
+    at its stored TCMB rate, fixed for the quote's life). The bridge keeps which account each quote
+    was made for;
+  - `POST /v1/credits/checkout {intent_id, quote_id, billing_profile_id}`: only a live quote this
+    account was given; the EU/UK VAT rule (`src/tax.js`, D-34) as for every web sale; the buyer
+    details iyzico needs (name, billing contact, address, city, country, identity number) from the
+    account's own billing profile and saas_be's `user_id`; then saas_be `POST /checkouts` with
+    `return_url: https://pigeonpost.dev/account?credits=<intent>#credits` and idempotency key
+    `pp-credits-<intent>`. The answer's `payment_page_url` is iyzico's hosted 3DS page (a one-time
+    payment, not a subscription). A replay of the intent returns the same page (kept in memory
+    only); other details are `409 intent_conflict`. Same 5-per-hour budget as other checkouts;
+  - `GET /v1/credits/checkout/{intent}`: `pending`, `paid` (with `purchase_id`), `failed` or
+    `expired`, read from saas_be until it settles;
+  - `GET /v1/credits/balance`: `{available_cents, held_cents}`;
+  - `GET /v1/credits/history?limit&cursor`: purchases, holds, sales, refunds and adjustments, newest
+    first, reduced to what a person reads.
+- Spend (postbox → bridge, `BRIDGE_INTERNAL_TOKEN`, private link only):
+  `POST /internal/credits/holds {owner, offer_id, job_ref, idempotency_key}` (`201 {hold_id,
+  amount_cents, expires_at}`, or `402 insufficient_credit` with `available_cents` and
+  `required_cents`; the price comes from the immutable `per_job` offer, never the caller),
+  `POST /internal/credits/holds/{hold}/capture {job_ref}` (the sale, with `commission_bps`,
+  `commission_cents`, `publisher_cents`), `POST /internal/credits/holds/{hold}/release {reason}`
+  (`409 hold_captured` for a captured hold), `GET /internal/credits/balances/{owner_kind}/{owner_id}`.
+  All idempotent in saas_be. The postbox holds before it queues a job (key = job id), captures once
+  the succeeded result is delivered, releases on every other ending, and retries both from its
+  worker until answered.
+- The `/internal/credits/*` routes answer 404 under the public `/api` prefix, and everything answers
+  404 (internal) or 503 (member) until both marketplace tokens are set.
+
 **Missed returns.** Every 60 s the reconciler reads saas_be's internal access list:
 `GET /v1/internal/tenants/pigeonpost/subscription-packages`, using `SAAS_INTERNAL_TOKEN`. It
 activates and renews `pp-cloud:` and `pp-org:` subscriptions from that list, and passes the Keycloak
@@ -198,7 +244,8 @@ marked expired once that passes. Nothing here ever extends a paid period.
 - No card data, checkout token or form content is stored. `STORE_STATE_DIR/billing-state.json`
   (mode 600) holds only intents and the last pushed entitlement. `marketplace-state.json` (mode 600)
   holds marketplace purchases, their ids and the single-use payment-authorization token the postbox
-  consumes through this service.
+  consumes through this service. `credits-state.json` (mode 600) holds the credit quotes and
+  checkouts this bridge started and which account each belongs to; never a payment page link.
 - Every saas_be response is validated: ids, statuses, mode, amounts, dates and plausible periods.
   Every mutation sends an idempotency key.
 - Limit: 5 new checkouts per account per hour. Replays of an intent do not count.
@@ -227,7 +274,7 @@ marked expired once that passes. Nothing here ever extends a paid period.
 | `SALES_NOTIFY_TO`, `SALES_NOTIFY_FROM` | Recipient (default `info@pigeonpost.dev`) and sender (default `no-reply@pigeonpost.dev`) of the sales notification sent through saas_be. |
 | `TAX_EU_UK_GATE`, `TAX_B2C_OPEN_REGIONS`, `TAX_IP_COUNTRY_HEADER`, `HMRC_CLIENT_ID`/`HMRC_CLIENT_SECRET` | EU/UK VAT rule for web sales (`src/tax.js`): EU/UK consumers are refused until a region is opened; EU/UK businesses need a VIES/HMRC-valid VAT number (reverse charge). Defaults: gate on, no region open, `cf-ipcountry`, no HMRC credentials (UK businesses refused). See `docs/billing-tax.md`. |
 | `SAAS_MARKETPLACE_TOKEN` / `SAAS_MARKETPLACE_TOKEN_FILE` | saas_be tenant service token for `MASAAS_TENANT_ID`, scope `marketplace:bridge` only (its SHA-256 goes in saas_be's `INTERNAL_TENANT_SERVICE_TOKENS`). Never the `marketplace:finance` token. |
-| `BRIDGE_INTERNAL_TOKEN` / `BRIDGE_INTERNAL_TOKEN_FILE` | What the postbox presents on `/internal/marketplace/*` (`POSTBOX_BRIDGE_TOKEN` there), at least 32 characters. The marketplace routes answer 404 until both marketplace tokens are set. |
+| `BRIDGE_INTERNAL_TOKEN` / `BRIDGE_INTERNAL_TOKEN_FILE` | What the postbox presents on `/internal/marketplace/*` and `/internal/credits/*` (`POSTBOX_BRIDGE_TOKEN` there), at least 32 characters. The marketplace and credit routes answer 404 until both marketplace tokens are set. |
 | `MARKETPLACE_PROVISION_MONTHLY` | `on` (default) provisions monthly offers in saas_be right after mirroring; `off` leaves them unsellable. |
 
 `/healthz` reports `configured:true` when these are present and well formed. It checks local
