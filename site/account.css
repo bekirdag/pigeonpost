@@ -37,7 +37,7 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --ac-bg: #0a0c10;
     --ac-chrome: #101318;
     --ac-panel: #161a20;
@@ -61,6 +61,31 @@
     --ac-ring: 0 0 0 3px rgba(108, 155, 255, .32);
     --ac-scrim: rgba(0, 0, 0, .55);
   }
+}
+/* The appearance switch (theme.js) saying Dark: the same values; keep the two blocks identical. */
+:root[data-theme="dark"] {
+    --ac-bg: #0a0c10;
+    --ac-chrome: #101318;
+    --ac-panel: #161a20;
+    --ac-raised: #1d222a;
+    --ac-input: #0e1115;
+    --ac-hair: rgba(255, 255, 255, .055);
+    --ac-hair-strong: rgba(255, 255, 255, .11);
+    --ac-ink: #f2f4f7;
+    --ac-text: #c5cbd4;
+    --ac-muted: #9aa2ae;
+    --ac-accent: #3d6be0;
+    --ac-accent-hover: #4d79ea;
+    --ac-accent-text: #92b2ff;
+    --ac-accent-soft: rgba(108, 155, 255, .13);
+    --ac-ok: #4ade80;
+    --ac-danger: #fda4af;
+    --ac-danger-soft: rgba(253, 164, 175, .09);
+    --ac-shadow: 0 1px 0 rgba(255, 255, 255, .025) inset, 0 10px 30px -14px rgba(0, 0, 0, .7);
+    --ac-shadow-hover: 0 1px 0 rgba(255, 255, 255, .04) inset, 0 14px 34px -12px rgba(0, 0, 0, .8);
+    --ac-shadow-pop: 0 24px 60px -12px rgba(0, 0, 0, .75), 0 0 0 1px rgba(255, 255, 255, .07);
+    --ac-ring: 0 0 0 3px rgba(108, 155, 255, .32);
+    --ac-scrim: rgba(0, 0, 0, .55);
 }
 
 /* The site's tokens, re-pointed for everything drawn inside the account area. */
@@ -439,3 +464,44 @@ body.ac-shell main.account { padding: 0; }
 .pp-card .pp-price { margin-top: auto; padding-top: 6px; }
 .ac-app form input + .btn, .ac-app form input + .btn-small { margin-left: 8px; }
 #ac-pb-list .ac-row > .muted, #ac-pb-keys .ac-row > .muted { flex: 1; }
+
+/* ---- appearance switch (theme.js draws the icons and keeps the label) ---------------------- */
+.theme-toggle {
+  display: inline-grid; place-items: center; flex-shrink: 0;
+  width: 38px; height: 38px; padding: 0; border-radius: 10px;
+  border: 0; background: transparent; color: var(--ac-muted); cursor: pointer;
+}
+.theme-toggle:hover { background: var(--ac-raised); color: var(--ac-ink); }
+.theme-toggle:focus-visible { outline: none; box-shadow: var(--ac-ring); }
+.theme-icon { display: none; width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.theme-toggle:not([data-choice]) .theme-icon-system,
+.theme-toggle[data-choice="system"] .theme-icon-system,
+.theme-toggle[data-choice="light"] .theme-icon-light,
+.theme-toggle[data-choice="dark"] .theme-icon-dark { display: block; }
+/* Signed out: the switch sits beside the site logo. */
+body:not(.ac-shell) .wrap > header { display: flex; align-items: center; gap: 14px; }
+body:not(.ac-shell) .wrap > header > a { flex-shrink: 1; min-width: 0; }
+
+/* ---- billing details gate (account.js syncBillingGate) ------------------------------------- */
+.ac-gate {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  max-width: 920px; margin: 0 0 22px; padding: 14px 16px 14px 14px;
+  border-radius: var(--ac-radius); border: 1px solid var(--warn-edge);
+  background: var(--warn-fill); color: var(--ac-ink);
+}
+.ac-gate[hidden] { display: none; }
+.ac-gate.ac-gate-wide { max-width: 1120px; }
+.ac-gate > div { flex: 1 1 260px; min-width: 0; }
+.ac-gate strong { display: block; font-size: 15px; }
+.ac-gate p { margin: 2px 0 0; font-size: 14px; color: var(--ac-text); }
+.ac-gate-ico { display: inline-grid; place-items: center; width: 38px; height: 38px; border-radius: 10px; flex-shrink: 0;
+  background: color-mix(in srgb, var(--warn-text) 14%, transparent); color: var(--warn-text); }
+/* Passive: buy buttons are disabled with no hover affordance; the choices around them stay
+   readable but quiet. */
+.account .btn[data-billing-gated], .account .btn[data-billing-gated]:hover {
+  opacity: .42; cursor: not-allowed; box-shadow: none; filter: saturate(.35);
+}
+.account .btn-primary[data-billing-gated]:hover { background: var(--ac-accent); }
+.account .btn-secondary[data-billing-gated]:hover, .account .btn-small[data-billing-gated]:hover { border-color: var(--ac-hair-strong); }
+.ac-needs-billing :is(#credits form, .pp-cards, #mp-buy, #ac-cloud-picker) { opacity: .62; filter: saturate(.5); }
+@media (max-width: 560px) { .ac-gate .btn { width: 100%; } }

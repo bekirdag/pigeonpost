@@ -328,6 +328,7 @@
       else a.removeAttribute("aria-current");
     });
     const title = $("#ac-top-title"); if (title) title.textContent = spec.label;
+    syncBillingGate();
     const head = $(`#ac-h-${spec.view}`);
     if (head && spec.tab) head.textContent = spec.label;
     document.title = `${spec.label} · Your Pigeonpost account`;
@@ -446,6 +447,7 @@
     if (!getToken()) { mode = "signed-out"; shell(false); return renderSignedOut(el); }
     mode = "member"; shell(true);
     renderMember(el);
+    if (window.PPTheme) window.PPTheme.refresh();
   }
 
   function renderSignedOut(el) {
@@ -479,6 +481,7 @@
             <source srcset="/logo_white.png" media="(prefers-color-scheme: dark)">
             <img src="/logo.png" alt="" width="640" height="213">
           </picture></a>
+          <button type="button" class="theme-toggle" data-theme-toggle aria-label="Theme: System"></button>
           <span class="ac-top-sep" aria-hidden="true"></span>
           <span class="ac-top-title" id="ac-top-title" aria-hidden="true">Overview</span>
           <span class="ac-top-fill"></span>
@@ -506,6 +509,12 @@
         </nav>
         <div class="ac-scrim" id="ac-scrim" hidden></div>
         <div class="ac-content" id="ac-content">
+          <div class="ac-gate" id="ac-billing-gate" role="region" aria-labelledby="ac-billing-gate-title" hidden>
+            <span class="ac-gate-ico" aria-hidden="true">${icon("billing")}</span>
+            <div><strong id="ac-billing-gate-title">Add billing details first</strong>
+              <p id="ac-billing-gate-why">Purchases are invoiced to your billing details. Add them to buy plans, handles, Nests and credits.</p></div>
+            <a class="btn btn-primary" href="#billing" id="ac-billing-gate-go">Add billing details</a>
+          </div>
 
           <section class="ac-view" data-view="overview" aria-labelledby="ac-h-overview">
             ${viewHead("overview", "Overview", who.name ? `Signed in as ${esc(who.name)}.` : "Your plan, credit, names and agents at a glance.")}
@@ -701,6 +710,95 @@
       empty("#ac-empty-credits", "Credits pay for marketplace services. The marketplace isn't open on this account yet, so there is nothing to buy credit for.");
       empty("#ac-empty-publish", "The publisher console opens with the marketplace. It isn't available on this account yet.");
     }
+  }
+
+  // ---- billing details gate -----------------------------------------------------------------
+  //
+  // Web purchases are invoiced to the saved billing details, and checkout refuses without them
+  // (billing_profile_required / billing_profile_incomplete). While none are saved, or the saved
+  // ones lack what an invoice needs, every section that sells something shows one banner pointing
+  // at Billing details, and its buy and checkout buttons go passive: disabled, aria-disabled and
+  // a title saying why. Registering a name into a plan that has room, App Store and Google Play
+  // purchases, and spending credit already bought need no billing details and stay as they are.
+  // Saving complete details reloads the overview, which lifts the gate without a reload.
+
+  // What an invoice needs; the same fields billing_profile_incomplete names.
+  function profileComplete(p) {
+    if (!p) return false;
+    const a = p.address && typeof p.address === "object" ? p.address : p;
+    return Boolean(String(p.legal_name || p.legalName || "").trim() && String(a.line1 || "").trim()
+      && String(a.city || "").trim() && String(a.country || "").trim());
+  }
+  const SELLING_VIEWS = new Set(["get-handle", "plan", "products", "credits"]);
+  const GATE_REASON = "Add billing details first";
+  // Controls that start a paid web checkout. `when` narrows one to the cases that charge.
+  const GATED = [
+    { sel: "#ac-buy", when: () => !hasRoom() },
+    { sel: "#ac-cloud-start" },
+    { sel: "[data-change-plan]" },
+    { sel: "#ac-cloud-picker button" },
+    { sel: "#ac-products [data-buy]" },
+    { sel: "#pp-change-go" },
+    { sel: "#cr-buy-go" },
+    { sel: "#mp-buy-go" },
+  ];
+  const gateWants = new WeakMap();   // what the page's own code wants each gated control to be
+  let gateObserver = null;
+  let gateObserved = null;   // the shell it watches; a re-render draws a new one
+
+  function billingMissing() { return Boolean(overview) && !overview.hasBilling; }
+
+  function syncBillingGate() {
+    const app = $("#ac-app"); if (!app) return;
+    const missing = billingMissing();
+    app.classList.toggle("ac-needs-billing", missing);
+    const banner = $("#ac-billing-gate");
+    if (banner) {
+      const view = currentRoute && ROUTES[currentRoute] ? ROUTES[currentRoute].view : null;
+      banner.hidden = !(missing && SELLING_VIEWS.has(view));
+      banner.classList.toggle("ac-gate-wide", view === "products");
+      const why = $("#ac-billing-gate-why");
+      if (why) why.textContent = overview && overview.billingIncomplete
+        ? "Your billing details are missing a name, address, city or country. Complete them to buy plans, handles, Nests and credits."
+        : "Purchases are invoiced to your billing details. Add them to buy plans, handles, Nests and credits.";
+      const go = $("#ac-billing-gate-go");
+      if (go) go.textContent = overview && overview.billingIncomplete ? "Complete billing details" : "Add billing details";
+    }
+    const gated = new Set();
+    if (missing) for (const g of GATED) if (!g.when || g.when()) app.querySelectorAll(g.sel).forEach((n) => gated.add(n));
+    app.querySelectorAll("[data-billing-gated]").forEach((n) => { if (!gated.has(n)) ungate(n); });
+    gated.forEach(gate);
+    if (gateObserver && gateObserved === app) gateObserver.takeRecords();
+    else if (window.MutationObserver) {
+      if (gateObserver) gateObserver.disconnect();
+      gateObserved = app;
+      // Buttons are redrawn and re-enabled by their own code (a quote arrives, a name turns out
+      // free); keep them passive while the gate is up and remember what that code asked for.
+      gateObserver = new MutationObserver((records) => {
+        for (const r of records) {
+          if (r.type === "attributes" && r.target.hasAttribute("data-billing-gated")) gateWants.set(r.target, !r.target.disabled);
+        }
+        syncBillingGate();
+      });
+      gateObserver.observe(app, { subtree: true, childList: true, attributes: true, attributeFilter: ["disabled"] });
+    }
+  }
+  function gate(n) {
+    if (!n.hasAttribute("data-billing-gated")) {
+      gateWants.set(n, !n.disabled);
+      n.setAttribute("data-billing-gated", "");
+      n.setAttribute("aria-disabled", "true");
+      n.setAttribute("aria-describedby", "ac-billing-gate-why");
+      if (!n.hasAttribute("title")) { n.setAttribute("title", GATE_REASON); n.setAttribute("data-billing-title", ""); }
+    }
+    n.disabled = true;
+  }
+  function ungate(n) {
+    n.removeAttribute("data-billing-gated");
+    n.removeAttribute("aria-disabled");
+    if (n.getAttribute("aria-describedby") === "ac-billing-gate-why") n.removeAttribute("aria-describedby");
+    if (n.hasAttribute("data-billing-title")) { n.removeAttribute("title"); n.removeAttribute("data-billing-title"); }
+    n.disabled = gateWants.has(n) ? !gateWants.get(n) : false;
   }
 
   // ---- overview dashboard -------------------------------------------------------------------
@@ -1515,11 +1613,13 @@
     } finally { if ($("#ac-handles-refresh") === refresh && refresh && request === overviewRequest) refresh.disabled = false; }
     if ($("#ac-subs") !== box || request !== overviewRequest) return;
     const profiles = data.billingProfiles || [];
-    overview = { hasBilling: profiles.length > 0, profileId: profiles[0]?.id || null, openCurrencies: data.openCurrencies || null,
+    const complete = profiles.find(profileComplete) || null;
+    overview = { hasBilling: Boolean(complete), billingIncomplete: !complete && profiles.length > 0, profileId: complete?.id || null, openCurrencies: data.openCurrencies || null,
       plan: data.cloud?.plan?.web_plan || null, subscription: data.cloud?.subscriptions?.[0] || null };
     renderSubs(data.handles || []);
     renderCloud(data.cloud);
     renderBilling(profiles);
+    syncBillingGate();
     renderInvoices(data.invoices || []);
     const named = (data.handles || []).filter((h) => String(h.namespace || "").replace(/^\/+/, ""));
     dash.handles = { total: named.length,

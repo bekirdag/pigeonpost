@@ -374,17 +374,77 @@
     if (text) PPE.toast(text, "error");
   };
 
-  /// Header sign-in state, shared by every page that has `#ppe-account`.
+  // Small stroke icons for the shell, built as SVG nodes (no HTML parsing). Paths only.
+  const ICONS = {
+    people: ["M16 20a4 4 0 0 0-8 0", "M12 13a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z", "M20.5 19a3.5 3.5 0 0 0-3-3.4M17 6.2a3 3 0 0 1 0 5.6M3.5 19a3.5 3.5 0 0 1 3-3.4M7 6.2a3 3 0 0 0 0 5.6"],
+    agents: ["M7 7h10a3 3 0 0 1 3 3v6a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3v-6a3 3 0 0 1 3-3Z", "M12 3v4M9 12h.01M15 12h.01M9.5 15.5h5"],
+    rooms: ["M4 5h16v10H9l-5 4Z"],
+    rules: ["M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0", "M16 4v4M10 10v4M18 16v4"],
+    billing: ["M3 7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z", "M3 10h18M7 15h3"],
+    security: ["M12 3 5 6v5c0 4.5 3 8.3 7 10 4-1.7 7-5.5 7-10V6Z", "m9 12 2 2 4-4"],
+    "api-keys": ["M8 19a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z", "m10.8 12.2 8.7-8.7M17 6l2.5 2.5M14.5 8.5l2 2"],
+    webhooks: ["M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1", "M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"],
+    organization: ["M4 21V5a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v16M15 9h4a1 1 0 0 1 1 1v11M3 21h18", "M8 8h3M8 12h3M8 16h3"],
+    inbox: ["M4 13h4l1.5 3h5l1.5-3h4", "M5.5 5h13L21 13v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-5Z"],
+    menu: ["M4 7h16M4 12h16M4 17h16"],
+    close: ["M6 6l12 12M18 6 6 18"],
+    out: ["M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 16l-4-4 4-4M6 12h10"],
+  };
+  PPE.icon = function (name) {
+    const NS = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(NS, "svg");
+    svg.setAttribute("class", "ico");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("aria-hidden", "true");
+    svg.setAttribute("focusable", "false");
+    for (const d of ICONS[name] || []) {
+      const p = document.createElementNS(NS, "path");
+      p.setAttribute("d", d);
+      svg.append(p);
+    }
+    return svg;
+  };
+
+  /// Header sign-in state, shared by every page that has `#ppe-account`. Signed in, it is the
+  /// account menu: who is signed in, the inbox and Sign out.
+  let menuWired = false;
   PPE.renderAccount = function () {
     const slot = document.getElementById("ppe-account");
     if (!slot) return;
     slot.replaceChildren();
     if (PPE.signedIn()) {
       const who = PPE.whoami();
-      slot.append(PPE.el("span", { class: "who", translate: "no" }, who.username || "Signed in"),
-        PPE.el("button", { class: "btn btn-quiet", type: "button", onclick: () => PPE.signOut() }, "Sign out"));
+      const shown = who.username || who.name || "Signed in";
+      const initial = (who.name || who.username || "?").trim().charAt(0).toUpperCase() || "?";
+      const menu = PPE.el("div", { class: "user-menu", id: "ppe-user-menu", hidden: true },
+        PPE.el("div", { class: "user-id", translate: "no" }, PPE.el("strong", {}, who.name || shown), who.username && who.name && who.name !== who.username ? PPE.el("span", {}, who.username) : null),
+        PPE.el("a", { class: "menu-item", href: cfg.inbox || "https://inbox.pigeonpost.dev" }, PPE.icon("inbox"), "Open your inbox"),
+        PPE.el("button", { class: "menu-item", type: "button", onclick: () => PPE.signOut() }, PPE.icon("out"), "Sign out"));
+      const button = PPE.el("button", { class: "user-btn", id: "ppe-user-btn", type: "button", "aria-haspopup": "true", "aria-expanded": "false", "aria-controls": "ppe-user-menu" },
+        PPE.el("span", { class: "avatar", "aria-hidden": "true", translate: "no" }, initial),
+        PPE.el("span", { class: "who", translate: "no" }, shown));
+      button.addEventListener("click", (e) => { e.stopPropagation(); setMenu(menu.hidden); });
+      slot.append(PPE.el("div", { class: "user" }, button, menu));
+      if (!menuWired) {
+        menuWired = true;
+        document.addEventListener("click", (e) => {
+          const m = document.getElementById("ppe-user-menu");
+          if (m && !m.hidden && !m.contains(e.target)) setMenu(false);
+        });
+        document.addEventListener("keydown", (e) => {
+          const m = document.getElementById("ppe-user-menu");
+          if (e.key === "Escape" && m && !m.hidden) { setMenu(false); const b = document.getElementById("ppe-user-btn"); if (b) b.focus(); }
+        });
+      }
     } else {
       slot.append(PPE.el("button", { class: "btn btn-quiet", type: "button", onclick: () => PPE.signIn({ returnTo: "/app" }) }, "Sign in"));
     }
   };
+  function setMenu(open) {
+    const m = document.getElementById("ppe-user-menu");
+    const b = document.getElementById("ppe-user-btn");
+    if (!m || !b) return;
+    m.hidden = !open;
+    b.setAttribute("aria-expanded", String(open));
+  }
 })();

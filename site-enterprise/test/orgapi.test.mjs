@@ -74,7 +74,7 @@ async function keySheet(t, opts = {}) {
 test("owners see API keys and webhooks in the nav; the keys page lists every key with its state", async (t) => {
   const { window, $ } = open(t, "api-keys");
   await tick(60);
-  assert.deepEqual(navText(window).slice(0, 9), ["People", "Agents", "Rooms", "Rules", "Billing", "Security", "API keys", "Webhooks", "Organization"]);
+  assert.deepEqual(navText(window).slice(0, 9), ["People", "Agents", "Rooms", "Rules", "Security", "API keys", "Webhooks", "Billing", "Organization"]);
   assert.equal($("#content h1").textContent, "API keys");
   assert.equal(window.document.querySelectorAll("#content table").length, 1);
   assert.equal(window.document.querySelectorAll("#content .page-head .btn-primary").length, 1);
