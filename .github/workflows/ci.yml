@@ -138,6 +138,8 @@ jobs:
           apt-packages: ruby
       - name: Test the fail-closed Cubemeld App Store broker
         run: python3 .github/scripts/test_cubemeld_iap.py
+      - name: Test the Cubemeld Game Center manifest checks
+        run: python3 .github/scripts/test_cubemeld_gamecenter.py
       - name: Validate the dedicated ChatGPT OAuth provisioning boundaries
         run: python3 deploy/identity/test-chatgpt.py
       - uses: dtolnay/rust-toolchain@8632757d5a758c452f724e9d837848c694a7bb48 # 1.91.1
