@@ -38,7 +38,7 @@ path = "src/bin/buildd.rs"
 [dependencies]
 # The shared Nest package rules (manifest and configuration schema), the same code the postbox and
 # `pigeonpost nest validate` run. A workspace crate, no new third-party dependency.
-pigeonpost-core = { path = "../pigeonpost-core", version = "0.7.19" }
+pigeonpost-core = { path = "../pigeonpost-core", version = "0.7.20" }
 axum = "0.8"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "signal", "sync", "process"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

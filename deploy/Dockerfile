@@ -22,7 +22,7 @@
 # a toolchain that is proven rather than a new one.
 ARG BUILD_BASE=docker.io/library/rust:1.91.1-alpine3.22@sha256:8efbfb788786eeb127adc581394349c5fb567712156e0f8c2e499acadbc23756
 ARG RUNTIME_BASE=gcr.io/distroless/static-debian13:nonroot@sha256:f7f8f729987ad0fdf6b05eeeae94b26e6a0f613bdf46feea7fc40f7bd72953e6
-ARG MUSL_VERSION=1.2.5-r12
+ARG MUSL_VERSION=1.2.5-r13
 # tini is still load-bearing: the CLI's serve paths handle ctrl_c (SIGINT) but not SIGTERM, and a
 # process that is PID 1 gets no default signal handlers — so without an init, `docker stop` would
 # be ignored until the SIGKILL timeout and the retention sweep would die mid-batch. The static

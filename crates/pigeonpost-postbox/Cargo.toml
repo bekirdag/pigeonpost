@@ -30,7 +30,7 @@ subtle.workspace = true
 rand_core.workspace = true
 thiserror.workspace = true
 # identity minting + key custody
-pigeonpost-core = { path = "../pigeonpost-core", version = "0.7.19" }
+pigeonpost-core = { path = "../pigeonpost-core", version = "0.7.20" }
 # Group E2EE (P-2): server-side checks on key packages, envelopes and Welcomes. Never decrypts.
 pigeonpost-groupcrypto = { path = "../pigeonpost-groupcrypto" }
 ed25519-dalek.workspace = true

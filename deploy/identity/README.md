@@ -22,7 +22,7 @@ next person to try logging in.
 
 **`pkce.code.challenge.method` is S256 on this client, and that covers the device grant too.** The
 strong sign-in for SSH needs it, and Keycloak applies it to every flow the client can use. A device
-request without PKCE is refused with `Missing parameter: code_challenge_method`. CLI 0.7.19 and later
+request without PKCE is refused with `Missing parameter: code_challenge_method`. CLI 0.7.20 and later
 send S256 on both flows; older CLIs can use only the browser sign-in.
 
 **Redirect URIs must wildcard the port** (`http://127.0.0.1/*`). The CLI binds `127.0.0.1:0` and

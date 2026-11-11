@@ -29,7 +29,7 @@ fi
 #
 # `pkce.code.challenge.method` is S256 for every flow on this client. The strong sign-in for SSH
 # needs it, and Keycloak applies it to the device grant too, so a device request without PKCE is
-# refused with "Missing parameter: code_challenge_method". CLI 0.7.19 and later send S256 on both;
+# refused with "Missing parameter: code_challenge_method". CLI 0.7.20 and later send S256 on both;
 # older CLIs can use only the browser sign-in.
 #
 # `consentRequired` is on, and the device grant is why. Keycloak needs three things to approve a
