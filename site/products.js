@@ -112,7 +112,7 @@
 
     function inboxPanel() {
       return panel("inbox",
-        el("p", { text: "An Inbox is a Pigeonpost name you own, like /bekir, with its mail storage. Your names, and the plans that include them, are in Your handles and Pigeonpost Cloud plan below." }),
+        el("p", { text: "An Inbox is a Pigeonpost name you own, like /bekir, with its mail storage. Your names, and the plans that include them, are under Your handles and Cloud plan." }),
         el("button", { type: "button", class: "btn btn-secondary", id: "pp-inbox-find", onclick: () => deps.focusInbox && deps.focusInbox() }, "Find a name"));
     }
 

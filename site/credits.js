@@ -142,6 +142,7 @@
     async function loadBalance() {
       try { st.balance = await deps.bridgeGet("/v1/credits/balance"); } catch (_) { st.balance = null; }
       balanceLine.textContent = balanceText(st.balance);
+      if (deps.onBalance) deps.onBalance(st.balance);
     }
 
     function entry(h) {

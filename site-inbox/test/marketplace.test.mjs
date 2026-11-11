@@ -701,17 +701,18 @@ test("a decision refused for a stake reads as a conflict", async (t) => {
 
 // ---- the account page ---------------------------------------------------------------------------
 
-async function accountPage(t, { features, nested = false }) {
+async function accountPage(t, { features, nested = false, url = "https://pigeonpost.dev/account", before = null }) {
   // jsdom does not navigate: a sign-in redirect only reports "Not implemented: navigation" here.
   const navigations = [];
   const virtualConsole = new VirtualConsole();
   virtualConsole.on("jsdomError", (e) => { if (/navigation/i.test(String(e && e.message))) navigations.push(e.message); });
-  const dom = new JSDOM('<main id="account-root"></main>', { url: "https://pigeonpost.dev/account", runScripts: "outside-only", virtualConsole });
+  const dom = new JSDOM('<main id="account-root"></main>', { url, runScripts: "outside-only", virtualConsole });
   // Let any pending page work (the step-up's PKCE digest, late fetches) finish before closing.
   t.after(async () => { for (let i = 0; i < 20; i++) await tick(1); dom.window.close(); });
   const { window } = dom;
   window.eval(accountConfig);
   window.sessionStorage.setItem("pp_session", "member-fixture");
+  if (before) before(window);
   // The step-up sign-in builds a PKCE challenge before it navigates.
   if (!window.crypto.subtle) Object.defineProperty(window.crypto, "subtle", { value: globalThis.crypto.subtle });
   const calls = [];
@@ -759,6 +760,87 @@ test("the account page mounts the publisher console only with the marketplace fe
   assert.equal(on.doc.querySelector("#ac-staff").hidden, true, "a 403 staff_required keeps the staff card hidden");
   assert.equal(on.doc.querySelector("#credits").hidden, false);
   assert.match(on.doc.querySelector("#cr-balance").textContent, /Balance: \$12\.34/);
+});
+
+// ---- the account page's sections and deep links ---------------------------------------------
+
+const shown = (doc) => [...doc.querySelectorAll(".ac-view")].filter((v) => !v.hidden).map((v) => v.getAttribute("data-view"));
+const current = (doc) => [...doc.querySelectorAll("#ac-side [aria-current=page]")].map((a) => a.getAttribute("data-route"));
+const INTENT = "0123456789abcdef0123456789abcdef";
+// A fragment change and a history traversal each queue their hashchange as a task.
+const settle = () => new Promise((r) => setTimeout(r, 30));
+
+test("iyzico's credits return (?credits=<intent>#credits) opens the Credits section", async (t) => {
+  const p = await accountPage(t, { features: ["nests", "marketplace"], url: `https://pigeonpost.dev/account?credits=${INTENT}#credits` });
+  assert.deepEqual(shown(p.doc), ["credits"]);
+  assert.deepEqual(current(p.doc), ["credits"]);
+  assert.equal(p.window.location.hash, "#credits");
+  assert.equal(p.doc.querySelector("#credits").hidden, false);
+  assert.match(p.doc.querySelector("#ac-top-title").textContent, /Credits/);
+  assert.match(p.doc.querySelector("#ac-credit-chip").textContent, /\$12\.34/, "the top bar shows the balance the card loaded");
+  assert.equal(p.doc.querySelector("#ac-credit-chip").hidden, false);
+});
+
+test("a credits return without its fragment still lands on Credits, and the hash is restored for reloads", async (t) => {
+  const p = await accountPage(t, { features: ["nests", "marketplace"], url: `https://pigeonpost.dev/account?credits=${INTENT}` });
+  assert.deepEqual(shown(p.doc), ["credits"]);
+  assert.equal(p.window.location.hash, "#credits");
+});
+
+test("the postbox's buy_url (/account#credits) opens Credits, and the sidebar follows hash changes and Back", async (t) => {
+  const p = await accountPage(t, { features: ["nests", "marketplace"], url: "https://pigeonpost.dev/account#credits" });
+  assert.deepEqual(shown(p.doc), ["credits"]);
+  p.window.location.hash = "#billing";
+  await settle();
+  assert.deepEqual(shown(p.doc), ["billing"]);
+  assert.deepEqual(current(p.doc), ["billing"]);
+  assert.ok(p.doc.querySelector("#ac-billing"), "cards stay mounted while hidden");
+  p.window.history.back();
+  await settle();
+  assert.deepEqual(shown(p.doc), ["credits"]);
+  assert.deepEqual(current(p.doc), ["credits"]);
+});
+
+test("no hash opens the overview, with the plan, handles, mailboxes and credit balance", async (t) => {
+  const p = await accountPage(t, { features: ["nests", "marketplace"] });
+  assert.deepEqual(shown(p.doc), ["overview"]);
+  assert.equal(p.window.location.hash, "");
+  assert.equal(p.doc.querySelector("#ac-dash-plan").textContent, "No plan");
+  assert.equal(p.doc.querySelector("#ac-dash-handles").textContent, "0");
+  assert.equal(p.doc.querySelector("#ac-dash-boxes").textContent, "0");
+  assert.match(p.doc.querySelector("#ac-dash-credit").textContent, /\$12\.34/);
+});
+
+test("the apps' #products and #nests links open the Nests tab; #services opens the catalog tab", async (t) => {
+  for (const hash of ["#products", "#nests"]) {
+    const p = await accountPage(t, { features: ["nests", "marketplace"], url: `https://pigeonpost.dev/account${hash}` });
+    assert.deepEqual(shown(p.doc), ["products"]);
+    assert.deepEqual(current(p.doc), ["nests"]);
+    assert.equal(p.doc.querySelector("#pp-tab-nests").getAttribute("aria-selected"), "true");
+  }
+  const s = await accountPage(t, { features: ["nests", "marketplace"], url: "https://pigeonpost.dev/account#services" });
+  assert.deepEqual(shown(s.doc), ["products"]);
+  assert.equal(s.doc.querySelector("#pp-tab-services").getAttribute("aria-selected"), "true");
+  s.window.location.hash = "#inbox";
+  await settle();
+  assert.equal(s.doc.querySelector("#pp-tab-inbox").getAttribute("aria-selected"), "true");
+});
+
+test("a step-up sign-in comes back to the publisher console it left", async (t) => {
+  const p = await accountPage(t, { features: ["nests", "marketplace"], before: (w) => w.localStorage.setItem("pp_mp_return", "publisher") });
+  assert.deepEqual(shown(p.doc), ["publish"]);
+  assert.equal(p.window.location.hash, "#publish");
+  assert.equal(p.window.localStorage.getItem("pp_mp_return"), null);
+});
+
+test("without the marketplace, Credits and Publish leave the sidebar and their sections explain why", async (t) => {
+  const p = await accountPage(t, { features: ["nests"], url: "https://pigeonpost.dev/account#credits" });
+  assert.deepEqual(shown(p.doc), ["credits"]);
+  assert.equal(p.doc.querySelector('#ac-side [data-route="credits"]').hidden, true);
+  assert.equal(p.doc.querySelector('#ac-side [data-route="publish"]').hidden, true);
+  assert.equal(p.doc.querySelector("#ac-nav-staff").hidden, true, "staff navigation only for staff");
+  assert.match(p.doc.querySelector("#ac-empty-credits").textContent, /marketplace/);
+  assert.equal(p.doc.querySelector("#ac-credit-chip").hidden, true);
 });
 
 test("a step-up refusal on the account page does not burn a token refresh and keeps the challenge", async (t) => {

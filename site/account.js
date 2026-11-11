@@ -76,6 +76,10 @@
     // path (which calls login() with no arg) keeps whatever the sign-in card already recorded.
     const keep = remember === undefined ? wantsRemember() : !!remember;
     if (window.location.hash === "#delete-account") SS.setItem("pp_deletion_return", "1");
+    // The OIDC redirect URI carries no fragment, so the section the member was heading for
+    // (`/account#credits` from the postbox's buy_url, say) is parked here and restored on return.
+    const returnRoute = hashRoute();
+    if (returnRoute) SS.setItem("pp_return_view", returnRoute); else SS.removeItem("pp_return_view");
     SS.setItem("pp_remember", keep ? "1" : "0");
     const verifier = randomString(48);
     const state = randomString(12);
@@ -112,8 +116,11 @@
     const state = params.get("state");
     const strip = () => {
       const deletion = SS.getItem("pp_deletion_return") === "1";
+      const back = SS.getItem("pp_return_view");
       SS.removeItem("pp_deletion_return");
-      history.replaceState({}, "", (cfg.oidc.redirectPath || "/account") + (deletion ? "#delete-account" : ""));
+      SS.removeItem("pp_return_view");
+      const hash = deletion ? "#delete-account" : back && ROUTES[back] ? "#" + back : "";
+      history.replaceState({}, "", (cfg.oidc.redirectPath || "/account") + hash);
     };
     if (params.get("error")) {
       toast("Sign-in did not complete: " + params.get("error"));
@@ -243,6 +250,190 @@
     return { ok: true, name };
   }
 
+  // ---- sections and routing -----------------------------------------------------------------
+  //
+  // The signed-in page is an app shell: a top bar, a grouped sidebar, and one section at a time.
+  // Each section is a hash (`#credits`, `#handles`, …), so a reload, a shared link and Back/Forward
+  // all land on the same place. Every card keeps the element IDs its code reads; a card that is not
+  // on screen is only hidden, never unmounted, so its loaders and step-up flows run as before.
+  //
+  // `view` is the panel a route shows; several routes can share one (the Products card's tabs).
+  const ROUTES = {
+    overview:     { view: "overview",   label: "Overview" },
+    handles:      { view: "handles",    label: "Your handles",     group: "Handles & inboxes" },
+    "get-handle": { view: "get-handle", label: "Get a handle",     group: "Handles & inboxes" },
+    mailboxes:    { view: "mailboxes",  label: "AI agents",        group: "Handles & inboxes" },
+    keys:         { view: "keys",       label: "Connector keys",   group: "Handles & inboxes" },
+    plan:         { view: "plan",       label: "Cloud plan",       group: "Plans & products" },
+    inbox:        { view: "products",   label: "Buy an Inbox",     group: "Plans & products", tab: "inbox" },
+    nests:        { view: "products",   label: "Nests",            group: "Plans & products", tab: "nests", primary: true },
+    credits:      { view: "credits",    label: "Credits",          group: "Billing" },
+    billing:      { view: "billing",    label: "Billing details",  group: "Billing" },
+    invoices:     { view: "invoices",   label: "Invoices",         group: "Billing" },
+    services:     { view: "products",   label: "Services",         group: "Marketplace", tab: "services" },
+    publish:      { view: "publish",    label: "Publish",          group: "Marketplace", needs: "#ac-publisher" },
+    security:     { view: "security",   label: "Two-factor",       group: "Security & privacy" },
+    privacy:      { view: "privacy",    label: "Account deletion", group: "Security & privacy" },
+    staff:        { view: "staff",      label: "Marketplace review", group: "Staff", needs: "#ac-staff" },
+  };
+  // Hashes other sites and apps already link to. `#products` is the Linux and web apps' "buy
+  // Nests" link and `#nests` the Windows app's (1.0.x); both open the Nests tab, as they always did.
+  const ROUTE_ALIASES = { products: "nests", publisher: "publish", "ac-staff": "staff" };
+  // A step-up sign-in from a marketplace card comes back to that card (`pp_mp_return`).
+  const MP_RETURN_ROUTE = { publisher: "publish", staff: "staff", services: "services" };
+
+  function routeName(raw) {
+    const name = String(raw || "").replace(/^#/, "");
+    const canonical = ROUTE_ALIASES[name] || name;
+    return Object.prototype.hasOwnProperty.call(ROUTES, canonical) ? canonical : null;
+  }
+  const hashRoute = () => routeName(window.location.hash);
+
+  // Where a fresh load opens: the hash if it names a section, else whatever a return URL is
+  // finishing (iyzico's `?credits=` and `?checkout=`, a marketplace or Nest checkout, a step-up).
+  function initialRoute() {
+    const fromHash = hashRoute();
+    if (fromHash) return fromHash;
+    const q = new URLSearchParams(window.location.search);
+    if (q.has("credits")) return "credits";
+    if (q.has("mp_purchase") || q.has("mp_checkout")) return "services";
+    if (q.has("nest_org") || q.has("nest_checkout")) return "nests";
+    if (q.has("checkout") || q.has("card")) return "plan";
+    const back = MP_RETURN_ROUTE[SS.getItem("pp_mp_return") || ""];
+    return back || "overview";
+  }
+
+  let mode = null;          // "signed-out" | "member" | "deletion": what render() last drew
+  let currentRoute = null;
+
+  function setUrlHash(route, replace) {
+    const hash = "#" + route;
+    if (window.location.hash === hash) return;
+    if (replace) history.replaceState(history.state, "", window.location.pathname + window.location.search + hash);
+    else window.location.hash = hash;
+  }
+
+  // Show one section. `focus` is for a navigation the member made, which moves the reading
+  // position to the new section's heading; a programmatic jump (focusStep) does its own focusing.
+  function showRoute(name, opts) {
+    const o = opts || {};
+    const route = routeName(name) || "overview";
+    const spec = ROUTES[route];
+    const app = $("#ac-app"); if (!app) return;
+    const changed = route !== currentRoute;
+    currentRoute = route;
+    app.querySelectorAll(".ac-view").forEach((v) => { v.hidden = v.getAttribute("data-view") !== spec.view; });
+    app.querySelectorAll("[data-route]").forEach((a) => {
+      if (a.getAttribute("data-route") === route) a.setAttribute("aria-current", "page");
+      else a.removeAttribute("aria-current");
+    });
+    const title = $("#ac-top-title"); if (title) title.textContent = spec.label;
+    const head = $(`#ac-h-${spec.view}`);
+    if (head && spec.tab) head.textContent = spec.label;
+    document.title = `${spec.label} · Your Pigeonpost account`;
+    if (spec.tab) selectProductTab(spec.tab);
+    closeDrawer();
+    if (changed && o.focus) {
+      if (window.scrollTo) try { window.scrollTo(0, 0); } catch (_) { /* jsdom */ }
+      if (head) try { head.focus({ preventScroll: true }); } catch (_) { head.focus(); }
+    }
+  }
+
+  // Jump to a section from code (a purchase walking the member to billing, say), adding a history
+  // entry so Back returns to where they were.
+  function go(route, replace) {
+    const r = routeName(route); if (!r) return;
+    showRoute(r);
+    setUrlHash(r, replace);
+  }
+
+  // The Products card keeps its own tab state; the sidebar picks the tab by pressing it.
+  function selectProductTab(tab) {
+    const button = $(`#pp-tab-${tab}`);
+    if (button && button.getAttribute("aria-selected") !== "true") button.click();
+  }
+
+  // The route that shows a given view: the current one if it already does, else its primary.
+  function routeForView(view) {
+    if (currentRoute && ROUTES[currentRoute].view === view) return currentRoute;
+    const all = Object.keys(ROUTES).filter((r) => ROUTES[r].view === view);
+    return all.find((r) => ROUTES[r].primary) || all[0] || null;
+  }
+
+  function openDrawer() {
+    const app = $("#ac-app"); if (!app) return;
+    app.classList.add("ac-nav-open");
+    const t = $("#ac-nav-toggle"); if (t) t.setAttribute("aria-expanded", "true");
+    const scrim = $("#ac-scrim"); if (scrim) scrim.hidden = false;
+    const first = $("#ac-side [aria-current]") || $("#ac-side a");
+    if (first) try { first.focus({ preventScroll: true }); } catch (_) { first.focus(); }
+  }
+  function closeDrawer() {
+    const app = $("#ac-app"); if (!app || !app.classList.contains("ac-nav-open")) return;
+    app.classList.remove("ac-nav-open");
+    const t = $("#ac-nav-toggle"); if (t) t.setAttribute("aria-expanded", "false");
+    const scrim = $("#ac-scrim"); if (scrim) scrim.hidden = true;
+  }
+
+  // Display only: the signed-in name and address from the access token's claims. The postbox and
+  // the bridge verify the token; nothing here trusts these values for anything but a label.
+  function identity() {
+    try {
+      const part = String(getToken() || "").split(".")[1];
+      const b64 = part.replace(/-/g, "+").replace(/_/g, "/");
+      const claims = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))));
+      return { name: String(claims.name || claims.given_name || claims.preferred_username || ""), address: String(claims.email || "") };
+    } catch (_) {
+      return { name: "", address: "" };
+    }
+  }
+
+  // Small stroke icons, drawn inline so the page fetches nothing extra.
+  const ICON_PATHS = {
+    overview: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
+    handles: '<path d="M15 4 9 20"/><circle cx="18.5" cy="17.5" r="2.5"/>',
+    "get-handle": '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
+    mailboxes: '<rect x="4" y="7" width="16" height="12" rx="3"/><path d="M12 3v4M9 12h.01M15 12h.01M9.5 15.5h5"/>',
+    keys: '<circle cx="8" cy="15" r="4"/><path d="m10.8 12.2 8.7-8.7M17 6l2.5 2.5M14.5 8.5 16.5 10.5"/>',
+    plan: '<path d="M7 18a4.5 4.5 0 0 1-.6-8.96A6 6 0 0 1 18 10a4 4 0 0 1-.5 7.97Z"/>',
+    inbox: '<path d="M4 13h4l1.5 3h5l1.5-3h4"/><path d="M5.5 5h13L21 13v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-5Z"/>',
+    nests: '<path d="M12 3 20 7.5v9L12 21l-8-4.5v-9Z"/><path d="m4 7.5 8 4.5 8-4.5M12 12v9"/>',
+    credits: '<ellipse cx="12" cy="6.5" rx="7" ry="3"/><path d="M5 6.5v5c0 1.66 3.13 3 7 3s7-1.34 7-3v-5M5 11.5v5c0 1.66 3.13 3 7 3s7-1.34 7-3v-5"/>',
+    billing: '<path d="M6 3h9l4 4v14H6Z"/><path d="M14 3v5h5M9 13h7M9 17h5"/>',
+    invoices: '<path d="M6 3h12v18l-3-2-3 2-3-2-3 2Z"/><path d="M9 8h6M9 12h6"/>',
+    services: '<path d="M4 9h16l-1.2-4.2A1.5 1.5 0 0 0 17.4 4H6.6a1.5 1.5 0 0 0-1.4.8Z"/><path d="M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9M10 20v-5h4v5"/>',
+    publish: '<path d="M12 15V3M7 8l5-5 5 5"/><path d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/>',
+    security: '<path d="M12 3 5 6v5c0 4.5 3 8.3 7 10 4-1.7 7-5.5 7-10V6Z"/><path d="m9 12 2 2 4-4"/>',
+    privacy: '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>',
+    staff: '<circle cx="12" cy="8" r="4"/><path d="M5 21a7 7 0 0 1 14 0"/>',
+    menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
+    close: '<path d="M6 6l12 12M18 6 6 18"/>',
+    chevron: '<path d="m9 6 6 6-6 6"/>',
+    out: '<path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 16l-4-4 4-4M6 12h10"/>',
+  };
+  const icon = (name) => `<svg class="ac-ico" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${ICON_PATHS[name] || ""}</svg>`;
+
+  function navHtml() {
+    const groups = [];
+    for (const [route, spec] of Object.entries(ROUTES)) {
+      const key = spec.group || "";
+      let g = groups.find((x) => x.key === key);
+      if (!g) { g = { key, items: [] }; groups.push(g); }
+      g.items.push(`<li><a class="ac-nav-link" href="#${route}" data-route="${route}">${icon(route)}<span>${esc(spec.label)}</span></a></li>`);
+    }
+    return groups.map((g) => `
+      <div class="ac-nav-group"${g.key === "Staff" ? ' id="ac-nav-staff" hidden' : ""}>
+        ${g.key ? `<p class="ac-nav-label" id="ac-nav-${esc(g.key.replace(/[^a-z]+/gi, "-").toLowerCase())}">${esc(g.key)}</p>` : ""}
+        <ul${g.key ? ` aria-labelledby="ac-nav-${esc(g.key.replace(/[^a-z]+/gi, "-").toLowerCase())}"` : ""}>${g.items.join("")}</ul>
+      </div>`).join("");
+  }
+
+  // One section's heading. `solo` sections hold a single card whose own heading repeats this one;
+  // the stylesheet keeps that card heading for screen readers and hides it from view.
+  function viewHead(view, title, lede) {
+    return `<div class="ac-view-head"><h1 id="ac-h-${view}" tabindex="-1">${esc(title)}</h1>${lede ? `<p>${lede}</p>` : ""}</div>`;
+  }
+
   // ---- render -------------------------------------------------------------------------------
 
   const root = () => $("#account-root");
@@ -250,14 +441,16 @@
   function render() {
     const el = root();
     if (!el) return;
-    if (window.location.hash === "#delete-account") return renderDeletion(el);
-    if (!getToken()) return renderSignedOut(el);
+    const shell = (on) => { if (document.body) document.body.classList.toggle("ac-shell", on); };
+    if (window.location.hash === "#delete-account") { mode = "deletion"; shell(false); return renderDeletion(el); }
+    if (!getToken()) { mode = "signed-out"; shell(false); return renderSignedOut(el); }
+    mode = "member"; shell(true);
     renderMember(el);
   }
 
   function renderSignedOut(el) {
     el.innerHTML = `
-      <div class="ac-card ac-center">
+      <div class="ac-card ac-center ac-signin">
         <h2>Sign in to Pigeonpost</h2>
         <p class="muted">Claim and manage handles, and your yearly subscription.</p>
         <div class="ac-actions">
@@ -275,51 +468,275 @@
   }
 
   function renderMember(el) {
+    const who = identity();
+    const shown = who.name || who.address || "Your account";
+    const initial = (who.name || who.address || "?").trim().charAt(0).toUpperCase() || "?";
     el.innerHTML = `
-      <div class="ac-head">
-        <h2>Your account</h2>
-        <button class="btn btn-small" id="ac-logout">Sign out</button>
-      </div>
-      <div class="ac-card" id="ac-products"></div>
-      <section class="ac-card" id="credits" aria-labelledby="cr-title" hidden></section>
-      <div class="ac-card" id="ac-publisher" hidden></div>
-      <div class="ac-card" id="ac-staff" hidden></div>
-      ${searchBlock()}
-      <div class="ac-card"><h3>Your handles</h3><p class="muted">Names belong to your Pigeonpost account across mobile, desktop and web.</p><button class="btn btn-small" id="ac-handles-refresh">Refresh handles</button><div id="ac-subs"><p class="muted">Loading…</p></div></div>
-      <div class="ac-card">
-        <h3>Connect an AI agent</h3>
-        <p class="muted">Give a Claude or ChatGPT agent a hosted Pigeonpost inbox — it sends and
-          receives messages through an MCP connector tied to this account.</p>
-        <div id="ac-pb-list"><p class="muted">Loading…</p></div>
-        <div class="ac-actions ac-left">
-          <button class="btn btn-secondary" id="ac-pb-create">Create an inbox</button>
-          <button class="btn btn-secondary" id="ac-pb-key">Create connector key</button>
+      <div class="ac-app" id="ac-app">
+        <header class="ac-top">
+          <button type="button" class="ac-icon-btn ac-nav-toggle" id="ac-nav-toggle" aria-controls="ac-side" aria-expanded="false" aria-label="Open navigation">${icon("menu")}</button>
+          <a class="ac-brand" href="/" aria-label="Pigeonpost home"><picture class="brand-logo ac-logo">
+            <source srcset="/logo_white.png" media="(prefers-color-scheme: dark)">
+            <img src="/logo.png" alt="" width="640" height="213">
+          </picture></a>
+          <span class="ac-top-sep" aria-hidden="true"></span>
+          <span class="ac-top-title" id="ac-top-title" aria-hidden="true">Overview</span>
+          <span class="ac-top-fill"></span>
+          <a class="ac-chip" id="ac-credit-chip" href="#credits" hidden title="Credit balance">${icon("credits")}<span id="ac-credit-chip-v"></span></a>
+          <div class="ac-user">
+            <button type="button" class="ac-user-btn" id="ac-user-btn" aria-haspopup="true" aria-expanded="false" aria-controls="ac-user-menu">
+              <span class="ac-avatar" aria-hidden="true">${esc(initial)}</span><span class="ac-user-name">${esc(shown)}</span>
+            </button>
+            <div class="ac-user-menu" id="ac-user-menu" hidden>
+              <div class="ac-user-id"><strong>${esc(who.name || "Signed in")}</strong>${who.address ? `<span>${esc(who.address)}</span>` : ""}</div>
+              <a class="ac-menu-item" href="#security">${icon("security")}Security</a>
+              <a class="ac-menu-item" href="#billing">${icon("billing")}Billing details</a>
+              <button type="button" class="ac-menu-item" id="ac-logout">${icon("out")}Sign out</button>
+            </div>
+          </div>
+        </header>
+        <nav class="ac-side" id="ac-side" aria-label="Account sections">
+          <div class="ac-side-head"><span>Menu</span><button type="button" class="ac-icon-btn" id="ac-nav-close" aria-label="Close navigation">${icon("close")}</button></div>
+          ${navHtml()}
+          <div class="ac-side-foot">
+            <a href="https://inbox.pigeonpost.dev">Open the inbox</a>
+            <a href="https://developers.pigeonpost.dev">Developer docs</a>
+            <a href="/privacy">Privacy</a><a href="/terms">Terms</a>
+          </div>
+        </nav>
+        <div class="ac-scrim" id="ac-scrim" hidden></div>
+        <div class="ac-content" id="ac-content">
+
+          <section class="ac-view" data-view="overview" aria-labelledby="ac-h-overview">
+            ${viewHead("overview", "Overview", who.name ? `Signed in as ${esc(who.name)}.` : "Your plan, credit, names and agents at a glance.")}
+            <div class="ac-stats">
+              <a class="ac-stat" href="#plan"><span class="ac-stat-k">${icon("plan")}Cloud plan</span>
+                <span class="ac-stat-v" id="ac-dash-plan">…</span><span class="ac-stat-s" id="ac-dash-plan-s"></span></a>
+              <a class="ac-stat" href="#credits" id="ac-dash-credits" hidden><span class="ac-stat-k">${icon("credits")}Credit balance</span>
+                <span class="ac-stat-v" id="ac-dash-credit">…</span><span class="ac-stat-s" id="ac-dash-credit-s">For marketplace services</span></a>
+              <a class="ac-stat" href="#handles"><span class="ac-stat-k">${icon("handles")}Handles</span>
+                <span class="ac-stat-v" id="ac-dash-handles">…</span><span class="ac-stat-s" id="ac-dash-handles-s"></span></a>
+              <a class="ac-stat" href="#mailboxes"><span class="ac-stat-k">${icon("mailboxes")}Agent mailboxes</span>
+                <span class="ac-stat-v" id="ac-dash-boxes">…</span><span class="ac-stat-s" id="ac-dash-boxes-s"></span></a>
+            </div>
+            <div class="ac-callout" id="ac-dash-billing" hidden>
+              <div><strong>Add your billing details</strong><p>Plans, Nests and credits need them before checkout.</p></div>
+              <a class="btn btn-small" href="#billing">Add details</a>
+            </div>
+            <h2 class="ac-sub">Quick actions</h2>
+            <div class="ac-quick">
+              <a class="ac-quick-item" href="#get-handle">${icon("get-handle")}<span><strong>Get a handle</strong><small>Search for a name like /you</small></span></a>
+              <a class="ac-quick-item" href="#mailboxes">${icon("mailboxes")}<span><strong>Connect an AI agent</strong><small>A hosted inbox for Claude or ChatGPT</small></span></a>
+              <a class="ac-quick-item" href="#credits" id="ac-quick-credits" hidden>${icon("credits")}<span><strong>Buy credits</strong><small>Pay for marketplace services</small></span></a>
+              <a class="ac-quick-item" href="#nests">${icon("nests")}<span><strong>Buy Nests</strong><small>Private AI workspaces</small></span></a>
+              <a class="ac-quick-item" href="#security">${icon("security")}<span><strong>Two-factor sign-in</strong><small>Protect this account</small></span></a>
+              <a class="ac-quick-item" href="#invoices">${icon("invoices")}<span><strong>Invoices</strong><small>Download past receipts as PDF</small></span></a>
+            </div>
+          </section>
+
+          <section class="ac-view ac-view-solo" data-view="handles" aria-labelledby="ac-h-handles" hidden>
+            ${viewHead("handles", "Your handles", "")}
+            <div class="ac-card"><h3>Your handles</h3><div class="ac-card-head"><p class="muted">Names belong to your Pigeonpost account across mobile, desktop and web.</p><button class="btn btn-small" id="ac-handles-refresh">Refresh handles</button></div><div id="ac-subs"><p class="muted">Loading…</p></div>
+              <p class="ac-note"><a href="#get-handle">Get another handle</a> · <a href="#plan">Your Cloud plan</a></p></div>
+          </section>
+
+          <section class="ac-view ac-view-solo" data-view="get-handle" aria-labelledby="ac-h-get-handle" hidden>
+            ${viewHead("get-handle", "Get a handle", "")}
+            ${searchBlock()}
+          </section>
+
+          <section class="ac-view ac-view-solo" data-view="mailboxes" aria-labelledby="ac-h-mailboxes" hidden>
+            ${viewHead("mailboxes", "AI agents", "")}
+            <div class="ac-card">
+              <h3>Connect an AI agent</h3>
+              <p class="muted">Give a Claude or ChatGPT agent a hosted Pigeonpost inbox — it sends and
+                receives messages through an MCP connector tied to this account.</p>
+              <div id="ac-pb-list"><p class="muted">Loading…</p></div>
+              <div class="ac-actions ac-left">
+                <button class="btn btn-secondary" id="ac-pb-create">Create an inbox</button>
+                <a class="btn btn-secondary" href="#keys">Connector keys</a>
+              </div>
+            </div>
+          </section>
+
+          <section class="ac-view ac-view-solo" data-view="keys" aria-labelledby="ac-h-keys" hidden>
+            ${viewHead("keys", "Connector keys", "")}
+            <div class="ac-card">
+              <h3>Connector keys</h3>
+              <div class="ac-card-head"><p class="muted">Each key lets an agent act as this account. Revoke one to cut off a device or agent.</p>
+                <button class="btn btn-secondary" id="ac-pb-key">Create connector key</button></div>
+              <div id="ac-pb-out"></div>
+              <div id="ac-pb-keys"><p class="muted">Loading…</p></div>
+            </div>
+          </section>
+
+          <section class="ac-view ac-view-solo" data-view="plan" aria-labelledby="ac-h-plan" hidden>
+            ${viewHead("plan", "Cloud plan", "")}
+            <div class="ac-card" id="ac-cloud"><h3>Pigeonpost Cloud plan</h3><div id="ac-cloud-body"><p class="muted">Loading…</p></div></div>
+          </section>
+
+          <section class="ac-view ac-view-solo ac-view-wide" data-view="products" aria-labelledby="ac-h-products" hidden>
+            ${viewHead("products", "Nests", "")}
+            <div class="ac-card" id="ac-products"></div>
+          </section>
+
+          <section class="ac-view ac-view-solo" data-view="credits" aria-labelledby="ac-h-credits" hidden>
+            ${viewHead("credits", "Credits", "")}
+            <section class="ac-card" id="credits" aria-labelledby="cr-title" hidden></section>
+            <div class="ac-empty" id="ac-empty-credits"><p class="muted">Loading…</p></div>
+          </section>
+
+          <section class="ac-view ac-view-solo" data-view="billing" aria-labelledby="ac-h-billing" hidden>
+            ${viewHead("billing", "Billing details", "Who we invoice. Plans, Nests and credits all use these details.")}
+            <div class="ac-card"><h3>Billing details</h3><div id="ac-billing"><p class="muted">Loading…</p></div></div>
+          </section>
+
+          <section class="ac-view ac-view-solo" data-view="invoices" aria-labelledby="ac-h-invoices" hidden>
+            ${viewHead("invoices", "Invoices", "Every web purchase, with a PDF to download.")}
+            <div class="ac-card"><h3>Invoices</h3><div id="ac-invoices"><p class="muted">Loading…</p></div></div>
+          </section>
+
+          <section class="ac-view ac-view-solo" data-view="publish" aria-labelledby="ac-h-publish" hidden>
+            ${viewHead("publish", "Publish", "")}
+            <div class="ac-card" id="ac-publisher" hidden></div>
+            <div class="ac-empty" id="ac-empty-publish"><p class="muted">Loading…</p></div>
+          </section>
+
+          <section class="ac-view ac-view-solo" data-view="security" aria-labelledby="ac-h-security" hidden>
+            ${viewHead("security", "Two-factor", "")}
+            <div class="ac-card">
+              <h3>Security</h3>
+              <p class="muted">Add two-factor authentication with an app like Google Authenticator, Authy, or 1Password.</p>
+              <button class="btn btn-primary" id="ac-2fa">Set up two-factor authentication</button>
+              <p class="ac-note ac-mt">Opens a single screen with a QR code to scan, then brings you back here.</p>
+            </div>
+          </section>
+
+          <section class="ac-view ac-view-solo" data-view="privacy" aria-labelledby="ac-h-privacy" hidden>
+            ${viewHead("privacy", "Account deletion", "")}
+            <div class="ac-card ac-danger"><h3>Account deletion</h3>
+              <p class="muted">Deletes your hosted sign-in account, mailboxes, keys, your copies of messages and attachments, and contacts. You lose your handles.</p>
+              <a class="btn btn-danger" href="#delete-account">Delete your account and associated data</a></div>
+          </section>
+
+          <section class="ac-view ac-view-solo" data-view="staff" aria-labelledby="ac-h-staff" hidden>
+            ${viewHead("staff", "Marketplace review", "")}
+            <div class="ac-card" id="ac-staff" hidden></div>
+            <div class="ac-empty" id="ac-empty-staff"><p class="muted">Staff tools appear here for Pigeonpost staff accounts.</p></div>
+          </section>
         </div>
-        <div id="ac-pb-out"></div>
-        <h3 class="ac-mt">Connector keys</h3>
-        <p class="muted">Each key lets an agent act as this account. Revoke one to cut off a device or agent.</p>
-        <div id="ac-pb-keys"><p class="muted">Loading…</p></div>
-      </div>
-      <div class="ac-card"><h3>Billing details</h3><div id="ac-billing"><p class="muted">Loading…</p></div></div>
-      <div class="ac-card" id="ac-cloud"><h3>Pigeonpost Cloud plan</h3><div id="ac-cloud-body"><p class="muted">Loading…</p></div></div>
-      <div class="ac-card">
-        <h3>Security</h3>
-        <p class="muted">Add two-factor authentication with an app like Google Authenticator, Authy, or 1Password.</p>
-        <button class="btn btn-secondary" id="ac-2fa">Set up two-factor authentication</button>
-        <p class="ac-note ac-mt">Opens a single screen with a QR code to scan, then brings you back here.</p>
-      </div>
-      <div class="ac-card"><h3>Invoices</h3><div id="ac-invoices"><p class="muted">Loading…</p></div></div>
-      <div class="ac-card"><h3>Account deletion</h3><a href="#delete-account">Delete your account and associated data</a></div>`;
+      </div>`;
     $("#ac-logout").onclick = logout;
     $("#ac-handles-refresh").onclick = () => { loadOverview(); loadPostbox(); };
     $("#ac-2fa").onclick = setupTotp;
     $("#ac-pb-create").onclick = pbCreateInbox;
     $("#ac-pb-key").onclick = pbRevealKey;
+    wireShell();
+    currentRoute = null;
+    const start = initialRoute();
+    showRoute(start);
+    if (start !== "overview" && !hashRoute()) setUrlHash(start, true);
     wireSearch(true);
     loadOverview();
     loadPostbox();
     loadKeys();
     mountProducts();
+  }
+
+  let documentWired = false;
+  function wireShell() {
+    $("#ac-nav-toggle").onclick = () => ($("#ac-app").classList.contains("ac-nav-open") ? closeDrawer() : openDrawer());
+    $("#ac-nav-close").onclick = closeDrawer;
+    $("#ac-scrim").onclick = closeDrawer;
+    // A click on the current section's link fires no hashchange; it still closes the drawer.
+    $("#ac-side").addEventListener("click", (e) => { if (e.target.closest && e.target.closest("a")) closeDrawer(); });
+    const btn = $("#ac-user-btn");
+    const menu = $("#ac-user-menu");
+    const setMenu = (open) => { menu.hidden = !open; btn.setAttribute("aria-expanded", String(open)); };
+    btn.onclick = (e) => { e.stopPropagation(); setMenu(menu.hidden); };
+    menu.addEventListener("click", (e) => { if (e.target.closest && e.target.closest("a")) setMenu(false); });
+    if (!documentWired) {
+      // Once per page, not per render: these read whichever shell is on the page now.
+      documentWired = true;
+      document.addEventListener("click", (e) => {
+        const m = $("#ac-user-menu"), b = $("#ac-user-btn");
+        if (m && !m.hidden && !m.contains(e.target) && !(b && b.contains(e.target))) { m.hidden = true; b.setAttribute("aria-expanded", "false"); }
+      });
+      document.addEventListener("keydown", (e) => {
+        if (e.key !== "Escape") return;
+        const m = $("#ac-user-menu"), b = $("#ac-user-btn");
+        if (m && !m.hidden) { m.hidden = true; b.setAttribute("aria-expanded", "false"); b.focus(); }
+        const app = $("#ac-app");
+        if (app && app.classList.contains("ac-nav-open")) { closeDrawer(); $("#ac-nav-toggle").focus(); }
+      });
+    }
+    // A card that unhides itself (credits and the publisher console with the marketplace feature,
+    // the staff dashboard for staff) brings its sidebar entry with it.
+    if (window.MutationObserver) {
+      const watch = new MutationObserver(syncNav);
+      for (const id of ["#credits", "#ac-publisher", "#ac-staff"]) {
+        const node = $(id); if (node) watch.observe(node, { attributes: true, attributeFilter: ["hidden"] });
+      }
+    }
+    syncNav();
+  }
+
+  // What the marketplace feature decided, once /v1/capabilities has answered. Null until then.
+  let marketplaceOn = null;
+
+  function syncNav() {
+    const visible = (sel) => { const n = $(sel); return Boolean(n && !n.hidden); };
+    const show = (sel, on) => { const n = $(sel); if (n) n.hidden = !on; };
+    const creditsOn = visible("#credits");
+    show('#ac-side [data-route="credits"]', creditsOn || marketplaceOn === null);
+    show('#ac-side [data-route="publish"]', visible("#ac-publisher") || marketplaceOn === null);
+    show("#ac-nav-staff", visible("#ac-staff"));
+    show("#ac-dash-credits", creditsOn);
+    show("#ac-quick-credits", creditsOn);
+    if (!creditsOn) show("#ac-credit-chip", false);
+    const li = (sel) => { const a = $(sel); if (a && a.parentElement) a.parentElement.hidden = a.hidden; };
+    li('#ac-side [data-route="credits"]'); li('#ac-side [data-route="publish"]');
+    if (marketplaceOn === false) {
+      const empty = (sel, text) => { const n = $(sel); if (n) n.innerHTML = `<p class="muted">${esc(text)}</p>`; };
+      empty("#ac-empty-credits", "Credits pay for marketplace services. The marketplace isn't open on this account yet, so there is nothing to buy credit for.");
+      empty("#ac-empty-publish", "The publisher console opens with the marketplace. It isn't available on this account yet.");
+    }
+  }
+
+  // ---- overview dashboard -------------------------------------------------------------------
+
+  const dash = { handles: null, boxes: null, balance: undefined };
+  function renderDash() {
+    const set = (sel, text) => { const n = $(sel); if (n) n.textContent = text; };
+    if (overview) {
+      const plan = webPlan();
+      const sub = overview.subscription;
+      if (plan.capacity > 0) {
+        set("#ac-dash-plan", `${plan.capacity} name${plan.capacity === 1 ? "" : "s"}`);
+        set("#ac-dash-plan-s", `${plan.used} registered${plan.paid_through ? ` · paid through ${fmtDate(plan.paid_through)}` : ""}`);
+      } else {
+        set("#ac-dash-plan", "No plan");
+        set("#ac-dash-plan-s", sub ? statusText(sub.provider_status) : "Choose one to register names");
+      }
+      const callout = $("#ac-dash-billing"); if (callout) callout.hidden = overview.hasBilling;
+    }
+    if (dash.handles != null) {
+      set("#ac-dash-handles", String(dash.handles.total));
+      set("#ac-dash-handles-s", dash.handles.total ? `${dash.handles.active} active` : "Get your first one");
+    }
+    if (dash.boxes != null) {
+      set("#ac-dash-boxes", String(dash.boxes.total));
+      set("#ac-dash-boxes-s", dash.boxes.total ? `${dash.boxes.named} named` : "Connect an AI agent");
+    }
+    if (dash.balance !== undefined) {
+      const b = dash.balance;
+      const text = b ? money(Number(b.available_cents || 0) / 100, "USD") : "—";
+      set("#ac-dash-credit", text);
+      set("#ac-dash-credit-s", b && b.held_cents > 0 ? `${money(b.held_cents / 100, "USD")} reserved for runs` : "For marketplace services");
+      set("#ac-credit-chip-v", text);
+      const chip = $("#ac-credit-chip"); if (chip) chip.hidden = !b || !$("#credits") || $("#credits").hidden;
+      if (chip) chip.setAttribute("aria-label", `Credit balance ${text}`);
+    }
   }
 
   // ---- Products (Nests Phase B2) --------------------------------------------------------------
@@ -335,6 +752,7 @@
       if (Array.isArray(caps.features)) features = new Set(caps.features.map(String));
     } catch (_) { /* an older postbox: nothing new is on */ }
     const marketplace = features.has("marketplace") && window.PPMarketplace;
+    marketplaceOn = Boolean(marketplace);
     // A staff or publishing action the postbox refused for want of a recent strong sign-in: sign
     // in again with its acr_values/max_age, and come back to the same card.
     const stepUp = (challenge, section) => {
@@ -370,10 +788,12 @@
     });
     const back = SS.getItem("pp_mp_return");
     SS.removeItem("pp_mp_return");
-    // The Windows app links #nests (1.0.x); Linux and the web use #products.
-    const productsHash = ["#products", "#nests"].includes(window.location.hash);
-    const target = back === "publisher" ? $("#ac-publisher") : back === "staff" ? $("#ac-staff") : productsHash || back === "services" ? box : null;
-    if (target && target.scrollIntoView) target.scrollIntoView({ block: "start" });
+    // Back from a step-up sign-in: open the card that asked for it. The Products card has just
+    // drawn its tabs, so the current route's tab (`#nests`, `#services`, …) is pressed again.
+    if (MP_RETURN_ROUTE[back || ""] && !hashRoute()) go(MP_RETURN_ROUTE[back], true);
+    const spec = currentRoute && ROUTES[currentRoute];
+    if (spec && spec.tab) selectProductTab(spec.tab);
+    syncNav();
   }
 
   // ---- credits (credits v1) --------------------------------------------------------------------
@@ -399,10 +819,11 @@
       },
       navigate: (url) => { window.location.href = url; },
       preferredCurrency: defaultCurrency(),
+      // The top bar's chip and the overview tile show the same balance the card loads.
+      onBalance: (balance) => { dash.balance = balance; renderDash(); },
     });
-    if ((window.location.hash === "#credits" || new URLSearchParams(window.location.search).has("credits")) && box.scrollIntoView) {
-      box.scrollIntoView({ block: "start" });
-    }
+    // `?credits=<intent>` is iyzico's return; initialRoute already opened the Credits section.
+    syncNav();
   }
   // A run elsewhere on the page spent or freed credit: show the new balance.
   window.addEventListener("pp-credits-changed", () => { if (credits) credits.reload(); });
@@ -526,6 +947,8 @@
       // The handle an account already holds decides what to suggest for the next mailbox: agents
       // hang under the person, and which segment is the person depends on the shape of the name.
       pbNamed = identities.filter((i) => i.handle).map((i) => i.handle);
+      dash.boxes = { total: identities.length, named: pbNamed.length };
+      renderDash();
       box.innerHTML = (identities.length
         ? identities.map((i) => `<div class="ac-row">
             <span class="mono">${esc(i.handle || i.address)}</span>
@@ -865,9 +1288,12 @@
     }
   }
 
-  // Scroll a card into view and put the cursor on the field/button that needs attention.
+  // Open the section holding a card, scroll the card into view and put the cursor on the
+  // field/button that needs attention.
   function focusStep(cardSelector, targetSelector) {
     const card = $(cardSelector);
+    const view = card && card.closest && card.closest(".ac-view");
+    if (view && view.hidden) go(routeForView(view.getAttribute("data-view")));
     if (card && card.scrollIntoView) card.scrollIntoView({ behavior: "smooth", block: "center" });
     const target = card && $(targetSelector, card);
     if (target) {
@@ -929,7 +1355,7 @@
     if (notice) { sessionStorage.removeItem("pp_checkout_notice"); toast(notice); }
     if (!intent && !card) return;
     params.delete("checkout"); params.delete("card");
-    history.replaceState({}, "", window.location.pathname + (params.size ? "?" + params : ""));
+    history.replaceState({}, "", window.location.pathname + (params.size ? "?" + params : "") + window.location.hash);
     if (card) { toast("Card update submitted. It may take a minute to show."); return; }
     if (!/^[a-f0-9]{32}$/.test(intent) || !getToken()) return;
     TS.removeItem("pp_cloud_checkout");
@@ -1095,6 +1521,10 @@
     renderCloud(data.cloud);
     renderBilling(profiles);
     renderInvoices(data.invoices || []);
+    const named = (data.handles || []).filter((h) => String(h.namespace || "").replace(/^\/+/, ""));
+    dash.handles = { total: named.length,
+      active: named.filter((h) => h.active ?? (!h.expires_at || h.expires_at * 1000 > Date.now())).length };
+    renderDash();
     const buy = $("#ac-buy"); if (buy) buy.textContent = hasRoom() ? "Register it" : "Get it";
     resumePending();
   }
@@ -1130,7 +1560,7 @@
           : h.source === "google" ? "https://play.google.com/store/account/subscriptions?package=dev.pigeonpost.inbox" : "",
         source });
     }
-    if (!rows.length) { el.innerHTML = `<p class="muted">No handles yet. Search above to claim one.</p>`; return; }
+    if (!rows.length) { el.innerHTML = `<p class="muted">No handles yet. <a href="#get-handle">Get a handle</a> to claim your first.</p>`; return; }
     el.innerHTML = rows.map((r) => `
       <div class="ac-row">
         <div><span class="k">/${esc(r.name)}</span>
@@ -1278,5 +1708,10 @@
     render();
     if (window.location.hash !== "#delete-account" && await confirmCheckoutIfReturning() && getToken()) loadOverview();
   });
-  window.addEventListener("hashchange", render);
+  // Inside the shell a hash only changes the section. Entering or leaving the standalone
+  // deletion page (`#delete-account`, linked from the stores) redraws the whole page.
+  window.addEventListener("hashchange", () => {
+    if (window.location.hash === "#delete-account" || mode === "deletion") { render(); return; }
+    if (mode === "member" && $("#ac-app")) showRoute(hashRoute() || "overview", { focus: true });
+  });
 })();
