@@ -91,7 +91,8 @@ def load_manifest(path: str = MANIFEST_PATH):
         image_path = manifest_path.parent / image.get("path", "")
         if APPLY:
             # Uploads come only from the exact bytes committed at the pinned source commit.
-            image_path, content = _git_tracked_bytes(image_path)
+            # (The helper returns the repository root, not the file: keep image_path.)
+            _, content = _git_tracked_bytes(image_path)
         else:
             content = image_path.read_bytes()
         if hashlib.sha256(content).hexdigest() != image.get("sha256"):

@@ -6,6 +6,7 @@ import importlib.util
 import json
 import os
 import struct
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -112,6 +113,21 @@ class TestLoadManifest(unittest.TestCase):
         achievements, leaderboards = GC.load_manifest(path)
         self.assertEqual(len(achievements), 1)
         self.assertEqual(len(leaderboards), 1)
+        self.assertEqual(achievements[0]["_image"][0], "a.png")
+
+    def test_apply_reads_committed_image_and_keeps_its_file_name(self):
+        path = write_manifest(self.tmpdir.name)
+        root = self.tmpdir.name
+        identity = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_COMMITTER_NAME": "t",
+                    "GIT_AUTHOR_EMAIL": "t@example.invalid", "GIT_COMMITTER_EMAIL": "t@example.invalid"}
+        for args in (["init", "-q"], ["add", "."], ["commit", "-qm", "x"]):
+            subprocess.run(["git", "-C", root, *args], check=True, env=identity)
+        GC.APPLY = True
+        try:
+            achievements, _ = GC.load_manifest(path)
+        finally:
+            GC.APPLY = False
+        self.assertEqual(achievements[0]["_image"][0], "a.png")
 
     def test_wrong_bundle_rejected(self):
         path = write_manifest(self.tmpdir.name, bundleId="com.wrong.bundle")
