@@ -16,14 +16,19 @@
 <title>Admin — Pigeonpost for teams</title>
 <meta name="robots" content="noindex">
 </head>
-<body>
+<body class="console">
 <header class="top">
+  <button type="button" class="icon-btn nav-toggle" id="nav-toggle" aria-controls="nav" aria-expanded="false" aria-label="Open navigation" hidden><svg class="ico" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
   <a class="brand" href="/"><img class="logo-light" src="/logo.png" alt="Pigeonpost" width="640" height="213"><img class="logo-dark" src="/logo_white.png" alt="" width="640" height="213"><span class="brand-tag">for teams</span></a>
+  <button type="button" class="theme-toggle" data-theme-toggle aria-label="Theme: System"></button>
+  <span class="top-sep" id="top-sep" aria-hidden="true" hidden></span>
+  <span class="top-title" id="top-title" aria-hidden="true"></span>
   <div class="top-spacer"></div>
   <div class="account" id="ppe-account"></div>
 </header>
 <div class="shell" id="shell" hidden>
   <nav class="nav" id="nav" aria-label="Organization"></nav>
+  <div class="nav-scrim" id="nav-scrim" hidden></div>
   <main class="main"><div class="page" id="content" aria-live="polite"></div></main>
 </div>
 <main class="page narrow" id="gate"><p class="muted">Loading…</p></main>

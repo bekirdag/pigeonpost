@@ -59,7 +59,7 @@ test("People shows seats, one table and a row per person", async (t) => {
   const primary = window.document.querySelectorAll("#content .page-head .btn-primary");
   assert.equal(primary.length, 1, "one primary action");
   const nav = [...window.document.querySelectorAll("#nav a")].map((a) => a.textContent);
-  assert.deepEqual(nav.slice(0, 7), ["People", "Agents", "Rooms", "Rules", "Billing", "Security", "Organization"]);
+  assert.deepEqual(nav.slice(0, 7), ["People", "Agents", "Rooms", "Rules", "Security", "Billing", "Organization"]);
 });
 
 test("a people admin cannot grant roles and does not see billing or security", async (t) => {

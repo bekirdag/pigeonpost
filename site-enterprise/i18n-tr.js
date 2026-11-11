@@ -727,4 +727,18 @@ window.PPE_STRINGS_TR = {
   "Still confirming": "Onay sürüyor",
   "Your bank is taking longer than usual. We'll finish setting up your organization as soon as the payment is confirmed — you don't need to pay again.": "Bankanızın yanıtı normalden uzun sürüyor. Ödeme onaylanır onaylanmaz kuruluşunuzun kurulumunu tamamlayacağız — yeniden ödeme yapmanız gerekmez.",
   "Sign-in didn't finish": "Giriş tamamlanmadı",
+
+  // ---- the console shell and the appearance switch (theme.js) ----------------------------------
+  "Theme: {1}": "Tema: {1}",
+  "Theme: {1}. Switch to {2}.": "Tema: {1}. Şuna geç: {2}.",
+  "System": "Sistem",
+  "Light": "Açık",
+  "Dark": "Koyu",
+  "Workspace": "Çalışma alanı",
+  "Policy": "İlkeler",
+  "Developers": "Geliştiriciler",
+  "Menu": "Menü",
+  "Open navigation": "Gezinmeyi aç",
+  "Close navigation": "Gezinmeyi kapat",
+  "Packages": "Paketler",
 };

@@ -129,7 +129,11 @@ test("a deletion response cannot overwrite a subsequent sign-out", async t => {
   assert.equal($("#ac-deletion-receipt"), null);
 });
 
-async function checkoutPage(t, { url = "https://pigeonpost.dev/account", plan = { capacity: 0, used: 0, names: [] }, profiles = [{ id: "11111111-1111-4111-8111-111111111111" }],
+// What an invoice needs (account.js profileComplete): a name, an address, a city and a country.
+const COMPLETE_PROFILE = { id: "11111111-1111-4111-8111-111111111111", legal_name: "Example Person",
+  address: { line1: "1 Example Street", city: "Istanbul", postal_code: "34000", country: "TR" } };
+
+async function checkoutPage(t, { url = "https://pigeonpost.dev/account", plan = { capacity: 0, used: 0, names: [] }, profiles = [COMPLETE_PROFILE],
   subscriptions = [], recovery = false, statuses = ["pending", "active"], openCurrencies } = {}) {
   const dom = new JSDOM('<main id="account-root"></main>', { url, runScripts: "outside-only", virtualConsole: new VirtualConsole() });
   t.after(() => dom.window.close());
@@ -145,6 +149,7 @@ async function checkoutPage(t, { url = "https://pigeonpost.dev/account", plan = 
     const response = (body, status = 200) => ({ ok: status < 400, status, json: async () => body });
     if (path === "/api/v1/me/overview") return response({ handles: [], invoices: [], billingProfiles: profiles,
       cloud: { subscriptions, plan: { web_plan: plan } }, openCurrencies });
+    if (path === "/api/v1/billing/profiles" && init.method === "POST") { profiles = [{ ...COMPLETE_PROFILE, ...JSON.parse(init.body) }]; return response(profiles[0], 201); }
     if (path.endsWith("/availability")) return response({ available: !recovery || init.headers?.authorization === "Bearer member-token", known: true });
     if (path === "/api/v1/names") return response({ namespace: "/example", capacity: plan.capacity, used: plan.used + 1 });
     if (path.startsWith("/api/v1/cloud/checkout/")) return response({ status: statuses.length > 1 ? statuses.shift() : statuses[0] });
@@ -229,14 +234,81 @@ test("EUR is offered once the bridge opens it, priced from the catalog copy", as
   assert.equal(JSON.parse(page.window.sessionStorage.getItem("pp_cloud_checkout")).plan_code, "cloud-3names-yearly-eur");
 });
 
-test("billing details come before a plan", async (t) => {
-  const page = await checkoutPage(t, { profiles: [] });
-  await page.buy();
-  assert.equal(page.window.document.querySelector("#ac-plan-names"), null);
-  assert.match(page.window.document.querySelector("#ac-toast").textContent, /billing details/);
-  // The purchase walks the member from Get a handle to the Billing details section.
-  assert.equal(page.window.document.querySelector("#ac-billing").closest(".ac-view").hidden, false);
+test("billing details come before a plan: Get it is passive and the banner leads to Billing details", async (t) => {
+  const page = await checkoutPage(t, { url: "https://pigeonpost.dev/account#get-handle", profiles: [] });
+  const doc = page.window.document;
+  const input = doc.querySelector("#ac-handle");
+  input.value = "example"; input.dispatchEvent(new page.window.Event("input"));
+  for (let i = 0; i < 20; i++) await tick();
+  doc.querySelector("#ac-buy").click();
+  for (let i = 0; i < 5; i++) await tick();
+  assert.equal(doc.querySelector("#ac-plan-names"), null, "a passive button starts nothing");
+  page.window.location.hash = doc.querySelector("#ac-billing-gate-go").getAttribute("href");
+  page.window.dispatchEvent(new page.window.HashChangeEvent("hashchange"));
+  for (let i = 0; i < 5; i++) await tick();
+  assert.equal(doc.querySelector("#ac-billing").closest(".ac-view").hidden, false);
   assert.equal(page.window.location.hash, "#billing");
+});
+
+test("saving complete billing details lifts the gate without a reload", async (t) => {
+  const page = await checkoutPage(t, { url: "https://pigeonpost.dev/account#get-handle", profiles: [] });
+  const doc = page.window.document;
+  const input = doc.querySelector("#ac-handle");
+  input.value = "example"; input.dispatchEvent(new page.window.Event("input"));
+  for (let i = 0; i < 20; i++) await tick();
+  assert.equal(doc.querySelector("#ac-buy").disabled, true);
+  const form = doc.querySelector("#ac-billing form");
+  const fields = { legal_name: "Example Person", billing_email: "billing@example.test", line1: "1 Example Street", city: "Istanbul",
+    state: "Kadikoy", postal_code: "34000", country: "TR", identity_number: "10000000000" };
+  for (const [k, v] of Object.entries(fields)) form.elements.namedItem(k).value = v;
+  await form.onsubmit({ preventDefault() {} });
+  for (let i = 0; i < 20; i++) await tick();
+  assert.equal(page.calls.filter((c) => c.path === "/api/v1/billing/profiles" && c.method === "POST").length, 1);
+  const buy = doc.querySelector("#ac-buy");
+  assert.equal(buy.disabled, false, "the name was free, so Get it comes back");
+  assert.equal(buy.hasAttribute("aria-disabled"), false);
+  assert.equal(buy.hasAttribute("title"), false);
+  assert.equal(doc.querySelector("#ac-billing-gate").hidden, true);
+  assert.equal(doc.querySelector("#ac-app").classList.contains("ac-needs-billing"), false);
+});
+
+test("without billing details the selling sections show the gate and their buy buttons are passive", async (t) => {
+  const page = await checkoutPage(t, { url: "https://pigeonpost.dev/account#get-handle", profiles: [] });
+  const doc = page.window.document;
+  const gate = doc.querySelector("#ac-billing-gate");
+  assert.equal(gate.hidden, false, "the banner shows on Get a handle");
+  assert.match(gate.textContent, /Add billing details first/);
+  assert.equal(doc.querySelector("#ac-billing-gate-go").getAttribute("href"), "#billing");
+  const input = doc.querySelector("#ac-handle");
+  input.value = "example"; input.dispatchEvent(new page.window.Event("input"));
+  for (let i = 0; i < 20; i++) await tick();
+  const buy = doc.querySelector("#ac-buy");
+  assert.match(doc.querySelector("#ac-handle-status").textContent, /available/, "the name check still runs");
+  assert.equal(buy.disabled, true, "the buy button stays passive after the name check");
+  assert.equal(buy.getAttribute("aria-disabled"), "true");
+  assert.equal(buy.getAttribute("title"), "Add billing details first");
+  page.window.location.hash = "#plan"; page.window.dispatchEvent(new page.window.HashChangeEvent("hashchange"));
+  for (let i = 0; i < 5; i++) await tick();
+  assert.equal(gate.hidden, false, "and on Cloud plan");
+  assert.equal(doc.querySelector("#ac-cloud-start").disabled, true);
+  page.window.location.hash = "#security"; page.window.dispatchEvent(new page.window.HashChangeEvent("hashchange"));
+  for (let i = 0; i < 5; i++) await tick();
+  assert.equal(gate.hidden, true, "sections that sell nothing have no banner");
+});
+
+test("an incomplete billing profile counts as missing", async (t) => {
+  const page = await checkoutPage(t, { url: "https://pigeonpost.dev/account#plan", profiles: [{ id: "11111111-1111-4111-8111-111111111111", legal_name: "Example Person", address: { line1: "", city: "Istanbul", country: "TR" } }] });
+  const doc = page.window.document;
+  assert.equal(doc.querySelector("#ac-billing-gate").hidden, false);
+  assert.match(doc.querySelector("#ac-billing-gate-why").textContent, /missing a name, address, city or country/);
+  assert.equal(doc.querySelector("#ac-billing-gate-go").textContent, "Complete billing details");
+  assert.equal(doc.querySelector("#ac-cloud-start").disabled, true);
+});
+
+test("a plan with room still registers names without billing details", async (t) => {
+  const page = await checkoutPage(t, { profiles: [], plan: { capacity: 3, used: 1, names: [] } });
+  await page.buy();
+  assert.equal(page.calls.filter((c) => c.path === "/api/v1/names").length, 1);
 });
 
 test("a full plan points to a plan change instead of a second subscription", async (t) => {
@@ -668,4 +740,57 @@ test("logging out during renewal cannot restore the old session", async (t) => {
     assert.equal(storage.getItem("pp_refresh"), null);
   }
   assert.ok(window.document.querySelector("#ac-signin"));
+});
+
+// ---- the appearance switch (site/theme.js) ---------------------------------------------------
+
+const siteFile = (name) => readFileSync(new URL(`../../site/${name}`, import.meta.url), "utf8");
+
+test("the account shell has the theme switch beside the logo; it cycles, persists and steers the logo", async (t) => {
+  const dom = new JSDOM('<html><head><meta name="color-scheme" content="light dark"></head><body><main id="account-root"></main></body></html>',
+    { url: "https://pigeonpost.dev/account", runScripts: "outside-only", virtualConsole: new VirtualConsole() });
+  t.after(() => dom.window.close());
+  const { window } = dom;
+  window.localStorage.setItem("ppi_theme", "dark");
+  window.eval(siteFile("theme.js"));
+  const root = window.document.documentElement;
+  assert.equal(root.getAttribute("data-theme"), "dark", "a stored choice applies before the page script runs");
+  window.eval(config);
+  window.sessionStorage.setItem("pp_session", "member-token");
+  window.fetch = async () => ({ ok: true, status: 200, json: async () => ({ handles: [], invoices: [], billingProfiles: [], identities: [], keys: [] }) });
+  window.eval(source);
+  for (let i = 0; i < 10; i++) await tick();
+  const toggle = window.document.querySelector(".ac-top [data-theme-toggle]");
+  assert.ok(toggle, "the switch is in the top bar");
+  assert.equal(toggle.previousElementSibling.className, "ac-brand", "right after the logo");
+  assert.equal(toggle.getAttribute("aria-label"), "Theme: Dark");
+  const source_ = window.document.querySelector(".ac-top picture source");
+  assert.equal(source_.getAttribute("media"), "all", "the white logo shows when Dark is forced");
+  toggle.click();
+  assert.equal(root.hasAttribute("data-theme"), false);
+  assert.equal(window.localStorage.getItem("ppi_theme"), null, "System is the absence of a choice");
+  assert.equal(source_.getAttribute("media"), "(prefers-color-scheme: dark)");
+  assert.equal(toggle.getAttribute("aria-label"), "Theme: System");
+  toggle.click();
+  assert.equal(root.getAttribute("data-theme"), "light");
+  assert.equal(window.localStorage.getItem("ppi_theme"), "light");
+  assert.equal(source_.getAttribute("media"), "not all");
+  assert.equal(window.document.querySelector('meta[name="color-scheme"]').getAttribute("content"), "light");
+});
+
+test("the signed-out account page loads theme.js before its styles and has the switch", () => {
+  const html = siteFile("account.html");
+  assert.ok(html.indexOf("/theme.js?v=") < html.indexOf('rel="stylesheet"'));
+  assert.match(html, /<\/picture><\/a>\s*<button type="button" class="theme-toggle" data-theme-toggle/);
+});
+
+test("site stylesheets honour data-theme with the same dark values as the media query", () => {
+  const norm = (block) => block.split("\n").map((l) => l.trim()).filter(Boolean).join("\n");
+  for (const name of ["style.css", "account.css"]) {
+    const css = siteFile(name);
+    const media = /@media \(prefers-color-scheme: dark\) \{\n  :root:not\(\[data-theme="light"\]\) \{([^}]*)\}/.exec(css);
+    const forced = /:root\[data-theme="dark"\] \{([^}]*)\}/.exec(css);
+    assert.ok(media && forced, name);
+    assert.equal(norm(forced[1]), norm(media[1]), `${name}: the two dark blocks differ`);
+  }
 });

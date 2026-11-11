@@ -12,16 +12,17 @@
 
   const ADMIN = ["owner", "admin", "people_admin", "agent_admin", "billing_admin"];
   const ROLE_NAMES = { owner: "Owner", admin: "Admin", people_admin: "People admin", agent_admin: "Agent admin", billing_admin: "Billing admin" };
+  // The sidebar groups pages in this order; `group` names the heading each one sits under.
   const PAGES = [
-    { key: "people", title: "People", roles: ["owner", "admin", "people_admin"] },
-    { key: "agents", title: "Agents", roles: ["owner", "admin", "agent_admin"] },
-    { key: "rooms", title: "Rooms", roles: ADMIN },
-    { key: "rules", title: "Rules", roles: ["owner", "admin", "people_admin", "agent_admin"] },
-    { key: "billing", title: "Billing", roles: ["owner", "admin", "billing_admin"] },
-    { key: "security", title: "Security", roles: ["owner", "admin"] },
-    { key: "api-keys", title: "API keys", roles: ["owner", "admin"], feature: "org_api" },
-    { key: "webhooks", title: "Webhooks", roles: ["owner", "admin"], feature: "org_api" },
-    { key: "organization", title: "Organization", roles: ["owner", "admin"] },
+    { key: "people", title: "People", group: "Workspace", roles: ["owner", "admin", "people_admin"] },
+    { key: "agents", title: "Agents", group: "Workspace", roles: ["owner", "admin", "agent_admin"] },
+    { key: "rooms", title: "Rooms", group: "Workspace", roles: ADMIN },
+    { key: "rules", title: "Rules", group: "Policy", roles: ["owner", "admin", "people_admin", "agent_admin"] },
+    { key: "security", title: "Security", group: "Policy", roles: ["owner", "admin"] },
+    { key: "api-keys", title: "API keys", group: "Developers", roles: ["owner", "admin"], feature: "org_api" },
+    { key: "webhooks", title: "Webhooks", group: "Developers", roles: ["owner", "admin"], feature: "org_api" },
+    { key: "billing", title: "Billing", group: "Company", roles: ["owner", "admin", "billing_admin"] },
+    { key: "organization", title: "Organization", group: "Company", roles: ["owner", "admin"] },
   ];
   const CAPABILITIES = [
     ["enroll", "Log it in on a machine"],
@@ -75,28 +76,73 @@
 
   function gate(...nodes) {
     document.getElementById("shell").hidden = true;
+    chrome(false);
     const g = document.getElementById("gate");
     g.hidden = false;
     g.replaceChildren(el("div", { class: "card center-card" }, ...nodes));
   }
 
+  /// The top bar's shell parts: the drawer button and the section title show with the shell only.
+  function chrome(on) {
+    for (const id of ["nav-toggle", "top-sep"]) { const n = document.getElementById(id); if (n) n.hidden = !on; }
+    const title = document.getElementById("top-title");
+    if (title && !on) title.textContent = "";
+    if (!on) closeDrawer();
+  }
+
+  // ---- the drawer (below 900px the sidebar slides in over the page) ------------------------------
+  function openDrawer() {
+    document.body.classList.add("nav-open");
+    const s = document.getElementById("nav-scrim"); if (s) s.hidden = false;
+    const t = document.getElementById("nav-toggle"); if (t) t.setAttribute("aria-expanded", "true");
+    const first = document.querySelector("#nav .nav-link[aria-current], #nav .nav-link");
+    if (first) first.focus();
+  }
+  function closeDrawer() {
+    if (!document.body.classList.contains("nav-open")) return;
+    document.body.classList.remove("nav-open");
+    const s = document.getElementById("nav-scrim"); if (s) s.hidden = true;
+    const t = document.getElementById("nav-toggle"); if (t) t.setAttribute("aria-expanded", "false");
+  }
+  function wireDrawer() {
+    const t = document.getElementById("nav-toggle");
+    if (!t || t.dataset.wired) return;
+    t.dataset.wired = "1";
+    t.addEventListener("click", () => (document.body.classList.contains("nav-open") ? closeDrawer() : openDrawer()));
+    document.getElementById("nav-scrim").addEventListener("click", closeDrawer);
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && document.body.classList.contains("nav-open")) { closeDrawer(); t.focus(); }
+    });
+  }
+
   function renderNav() {
     const nav = document.getElementById("nav");
     nav.replaceChildren();
+    nav.append(el("div", { class: "nav-head" }, el("span", {}, "Menu"),
+      el("button", { class: "icon-btn", type: "button", "aria-label": "Close navigation", onclick: closeDrawer }, PPE.icon("close"))));
     const admins = app.orgs.filter((o) => (o.my_roles || []).some((r) => ADMIN.includes(r)));
     if (admins.length > 1) {
       const pick = el("select", { "aria-label": "Organization" }, admins.map((o) => el("option", { value: o.id, selected: o.id === app.org.id }, o.name)));
       pick.addEventListener("change", () => { PPE.store.set("ppe_org", pick.value); load(pick.value).then(() => go(app.page, true)); });
       nav.append(pick);
     }
-    nav.append(el("div", { class: "org-name", translate: "no" }, app.org.name), el("div", { class: "org-ns", translate: "no" }, `/${app.org.namespace}`));
+    nav.append(el("div", { class: "nav-org", translate: "no" },
+      el("span", { class: "org-mark", "aria-hidden": "true" }, (app.org.name || "?").trim().charAt(0).toUpperCase() || "?"),
+      el("div", {}, el("div", { class: "org-name" }, app.org.name), el("div", { class: "org-ns" }, `/${app.org.namespace}`))));
+    const groups = [];
     for (const p of PAGES) {
       if (!app.can(p.key)) continue;
-      const a = el("a", { href: `/app/${p.key}`, "aria-current": p.key === app.page ? "page" : null }, p.title);
-      a.addEventListener("click", (e) => { e.preventDefault(); go(p.key); });
-      nav.append(a);
+      let g = groups.find((x) => x.name === p.group);
+      if (!g) { g = { name: p.group, items: [] }; groups.push(g); }
+      const a = el("a", { class: "nav-link", href: `/app/${p.key}`, "data-page": p.key, "aria-current": p.key === app.page ? "page" : null }, PPE.icon(p.key), el("span", {}, p.title));
+      a.addEventListener("click", (e) => { e.preventDefault(); closeDrawer(); go(p.key); });
+      g.items.push(el("li", {}, a));
     }
-    nav.append(el("a", { href: cfg.inbox || "https://inbox.pigeonpost.dev" }, "Open inbox ↗"));
+    for (const g of groups) {
+      const id = `nav-g-${g.name.toLowerCase()}`;
+      nav.append(el("div", { class: "nav-group" }, el("p", { class: "nav-label", id }, g.name), el("ul", { "aria-labelledby": id }, g.items)));
+    }
+    nav.append(el("div", { class: "nav-foot" }, el("a", { href: cfg.inbox || "https://inbox.pigeonpost.dev" }, "Open inbox ↗"), el("a", { href: "/" }, "Packages")));
   }
 
   function banner() {
@@ -142,7 +188,10 @@
     const url = `/app/${page}`;
     if (window.location.pathname !== url) (replace ? window.history.replaceState : window.history.pushState).call(window.history, {}, "", url);
     renderNav();
-    document.title = `${PAGES.find((p) => p.key === page).title} — ${app.org.name}`;
+    chrome(true);
+    const title = PAGES.find((p) => p.key === page).title;
+    document.getElementById("top-title").textContent = title;
+    document.title = `${title} — ${app.org.name}`;
     content(el("p", { class: "muted" }, "Loading…"));
     try {
       const node = await PAGE[page]();
@@ -1259,6 +1308,7 @@
       await load(pick.id);
       document.getElementById("gate").hidden = true;
       document.getElementById("shell").hidden = false;
+      wireDrawer();
       const page = (window.location.pathname.split("/")[2] || "").replace(/[^a-z-]/g, "");
       await go(PAGE[page] ? page : "people", true);
       await PPE.runResume().catch(PPE.fail);

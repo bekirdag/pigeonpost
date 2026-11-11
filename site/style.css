@@ -45,7 +45,7 @@
    their spacing and the navy lifts to a blue that survives on a dark ground. The values are the
    phone's, from `apps/ios/Pigeonpost/Design/Theme.swift`. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --navy: #4a73d6;
     --navy-hover: #5f85e0;
     --blue: #6c9bff;
@@ -75,6 +75,37 @@
     --bad: #fda4af;
     --toast-fill: #2e333b;
   }
+}
+/* The appearance switch (theme.js) saying Dark: the same values; keep the two blocks identical. */
+:root[data-theme="dark"] {
+    --navy: #4a73d6;
+    --navy-hover: #5f85e0;
+    --blue: #6c9bff;
+    --green: #34d06a;
+    --ink: #f4f6f9;
+    --body: #c6ccd6;
+    --muted: #949ba6;
+    --rule: #2c313a;
+    --wash: #16191f;
+    --ground: #0f1216;
+    --edge: #454c58;
+    --card-edge-hover: #3a404b;
+    --shadow-card: rgba(0, 0, 0, .5);
+
+    --t-flag: #b490f5;
+    --t-str: #4ade80;
+    --t-path: #e9a23b;
+    --t-pkg: #2dd4bf;
+    --free-fill: #16281c;
+    --free-text: #4ade80;
+    --paid-fill: #1d2140;
+    --paid-text: #a5b4fc;
+
+    --warn-text: #e9a23b;
+    --warn-fill: #2a2318;
+    --warn-edge: #4a3a1e;
+    --bad: #fda4af;
+    --toast-fill: #2e333b;
 }
 
 * { box-sizing: border-box; }
