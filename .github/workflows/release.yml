@@ -141,7 +141,7 @@ jobs:
           # Native runners make `--version` a real execution smoke test for every released asset.
           # Linux assets are built as static musl binaries inside one digest-pinned multi-arch
           # builder, so npm does not accidentally inherit the Ubuntu runner's glibc floor.
-          - { os: macos-14, target: aarch64-apple-darwin, asset: pigeonpost-darwin-arm64, binary: pigeonpost, compliance: true, compliance_asset: ppcompliance-darwin-arm64, compliance_binary: ppcompliance }
+          - { os: macos-15, target: aarch64-apple-darwin, asset: pigeonpost-darwin-arm64, binary: pigeonpost, compliance: true, compliance_asset: ppcompliance-darwin-arm64, compliance_binary: ppcompliance }
           - { os: macos-15-intel, target: x86_64-apple-darwin, asset: pigeonpost-darwin-x64, binary: pigeonpost, compliance: true, compliance_asset: ppcompliance-darwin-x64, compliance_binary: ppcompliance }
           - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl, asset: pigeonpost-linux-arm64, binary: pigeonpost, compliance: true, compliance_asset: ppcompliance-linux-arm64, compliance_binary: ppcompliance, static_linux: true }
           - { os: ubuntu-24.04, target: x86_64-unknown-linux-musl, asset: pigeonpost-linux-x64, binary: pigeonpost, compliance: true, compliance_asset: ppcompliance-linux-x64, compliance_binary: ppcompliance, static_linux: true }
