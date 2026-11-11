@@ -31,6 +31,7 @@ mod lifecycle;
 mod limits;
 mod listing;
 pub(crate) mod marketplace;
+pub(crate) mod marketplace_hosted;
 pub(crate) mod marketplace_pay;
 pub(crate) mod meetings;
 mod msgactions;
@@ -1021,6 +1022,9 @@ impl Store {
         // Marketplace M2b: visibility grants, source connections, hosted test Nests.
         conn.execute_batch(marketplace::SCHEMA_M2B)?;
         conn.execute_batch(marketplace_pay::SCHEMA)?;
+        // Publisher-hosted listings and pay-per-job: guarded column adds, the per_job term, two
+        // new job tables (`store::marketplace_hosted`).
+        marketplace_hosted::migrate(&conn)?;
         for stmt in MIGRATIONS
             .iter()
             .chain(filtering::MIGRATIONS)
@@ -1328,7 +1332,8 @@ impl Store {
             for sha in orphaned {
                 let referred: Option<i64> = c
                     .query_row(
-                        "SELECT 1 FROM attachments WHERE sha256 = ?1 LIMIT 1",
+                        "SELECT 1 FROM attachments WHERE sha256 = ?1
+                         UNION ALL SELECT 1 FROM nest_hosted_job_files WHERE sha256 = ?1 LIMIT 1",
                         params![sha],
                         |r| r.get(0),
                     )
@@ -1648,8 +1653,10 @@ impl Store {
             // Only the ones nothing else claims. The same file may be in another mailbox.
             let mut orphaned = Vec::new();
             for sha in shas {
+                // A hosted marketplace job's result file keeps its blob too.
                 let still: i64 = tx.query_row(
-                    "SELECT COUNT(*) FROM attachments WHERE sha256 = ?1",
+                    "SELECT (SELECT COUNT(*) FROM attachments WHERE sha256 = ?1)
+                          + (SELECT COUNT(*) FROM nest_hosted_job_files WHERE sha256 = ?1)",
                     params![sha],
                     |r| r.get(0),
                 )?;
@@ -1726,7 +1733,8 @@ impl Store {
             let mut blobs = Vec::new();
             for sha in touched {
                 let still: i64 = tx.query_row(
-                    "SELECT COUNT(*) FROM attachments WHERE sha256 = ?1",
+                    "SELECT (SELECT COUNT(*) FROM attachments WHERE sha256 = ?1)
+                          + (SELECT COUNT(*) FROM nest_hosted_job_files WHERE sha256 = ?1)",
                     params![sha],
                     |r| r.get(0),
                 )?;

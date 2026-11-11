@@ -561,7 +561,8 @@ async fn read_listing(
                     .query_row(
                         "SELECT l.id, l.publisher_id, l.release_id, l.title, l.summary, l.visibility,
                                 l.status, p.display_name, p.owner_kind, l.description, l.address,
-                                l.published_at, r.version, r.manifest, l.price_currency, l.price_term
+                                l.published_at, r.version, r.manifest, l.price_currency, l.price_term,
+                                l.hosting, l.service_address
                            FROM nest_listings l JOIN publisher_profiles p ON p.id = l.publisher_id
                            JOIN nest_releases r ON r.id = l.release_id
                           WHERE l.id = ?1",
@@ -589,6 +590,10 @@ async fn read_listing(
                                     "description": r.get::<_, String>(9)?,
                                     "address": r.get::<_, Option<String>>(10)?,
                                     "published_at": r.get::<_, Option<i64>>(11)?.map(iso),
+                                    // `publisher`: the publisher runs it; Pigeonpost reviewed the
+                                    // publisher and the integration, not the code.
+                                    "hosting": r.get::<_, String>(16)?,
+                                    "service_address": r.get::<_, Option<String>>(17)?,
                                     "version": r.get::<_, String>(12)?,
                                     "config_schema": manifest.get("config_schema").cloned()
                                         .unwrap_or_else(pigeonpost_core::nest_package::empty_config_schema),
@@ -612,6 +617,10 @@ async fn read_listing(
                 let mut found = found;
                 if let Some(row) = found.as_mut() {
                     row.body["price"] = crate::marketplace_pay::price_json_in(c, &lid)?;
+                    // Credits v1: a publisher-hosted operation's per-job price, on each operation.
+                    if row.body["hosting"] == "publisher" {
+                        crate::marketplace_credits::price_operations_in(c, &lid, &mut row.body)?;
+                    }
                 }
                 Ok(found)
             })

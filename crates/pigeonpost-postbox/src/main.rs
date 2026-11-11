@@ -94,11 +94,17 @@ mod internal_api;
 mod limits;
 mod mail_layout;
 mod marketplace;
+mod marketplace_credits;
+#[cfg(test)]
+mod marketplace_credits_tests;
 mod marketplace_env;
 mod marketplace_grants;
 mod marketplace_hardening;
 #[cfg(test)]
 mod marketplace_hardening_tests;
+mod marketplace_hosted;
+#[cfg(test)]
+mod marketplace_hosted_tests;
 mod marketplace_listings;
 mod marketplace_m1;
 #[cfg(test)]
@@ -563,6 +569,8 @@ async fn serve(cfg: Config) {
     marketplace_test_nests::start_sweeper(state.clone());
     // Marketplace payments: retry offer mirrors, enforce licence deletion boundaries.
     marketplace_pay::start_sweeper(state.clone());
+    // Publisher-hosted jobs: dispatch to the publisher's service, expire, deliver results.
+    marketplace_hosted::start_worker(state.clone());
     start_internal_listener(&state).await;
     // Disappearing-message expiry and group maintenance (SDS §17.2, §4.3), every 30 s.
     ephemeral::start_worker(state.clone());
@@ -1096,6 +1104,8 @@ fn build_router(state: AppState) -> Router {
         .merge(marketplace_test_nests::router())
         // Marketplace payments (M3): prices, purchases and licences, behind the same flag.
         .merge(marketplace_pay::router())
+        // Publisher-hosted listings: integrations, hosted jobs and their results.
+        .merge(marketplace_hosted::router())
         // Phase 3B: calendar and scheduled meetings (SDS §14B.5, docs/calendar.md).
         .route(
             "/v1/calendars",

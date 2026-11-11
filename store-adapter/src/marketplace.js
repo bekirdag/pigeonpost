@@ -1,6 +1,7 @@
 // Paid marketplace purchases: Pigeonpost postbox (listings, installations) <-> this bridge <->
 // saas_be marketplace finance (`/v1/internal/tenants/{tenant}/marketplace`, scope
-// `marketplace:bridge`). Launch terms: one-off and monthly only. No wallet, no credits.
+// `marketplace:bridge`). Card terms: one-off and monthly. Publisher-hosted jobs are sold for
+// prepaid credits instead (credits.js); their `per_job` USD offers are mirrored through here too.
 //
 // Who decides what:
 //  - The postbox owns listings, prices as publishers set them, and installations. A buyer's
@@ -17,7 +18,8 @@
 //   buyer, member token: POST /v1/marketplace/checkout, GET /v1/marketplace/checkout/{intent},
 //     GET /v1/marketplace/licences, GET /v1/marketplace/installations/{installation},
 //     POST /v1/marketplace/installations/{installation}/cancel
-//   postbox, BRIDGE_INTERNAL_TOKEN: PUT /internal/marketplace/offers/{offer},
+//   postbox, BRIDGE_INTERNAL_TOKEN: PUT /internal/marketplace/offers/{offer} (one_off, monthly or
+//     per_job),
 //     POST /internal/marketplace/authorizations/consume
 //
 // Finance routes (payouts, refunds, chargebacks, statements, journal) need `marketplace:finance`
@@ -39,6 +41,9 @@ const INSTALLATION = /^ins_[a-z2-7]{16,32}$/;
 const ACCOUNT = /^acct_[A-Za-z0-9_]{6,64}$/;
 const ORG = /^org_[a-z0-9]{6,64}$/;
 const TERMS = ["one_off", "monthly"];
+// Offer terms: the card terms, and `per_job` (credits v1: a publisher-hosted operation, USD only,
+// held and captured against prepaid credit, never sold through a card checkout).
+const OFFER_TERMS = [...TERMS, "per_job"];
 const CURRENCIES = ["TRY", "USD", "EUR"];
 const LICENCE_STATUSES = ["active", "canceling", "paused", "expired", "terminated", "revoked"];
 const AUTH_STATUSES = ["pending_payment", "authorized", "consumed", "failed", "expired", "revoked"];
@@ -83,7 +88,7 @@ function mp(method, path, body) {
 }
 
 function validOfferView(o, id) {
-  if (!o || o.offer_id !== id || !TERMS.includes(o.term) || !CURRENCIES.includes(o.currency)
+  if (!o || o.offer_id !== id || !OFFER_TERMS.includes(o.term) || !CURRENCIES.includes(o.currency)
     || !Number.isInteger(o.price_minor) || !["active", "retired"].includes(o.status) || typeof o.sellable !== "boolean") {
     fail(502, "Billing returned an invalid offer.", "invalid_upstream");
   }
@@ -367,12 +372,16 @@ export function createMarketplace(dir) {
       ["listing_id", "publisher_id", "release_line", "title", "term", "currency", "price_minor"]);
     for (const key of ["listing_id", "publisher_id", "release_line"]) if (!ID.test(body[key] || "")) fail(400, `${key} is invalid.`, "invalid_request");
     if (typeof body.title !== "string" || !body.title.trim() || body.title.length > 200) fail(400, "title is invalid.", "invalid_request");
-    if (!TERMS.includes(body.term)) fail(400, "term must be one_off or monthly.", "invalid_request");
+    if (!OFFER_TERMS.includes(body.term)) fail(400, "term must be one_off, monthly or per_job.", "invalid_request");
     if (!CURRENCIES.includes(body.currency)) fail(400, "currency must be TRY, USD or EUR.", "invalid_request");
+    // Credits are kept and spent in USD: a per-job price is USD cents, and no card is charged for
+    // it, so the iyzico POS currencies do not apply.
+    const perJob = body.term === "per_job";
+    if (perJob && body.currency !== "USD") fail(400, "A per-job price is in USD.", "invalid_request");
     if (!Number.isInteger(body.price_minor) || body.price_minor < 1 || body.price_minor > 100_000_000) fail(400, "price_minor is invalid.", "invalid_request");
     const status = body.status ?? "active";
     if (!["active", "retired"].includes(status)) fail(400, "status must be active or retired.", "invalid_request");
-    if (status === "active" && !config.openCurrencies.includes(body.currency)) fail(409, `Payments in ${body.currency} are not open yet.`, "currency_unavailable");
+    if (status === "active" && !perJob && !config.openCurrencies.includes(body.currency)) fail(409, `Payments in ${body.currency} are not open yet.`, "currency_unavailable");
     let offer;
     try {
       offer = validOfferView(await mp("PUT", `/offers/${encodeURIComponent(offerId)}`, { ...body, title: body.title.trim(), status }), offerId);

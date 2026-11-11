@@ -19,6 +19,7 @@ import { createNotifier, createSales, sourceOf } from "./sales.js";
 import * as tax from "./tax.js";
 import { createLimiter } from "./limits.js";
 import { createMarketplace } from "./marketplace.js";
+import { createCredits } from "./credits.js";
 
 const state = new State(config.stateDir);
 const billing = createBilling(state);
@@ -28,6 +29,7 @@ const sales = createSales(config.stateDir, { notifier: createNotifier({
   delays: (process.env.SALES_NOTIFY_DELAYS_MS || "0,30000,120000,600000").split(",").map(Number).filter((n) => Number.isFinite(n) && n >= 0),
 }) });
 const marketplace = createMarketplace(config.stateDir);
+const credits = createCredits(config.stateDir);
 const publicLimiter = createLimiter({ perMinute: config.publicRequestsPerMinute });
 const MAX_BODY = 64 * 1024;
 
@@ -139,6 +141,25 @@ const server = http.createServer(async (req, res) => {
       return send(res, 404, { error: "not found" }, origin);
     }
 
+    // ---- postbox -> bridge (credit holds for publisher-hosted jobs), the same service token ----
+    if (path.startsWith("/internal/credits/")) {
+      if (url.pathname.startsWith("/api/")) return send(res, 404, { error: "not found" }, origin);
+      if (!config.marketplace.enabled) return send(res, 404, { error: "not found" }, origin);
+      if (!marketplace.internalOk(req)) return send(res, 401, { error: "invalid service token", code: "invalid_service_token" }, origin);
+      if (method === "POST" && path === "/internal/credits/holds") {
+        return send(res, 201, await credits.hold(await readJson(req)), origin);
+      }
+      if (method === "POST" && (match = /^\/internal\/credits\/holds\/([^/]+)\/(capture|release)$/.exec(path))) {
+        const hold = decodePart(match[1]);
+        const body = await readJson(req);
+        return send(res, 200, match[2] === "capture" ? await credits.capture(hold, body) : await credits.release(hold, body), origin);
+      }
+      if (method === "GET" && (match = /^\/internal\/credits\/balances\/([^/]+)\/([^/]+)$/.exec(path))) {
+        return send(res, 200, await credits.ownerBalance(decodePart(match[1]), decodePart(match[2])), origin);
+      }
+      return send(res, 404, { error: "not found" }, origin);
+    }
+
     // ---- everything below needs the customer's token ---------------------------------------
     const token = bearer(req);
     if (!token) return send(res, 401, { error: "sign in required" }, origin);
@@ -235,6 +256,19 @@ const server = http.createServer(async (req, res) => {
     if (method === "POST" && (match = /^\/v1\/marketplace\/installations\/([^/]+)\/cancel$/.exec(path))) {
       return send(res, 200, await marketplace.cancel(token, decodePart(match[1])), origin);
     }
+
+    // ---- prepaid credits (credits v1): the owner is always this token's account ------------
+    if (method === "GET" && path === "/v1/credits/packs") return send(res, 200, await credits.packs(token), origin);
+    if (method === "POST" && path === "/v1/credits/quotes") return send(res, 200, await credits.quote(token, await readJson(req)), origin);
+    if (method === "POST" && path === "/v1/credits/checkout") {
+      return send(res, 200, await credits.checkout(token, await readJson(req),
+        { ipCountry: tax.ipCountry(req.headers), buyerIp: sourceOf(req) }), origin);
+    }
+    if (method === "GET" && (match = /^\/v1\/credits\/checkout\/([a-f0-9]{32})$/.exec(path))) {
+      return send(res, 200, await credits.checkoutStatus(token, match[1]), origin);
+    }
+    if (method === "GET" && path === "/v1/credits/balance") return send(res, 200, await credits.balance(token), origin);
+    if (method === "GET" && path === "/v1/credits/history") return send(res, 200, await credits.history(token, url.searchParams), origin);
 
     // ---- enterprise (the Phase 4 portal calls these) ---------------------------------------
     if (method === "POST" && path === "/ent/billing-profile") {

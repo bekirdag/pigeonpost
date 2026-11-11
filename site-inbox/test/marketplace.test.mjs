@@ -12,6 +12,7 @@ const catalogJs = read("../../site/marketplace-catalog.js");
 const publisherJs = read("../../site/marketplace-publisher.js");
 const staffJs = read("../../site/marketplace-staff.js");
 const products = read("../../site/products.js");
+const creditsJs = read("../../site/credits.js");
 const accountJs = read("../../site/account.js");
 const accountConfig = read("../../site/account-config.js");
 const tick = async (n = 25) => { for (let i = 0; i < n; i++) await new Promise((r) => setImmediate(r)); };
@@ -39,7 +40,7 @@ function page(t, routes) {
   const dom = new JSDOM('<div id="root"></div>', { url: "https://pigeonpost.dev/account", runScripts: "outside-only", virtualConsole: new VirtualConsole() });
   t.after(() => dom.window.close());
   const { window } = dom;
-  for (const s of [core, catalogJs, publisherJs, staffJs, products]) window.eval(s);
+  for (const s of [core, catalogJs, publisherJs, staffJs, creditsJs, products]) window.eval(s);
   const calls = [], stepUps = [];
   const pb = async (path, init = {}) => {
     const method = init.method || "GET";
@@ -715,7 +716,8 @@ async function accountPage(t, { features, nested = false }) {
   if (!window.crypto.subtle) Object.defineProperty(window.crypto, "subtle", { value: globalThis.crypto.subtle });
   const calls = [];
   window.fetch = async (url, init = {}) => {
-    const u = new URL(url);
+    // Bridge calls are relative (`/api/...`); postbox calls are absolute.
+    const u = new URL(url, "https://pigeonpost.dev");
     const path = u.pathname + u.search;
     calls.push({ path, method: init.method || "GET" });
     const res = (body, status = 200) => ({ ok: status < 400, status, json: async () => body });
@@ -731,9 +733,13 @@ async function accountPage(t, { features, nested = false }) {
     if (path.startsWith("/v1/publishers/pub_1/")) return res({ data: [] });
     if (path.startsWith("/v1/staff/")) return res({ error: "staff_required", detail: "staff only" }, 403);
     if (path === "/v1/orgs") return res({ orgs: [] });
+    if (path === "/api/v1/credits/packs") return res({ packs: [{ pack_id: "usd_10", amount_cents: 1000 }, { pack_id: "usd_25", amount_cents: 2500 }], currencies: ["USD"] });
+    if (path === "/api/v1/credits/quotes") return res({ quote_id: "q1", pack_id: "usd_25", credit_cents: 2500, charge: { currency: "USD", amount_minor: 2500, tax_minor: 0 }, fx: null, expires_at: "2030-01-01T00:00:00Z" });
+    if (path === "/api/v1/credits/balance") return res({ available_cents: 1234, held_cents: 0 });
+    if (path.startsWith("/api/v1/credits/history")) return res({ entries: [], next_cursor: null });
     return res({ identities: [], keys: [], handles: [], subscriptions: [], invoices: [], paymentMethods: [], billingProfiles: [], data: [], packages: [] });
   };
-  for (const s of [core, catalogJs, publisherJs, staffJs, products]) window.eval(s);
+  for (const s of [core, catalogJs, publisherJs, staffJs, creditsJs, products]) window.eval(s);
   window.eval(accountJs);
   for (let i = 0; i < 40; i++) await tick(1);
   return { window, doc: window.document, calls, navigations };
@@ -744,11 +750,15 @@ test("the account page mounts the publisher console only with the marketplace fe
   assert.equal(off.doc.querySelector("#ac-publisher").hidden, true);
   assert.equal(off.doc.querySelector("#ac-staff").hidden, true);
   assert.equal(off.calls.some((c) => c.path.startsWith("/v1/publishers") || c.path.startsWith("/v1/staff")), false);
+  assert.equal(off.doc.querySelector("#credits").hidden, true, "credits come with the marketplace");
+  assert.equal(off.calls.some((c) => c.path.startsWith("/api/v1/credits")), false);
 
   const on = await accountPage(t, { features: ["nests", "marketplace"] });
   assert.equal(on.doc.querySelector("#ac-publisher").hidden, false);
   assert.match(on.doc.querySelector("#mp-pub-title").textContent, /Publish on the marketplace/);
   assert.equal(on.doc.querySelector("#ac-staff").hidden, true, "a 403 staff_required keeps the staff card hidden");
+  assert.equal(on.doc.querySelector("#credits").hidden, false);
+  assert.match(on.doc.querySelector("#cr-balance").textContent, /Balance: \$12\.34/);
 });
 
 test("a step-up refusal on the account page does not burn a token refresh and keeps the challenge", async (t) => {
@@ -804,4 +814,157 @@ test("a publisher prices a listing with step-up and is offered the nearest invoi
   await tick();
   assert.equal(p.calls.filter((c) => c.method === "PUT")[2].body.amount_minor, 12001);
   assert.match(p.$("#mp-pub-status").textContent, /Price saved/);
+});
+
+// ---- publisher-hosted listings --------------------------------------------------------------
+
+const HOSTED = { ...DETAIL, hosting: "publisher", service_address: "/acme/hr", operations: [{ name: "hr.research", version: "1.0", title: "HR research", fields: [{ name: "role", max_chars: 200, required: true, label: "Role" }, { name: "notes", max_chars: 2000, required: false, multiline: true }], output: { kind: "file", media_type: "application/pdf" } }] };
+
+test("a publisher-hosted listing shows the hosting notice, runs an operation from its fields and lists runs", async (t) => {
+  const jobs = [];
+  const p = catalogPage(t, { detail: HOSTED, listings: [{ ...LISTING, hosting: "publisher" }], extra: (method, path, body) => { if (method === "GET" && path === "/v1/marketplace/hosted-jobs") return { data: jobs }; if (method === "POST" && path === "/v1/marketplace/hosted-jobs") { const j = { job_id: "job_1", listing_id: "lst_a", operation: body.operation, execution: "queued", created_at: "2026-11-11T10:00:00Z", result: null }; jobs.push(j); return { data: j }; } return undefined; } });
+  await openDetail(p);
+  assert.match(p.$("#mp-hosted-notice").textContent, /Hosted by the publisher/);
+  assert.match(p.$("#mp-hosted-notice").textContent, /your inputs are sent to the publisher/);
+  assert.equal(p.$("#mp-install"), null);
+  assert.equal(p.$("#mp-buy"), null);
+  assert.ok(p.$('[data-hosting="publisher"]'));
+  assert.equal(p.$("#mp-run-0-notes").tagName, "TEXTAREA");
+  assert.equal(p.$("#mp-run-0-role").required, true);
+  p.$("#mp-run-0-role").value = "CTO";
+  p.submit(p.$("#mp-run-0"));
+  await tick();
+  const post = p.calls.find((c) => c.method === "POST" && c.path === "/v1/marketplace/hosted-jobs");
+  assert.deepEqual(post.body, { listing_id: "lst_a", operation: "hr.research", operation_version: "1.0", input: { role: "CTO" } });
+  assert.match(p.$("#mp-cat-status").textContent, /Sent to the publisher/);
+  assert.match(p.$('#mp-jobs [data-job="job_1"]').textContent, /Sending to the publisher/);
+});
+
+// ---- credits on a priced operation ----------------------------------------------------------
+
+const PER_JOB = { ...HOSTED, operations: [{ ...HOSTED.operations[0], price: { amount_cents: 2500, currency: "USD", term: "per_job", funding: "credits", on_sale: true } }] };
+
+function pricedPage(t, { available = 10000, run, jobs = [] } = {}) {
+  const bridge = [];
+  const p = catalogPage(t, {
+    detail: PER_JOB, listings: [{ ...LISTING, hosting: "publisher" }],
+    extra: (method, path, body) => {
+      if (method === "GET" && path === "/v1/marketplace/hosted-jobs") return { data: jobs };
+      if (method === "POST" && path === "/v1/marketplace/hosted-jobs") return run ? run(body) : { data: { job_id: "job_1" } };
+      if (method === "POST" && /\/cancel$/.test(path)) { jobs[0].execution = "cancelled"; jobs[0].charge.status = "released"; return { data: jobs[0] }; }
+      return undefined;
+    },
+    deps: { bridgeGet: async (path) => { bridge.push(path); if (path === "/v1/credits/balance") return { available_cents: available, held_cents: 0 }; return {}; } },
+  });
+  p.bridge = bridge;
+  return p;
+}
+
+test("a priced operation shows its price and the buyer's credit, and runs from that credit", async (t) => {
+  const p = pricedPage(t);
+  await openDetail(p);
+  await tick();
+  assert.match(p.$("#mp-run-0-price").textContent, /Price: \$25\.00 per run, paid from your credit/);
+  assert.match(p.$("#mp-run-0-balance").textContent, /Your credit: \$100\.00/);
+  assert.equal(p.$("#mp-run-0-go").disabled, false);
+  assert.equal(p.$("#mp-run-0-buy"), null);
+  assert.ok(p.bridge.includes("/v1/credits/balance"));
+  p.$("#mp-run-0-role").value = "CTO";
+  p.submit(p.$("#mp-run-0"));
+  await tick();
+  assert.ok(p.calls.find((c) => c.method === "POST" && c.path === "/v1/marketplace/hosted-jobs"));
+  assert.match(p.$("#mp-cat-status").textContent, /\$25\.00 is reserved from your credit/);
+});
+
+test("a short balance offers Buy credits instead of a run, and a 402 says so too", async (t) => {
+  const p = pricedPage(t, { available: 1000 });
+  await openDetail(p);
+  await tick();
+  assert.equal(p.$("#mp-run-0-go").disabled, true);
+  assert.match(p.$("#mp-run-0-short").textContent, /You need \$15\.00 more/);
+  assert.equal(p.$("#mp-run-0-buy").getAttribute("href"), "#credits");
+  assert.match(p.$("#mp-run-0-buy").textContent, /Buy credits/);
+
+  const q = pricedPage(t, { run: () => { throw fail(402, "insufficient_credit", { available_cents: 0, required_cents: 2500 }); } });
+  await openDetail(q);
+  await tick();
+  q.$("#mp-run-0-role").value = "CTO";
+  q.submit(q.$("#mp-run-0"));
+  await tick();
+  assert.match(q.$("#mp-cat-status").textContent, /Your credit is too low for this run/);
+  assert.ok(q.$("#mp-cat-status a[href='#credits']"));
+});
+
+test("a run's charge is shown in the list and a running job can be cancelled", async (t) => {
+  const jobs = [{ job_id: "job_1", listing_id: "lst_a", operation: "hr.research", execution: "running", created_at: "2026-11-11T10:00:00Z", result: null,
+    charge: { amount_cents: 2500, currency: "USD", status: "held" } }];
+  const p = pricedPage(t, { jobs });
+  await openDetail(p);
+  await tick();
+  assert.match(p.$('#mp-jobs [data-job="job_1"]').textContent, /\$25\.00 reserved/);
+  p.$('[data-cancel-job="job_1"]').click();
+  await tick();
+  assert.ok(p.calls.find((c) => c.method === "POST" && c.path === "/v1/marketplace/hosted-jobs/job_1/cancel"));
+  assert.match(p.$("#mp-cat-status").textContent, /Cancelled\. The reserved credit comes back/);
+  assert.match(p.$('#mp-jobs [data-job="job_1"]').textContent, /returned to your credit/);
+  assert.equal(p.$('[data-cancel-job="job_1"]'), null);
+});
+
+test("a free operation of a publisher-hosted listing never asks for credit", async (t) => {
+  const free = catalogPage(t, { detail: HOSTED, listings: [{ ...LISTING, hosting: "publisher" }], extra: (method, path) => (method === "GET" && path === "/v1/marketplace/hosted-jobs" ? { data: [] } : undefined),
+    deps: { bridgeGet: async (path) => { if (path.startsWith("/v1/credits")) throw new Error("no credit call expected"); return {}; } } });
+  await openDetail(free);
+  await tick();
+  assert.equal(free.$("#mp-run-0-price"), null);
+  assert.equal(free.$("#mp-run-0-go").disabled, false);
+});
+
+test("a publisher prices each operation of a publisher-hosted listing per job, in USD", async (t) => {
+  const ops = [{ name: "hr.research", title: "HR research", price: null }];
+  const p = publisherPage(t, {
+    listings: [{ id: "lst_1", title: "Wodo AI HR", summary: "A", visibility: "public", status: "published", version: "1.0.0", hosting: "publisher",
+      price: { amount_minor: 0, currency: "TRY", term: "one_off", funding: "test_credits" } }],
+    extra: (m, path, body) => {
+      if (m === "GET" && path === "/v1/marketplace/listings/lst_1") return { data: { id: "lst_1", hosting: "publisher", operations: ops } };
+      if (m === "PUT" && path === "/v1/publishers/pub_1/listings/lst_1/operations/hr.research/price") {
+        ops[0].price = { amount_cents: body.amount_cents, currency: "USD", term: "per_job", on_sale: true };
+        return { data: { listing_id: "lst_1", operation: "hr.research", price: ops[0].price, offer: null } };
+      }
+      return undefined;
+    },
+  });
+  await tick();
+  p.$('[data-price="lst_1"]').click();
+  await tick();
+  assert.equal(p.$("#mp-price-lst_1"), null, "no one-off or monthly price for a publisher-hosted listing");
+  assert.match(p.$("#mp-jobprice-lst_1").textContent, /Pigeonpost keeps 10% of each job/);
+  assert.match(p.$("#mp-jobprice-lst_1-0").textContent, /HR research: price per job.*Now: Free/s);
+  p.$("#mp-jobprice-lst_1-0-amount").value = "25";
+  p.submit(p.$("#mp-jobprice-lst_1-0"));
+  await tick();
+  const put = p.calls.find((c) => c.method === "PUT");
+  assert.deepEqual(put.body, { amount_cents: 2500, currency: "USD" });
+  assert.match(p.$("#mp-pub-status").textContent, /Price saved/);
+  assert.match(p.$("#mp-jobprice-lst_1-0").textContent, /Now: \$25\.00 per job/);
+});
+
+test("staff see a publisher-hosted integration's per-job prices in review", async (t) => {
+  const p = staffPage(t, { extra: (m, path) => (path === "/v1/staff/reviews/rev_1" ? { data: { id: "rev_1", status: "open", release_id: "rel_1", version: "1.0.0", release_digest: "sha256:abc", security_state: "normal", first_party: false, kind: "integration", stages: [],
+    integration: { service_address: "/wodo/hr", service_mailbox: "/k/x", service_owned: true, operations: [{ name: "hr.research", title: "HR research" }],
+      prices: [{ listing_id: "lst_1", operation: "hr.research", amount_cents: 2500, currency: "USD", term: "per_job" }] } } } : undefined) });
+  await tick();
+  p.$('[data-review="rev_1"] button').click();
+  await tick();
+  assert.match(p.$("#mp-sr-integration").textContent, /Service address \/wodo\/hr/);
+  assert.match(p.$("#mp-sr-prices").textContent, /hr\.research \$25\.00/);
+});
+
+test("a result that could not reach the inbox says it is available on the job page", async (t) => {
+  const jobs = [{ job_id: "job_9", listing_id: "lst_a", operation: "hr.research", execution: "succeeded", delivery: "undeliverable", created_at: "2026-11-11T10:00:00Z", result: { summary: "ok", files: [] }, charge: null }];
+  const p = catalogPage(t, { detail: HOSTED, listings: [{ ...LISTING, hosting: "publisher" }], extra: (method, path) => (method === "GET" && path === "/v1/marketplace/hosted-jobs" ? { data: jobs } : undefined) });
+  await openDetail(p);
+  await tick();
+  const row = p.$('#mp-jobs [data-job="job_9"]').textContent;
+  assert.match(row, /available on the job page/);
+  assert.doesNotMatch(row, /in your inbox$/);
 });

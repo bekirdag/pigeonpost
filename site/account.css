@@ -118,6 +118,7 @@
 .mp-row > form { flex-basis: 100%; }
 .mp-badge { display: inline-block; font-size: .8em; padding: 0 .45rem; border-radius: .6rem; border: 1px solid var(--rule); color: var(--muted); }
 .mp-badge-first { border-color: var(--blue); color: var(--blue); }
+.mp-badge-hosted { border-color: var(--muted); font-style: italic; }
 .mp-hint { font-size: 13px; color: var(--muted); }
 .ac-form label.mp-check, label.mp-check { display: flex; flex-direction: row; align-items: baseline; gap: .35rem; color: var(--ink); }
 .mp-filter, .mp-config, .mp-visibility, .mp-section fieldset, .mp-installation fieldset { border: 1px solid var(--rule); border-radius: .5rem; padding: .5rem .75rem; margin: .5rem 0; display: grid; gap: .35rem; }

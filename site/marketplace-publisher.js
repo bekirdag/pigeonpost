@@ -16,6 +16,9 @@
 //   PUT|DELETE /v1/publishers/{p}/listings/{l}/price (step-up) {amount_minor, currency, term}: a
 //     price the financial authority cannot invoice is refused with 422 price_not_invoiceable and
 //     the nearest prices it can (details.nearest), which the form offers
+//   PUT|DELETE /v1/publishers/{p}/listings/{l}/operations/{op}/price (step-up) {amount_cents,
+//     currency: USD}: a publisher-hosted listing is priced per job of each operation instead
+//     (credits v1); the operations and their prices come from GET /v1/marketplace/listings/{l}
 (function () {
   "use strict";
 
@@ -333,8 +336,43 @@
       }
       li.append(row);
       if (st.editing === l.id) li.append(editListingForm(l, lpath));
-      if (st.pricing === l.id) li.append(priceForm(l, lpath));
+      if (st.pricing === l.id) li.append(l.hosting === "publisher" ? jobPriceForm(l, lpath) : priceForm(l, lpath));
       return li;
+    }
+
+    /// A publisher-hosted listing's per-job prices (credits v1): one row per operation, in USD.
+    /// Buyers pay from their prepaid credit; Piyote keeps 10% of each job.
+    function jobPriceForm(l, lpath) {
+      const p = `mp-jobprice-${l.id}`;
+      const box = el("div", { class: "mp-edit", id: p },
+        el("p", { class: "muted", text: "Each operation is priced per job in US dollars and paid from the buyer's credit. Pigeonpost keeps 10% of each job; the rest is paid to you. Changing a price asks you to confirm it's you." }));
+      if (!st.jobOps || st.jobOps.id !== l.id) {
+        st.jobOps = { id: l.id, ops: null };
+        deps.pb(`/v1/marketplace/listings/${encodeURIComponent(l.id)}`)
+          .then((v) => { st.jobOps = { id: l.id, ops: (v.data && v.data.operations) || [] }; draw(); })
+          .catch(() => { st.jobOps = { id: l.id, ops: [] }; draw(); });
+        box.append(el("p", { class: "muted", text: "Loading…" }));
+        return box;
+      }
+      if (!st.jobOps.ops || !st.jobOps.ops.length) { box.append(el("p", { class: "muted", text: st.jobOps.ops ? "This listing has no operations." : "Loading…" })); return box; }
+      st.jobOps.ops.forEach((op, i) => {
+        const id = `${p}-${i}`;
+        const cur = op.price && Number(op.price.amount_cents) > 0 ? op.price : null;
+        const amount = el("input", { id: `${id}-amount`, type: "number", min: "0.01", step: "0.01", required: true, value: cur ? (cur.amount_cents / 100).toFixed(2) : "" });
+        const opPath = `${lpath}/operations/${encodeURIComponent(op.name)}/price`;
+        const after = async () => { st.jobOps = null; draw(); };
+        box.append(el("form", { class: "ac-form", id, "data-operation": op.name, onsubmit: (e) => {
+          e.preventDefault();
+          const cents = Math.round(Number(amount.value) * 100);
+          if (!Number.isInteger(cents) || cents <= 0) { status.say("Enter a price above zero."); return; }
+          act(() => post(opPath, { amount_cents: cents, currency: "USD" }, "PUT"), "Price saved. It goes on sale once Pigeonpost's billing holds it.", after);
+        } }, el("fieldset", {}, el("legend", { text: `${op.title || op.name}: price per job` }),
+          el("p", { class: "muted", text: `Now: ${cur ? `${MP.money(cur.amount_cents, "USD")} per job${cur.on_sale ? "" : " (not on sale yet)"}` : "Free"}.` }),
+          el("label", { for: `${id}-amount` }, "Price per job (USD)"), amount,
+          el("button", { type: "submit", class: "btn btn-small" }, "Save price"),
+          cur ? el("button", { type: "button", class: "btn btn-small", id: `${id}-free`, onclick: () => act(() => post(opPath, undefined, "DELETE"), "This operation is free again.", after) }, "Make it free") : null)));
+      });
+      return box;
     }
 
     /// The listing's price (payments): tax-inclusive, in TRY, USD or EUR, one-off or monthly.

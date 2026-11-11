@@ -7,7 +7,8 @@ every spec edit. It uses the same strict loader (duplicate keys are an error) an
 YAML's document order.
 
 Usage: export_json.py [path ...]
-       (default: openapi/pigeonpost.v1.yaml openapi/pigeonpost-org.v1.yaml)
+       (default: openapi/pigeonpost.v1.yaml openapi/pigeonpost-org.v1.yaml
+        docs/nests/contracts/pigeonpost-nests.v1.yaml)
 """
 
 import sys

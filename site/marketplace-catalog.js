@@ -20,6 +20,17 @@
 //   POST   /v1/nest-installations/{id}/rollback       {}
 //   DELETE /v1/nest-installations/{id}                uninstall
 //   POST   /v1/orgs/{org}/nest-installations           install for a company {listing_id, handle, purchase_id}
+//   POST   /v1/marketplace/hosted-jobs                run an operation of a publisher-hosted listing
+//                                                    {listing_id, operation, input}
+//   GET    /v1/marketplace/hosted-jobs                this account's hosted jobs
+//   POST   /v1/marketplace/hosted-jobs/{id}/cancel    stop a run before its result arrives
+//
+// A publisher-hosted listing (`hosting: "publisher"`) is run by its publisher: it is never
+// installed, its page says so before anything is sent, and each operation has a Run form built
+// from its input fields. Results come back to the buyer's inbox as a message with the PDF attached.
+// An operation with a per-job price (`operation.price`, USD) is paid from the account's credit:
+// the form shows the price and the balance (`GET /api/v1/credits/balance` on the bridge), and a
+// "Buy credits" link to the account's Credits card when the balance is short.
 // and the billing bridge (deps.bridgeGet / deps.bridgeAction / deps.startCheckout):
 //   POST   /api/v1/marketplace/checkout               (on /billing/checkout) start a purchase
 //   GET    /api/v1/marketplace/checkout/{intent}       where a purchase stands after iyzico
@@ -107,9 +118,128 @@
 
     function badge(l) {
       const p = l.publisher || {};
-      return p.first_party
+      const who = p.first_party
         ? el("span", { class: "mp-badge mp-badge-first", text: "By Pigeonpost" })
         : el("span", { class: "mp-badge", text: `Publisher: ${p.display_name || "unknown"}` });
+      if (l.hosting !== "publisher") return who;
+      return el("span", {}, who, " ", el("span", { class: "mp-badge mp-badge-hosted", "data-hosting": "publisher", text: "Hosted by the publisher" }));
+    }
+
+    const HOSTED_NOTICE = "Hosted by the publisher — Pigeonpost reviewed the publisher and this integration, not the code; your inputs are sent to the publisher.";
+    const JOB_TEXT = { queued: "Sending to the publisher", running: "With the publisher", succeeded: "Done — the result is in your inbox",
+      failed: "Failed", expired: "Ran out of time", cancelled: "Cancelled" };
+    // Inbox delivery gave up after its last attempt: the result is still kept on the job.
+    const jobText = (j) => (j.execution === "succeeded" && j.delivery === "undeliverable"
+      ? "Done — it couldn't be delivered to your inbox; the result is available on the job page"
+      : JOB_TEXT[j.execution] || j.execution);
+    const CHARGE_TEXT = { held: "reserved", charged: "paid", released: "returned to your credit" };
+    const RUN_ERRORS = {
+      insufficient_credit: "Your credit is too low for this run. Buy credits, then run it again.",
+      not_on_sale: "This service's price is being updated. Try again in a minute.",
+      billing_unavailable: "Payments aren't answering right now. Nothing was charged; try again shortly.",
+    };
+    const buyCredits = (id) => el("a", { class: "btn btn-secondary btn-small", id, href: "#credits" }, "Buy credits");
+
+    /// The account's credit, for priced operations (`null`: not loaded or could not be).
+    async function loadCredit() {
+      try { st.credit = deps.bridgeGet ? await deps.bridgeGet("/v1/credits/balance") : null; } catch (_) { st.credit = null; }
+      st.creditLoaded = true;
+      draw();
+    }
+    const creditChanged = () => { try { window.dispatchEvent(new window.Event("pp-credits-changed")); } catch (_) { /* old browsers */ } };
+
+    function hostedNotice() {
+      return el("p", { class: "pp-warn mp-hosted-notice", id: "mp-hosted-notice", role: "note", text: HOSTED_NOTICE });
+    }
+
+    /// One Run form per operation, from its input fields (`{name, max_chars, required, label?, multiline?}`).
+    function runForm(l, op, i) {
+      const prefix = `mp-run-${i}`;
+      const inputs = [];
+      const box = el("fieldset", {}, el("legend", { text: op.title || op.name }));
+      if (op.description) box.append(el("p", { class: "muted", text: op.description }));
+      for (const f of op.fields || []) {
+        const id = `${prefix}-${String(f.name).replace(/[^a-z0-9_]/g, "_")}`;
+        const attrs = { id, maxlength: f.max_chars, required: f.required === true, autocomplete: "off" };
+        const input = f.multiline ? el("textarea", { ...attrs, rows: "4" }) : el("input", { ...attrs, type: "text" });
+        inputs.push([f.name, input]);
+        box.append(el("label", { for: id }, (f.label || f.name) + (f.required ? " (required)" : "")), input);
+      }
+      const price = op.price && Number(op.price.amount_cents) > 0 ? op.price : null;
+      let blocked = false;
+      if (price) {
+        box.append(el("p", { class: "mp-run-price", id: `${prefix}-price`, text: `Price: ${MP.money(price.amount_cents, "USD")} per run, paid from your credit.` }));
+        const have = st.credit && Number.isInteger(st.credit.available_cents) ? st.credit.available_cents : null;
+        if (price.on_sale === false) {
+          blocked = true;
+          box.append(el("p", { class: "muted", text: RUN_ERRORS.not_on_sale }));
+        } else if (!st.creditLoaded) {
+          box.append(el("p", { class: "muted", id: `${prefix}-balance`, text: "Checking your credit…" }));
+        } else if (have === null) {
+          box.append(el("p", { class: "muted", id: `${prefix}-balance`, text: "Your credit could not be loaded." }), buyCredits(`${prefix}-buy`));
+        } else {
+          box.append(el("p", { id: `${prefix}-balance`, text: `Your credit: ${MP.money(have, "USD")}.` }));
+          if (have < price.amount_cents) {
+            blocked = true;
+            box.append(el("p", { class: "pp-warn", id: `${prefix}-short`, text: `You need ${MP.money(price.amount_cents - have, "USD")} more.` }), buyCredits(`${prefix}-buy`));
+          }
+        }
+      }
+      box.append(el("p", { class: "ac-note", text: price ? "The price is reserved when you run it, and charged only once the result is in your inbox. If it fails or runs out of time, it comes back to your credit." : "The result is sent to your inbox as a PDF." }),
+        el("button", { type: "submit", class: "btn btn-primary", id: `${prefix}-go`, disabled: blocked }, `Run ${op.title || op.name}`));
+      return el("form", { class: "ac-form mp-run", id: prefix, "data-operation": op.name, onsubmit: async (e) => {
+        e.preventDefault();
+        const input = {};
+        for (const [name, node] of inputs) if (node.value.trim() !== "") input[name] = node.value;
+        try {
+          await deps.pb("/v1/marketplace/hosted-jobs", { method: "POST", body: JSON.stringify({ listing_id: l.id, operation: op.name, operation_version: op.version, input }) });
+          status.say(price ? `Sent to the publisher. ${MP.money(price.amount_cents, "USD")} is reserved from your credit; the result will arrive in your inbox.` : "Sent to the publisher. The result will arrive in your inbox.");
+          for (const [, node] of inputs) node.value = "";
+          if (price) { creditChanged(); loadCredit(); }
+        } catch (err) {
+          if (err && err.code === "insufficient_credit") status.say(RUN_ERRORS.insufficient_credit, buyCredits("mp-run-buy"));
+          else MP.report(deps, status, err, "services", RUN_ERRORS);
+          if (price) loadCredit();
+        }
+        await loadJobs(l.id);
+      } }, box);
+    }
+
+    async function loadJobs(listingId) {
+      try {
+        const v = await deps.pb("/v1/marketplace/hosted-jobs");
+        st.jobs = (v.data || []).filter((j) => j.listing_id === listingId);
+      } catch (_) { st.jobs = []; }
+      draw();
+    }
+
+    function jobsBlock(l) {
+      if (st.jobs === undefined || st.jobsFor !== l.id) { st.jobsFor = l.id; st.jobs = null; loadJobs(l.id); }
+      const box = el("section", { class: "mp-jobs", id: "mp-jobs", "aria-labelledby": "mp-jobs-title" }, el("h5", { id: "mp-jobs-title", text: "Your runs" }));
+      if (!st.jobs) { box.append(el("p", { class: "muted", text: "Loading…" })); return box; }
+      if (!st.jobs.length) { box.append(el("p", { class: "muted", text: "Nothing run yet." })); return box; }
+      box.append(el("ul", { class: "mp-list", "aria-label": "Runs" }, st.jobs.map((j) => el("li", { class: "mp-row", "data-job": j.job_id },
+        el("span", { text: `${MP.when(j.created_at)} · ${j.operation} · ${jobText(j)}` }),
+        j.charge ? el("span", { class: "muted", "data-charge": j.charge.status, text: ` · ${MP.money(j.charge.amount_cents, "USD")} ${CHARGE_TEXT[j.charge.status] || j.charge.status}` }) : null,
+        j.result && j.result.summary ? el("span", { class: "muted", text: ` · ${j.result.summary.slice(0, 200)}` }) : null,
+        ["queued", "running"].includes(j.execution) ? el("button", { type: "button", class: "btn btn-small", "data-cancel-job": j.job_id, onclick: async () => {
+          try {
+            await deps.pb(`/v1/marketplace/hosted-jobs/${encodeURIComponent(j.job_id)}/cancel`, { method: "POST", body: "{}" });
+            status.say(j.charge ? "Cancelled. The reserved credit comes back to you within a minute." : "Cancelled.");
+            if (j.charge) creditChanged();
+          } catch (err) { MP.report(deps, status, err, "services", { job_closed: "This run has already finished." }); }
+          await loadJobs(j.listing_id);
+        } }, "Cancel") : null))));
+      return box;
+    }
+
+    function hostedBlock(l) {
+      const box = el("div", { class: "mp-hosted", id: "mp-hosted" });
+      const priced = (l.operations || []).some((op) => op.price && Number(op.price.amount_cents) > 0);
+      if (priced && st.creditFor !== l.id) { st.creditFor = l.id; st.creditLoaded = false; st.credit = null; loadCredit(); }
+      (l.operations || []).forEach((op, i) => box.append(runForm(l, op, i)));
+      box.append(jobsBlock(l));
+      return box;
     }
 
     function filterControls() {
@@ -386,8 +516,14 @@
         el("p", { class: "muted", text: `Version ${d.version}${d.published_at ? ` · listed ${MP.when(d.published_at)}` : ""}` }),
         el("p", { text: d.summary }),
         d.description ? el("p", { class: "mp-description", text: d.description }) : null,
+        d.hosting === "publisher" ? hostedNotice() : null,
         el("h5", { text: "What it does" }), operationsBlock(d.operations || []),
-        priceBlock(d));
+        d.hosting === "publisher" ? null : priceBlock(d));
+      if (d.hosting === "publisher") {
+        box.append(hostedBlock(d));
+        box.append(el("p", { class: "ac-note" }, "Something wrong with this service? ", el("a", { href: "/app-support.html", text: "Tell Pigeonpost support" }), " and include its name."));
+        return box;
+      }
       const inst = installFor(d.id);
       const paid = st.purchase && st.purchase.listing_id === d.id && st.purchase.status === "paid" ? st.purchase : null;
       if (inst) box.append(installationBlock(d, inst));

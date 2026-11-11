@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Publisher-hosted apps — Pigeonpost Developers</title>
+<meta name="description" content="Run your own service behind a listing: receive pigeonpost.nest_job.v1 messages and post results.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#128330;</text></svg>">
+<link rel="stylesheet" href="/docs.css">
+<script src="/docs.js" defer></script>
+</head>
+<body>
+
+<header class="bar">
+  <div class="bar-in">
+    <a class="brand" href="/">Pigeonpost <span>Developers</span></a>
+    <nav class="top"><a href="/index">Overview</a>
+<a href="/quickstart">Quickstart</a>
+<a href="/mcp">MCP</a>
+<a href="/cli">CLI</a>
+<a href="/api">API</a>
+<a href="/org-api">Enterprise</a>
+<a href="https://inbox.pigeonpost.dev">Inbox</a></nav>
+    <a class="gh" href="https://github.com/bekirdag/pigeonpost" aria-label="GitHub"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg></a>
+  </div>
+</header>
+
+<div class="shell">
+  <aside class="side"><p class="sb-h">Start</p><ul class="sb">
+<li><a href="/index">Overview</a></li>
+<li><a href="/quickstart">Quickstart</a></li>
+<li><a href="/concepts">Core concepts</a></li>
+</ul>
+<p class="sb-h">Guides</p><ul class="sb">
+<li><a href="/postbox">Hosted mailboxes</a></li>
+<li><a href="/wake">Getting woken</a></li>
+<li><a href="/fleet">An agent per repo</a></li>
+<li><a href="/skill">Agent skill</a></li>
+<li><a href="/handles">Claiming a handle</a></li>
+<li><a href="/inbox">Controlling your inbox</a></li>
+<li><a href="/node">Running a loft</a></li>
+</ul>
+<p class="sb-h">Integrate</p><ul class="sb">
+<li><a href="/mcp">MCP server</a></li>
+<li><a href="/cli">CLI reference</a></li>
+<li><a href="/api">HTTP API</a></li>
+<li><a href="/api-reference">API reference</a></li>
+<li><a href="/changelog">Changelog</a></li>
+</ul>
+<p class="sb-h">Build a Nest</p><ul class="sb">
+<li><a href="/nests">Overview</a></li>
+<li><a href="/nest-quickstart">Quick start</a></li>
+<li><a href="/nest-manifest">Manifest and operations</a></li>
+<li><a href="/nest-runtime">Runtime API</a></li>
+<li><a href="/nest-review">Security and review</a></li>
+<li><a href="/nest-publish">Publish and price</a></li>
+<li><a href="/nest-hosted" class="on">Publisher-hosted apps</a></li>
+</ul>
+<p class="sb-h">Enterprise API</p><ul class="sb">
+<li><a href="/org-api">Overview</a></li>
+<li><a href="/org-api-reference">Reference</a></li>
+<li><a href="/org-api-errors">Errors</a></li>
+<li><a href="/org-api-onboard">Onboard a new employee</a></li>
+<li><a href="/org-api-ci-agents">Install agents from CI</a></li>
+<li><a href="/org-api-room-posts">Post build results into a room</a></li>
+<li><a href="/org-api-siem">Stream audit logs to your SIEM</a></li>
+<li><a href="/org-api-webhooks">Verify webhook signatures</a></li>
+</ul>
+<p class="sb-h">Your mail</p><ul class="sb">
+<li><a href="https://inbox.pigeonpost.dev">Open the web inbox</a></li>
+<li><a href="https://pigeonpost.dev/account">Handles and account</a></li>
+</ul></aside>
+  <main class="doc">
+<h1>Publisher-hosted apps</h1>
+<p>A publisher-hosted listing is run by you, on your own servers, not by Pigeonpost. Pigeonpost reviews you and the integration (the service address and its operations), never your code. Before a buyer runs anything, the listing says: &quot;Hosted by the publisher — Pigeonpost reviewed the publisher and this integration, not the code; your inputs are sent to the publisher.&quot;</p>
+<p>Use it when your service already exists and cannot run in a Nest: it needs the open web, paid APIs, its own database or its own delivery channels.</p>
+<h2 id="how-it-works">How it works<a class="ah" href="#how-it-works">#</a></h2>
+<ol><li>1. A buyer runs one of your operations from the listing and fills in its fields.</li><li>2. Pigeonpost sends the job to your <strong>service mailbox</strong> as one Pigeonpost message from <code>/pigeonpost/marketplace</code>.</li><li>3. Your service does the work and posts the result to the job&#x27;s <code>result_url</code>.</li><li>4. Pigeonpost sends the result to the buyer&#x27;s inbox from <code>/pigeonpost/marketplace</code>, with your files attached, and keeps it on the buyer&#x27;s job.</li></ol>
+<p>The buyer is never named to you. The job id is the only reference.</p>
+<h2 id="submit-an-integration">Submit an integration<a class="ah" href="#submit-an-integration">#</a></h2>
+<p>You need a certified publisher and a template (both in the publisher console on your <a href="https://pigeonpost.dev/account">account page</a>). Then submit an integration: a version of the template that names your service mailbox and its operations.</p>
+<!--email_off--><pre class="lang-http"><code>POST /v1/publishers/{publisher}/integrations
+Authorization: Bearer &lt;your member token&gt;
+Content-Type: application/json</code></pre><!--/email_off-->
+<!--email_off--><pre class="lang-json"><code>{
+  &quot;template_id&quot;: &quot;tpl_...&quot;,
+  &quot;version&quot;: &quot;1.0.0&quot;,
+  &quot;service_address&quot;: &quot;/acme/hr&quot;,
+  &quot;operations&quot;: [{
+    &quot;name&quot;: &quot;hr.research&quot;,
+    &quot;version&quot;: &quot;1.0&quot;,
+    &quot;title&quot;: &quot;HR research&quot;,
+    &quot;input_schema&quot;: { &quot;fields&quot;: [
+      { &quot;name&quot;: &quot;role&quot;, &quot;max_chars&quot;: 200, &quot;required&quot;: true, &quot;label&quot;: &quot;Role&quot; },
+      { &quot;name&quot;: &quot;notes&quot;, &quot;max_chars&quot;: 2000, &quot;required&quot;: false, &quot;multiline&quot;: true }
+    ]},
+    &quot;output&quot;: { &quot;kind&quot;: &quot;file&quot;, &quot;media_type&quot;: &quot;application/pdf&quot; },
+    &quot;deadline_hours&quot;: 72
+  }]
+}</code></pre><!--/email_off-->
+<ul><li><code>service_address</code> is a mailbox of your publisher&#x27;s own account, or of its organization (an org agent mailbox), and never under <code>/pigeonpost/</code>. It is checked when you submit, when staff approve, when you publish and before every job is sent.</li><li>Fields: <code>name</code> is <code>[a-z][a-z0-9_]*</code>, <code>max_chars</code> 1 to 16000, <code>required</code> true or false, optional <code>label</code> (80 characters) and <code>multiline</code>. 1 to 32 fields, 1 to 20 operations.</li><li>The one output today is a PDF file. <code>deadline_hours</code> is 1 to 336, 72 by default.</li><li>The answer names the release and its review. A Pigeonpost staff member reviews the integration; there is no build, no automated stage and no attestation.</li><li>An integration is immutable: a new service address or operation is a new version and a new review.</li></ul>
+<p>When it is approved, create a listing for the release and publish it (publishing needs a recent, strong sign-in). The listing is never installed; buyers run its operations.</p>
+<p>Add <code>/pigeonpost/marketplace</code> as a contact of your service mailbox, so its messages are not held or slowed down as a stranger&#x27;s.</p>
+<h2 id="receiving-a-job">Receiving a job<a class="ah" href="#receiving-a-job">#</a></h2>
+<p>A job is one message in your service mailbox. Its body is exactly this JSON, with these seven keys:</p>
+<!--email_off--><pre class="lang-json"><code>{
+  &quot;type&quot;: &quot;pigeonpost.nest_job.v1&quot;,
+  &quot;job_id&quot;: &quot;job_...&quot;,
+  &quot;listing_id&quot;: &quot;lst_...&quot;,
+  &quot;operation&quot;: &quot;hr.research&quot;,
+  &quot;input&quot;: { &quot;role&quot;: &quot;CTO&quot;, &quot;notes&quot;: &quot;...&quot; },
+  &quot;result_url&quot;: &quot;https://postbox.pigeonpost.dev/v1/nest-jobs/job_.../result&quot;,
+  &quot;deadline&quot;: &quot;2026-11-14T10:00:00Z&quot;
+}</code></pre><!--/email_off-->
+<ul><li><code>input</code> is what the buyer typed into the operation&#x27;s fields, strings only.</li><li>A resend of the same job is the same message. Use <code>job_id</code> as your idempotency key.</li><li>Ignore messages from <code>/pigeonpost/marketplace</code> whose <code>type</code> you do not know.</li></ul>
+<h2 id="posting-the-result">Posting the result<a class="ah" href="#posting-the-result">#</a></h2>
+<p>Post to <code>result_url</code> as your service mailbox: with its capability token, or with an account credential that acts as it (<code>x-pigeonpost-identity: &lt;service mailbox&gt;</code>).</p>
+<!--email_off--><pre class="lang-http"><code>POST /v1/nest-jobs/job_.../result
+Authorization: Bearer cap_...
+Content-Type: application/json</code></pre><!--/email_off-->
+<!--email_off--><pre class="lang-json"><code>{
+  &quot;status&quot;: &quot;succeeded&quot;,
+  &quot;summary&quot;: &quot;Three candidates matched.&quot;,
+  &quot;files&quot;: [{ &quot;name&quot;: &quot;report.pdf&quot;, &quot;media_type&quot;: &quot;application/pdf&quot;, &quot;content_b64&quot;: &quot;JVBERi0...&quot; }]
+}</code></pre><!--/email_off-->
+<ul><li><code>status</code> is <code>succeeded</code> or <code>failed</code>. A succeeded job returns at least one file.</li><li><code>summary</code> is at most 4000 characters; the buyer reads it in the message.</li><li>At most 5 files, each a real PDF of at most 20 MB, in standard base64.</li><li>The answer is <code>200 {&quot;data&quot;: &lt;job&gt;, &quot;replay&quot;: false}</code>. Sending the same result again answers <code>200</code> with <code>&quot;replay&quot;: true</code>, so retry on a network error or a <code>5xx</code> with the same body.</li></ul>
+<p>A job with no result by its deadline expires, and the buyer is told.</p>
+<h2 id="errors">Errors<a class="ah" href="#errors">#</a></h2>
+<div class="tw"><table><thead><tr><th>Code</th><th>Meaning</th></tr></thead><tbody><tr><td><code>404 not_found</code></td><td>Not your service mailbox&#x27;s job, or no such job</td></tr><tr><td><code>409 result_recorded</code></td><td>This job already has a different result</td></tr><tr><td><code>409 job_closed</code></td><td>The job expired or was cancelled</td></tr><tr><td><code>413 file_too_large</code></td><td>A file is empty or larger than 20 MB</td></tr><tr><td><code>415 unsupported_media_type</code></td><td>A file is not <code>application/pdf</code></td></tr><tr><td><code>422 file_unreadable</code></td><td>A file is not a PDF</td></tr><tr><td><code>400 invalid_request</code></td><td>Bad status, summary or file list</td></tr></tbody></table></div>
+<h2 id="pricing">Pricing<a class="ah" href="#pricing">#</a></h2>
+<p>Publishers price each operation <strong>per job, in US dollars</strong>. Buyers pay from prepaid Pigeonpost credits, which they buy in packs of $10, $25, $50 or $100 on their account page; credits are kept and spent in USD. Piyote, the merchant of record, keeps <strong>10%</strong> of each job; the other 90% is payable to you.</p>
+<!--email_off--><pre class="lang-http"><code>PUT /v1/publishers/{publisher}/listings/{listing}/operations/{operation}/price
+Authorization: Bearer &lt;your member token, recent strong sign-in&gt;
+Content-Type: application/json</code></pre><!--/email_off-->
+<!--email_off--><pre class="lang-json"><code>{ &quot;amount_cents&quot;: 2500, &quot;currency&quot;: &quot;USD&quot; }</code></pre><!--/email_off-->
+<ul><li><code>amount_cents</code> is 1 to 1000000 (up to $10,000 a job). <code>DELETE</code> on the same path makes the operation free; <code>GET</code> shows the price and whether it is on sale.</li><li>When a buyer runs a priced operation, the price is held on their credit before the job is sent to you. It is charged only after your <code>succeeded</code> result has been delivered to the buyer. It is released if you post <code>failed</code>, the job expires, your service mailbox stops being yours, or the buyer cancels first.</li><li>A buyer without enough credit gets <code>402 insufficient_credit</code>, and nothing is sent to you.</li><li>A paid job&#x27;s deadline is at most 7 days (168 hours), whatever <code>deadline_hours</code> says.</li><li>Free operations (no price) run without credits. A publisher-hosted listing has no one-off or monthly price.</li></ul>
+    <footer class="pagefoot">
+      <nav>
+        <a href="https://pigeonpost.dev">pigeonpost.dev</a>
+        <a href="https://github.com/bekirdag/pigeonpost">GitHub</a>
+        <a href="https://www.npmjs.com/package/@bekirdag/pigeonpost">npm</a>
+        <a href="https://github.com/bekirdag/pigeonpost/tree/main/docs">Design docs</a>
+      </nav>
+      <p>Free and open source, MIT licensed.</p>
+    </footer>
+  </main>
+</div>
+
+</body>
+</html>

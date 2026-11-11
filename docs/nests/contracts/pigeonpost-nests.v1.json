@@ -76,6 +76,10 @@
       "description": "Marketplace M2b (R-70): test Nests on a staging postbox only, in the test pool, with synthetic jobs and an expiry."
     },
     {
+      "name": "Publisher-hosted",
+      "description": "Listings run by their publisher: integrations reviewed by staff, jobs delivered to the publisher's service mailbox as `pigeonpost.nest_job.v1` messages, results posted back and delivered to the buyer. Paid with prepaid credits (credits v1): a publisher prices each operation per job in USD; the buyer's credit is held before the job is queued, captured once a succeeded result is delivered (Piyote keeps 10%), and released on every other ending."
+    },
+    {
       "name": "Marketplace console",
       "description": "Marketplace M2b: install counts, listing reports and the staff listing list."
     }
@@ -2549,7 +2553,7 @@
         ],
         "operationId": "setListingPrice",
         "summary": "Price a listing",
-        "description": "A **certified** publisher's admin, with **step-up**. Sets the tax-inclusive price (minor units), currency and term (`one_off` or `monthly`; no wallet, no per-job terms). The price is mirrored to the financial authority through the billing bridge before it stands: as an immutable offer whose id derives from listing, publisher, release line, term, currency and amount, so any change is a new offer and the previous one is retired. Monthly offers are provisioned there. Publishing on a new major version mirrors a new offer for that release line. Licences already bought keep their terms. `422 price_not_invoiceable` with `details.nearest`, `409 currency_unavailable`, `503 billing_unavailable`.",
+        "description": "A **certified** publisher's admin, with **step-up**. Sets the tax-inclusive price (minor units), currency and term (`one_off` or `monthly`). A publisher-hosted listing is priced per job of each operation instead (`409 per_job_only`; see `/v1/publishers/{publisher}/listings/{listing}/operations/{operation}/price`). The price is mirrored to the financial authority through the billing bridge before it stands: as an immutable offer whose id derives from listing, publisher, release line, term, currency and amount, so any change is a new offer and the previous one is retired. Monthly offers are provisioned there. Publishing on a new major version mirrors a new offer for that release line. Licences already bought keep their terms. `422 price_not_invoiceable` with `details.nearest`, `409 currency_unavailable`, `503 billing_unavailable`.",
         "x-pigeonpost-status": "implemented",
         "x-pigeonpost-action": "NestPublish",
         "security": [
@@ -5316,6 +5320,758 @@
           }
         }
       }
+    },
+    "/v1/publishers/{publisher}/integrations": {
+      "post": {
+        "tags": [
+          "Publisher-hosted"
+        ],
+        "operationId": "submitIntegration",
+        "summary": "Submit a publisher-hosted integration for review",
+        "description": "A certified publisher's admins. A new version of one of the publisher's templates that names a service mailbox (a `/k/` address or handle of a mailbox owned by the publisher's account, or by its organization's internal account; never under `/pigeonpost/`) and its operations. The integration is stored as an immutable release (`build_isolation = publisher_hosted`) with an open review of kind `integration`; staff decide it with `POST /v1/staff/reviews/{review}/decisions` (step-up), naming `release_digest`. No build and no attestation. `422 service_address_not_owned`, `409 version_exists`, `400 invalid_integration`.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "PublisherManage",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Publisher"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IntegrationCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The integration release and its review.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/IntegrationSubmitted"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "description": "The service address is not a mailbox of this publisher (`service_address_not_owned`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/marketplace/hosted-jobs": {
+      "get": {
+        "tags": [
+          "Publisher-hosted"
+        ],
+        "operationId": "listHostedJobs",
+        "summary": "The caller's hosted jobs",
+        "description": "Newest first, at most 100.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "NestJobRead",
+        "security": [
+          {
+            "memberToken": []
+          },
+          {
+            "apiKey": []
+          },
+          {
+            "capToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Jobs.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "next_cursor"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/HostedJob"
+                      }
+                    },
+                    "next_cursor": {
+                      "type": "null"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Publisher-hosted"
+        ],
+        "operationId": "runHostedJob",
+        "summary": "Run an operation of a publisher-hosted listing",
+        "description": "The listing must be published, publisher-hosted and visible to the caller (an invite or organization grant needs its invoke switch); the input must match the operation's fields. The job is delivered to the publisher's service at once as a `pigeonpost.nest_job.v1` message from the platform marketplace mailbox; the buyer is never named to the publisher. The result is sent to `deliver_to` (one of the caller's mailboxes; default their first). At most 10 open jobs per account (`429 rate_limited`). **Credits**: an operation with a per-job price holds that price on the caller's credit before the job is queued (idempotency key: the job id; the job's deadline is sent with it and the hold expires a day after it; a paid job's deadline is at most 7 days). Too little credit is `402 insufficient_credit` with `details.available_cents`, `details.required_cents` and `details.buy_url`, and nothing is queued. The hold is captured once a succeeded result is delivered (a capture the financial authority refuses for good is released instead) and released when the job fails, expires, loses its service mailbox or is cancelled; switching the marketplace off refuses new jobs only, and jobs already admitted still finish, deliver and settle; `charge` on the job says where it stands. A free operation skips billing. `409 no_mailbox`, `409 service_address_not_owned`, `409 not_on_sale` (a leftover card price and no per-job price), `503 not_on_sale` (the price is being mirrored), `503 billing_unavailable`.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "NestInstall",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HostedJobCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The job, queued.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/HostedJob"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "402": {
+            "description": "Too little credit for this job (`insufficient_credit`): `details.available_cents`, `details.required_cents` (USD cents) and `details.buy_url`, where credits are bought. Nothing was queued or held.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/BillingUnavailable"
+          }
+        }
+      }
+    },
+    "/v1/marketplace/hosted-jobs/{job}/cancel": {
+      "post": {
+        "tags": [
+          "Publisher-hosted"
+        ],
+        "operationId": "cancelHostedJob",
+        "summary": "Cancel a hosted job before its result arrives",
+        "description": "The account that ran it, a person; anyone else gets `404`. A queued or running job becomes `cancelled` and its credit hold is released; a result the service posts afterwards is refused (`409 job_closed`). A finished job is `409 job_closed`.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "NestInstall",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Job"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The cancelled job.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/HostedJob"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/v1/publishers/{publisher}/listings/{listing}/operations/{operation}/price": {
+      "get": {
+        "tags": [
+          "Publisher-hosted"
+        ],
+        "operationId": "getJobPrice",
+        "summary": "Read an operation's per-job price and offer",
+        "description": "The publisher's team. The price per job (USD cents) and the `per_job` offer the financial authority holds for it on the listing's current release line.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "PublisherManage",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Publisher"
+          },
+          {
+            "$ref": "#/components/parameters/Listing"
+          },
+          {
+            "$ref": "#/components/parameters/Operation"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The price.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/JobPriceState"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Publisher-hosted"
+        ],
+        "operationId": "setJobPrice",
+        "summary": "Price one job of a publisher-hosted operation",
+        "description": "A **certified** publisher's admin, with **step-up**. What one job of this operation costs buyers, in USD cents (1 to 1000000), paid from their prepaid credit; Piyote keeps 10% of each job and the rest is payable to the publisher. The listing must be publisher-hosted (`409 not_publisher_hosted`) and its integration must declare the operation (`404 unknown_operation`). Mirrored to the financial authority as an immutable `per_job` USD offer before it stands (any change is a new offer; the previous one is retired). Jobs already running keep the hold they were admitted with. `503 billing_unavailable`.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "NestPublish",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Publisher"
+          },
+          {
+            "$ref": "#/components/parameters/Listing"
+          },
+          {
+            "$ref": "#/components/parameters/Operation"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JobPriceSet"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The price and its offer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/JobPriceState"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "503": {
+            "$ref": "#/components/responses/BillingUnavailable"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Publisher-hosted"
+        ],
+        "operationId": "clearJobPrice",
+        "summary": "Make a publisher-hosted operation free",
+        "description": "A **certified** publisher's admin, with **step-up**. Removes the per-job price; its offer is retired at the financial authority. Running jobs keep their holds.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "NestPublish",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Publisher"
+          },
+          {
+            "$ref": "#/components/parameters/Listing"
+          },
+          {
+            "$ref": "#/components/parameters/Operation"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The operation's (now empty) price.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/JobPriceState"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/v1/marketplace/hosted-jobs/{job}": {
+      "get": {
+        "tags": [
+          "Publisher-hosted"
+        ],
+        "operationId": "getHostedJob",
+        "summary": "Read a hosted job",
+        "description": "The account that ran it; anyone else gets `404`.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "NestJobRead",
+        "security": [
+          {
+            "memberToken": []
+          },
+          {
+            "apiKey": []
+          },
+          {
+            "capToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Job"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The job.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/HostedJob"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/v1/marketplace/hosted-jobs/{job}/files/{index}": {
+      "get": {
+        "tags": [
+          "Publisher-hosted"
+        ],
+        "operationId": "getHostedJobFile",
+        "summary": "Download a hosted job's result file",
+        "description": "The account that ran the job. Served as an attachment with `x-content-type-options nosniff`.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "NestJobRead",
+        "security": [
+          {
+            "memberToken": []
+          },
+          {
+            "apiKey": []
+          },
+          {
+            "capToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Job"
+          },
+          {
+            "name": "index",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The file.",
+            "content": {
+              "application/pdf": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/v1/nest-jobs/{job}/result": {
+      "post": {
+        "tags": [
+          "Publisher-hosted"
+        ],
+        "operationId": "postHostedJobResult",
+        "summary": "A publisher's service reports a hosted job's result",
+        "description": "Authenticated as the listing's service mailbox: its capability token, or an account credential that acts as that mailbox (`x-pigeonpost-identity`). Anyone else gets `404`, as for a job that does not exist. `succeeded` needs at least one file; each file is `application/pdf` (else `415 unsupported_media_type`), at most 20 MB decoded (`413 file_too_large`), and must parse as a PDF (`422 file_unreadable`); at most 5 files, summary at most 4000 characters. Idempotent: the same result again answers `200` with `replay: true`; a different one is `409 result_recorded`; a job that expired is `409 job_closed`. The result is then sent to the buyer's mailbox from the marketplace mailbox with the files attached, and kept on the job.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "NestOperate",
+        "security": [
+          {
+            "capToken": []
+          },
+          {
+            "apiKey": []
+          },
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Job"
+          },
+          {
+            "$ref": "#/components/parameters/ActingIdentity"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HostedJobResult"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The job with its result; `replay` says whether this repeated a stored result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "replay"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/HostedJob"
+                    },
+                    "replay": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "description": "Not a supported result media type (`unsupported_media_type`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The file is not what it claims to be (`file_unreadable`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/staff/hosted-jobs": {
+      "get": {
+        "tags": [
+          "Staff"
+        ],
+        "operationId": "staffListHostedJobs",
+        "summary": "Publisher-hosted jobs, for support",
+        "description": "A reviewer with step-up. Ids, states, delivery and error codes, newest first, at most 100; never the input or the result.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "NestReview",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "queued",
+                "running",
+                "succeeded",
+                "failed",
+                "expired",
+                "cancelled"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Jobs.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "next_cursor"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/StaffHostedJob"
+                      }
+                    },
+                    "next_cursor": {
+                      "type": "null"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -5423,6 +6179,17 @@
         "schema": {
           "type": "string",
           "pattern": "^job_[a-z2-7]{26}$"
+        }
+      },
+      "Operation": {
+        "name": "operation",
+        "in": "path",
+        "required": true,
+        "description": "An operation name the listing's integration declares (lower-case dotted words, for example `hr.research`).",
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
         }
       },
       "Publisher": {
@@ -5667,11 +6434,753 @@
       }
     },
     "schemas": {
+      "IntegrationField": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "max_chars",
+          "required"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "max_chars": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 16000
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "label": {
+            "type": "string",
+            "maxLength": 80
+          },
+          "multiline": {
+            "type": "boolean"
+          }
+        }
+      },
+      "IntegrationOperation": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "version",
+          "input_schema",
+          "output"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 1000
+          },
+          "input_schema": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "fields"
+            ],
+            "properties": {
+              "fields": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 32,
+                "items": {
+                  "$ref": "#/components/schemas/IntegrationField"
+                }
+              }
+            }
+          },
+          "output": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "media_type"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "file"
+                ]
+              },
+              "media_type": {
+                "type": "string",
+                "enum": [
+                  "application/pdf"
+                ]
+              }
+            }
+          },
+          "deadline_hours": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 336,
+            "default": 72
+          }
+        }
+      },
+      "IntegrationCreate": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "template_id",
+          "version",
+          "service_address",
+          "operations"
+        ],
+        "properties": {
+          "template_id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string",
+            "description": "Semver; a new service address or operation is a new version."
+          },
+          "service_address": {
+            "type": "string",
+            "description": "A mailbox of the publisher's account or organization, for example `/acme/hr`."
+          },
+          "operations": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 20,
+            "items": {
+              "$ref": "#/components/schemas/IntegrationOperation"
+            }
+          }
+        }
+      },
+      "IntegrationSummary": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "service_address",
+          "service_mailbox",
+          "service_owned",
+          "operations",
+          "prices"
+        ],
+        "properties": {
+          "service_address": {
+            "type": "string"
+          },
+          "service_mailbox": {
+            "type": "string"
+          },
+          "service_owned": {
+            "type": "boolean"
+          },
+          "operations": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "prices": {
+            "description": "The per-job prices the template's listings carry (credits v1), for the reviewer to see what buyers will pay.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "listing_id",
+                "operation",
+                "amount_cents",
+                "currency",
+                "term"
+              ],
+              "properties": {
+                "listing_id": {
+                  "type": "string"
+                },
+                "operation": {
+                  "type": "string"
+                },
+                "amount_cents": {
+                  "type": "integer"
+                },
+                "currency": {
+                  "type": "string",
+                  "enum": [
+                    "USD"
+                  ]
+                },
+                "term": {
+                  "type": "string",
+                  "enum": [
+                    "per_job"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "IntegrationSubmitted": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "release_id",
+          "review_id",
+          "release_digest",
+          "kind",
+          "manifest"
+        ],
+        "properties": {
+          "release_id": {
+            "type": "string"
+          },
+          "review_id": {
+            "type": "string"
+          },
+          "release_digest": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "integration"
+            ]
+          },
+          "manifest": {
+            "type": "object",
+            "description": "The stored descriptor (`kind` publisher_hosted, `name`, `version`, `service_address`, `service_mailbox`, `operations` with `fields`, `output`, `deadline_hours`)."
+          }
+        }
+      },
+      "HostedJobCreate": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "listing_id",
+          "operation",
+          "input"
+        ],
+        "properties": {
+          "listing_id": {
+            "type": "string"
+          },
+          "operation": {
+            "type": "string"
+          },
+          "operation_version": {
+            "type": "string"
+          },
+          "input": {
+            "type": "object",
+            "description": "The operation's fields, strings only; at most 64 KiB as JSON.",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "deliver_to": {
+            "type": "string",
+            "description": "One of the caller's mailboxes; default the account's first."
+          }
+        }
+      },
+      "HostedJobFile": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "index",
+          "name",
+          "media_type",
+          "bytes",
+          "download_path"
+        ],
+        "properties": {
+          "index": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "media_type": {
+            "type": "string"
+          },
+          "bytes": {
+            "type": "integer"
+          },
+          "download_path": {
+            "type": "string"
+          }
+        }
+      },
+      "HostedJob": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "job_id",
+          "listing_id",
+          "listing_title",
+          "hosting",
+          "service_address",
+          "operation",
+          "operation_version",
+          "execution",
+          "deliver_to",
+          "delivery",
+          "result",
+          "error_code",
+          "revision",
+          "deadline_at",
+          "created_at",
+          "updated_at",
+          "finished_at",
+          "charge"
+        ],
+        "properties": {
+          "job_id": {
+            "type": "string"
+          },
+          "listing_id": {
+            "type": "string"
+          },
+          "listing_title": {
+            "type": "string"
+          },
+          "hosting": {
+            "type": "string",
+            "enum": [
+              "publisher"
+            ]
+          },
+          "service_address": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "operation": {
+            "type": "string"
+          },
+          "operation_version": {
+            "type": "string"
+          },
+          "execution": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "succeeded",
+              "failed",
+              "expired",
+              "cancelled"
+            ]
+          },
+          "deliver_to": {
+            "type": "string"
+          },
+          "delivery": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "pending",
+              "delivered",
+              "undeliverable",
+              null
+            ]
+          },
+          "result": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "summary",
+                  "files"
+                ],
+                "properties": {
+                  "summary": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "files": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/components/schemas/HostedJobFile"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "error_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "revision": {
+            "type": "integer"
+          },
+          "deadline_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "charge": {
+            "description": "Credits: what this job holds or cost. `null` for a free operation. `held`: reserved on the buyer's credit; `charged`: captured after the result was delivered; `released`: returned to the buyer's credit.",
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/HostedJobCharge"
+              }
+            ]
+          }
+        }
+      },
+      "HostedJobCharge": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "amount_cents",
+          "currency",
+          "status"
+        ],
+        "properties": {
+          "amount_cents": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "currency": {
+            "type": "string",
+            "enum": [
+              "USD"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "held",
+              "charged",
+              "released"
+            ]
+          }
+        }
+      },
+      "JobPriceSet": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "amount_cents"
+        ],
+        "properties": {
+          "amount_cents": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000,
+            "description": "Price of one job in US cents (credits are kept and spent in USD)."
+          },
+          "currency": {
+            "type": "string",
+            "enum": [
+              "USD"
+            ]
+          }
+        }
+      },
+      "JobPrice": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "amount_cents",
+          "currency",
+          "term"
+        ],
+        "properties": {
+          "amount_cents": {
+            "type": "integer"
+          },
+          "currency": {
+            "type": "string",
+            "enum": [
+              "USD"
+            ]
+          },
+          "term": {
+            "type": "string",
+            "enum": [
+              "per_job"
+            ]
+          }
+        }
+      },
+      "JobPriceState": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "listing_id",
+          "operation",
+          "price",
+          "offer"
+        ],
+        "properties": {
+          "listing_id": {
+            "type": "string"
+          },
+          "operation": {
+            "type": "string"
+          },
+          "price": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/JobPrice"
+              }
+            ]
+          },
+          "offer": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "offer_id",
+                  "state",
+                  "on_sale",
+                  "release_line"
+                ],
+                "properties": {
+                  "offer_id": {
+                    "type": "string",
+                    "pattern": "^mpo_[0-9a-f]{32}$"
+                  },
+                  "state": {
+                    "type": "string",
+                    "enum": [
+                      "pending",
+                      "active",
+                      "retiring",
+                      "retired"
+                    ]
+                  },
+                  "on_sale": {
+                    "type": "boolean"
+                  },
+                  "release_line": {
+                    "type": "string"
+                  },
+                  "error": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "HostedJobResultFile": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "media_type",
+          "content_b64"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "media_type": {
+            "type": "string",
+            "enum": [
+              "application/pdf"
+            ]
+          },
+          "content_b64": {
+            "type": "string",
+            "description": "Standard base64 (RFC 4648 section 4); at most 20 MB decoded."
+          }
+        }
+      },
+      "HostedJobResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "succeeded",
+              "failed"
+            ]
+          },
+          "summary": {
+            "type": "string",
+            "maxLength": 4000
+          },
+          "files": {
+            "type": "array",
+            "maxItems": 5,
+            "items": {
+              "$ref": "#/components/schemas/HostedJobResultFile"
+            }
+          }
+        }
+      },
+      "StaffHostedJob": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "job_id",
+          "listing_id",
+          "listing_title",
+          "publisher_id",
+          "operation",
+          "execution",
+          "delivery",
+          "error_code",
+          "last_dispatch_error",
+          "dispatch_attempts",
+          "created_at",
+          "updated_at",
+          "charge_state",
+          "charge_error"
+        ],
+        "properties": {
+          "job_id": {
+            "type": "string"
+          },
+          "listing_id": {
+            "type": "string"
+          },
+          "listing_title": {
+            "type": "string"
+          },
+          "publisher_id": {
+            "type": "string"
+          },
+          "operation": {
+            "type": "string"
+          },
+          "execution": {
+            "type": "string"
+          },
+          "delivery": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_dispatch_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "dispatch_attempts": {
+            "type": "integer"
+          },
+          "charge_state": {
+            "description": "Credits: the job's charge in the outbox (`null`: free). `refused` means saas_be refused a capture or release for good; `charge_error` says why.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "holding",
+              "held",
+              "capture_pending",
+              "captured",
+              "release_pending",
+              "released",
+              "refused",
+              null
+            ]
+          },
+          "charge_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "ListingPriceTerms": {
         "type": "object",
         "additionalProperties": false,
         "description": "Price terms a publisher sets (M2b). `amount_minor` must be 0 until payments land (`400 price_not_available`).",
         "properties": {
+          "hosting": {
+            "type": "string",
+            "enum": [
+              "pigeonpost",
+              "publisher"
+            ],
+            "description": "`publisher`: the publisher runs this service. Pigeonpost reviewed the publisher and the integration, not the code; a buyer's inputs are sent to the publisher. Such a listing is never installed: its operations are run as hosted jobs."
+          },
+          "service_address": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A publisher-hosted listing's service mailbox, as its integration names it."
+          },
           "amount_minor": {
             "type": "integer",
             "const": 0
@@ -6571,6 +8080,14 @@
           "updated_at"
         ],
         "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "release",
+              "integration"
+            ],
+            "description": "`integration`: a publisher-hosted integration, reviewed by staff alone (one `human_review` stage, no attestation)."
+          },
           "review_id": {
             "type": "string",
             "pattern": "^rvw_[a-z2-7]{26}$"
@@ -7058,6 +8575,25 @@
           "stages"
         ],
         "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "release",
+              "integration"
+            ],
+            "description": "`integration`: a publisher-hosted integration, reviewed by staff alone (one `human_review` stage, no attestation)."
+          },
+          "integration": {
+            "description": "For an integration review, its descriptor and whether the service mailbox is still the publisher's; otherwise null.",
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/IntegrationSummary"
+              }
+            ]
+          },
           "id": {
             "type": "string",
             "pattern": "^rvw_[a-z2-7]{26}$"
@@ -7162,6 +8698,14 @@
           "attestation"
         ],
         "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "release",
+              "integration"
+            ],
+            "description": "`integration`: a publisher-hosted integration, reviewed by staff alone (one `human_review` stage, no attestation)."
+          },
           "decision_id": {
             "type": "string"
           },
@@ -7351,7 +8895,7 @@
             "items": {
               "type": "object"
             },
-            "description": "The release manifest's operations and their input fields."
+            "description": "The release manifest's operations and their input fields. On a publisher-hosted listing each also has `price`: `null` (free) or `{amount_cents, currency: USD, term: per_job, funding: credits, on_sale}`."
           },
           "config_schema": {
             "$ref": "#/components/schemas/NestConfigSchema"
@@ -8527,6 +10071,14 @@
           "conflict"
         ],
         "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "release",
+              "integration"
+            ],
+            "description": "`integration`: a publisher-hosted integration, reviewed by staff alone (one `human_review` stage, no attestation)."
+          },
           "id": {
             "type": "string"
           },
