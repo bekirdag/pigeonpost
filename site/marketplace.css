@@ -249,3 +249,13 @@
   .mp-detail-hero .mp-logo[data-size="96"] .mp-logo-letters { font-size: 26px; }
   .mp-detail-titles h4 { font-size: 21px; }
 }
+
+/* ---- informational callout (a publisher-hosted listing's notice) -------------------------------
+   The billing gate's tokens: amber fill and edge, ink text. Information, never an error. */
+.mp-callout {
+  display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; border-radius: 12px;
+  border: 1px solid var(--warn-edge, #fde68a); background: var(--warn-fill, #fffbeb); color: var(--mp-ink);
+}
+.mp-callout p { margin: 0; font-size: 14px; line-height: 1.5; color: var(--mp-text); }
+.mp-callout strong { color: var(--mp-ink); }
+.mp-callout-icon { flex-shrink: 0; width: 20px; height: 20px; margin-top: 1px; fill: none; stroke: var(--warn-text, #92400e); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }

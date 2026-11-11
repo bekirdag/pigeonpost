@@ -1253,3 +1253,28 @@ test("the publisher console uploads a listing logo as the image itself, and can 
   await tick();
   assert.ok(p.calls.find((c) => c.method === "DELETE" && c.path === "/v1/publishers/pub_1/listings/lst_1/logo"));
 });
+
+test("the shared products view takes its heading and subtitle from the sidebar item", async (t) => {
+  const p = await accountPage(t, { features: ["nests", "marketplace"], url: "https://pigeonpost.dev/account#services" });
+  const head = () => p.doc.querySelector("#ac-h-products").textContent;
+  const lede = () => p.doc.querySelector("#ac-l-products");
+  assert.equal(head(), "Services");
+  assert.match(lede().textContent, /verified publishers/);
+  assert.equal(lede().hidden, false);
+  p.window.location.hash = "#nests";
+  p.window.dispatchEvent(new p.window.HashChangeEvent("hashchange"));
+  for (let i = 0; i < 10; i++) await tick(1);
+  assert.equal(head(), "Nests");
+  assert.match(lede().textContent, /workspaces/);
+});
+
+test("a publisher-hosted listing's notice is an informational callout, not a warning", async (t) => {
+  const p = catalogPage(t, { detail: { ...DETAIL, hosting: "publisher", operations: [] } });
+  await openDetail(p);
+  const note = p.$("#mp-hosted-notice");
+  assert.ok(note.classList.contains("mp-callout"));
+  assert.equal(note.classList.contains("pp-warn"), false);
+  assert.equal(note.getAttribute("role"), "note");
+  assert.equal(note.querySelector("svg").getAttribute("aria-hidden"), "true");
+  assert.equal(note.querySelector("strong").textContent, "Hosted by the publisher");
+});

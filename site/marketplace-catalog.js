@@ -152,7 +152,19 @@
     const creditChanged = () => { try { window.dispatchEvent(new window.Event("pp-credits-changed")); } catch (_) { /* old browsers */ } };
 
     function hostedNotice() {
-      return el("p", { class: "pp-warn mp-hosted-notice", id: "mp-hosted-notice", role: "note", text: HOSTED_NOTICE });
+      // Information, not an error: an amber callout with an info icon (the billing gate's tokens).
+      const NS = "http://www.w3.org/2000/svg";
+      const icon = document.createElementNS(NS, "svg");
+      icon.setAttribute("viewBox", "0 0 24 24"); icon.setAttribute("aria-hidden", "true"); icon.setAttribute("focusable", "false");
+      icon.setAttribute("class", "mp-callout-icon");
+      for (const [tag, attrs] of [["circle", { cx: "12", cy: "12", r: "9" }], ["path", { d: "M12 11v5" }], ["path", { d: "M12 8h.01" }]]) {
+        const n = document.createElementNS(NS, tag);
+        for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+        icon.append(n);
+      }
+      const [lead, rest] = HOSTED_NOTICE.split(" — ");
+      return el("div", { class: "mp-callout mp-hosted-notice", id: "mp-hosted-notice", role: "note" }, icon,
+        el("p", {}, el("strong", { text: lead }), ` — ${rest}`));
     }
 
     /// One Run form per operation, from its input fields (`{name, max_chars, required, label?, multiline?}`).
@@ -301,8 +313,8 @@
       const box = el("div", { class: "mp-catalog", id: "mp-catalog" },
         el("div", { class: "mp-hero" },
           el("div", { class: "mp-hero-text" },
-            el("h4", { class: "mp-hero-title", text: "Marketplace" }),
-            el("p", { class: "mp-hero-sub", text: "Apps and services from verified publishers. Every release is built from source and reviewed by Pigeonpost before it is listed." })),
+            el("h4", { class: "mp-hero-title", text: "Find a service" }),
+            el("p", { class: "mp-hero-sub", text: "Every release is built from source and reviewed by Pigeonpost before it is listed. Publishers are verified before they can list anything." })),
           searchForm()),
         filterControls(), status);
       if (st.error) {
