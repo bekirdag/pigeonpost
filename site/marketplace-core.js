@@ -147,7 +147,10 @@
   };
 
   /// FNV-1a over the id's UTF-16 units: the same tone for the same id on every client.
-  MP.TONES = 12;
+  MP.TONES = 24;
+  // The hues a tone can take: the colour wheel without its yellow-to-lime stretch, where white
+  // initials would be hard to read. Each tone is a gradient from this hue to a deeper, shifted one.
+  MP.TONE_HUES = [0, 12, 24, 160, 172, 184, 196, 206, 216, 226, 236, 246, 256, 266, 276, 286, 296, 306, 316, 326, 336, 346, 148, 354];
   MP.logoTone = function (id) {
     let h = 0x811c9dc5;
     const s = String(id || "");
@@ -155,17 +158,23 @@
     return h % MP.TONES;
   };
 
-  /// A listing's logo tile. `size` is the drawn size in CSS pixels (40, 56 or 96); the image
-  /// variant is the next one up for sharp high-density screens. `alt` empty marks it decorative
-  /// (the title is next to it).
+  /// A listing's logo tile. `size` is the drawn size in CSS pixels (40, 48, 64, 72 or 96); the
+  /// image variant is the next one up for sharp high-density screens. `alt` empty marks it
+  /// decorative (the title is next to it).
   MP.logo = function (l, opts) {
     const o = opts || {};
-    const size = o.size || 56;
+    const size = o.size || 64;
     const alt = o.alt == null ? "" : o.alt;
-    const fallback = () => el("span", {
-      class: `mp-logo mp-logo-default mp-tone-${MP.logoTone(l && l.id)}`, "data-size": String(size),
-      "data-logo": "default", role: alt ? "img" : null, "aria-label": alt || null, "aria-hidden": alt ? null : "true",
-    }, el("span", { class: "mp-logo-letters", text: MP.initials(l && l.title) }));
+    const fallback = () => {
+      const tone = MP.logoTone(l && l.id);
+      const tile = el("span", {
+        class: `mp-logo mp-logo-default mp-tone-${tone}`, "data-size": String(size),
+        "data-logo": "default", role: alt ? "img" : null, "aria-label": alt || null, "aria-hidden": alt ? null : "true",
+      }, el("span", { class: "mp-logo-letters", text: MP.initials(l && l.title) }));
+      // A custom property through the CSSOM, which a strict style-src policy allows.
+      tile.style.setProperty("--mp-hue", String(MP.TONE_HUES[tone]));
+      return tile;
+    };
     const urls = l && l.logo && l.logo.urls;
     const pick = urls && (size > 64 ? urls["512"] : urls["128"]);
     const src = pick ? MP.assetUrl(pick) : null;
@@ -203,30 +212,32 @@
         el("span", { class: "mp-sr", text: p.first_party ? "Made by Pigeonpost" : "Verified publisher" })) : null);
   };
 
-  /// One catalog card. `open(listing)` shows its page; `installed` adds the Installed tag.
+  /// One catalog card: a content box whose logo, title and description lead, with the publisher,
+  /// category, where it runs and the price in a quiet footer. `open(listing)` shows its page (or
+  /// `href` links to it); `installed` notes that this account has it; `featured` draws it larger.
   MP.card = function (l, opts) {
     const o = opts || {};
-    const tags = el("div", { class: "mp-card-tags" },
-      l.category && MP.categoryLabel(l.category) ? el("span", { class: "mp-chip", "data-category": l.category, text: MP.categoryLabel(l.category) }) : null,
-      // A sample is a placeholder: where it would run is not decided yet.
-      l.sample ? el("span", { class: "mp-chip mp-chip-sample", text: "Sample" })
-        : el("span", { class: `mp-chip mp-chip-hosting${l.hosting === "publisher" ? " mp-chip-publisher" : ""}`, "data-hosting": l.hosting || "pigeonpost", text: MP.hostingText(l) }));
-    const status = !l.coming_soon && o.installed ? el("span", { class: "mp-card-state mp-card-installed", text: "Installed" }) : null;
+    const facts = el("span", { class: "mp-card-facts" });
+    const fact = (node) => { if (facts.childNodes.length) facts.append(el("span", { class: "mp-dot", "aria-hidden": "true", text: "·" })); facts.append(node); };
+    if (l.category && MP.categoryLabel(l.category)) fact(el("span", { class: "mp-card-category", "data-category": l.category, text: MP.categoryLabel(l.category) }));
+    // A sample is a placeholder: where it would run is not decided yet.
+    if (l.sample) fact(el("span", { class: "mp-card-sample", text: "Sample" }));
+    else fact(el("span", { class: `mp-card-hosting${l.hosting === "publisher" ? " mp-card-hosting-publisher" : ""}`, "data-hosting": l.hosting || "pigeonpost", text: MP.hostingText(l) }));
+    if (!l.coming_soon && o.installed) fact(el("span", { class: "mp-card-installed", text: "Installed" }));
     return el(o.tag || "li", { class: `mp-card${l.coming_soon ? " mp-card-coming" : ""}${o.featured ? " mp-card-featured" : ""}`, "data-listing": l.id },
       l.coming_soon ? el("span", { class: "mp-ribbon", "aria-hidden": "true", text: "Coming soon" }) : null,
-      el("div", { class: "mp-card-head" },
-        MP.logo(l, { size: o.featured ? 64 : 48 }),
-        el("div", { class: "mp-card-titles" },
-          el(o.heading || "h5", { class: "mp-card-title" },
-            o.href
-              ? el("a", { class: "mp-card-link", href: o.href, "aria-label": `${l.title}${l.coming_soon ? " (coming soon)" : ""}` }, l.title)
-              : el("button", { type: "button", class: "mp-card-link", "aria-label": `Details for ${l.title}`, onclick: () => o.open && o.open(l) }, l.title)),
-          MP.publisherLine(l))),
+      MP.logo(l, { size: o.featured ? 72 : 64 }),
+      el(o.heading || "h5", { class: "mp-card-title" },
+        o.href
+          ? el("a", { class: "mp-card-link", href: o.href, "aria-label": `${l.title}${l.coming_soon ? " (coming soon)" : ""}` }, l.title)
+          : el("button", { type: "button", class: "mp-card-link", "aria-label": `Details for ${l.title}${l.coming_soon ? " (coming soon)" : ""}`, onclick: () => o.open && o.open(l) }, l.title)),
       el("p", { class: "mp-card-summary", text: l.summary || "" }),
-      tags,
+      // Publisher and price on one line, the facts under them.
       el("div", { class: "mp-card-foot" },
-        el("span", { class: `mp-card-price${l.coming_soon ? " mp-card-price-soon" : ""}`, text: MP.cardPrice(l) }),
-        status));
+        MP.publisherLine(l),
+        // The ribbon already says "Coming soon"; such a card has no price to show yet.
+        l.coming_soon ? null : el("span", { class: "mp-card-price", text: MP.cardPrice(l) }),
+        facts));
   };
 
   // ---- configuration schema → form ---------------------------------------------------------------

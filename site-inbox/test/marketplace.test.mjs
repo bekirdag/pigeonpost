@@ -1093,6 +1093,7 @@ test("default logos are the title's initials on a tone derived from the id, the 
   const tile = MP.logo({ id: "lst_sample_translator", title: "Translator (TR/EN/DE)" }, { size: 48 });
   assert.equal(tile.dataset.logo, "default");
   assert.ok(tile.classList.contains(`mp-tone-${tone}`));
+  assert.equal(tile.style.getPropertyValue("--mp-hue"), String(MP.TONE_HUES[tone]), "the gradient starts from the id's hue");
   assert.equal(tile.textContent, "Tr");
   assert.equal(tile.getAttribute("aria-hidden"), "true", "decorative next to its title");
   const named = MP.logo({ id: "lst_x", title: "X ray" }, { size: 96, alt: "X ray logo" });
@@ -1123,15 +1124,15 @@ test("cards show the logo, the publisher with its verified badge, the category, 
   assert.equal(a.querySelector(".mp-logo-letters").textContent, "HH");
   assert.equal(a.querySelector(".mp-publisher-name").textContent, "Acme");
   assert.ok(a.querySelector(".mp-verified"), "a certified publisher has the verified badge");
-  assert.equal(a.querySelector(".mp-chip[data-category]").textContent, "Legal");
-  assert.equal(a.querySelector(".mp-chip-hosting").textContent, "Runs in your Nest");
+  assert.equal(a.querySelector(".mp-card-category").textContent, "Legal");
+  assert.equal(a.querySelector(".mp-card-hosting").textContent, "Runs in your Nest");
   assert.equal(a.querySelector(".mp-card-price").textContent, "Free");
   assert.equal(a.querySelector(".mp-card-summary").textContent, "Answers HR questions");
   assert.equal(a.querySelector(".mp-ribbon"), null);
   const i = p.$('[data-listing="lst_i"]');
   assert.equal(i.querySelector("img.mp-logo").getAttribute("src"), "https://postbox.pigeonpost.dev/v1/marketplace/listings/lst_i/logo/0123456789abcdef/128.webp");
   assert.equal(i.querySelector(".mp-verified"), null);
-  assert.equal(i.querySelector(".mp-chip-hosting").textContent, "Hosted by the publisher");
+  assert.equal(i.querySelector(".mp-card-hosting").textContent, "Hosted by the publisher");
   assert.equal(i.querySelector(".mp-card-price").textContent, "$0.25 per run");
   assert.equal(p.$('[data-listing="lst_m"] .mp-card-price').textContent, "$10.00/month");
   // The whole card opens the listing through its title, which names it for screen readers.
@@ -1154,8 +1155,8 @@ test("coming-soon samples wear a ribbon, fill the featured row, and filter and s
   const soon = p.$('#mp-grid [data-listing="lst_sample_contract_reviewer"]');
   assert.ok(soon.classList.contains("mp-card-coming"));
   assert.equal(soon.querySelector(".mp-ribbon").textContent, "Coming soon");
-  assert.equal(soon.querySelector(".mp-card-price").textContent, "Coming soon");
-  assert.equal(soon.querySelector(".mp-chip-sample").textContent, "Sample");
+  assert.equal(soon.querySelector(".mp-card-price"), null, "the ribbon says it; no second label");
+  assert.equal(soon.querySelector(".mp-card-sample").textContent, "Sample");
   assert.equal(soon.querySelector(".mp-publisher-name").textContent, "Pigeonpost");
   const featured = [...p.doc.querySelectorAll("#mp-featured [data-listing]")].map((n) => n.dataset.listing);
   assert.deepEqual(featured, ["lst_sample_contract_reviewer", "lst_sample_meeting_minutes", "lst_sample_translator"], "featured rank order");
