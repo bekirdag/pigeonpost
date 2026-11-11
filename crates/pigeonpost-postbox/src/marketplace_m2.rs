@@ -469,12 +469,15 @@ pub(crate) struct Rel {
     pub(crate) release_digest: Option<String>,
     pub(crate) image: Option<String>,
     pub(crate) manifest: Value,
+    /// A publisher-hosted integration (`marketplace_hosted`): reviewed, never attested or run here.
+    pub(crate) hosted: bool,
 }
 
 pub(crate) fn release_in(c: &Connection, id: &str) -> rusqlite::Result<Option<Rel>> {
     c.query_row(
         "SELECT id, template_id, publisher_id, version, status, security_state, release_digest,
-                image, manifest FROM nest_releases WHERE id = ?1",
+                image, manifest, COALESCE(build_isolation = 'publisher_hosted', 0)
+           FROM nest_releases WHERE id = ?1",
         [id],
         |r| {
             Ok(Rel {
@@ -490,6 +493,7 @@ pub(crate) fn release_in(c: &Connection, id: &str) -> rusqlite::Result<Option<Re
                     .get::<_, Option<String>>(8)?
                     .and_then(|t| serde_json::from_str(&t).ok())
                     .unwrap_or(Value::Null),
+                hosted: r.get::<_, i64>(9)? == 1,
             })
         },
     )
@@ -1575,10 +1579,11 @@ fn review_status_in(
         Option<String>,
         String,
         String,
+        String,
     )> = c
         .query_row(
             "SELECT c.status, c.release_id, c.previous_id, c.revision, c.updated_at,
-                    r.release_digest, r.security_state, p.status
+                    r.release_digest, r.security_state, p.status, c.kind
                FROM review_cases c JOIN nest_releases r ON r.id = c.release_id
                JOIN publisher_profiles p ON p.id = c.publisher_id
               WHERE c.id = ?1 AND c.publisher_id = ?2",
@@ -1593,18 +1598,34 @@ fn review_status_in(
                     r.get(5)?,
                     r.get(6)?,
                     r.get(7)?,
+                    r.get(8)?,
                 ))
             },
         )
         .optional()?;
-    let Some((case_status, release, previous, revision, updated, digest, security, pub_status)) =
-        row
+    let Some((
+        case_status,
+        release,
+        previous,
+        revision,
+        updated,
+        digest,
+        security,
+        pub_status,
+        kind,
+    )) = row
     else {
         return Ok(None);
     };
     let rows = decisions_in(c, case)?;
     let mut stages = Vec::new();
-    for name in STAGES {
+    // A publisher-hosted integration has one stage: the staff review of publisher and integration.
+    let names: &[&str] = if kind == "integration" {
+        &["human_review"]
+    } else {
+        &STAGES
+    };
+    for name in names.iter().copied() {
         let mine: Vec<&DecisionRow> = rows.iter().filter(|r| r.1 == name).collect();
         let stage = match mine.last() {
             None => json!({
@@ -1652,6 +1673,7 @@ fn review_status_in(
     let findings_ref = format!("/v1/publishers/{publisher}/reviews/{case}/findings");
     let mut out = json!({
         "review_id": case,
+        "kind": kind,
         "publisher_id": publisher,
         "release_id": release,
         "artifact_digest": digest.unwrap_or_default(),
@@ -1922,7 +1944,8 @@ async fn withdraw_review(
 const LISTING_COLS: &str =
     "l.id, l.publisher_id, l.release_id, l.template_id, l.title, l.summary, \
      l.description, l.visibility, l.status, l.address, l.moderation_reason, l.created_at, \
-     l.updated_at, l.published_at, r.version, l.price_currency, l.price_term";
+     l.updated_at, l.published_at, r.version, l.price_currency, l.price_term, l.hosting, \
+     l.service_address";
 
 fn listing_json(r: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
     Ok(json!({
@@ -1942,6 +1965,8 @@ fn listing_json(r: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
         "published_at": r.get::<_, Option<i64>>(13)?.map(iso),
         "version": r.get::<_, String>(14)?,
         "price": crate::marketplace_listings::price_json(r.get(15)?, r.get(16)?),
+        "hosting": r.get::<_, String>(17)?,
+        "service_address": r.get::<_, Option<String>>(18)?,
     }))
 }
 
@@ -2053,14 +2078,25 @@ async fn create_listing(
                 let rel = release_in(tx, &req.release_id)?
                     .filter(|r| r.publisher_id == pid)
                     .ok_or_else(|| GErr::new(StatusCode::NOT_FOUND, "not_found", "no such release"))?;
-                let address = rel.manifest["listing_address"].as_str().unwrap_or("").to_string();
-                let held: Option<String> = tx
-                    .query_row(
-                        "SELECT id FROM nest_listings WHERE address = ?1",
-                        [&address],
-                        |r| r.get(0),
-                    )
-                    .optional()?;
+                // A publisher-hosted integration has no Nest address: its jobs go to its service
+                // mailbox (`marketplace_hosted`).
+                let address = (!rel.hosted)
+                    .then(|| rel.manifest["listing_address"].as_str().unwrap_or("").to_string());
+                let (hosting, service) = if rel.hosted {
+                    ("publisher", rel.manifest["service_address"].as_str().map(str::to_string))
+                } else {
+                    ("pigeonpost", None)
+                };
+                let held: Option<String> = match &address {
+                    Some(a) => tx
+                        .query_row(
+                            "SELECT id FROM nest_listings WHERE address = ?1",
+                            [a],
+                            |r| r.get(0),
+                        )
+                        .optional()?,
+                    None => None,
+                };
                 if let Some(existing) = held {
                     return Err(GErr::conflict(
                         "listing_address_taken",
@@ -2071,8 +2107,8 @@ async fn create_listing(
                 tx.execute(
                     "INSERT INTO nest_listings (id, publisher_id, release_id, title, summary,
                         visibility, status, created_at, updated_at, address, description, template_id,
-                        price_currency, price_term)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'draft', ?7, ?7, ?8, ?9, ?10, ?11, ?12)",
+                        price_currency, price_term, hosting, service_address)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'draft', ?7, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
                     params![
                         lid,
                         pid,
@@ -2085,7 +2121,9 @@ async fn create_listing(
                         description,
                         rel.template_id,
                         currency,
-                        term
+                        term,
+                        hosting,
+                        service
                     ],
                 )?;
                 Ok(listing_in(tx, &lid, &pid)?.unwrap_or(Value::Null))
@@ -2241,10 +2279,13 @@ async fn publish_listing(
                     .ok_or_else(|| {
                         GErr::new(StatusCode::NOT_FOUND, "not_found", "no such release")
                     })?;
-                if !live_attested_in(tx, &rel)? {
+                if rel.hosted {
+                    // Reviewed by staff, its service mailbox still the publisher's.
+                    crate::marketplace_hosted::publishable_in(tx, &rel)?;
+                } else if !live_attested_in(tx, &rel)? {
                     return Err(not_runnable(&rel));
                 }
-                if rel.manifest["listing_address"].as_str() != address.as_deref() {
+                if !rel.hosted && rel.manifest["listing_address"].as_str() != address.as_deref() {
                     return Err(conflict_code(
                         "listing_address_changed",
                         "this release serves another address; give it its own listing",
@@ -2252,8 +2293,16 @@ async fn publish_listing(
                 }
                 tx.execute(
                     "UPDATE nest_listings SET release_id = ?2, status = 'published',
-                        published_at = COALESCE(published_at, ?3), updated_at = ?3 WHERE id = ?1",
-                    params![listing, rel.id, now],
+                        published_at = COALESCE(published_at, ?3), updated_at = ?3,
+                        service_address = CASE WHEN ?4 THEN ?5 ELSE service_address END
+                      WHERE id = ?1",
+                    params![
+                        listing,
+                        rel.id,
+                        now,
+                        rel.hosted,
+                        rel.manifest["service_address"].as_str()
+                    ],
                 )?;
                 operations_in(tx, &listing, &rel.manifest)?;
                 crate::store::audit::append_in(tx, &audit)?;
@@ -2417,8 +2466,8 @@ async fn catalog(
                         |r| {
                             let mut v = listing_json(r)?;
                             v["publisher"] = json!({
-                                "display_name": r.get::<_, String>(17)?,
-                                "first_party": r.get::<_, String>(18)? == "platform",
+                                "display_name": r.get::<_, String>(19)?,
+                                "first_party": r.get::<_, String>(20)? == "platform",
                             });
                             if let Some(o) = v.as_object_mut() {
                                 o.remove("moderation_reason");
@@ -2903,6 +2952,9 @@ async fn install(
             return Err(not_found());
         }
         let rel = rel.ok_or_else(not_found)?;
+        if rel.hosted {
+            return Err(crate::marketplace_hosted::not_installable());
+        }
         // Marketplace payments: a priced listing installs only under a paid purchase's id.
         let pending = match crate::marketplace_pay::admit_install(
             &state,
@@ -3649,23 +3701,24 @@ async fn staff_list_reviews(
         let rows = state
             .store
             .group_read(move |c| -> GResult<Vec<Value>> {
-                let list: Vec<(String, String, String, String, i64, i64, String)> = {
+                type Row = (String, String, String, String, i64, i64, String, String);
+                let list: Vec<Row> = {
                     let mut stmt = c.prepare(&format!(
                         "SELECT c.id, c.release_id, c.publisher_id, r.version, c.revision, c.updated_at,
-                                p.display_name
+                                p.display_name, c.kind
                            FROM review_cases c JOIN nest_releases r ON r.id = c.release_id
                            JOIN publisher_profiles p ON p.id = c.publisher_id
                           WHERE c.status = ?1 ORDER BY c.created_at, c.rowid LIMIT {PAGE}"
                     ))?;
                     let rows = stmt
                         .query_map([&status], |r| {
-                            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?))
+                            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?))
                         })?
                         .collect::<rusqlite::Result<Vec<_>>>()?;
                     rows
                 };
                 let mut out = Vec::new();
-                for (case, release, publisher, version, revision, updated, name) in list {
+                for (case, release, publisher, version, revision, updated, name, kind) in list {
                     let conflict = store::review_conflict_in(c, &account, &release)?;
                     let done: Vec<String> = decisions_in(c, &case)?
                         .into_iter()
@@ -3673,7 +3726,7 @@ async fn staff_list_reviews(
                         .collect();
                     out.push(json!({
                         "id": case, "release_id": release, "publisher_id": publisher,
-                        "publisher_name": name, "version": version, "status": status,
+                        "publisher_name": name, "version": version, "status": status, "kind": kind,
                         "revision": revision, "updated_at": iso(updated),
                         "stages_recorded": done,
                         "first_party": conflict.first_party, "conflict": conflict.conflicted,
@@ -3775,6 +3828,9 @@ async fn staff_moderate(
                             |r| r.get(0),
                         )?;
                         let live = match &rel {
+                            Some(r) if r.hosted => {
+                                crate::marketplace_hosted::publishable_in(tx, r).is_ok()
+                            }
                             Some(r) => live_attested_in(tx, r)?,
                             None => false,
                         };

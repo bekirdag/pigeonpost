@@ -253,6 +253,12 @@ fn price_in(c: &Connection, listing: &str) -> rusqlite::Result<Option<Price>> {
     .optional()
 }
 
+/// Whether the publisher priced this listing (publisher-hosted jobs refuse priced listings until
+/// prepaid credits exist).
+pub(crate) fn is_priced_in(c: &Connection, listing: &str) -> rusqlite::Result<bool> {
+    Ok(price_in(c, listing)?.is_some())
+}
+
 /// The one price model (`ListingPrice`): the publisher's price (`funding: card`), or zero (test
 /// credits) with the listing's preferred currency and term for a free one (M2b).
 pub(crate) fn price_json_in(c: &Connection, listing: &str) -> rusqlite::Result<Value> {

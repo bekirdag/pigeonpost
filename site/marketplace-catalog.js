@@ -20,6 +20,13 @@
 //   POST   /v1/nest-installations/{id}/rollback       {}
 //   DELETE /v1/nest-installations/{id}                uninstall
 //   POST   /v1/orgs/{org}/nest-installations           install for a company {listing_id, handle, purchase_id}
+//   POST   /v1/marketplace/hosted-jobs                run an operation of a publisher-hosted listing
+//                                                    {listing_id, operation, input}
+//   GET    /v1/marketplace/hosted-jobs                this account's hosted jobs
+//
+// A publisher-hosted listing (`hosting: "publisher"`) is run by its publisher: it is never
+// installed, its page says so before anything is sent, and each operation has a Run form built
+// from its input fields. Results come back to the buyer's inbox as a message with the PDF attached.
 // and the billing bridge (deps.bridgeGet / deps.bridgeAction / deps.startCheckout):
 //   POST   /api/v1/marketplace/checkout               (on /billing/checkout) start a purchase
 //   GET    /api/v1/marketplace/checkout/{intent}       where a purchase stands after iyzico
@@ -107,9 +114,77 @@
 
     function badge(l) {
       const p = l.publisher || {};
-      return p.first_party
+      const who = p.first_party
         ? el("span", { class: "mp-badge mp-badge-first", text: "By Pigeonpost" })
         : el("span", { class: "mp-badge", text: `Publisher: ${p.display_name || "unknown"}` });
+      if (l.hosting !== "publisher") return who;
+      return el("span", {}, who, " ", el("span", { class: "mp-badge mp-badge-hosted", "data-hosting": "publisher", text: "Hosted by the publisher" }));
+    }
+
+    const HOSTED_NOTICE = "Hosted by the publisher — Pigeonpost reviewed the publisher and this integration, not the code; your inputs are sent to the publisher.";
+    const JOB_TEXT = { queued: "Sending to the publisher", running: "With the publisher", succeeded: "Done — the result is in your inbox",
+      failed: "Failed", expired: "Ran out of time", cancelled: "Cancelled" };
+
+    function hostedNotice() {
+      return el("p", { class: "pp-warn mp-hosted-notice", id: "mp-hosted-notice", role: "note", text: HOSTED_NOTICE });
+    }
+
+    /// One Run form per operation, from its input fields (`{name, max_chars, required, label?, multiline?}`).
+    function runForm(l, op, i) {
+      const prefix = `mp-run-${i}`;
+      const inputs = [];
+      const box = el("fieldset", {}, el("legend", { text: op.title || op.name }));
+      if (op.description) box.append(el("p", { class: "muted", text: op.description }));
+      for (const f of op.fields || []) {
+        const id = `${prefix}-${String(f.name).replace(/[^a-z0-9_]/g, "_")}`;
+        const attrs = { id, maxlength: f.max_chars, required: f.required === true, autocomplete: "off" };
+        const input = f.multiline ? el("textarea", { ...attrs, rows: "4" }) : el("input", { ...attrs, type: "text" });
+        inputs.push([f.name, input]);
+        box.append(el("label", { for: id }, (f.label || f.name) + (f.required ? " (required)" : "")), input);
+      }
+      box.append(el("p", { class: "ac-note", text: "The result is sent to your inbox as a PDF." }),
+        el("button", { type: "submit", class: "btn btn-primary", id: `${prefix}-go` }, `Run ${op.title || op.name}`));
+      return el("form", { class: "ac-form mp-run", id: prefix, "data-operation": op.name, onsubmit: async (e) => {
+        e.preventDefault();
+        const input = {};
+        for (const [name, node] of inputs) if (node.value.trim() !== "") input[name] = node.value;
+        try {
+          await deps.pb("/v1/marketplace/hosted-jobs", { method: "POST", body: JSON.stringify({ listing_id: l.id, operation: op.name, operation_version: op.version, input }) });
+          status.say("Sent to the publisher. The result will arrive in your inbox.");
+          for (const [, node] of inputs) node.value = "";
+        } catch (err) { MP.report(deps, status, err, "services", { payment_unavailable: "Paid runs of this service aren't available yet." }); }
+        await loadJobs(l.id);
+      } }, box);
+    }
+
+    async function loadJobs(listingId) {
+      try {
+        const v = await deps.pb("/v1/marketplace/hosted-jobs");
+        st.jobs = (v.data || []).filter((j) => j.listing_id === listingId);
+      } catch (_) { st.jobs = []; }
+      draw();
+    }
+
+    function jobsBlock(l) {
+      if (st.jobs === undefined || st.jobsFor !== l.id) { st.jobsFor = l.id; st.jobs = null; loadJobs(l.id); }
+      const box = el("section", { class: "mp-jobs", id: "mp-jobs", "aria-labelledby": "mp-jobs-title" }, el("h5", { id: "mp-jobs-title", text: "Your runs" }));
+      if (!st.jobs) { box.append(el("p", { class: "muted", text: "Loading…" })); return box; }
+      if (!st.jobs.length) { box.append(el("p", { class: "muted", text: "Nothing run yet." })); return box; }
+      box.append(el("ul", { class: "mp-list", "aria-label": "Runs" }, st.jobs.map((j) => el("li", { class: "mp-row", "data-job": j.job_id },
+        el("span", { text: `${MP.when(j.created_at)} · ${j.operation} · ${JOB_TEXT[j.execution] || j.execution}` }),
+        j.result && j.result.summary ? el("span", { class: "muted", text: ` · ${j.result.summary.slice(0, 200)}` }) : null))));
+      return box;
+    }
+
+    function hostedBlock(l) {
+      const box = el("div", { class: "mp-hosted", id: "mp-hosted" });
+      if (l.price && Number(l.price.amount_minor) > 0) {
+        box.append(el("p", { class: "muted", id: "mp-hosted-paid", text: "Paid runs of this service aren't available yet." }));
+      } else {
+        (l.operations || []).forEach((op, i) => box.append(runForm(l, op, i)));
+      }
+      box.append(jobsBlock(l));
+      return box;
     }
 
     function filterControls() {
@@ -386,8 +461,14 @@
         el("p", { class: "muted", text: `Version ${d.version}${d.published_at ? ` · listed ${MP.when(d.published_at)}` : ""}` }),
         el("p", { text: d.summary }),
         d.description ? el("p", { class: "mp-description", text: d.description }) : null,
+        d.hosting === "publisher" ? hostedNotice() : null,
         el("h5", { text: "What it does" }), operationsBlock(d.operations || []),
-        priceBlock(d));
+        d.hosting === "publisher" ? null : priceBlock(d));
+      if (d.hosting === "publisher") {
+        box.append(hostedBlock(d));
+        box.append(el("p", { class: "ac-note" }, "Something wrong with this service? ", el("a", { href: "/app-support.html", text: "Tell Pigeonpost support" }), " and include its name."));
+        return box;
+      }
       const inst = installFor(d.id);
       const paid = st.purchase && st.purchase.listing_id === d.id && st.purchase.status === "paid" ? st.purchase : null;
       if (inst) box.append(installationBlock(d, inst));

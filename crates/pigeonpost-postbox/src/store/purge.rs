@@ -240,6 +240,13 @@ pub(crate) const TABLES: &[(&str, Rule)] = &[
         Keep("Catalog record of a publisher's listing; the publisher profile blocks the purge"),
     ),
     ("nest_mp_purchases", Block(A, "account_id = ?1")),
+    // Publisher-hosted jobs: the buyer's own input and result, like `nest_jobs`; the files belong
+    // to their job, whose row blocks.
+    ("nest_hosted_jobs", Block(A, "account_id = ?1")),
+    (
+        "nest_hosted_job_files",
+        Keep("Result files of a hosted job; the job row blocks the purge"),
+    ),
     (
         "nest_installation_licences",
         Keep("Licence state of an installation; the installation row blocks the purge"),

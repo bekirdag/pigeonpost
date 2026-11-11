@@ -1864,6 +1864,14 @@ async fn staff_read_review(
         data["id"] = json!(view.case_id);
         data["status"] = json!(view.status);
         data["first_party"] = json!(view.conflict.first_party);
+        // What staff review for a publisher-hosted integration: its service and operations.
+        let (case, release) = (view.case_id.clone(), view.release_id.clone());
+        let (kind, integration) = state
+            .store
+            .group_read(move |c| crate::marketplace_hosted::staff_view_in(c, &case, &release))
+            .await?;
+        data["kind"] = json!(kind);
+        data["integration"] = integration;
         Ok(Json(json!({ "data": data })))
     }
     .await;
@@ -1936,13 +1944,15 @@ async fn staff_decide(
         if reason.is_empty() || reason.chars().count() > 2000 {
             return Err(GErr::bad("invalid_request", "reason: 1-2000 characters"));
         }
+        // A publisher-hosted integration is reviewed, never attested (`marketplace_hosted`).
+        let integration = crate::marketplace_hosted::is_integration_case(&state, &review).await?;
         let mut actions = vec![Action::NestReview];
-        if req.decision == "approved" {
+        if req.decision == "approved" && !integration {
             actions.push(Action::NestAttest);
         }
         let view = staff_gate(&state, &principal, &account, &review, &actions).await?;
         // Hardening: an approval is only attested with a signature (503 without a key).
-        let signer = if req.decision == "approved" {
+        let signer = if req.decision == "approved" && !integration {
             Some(state.nests.marketplace.signer()?)
         } else {
             None
@@ -1993,6 +2003,24 @@ async fn staff_decide(
                         return Err(conflict_code("security_quarantined", "this release is quarantined"))
                     }
                     _ => {}
+                }
+                if integration {
+                    return crate::marketplace_hosted::decide_in(
+                        tx,
+                        &crate::marketplace_hosted::Decision {
+                            case: &view.case_id,
+                            release: &view.release_id,
+                            decision: &req.decision,
+                            reason: &reason,
+                            reviewer: &who,
+                            decision_id: &did,
+                            presented_digest: &req.release_digest,
+                            stored_digest: digest.as_deref(),
+                            platform_owner: platform_owner.as_deref(),
+                        },
+                        &audit,
+                        now,
+                    );
                 }
                 let (Some(digest), Some(image)) = (digest, image) else {
                     return Err(conflict_code("review_required", "this release has no build record"));
@@ -2781,16 +2809,23 @@ fn record_stage_in(
     platform_owner: Option<&str>,
     now: i64,
 ) -> GResult<(String, bool)> {
-    let status: Option<String> = tx
+    let status: Option<(String, String)> = tx
         .query_row(
-            "SELECT status FROM review_cases WHERE id = ?1",
+            "SELECT status, kind FROM review_cases WHERE id = ?1",
             [review],
-            |r| r.get(0),
+            |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .optional()?;
-    let Some(status) = status else {
+    let Some((status, kind)) = status else {
         return Err(not_found());
     };
+    // A publisher-hosted integration has no build to analyse: staff review it alone.
+    if kind == "integration" {
+        return Err(conflict_code(
+            "integration_review",
+            "an integration review has no automated stages",
+        ));
+    }
     // The same record again (a retry of a lost answer) is the same decision.
     let earlier: Option<(String, String)> = tx
         .query_row(

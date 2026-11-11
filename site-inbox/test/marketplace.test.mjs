@@ -805,3 +805,35 @@ test("a publisher prices a listing with step-up and is offered the nearest invoi
   assert.equal(p.calls.filter((c) => c.method === "PUT")[2].body.amount_minor, 12001);
   assert.match(p.$("#mp-pub-status").textContent, /Price saved/);
 });
+
+// ---- publisher-hosted listings --------------------------------------------------------------
+
+const HOSTED = { ...DETAIL, hosting: "publisher", service_address: "/acme/hr", operations: [{ name: "hr.research", version: "1.0", title: "HR research", fields: [{ name: "role", max_chars: 200, required: true, label: "Role" }, { name: "notes", max_chars: 2000, required: false, multiline: true }], output: { kind: "file", media_type: "application/pdf" } }] };
+
+test("a publisher-hosted listing shows the hosting notice, runs an operation from its fields and lists runs", async (t) => {
+  const jobs = [];
+  const p = catalogPage(t, { detail: HOSTED, listings: [{ ...LISTING, hosting: "publisher" }], extra: (method, path, body) => { if (method === "GET" && path === "/v1/marketplace/hosted-jobs") return { data: jobs }; if (method === "POST" && path === "/v1/marketplace/hosted-jobs") { const j = { job_id: "job_1", listing_id: "lst_a", operation: body.operation, execution: "queued", created_at: "2026-11-11T10:00:00Z", result: null }; jobs.push(j); return { data: j }; } return undefined; } });
+  await openDetail(p);
+  assert.match(p.$("#mp-hosted-notice").textContent, /Hosted by the publisher/);
+  assert.match(p.$("#mp-hosted-notice").textContent, /your inputs are sent to the publisher/);
+  assert.equal(p.$("#mp-install"), null);
+  assert.equal(p.$("#mp-buy"), null);
+  assert.ok(p.$('[data-hosting="publisher"]'));
+  assert.equal(p.$("#mp-run-0-notes").tagName, "TEXTAREA");
+  assert.equal(p.$("#mp-run-0-role").required, true);
+  p.$("#mp-run-0-role").value = "CTO";
+  p.submit(p.$("#mp-run-0"));
+  await tick();
+  const post = p.calls.find((c) => c.method === "POST" && c.path === "/v1/marketplace/hosted-jobs");
+  assert.deepEqual(post.body, { listing_id: "lst_a", operation: "hr.research", operation_version: "1.0", input: { role: "CTO" } });
+  assert.match(p.$("#mp-cat-status").textContent, /Sent to the publisher/);
+  assert.match(p.$('#mp-jobs [data-job="job_1"]').textContent, /Sending to the publisher/);
+});
+
+test("a priced publisher-hosted listing offers no run until paid runs exist", async (t) => {
+  const HOSTED_PRICE = { ...HOSTED, price: { amount_minor: 99900, currency: "TRY", term: "one_off", funding: "card", on_sale: true } };
+  const p = catalogPage(t, { detail: HOSTED_PRICE, listings: [{ ...LISTING, hosting: "publisher" }], extra: (method, path) => { if (method === "GET" && path === "/v1/marketplace/hosted-jobs") return { data: [] }; return undefined; } });
+  await openDetail(p);
+  assert.equal(p.$("#mp-run-0"), null);
+  assert.match(p.$("#mp-hosted-paid").textContent, /aren't available yet/);
+});

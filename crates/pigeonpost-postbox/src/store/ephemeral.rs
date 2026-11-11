@@ -198,7 +198,8 @@ impl Store {
             touched.dedup();
             for sha in touched {
                 let still: i64 = tx.query_row(
-                    "SELECT COUNT(*) FROM attachments WHERE sha256 = ?1",
+                    "SELECT (SELECT COUNT(*) FROM attachments WHERE sha256 = ?1)
+                          + (SELECT COUNT(*) FROM nest_hosted_job_files WHERE sha256 = ?1)",
                     params![sha],
                     |r| r.get(0),
                 )?;

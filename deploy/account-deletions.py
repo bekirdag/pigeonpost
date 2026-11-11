@@ -292,6 +292,10 @@ def erase(conn, request_id, blob_root, evidence):
             conn.execute("UPDATE nest_test_jobs SET created_by=? WHERE created_by=?", ("erased_" + request_id, account))
         # Marketplace payments: purchases no longer name the person (invoices and the money side
         # stay with the financial authority under its own retention); listing prices name who set them.
+        if has(conn, "nest_hosted_jobs"):
+            # Publisher-hosted jobs: the buyer's input, result summary and delivery mailbox go;
+            # ids and states stay for the publisher's and staff's records.
+            conn.execute("UPDATE nest_hosted_jobs SET account_id=?, input='{}', summary=NULL, deliver_to=? WHERE account_id=?", ("erased_" + request_id, "erased_" + request_id, account))
         if has(conn, "nest_mp_purchases"):
             conn.execute("UPDATE nest_mp_purchases SET account_id=?, owner_id=? WHERE account_id=?", ("erased_" + request_id, "erased_" + request_id, account))
         if has(conn, "nest_listing_prices"):

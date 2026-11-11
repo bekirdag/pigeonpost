@@ -57,6 +57,7 @@ NAV = [
         ("nest-runtime", "Runtime API"),
         ("nest-review", "Security and review"),
         ("nest-publish", "Publish and price"),
+        ("nest-hosted", "Publisher-hosted apps"),
     ]),
     ("Enterprise API", [
         ("org-api", "Overview"),
@@ -2581,6 +2582,125 @@ Operation versions are separate from the package release. Keep serving older ope
 At launch a listing can offer one-off and monthly terms only. Monthly terms are a subscription per licence. Per-job and 12-month terms will come later.
 
 Revenue share and payout terms are set in the Publisher Agreement.
+""")
+
+page("nest-hosted", "Publisher-hosted apps",
+     "Run your own service behind a listing: receive pigeonpost.nest_job.v1 messages and post results.",
+     """
+# Publisher-hosted apps
+
+A publisher-hosted listing is run by you, on your own servers, not by Pigeonpost. Pigeonpost reviews you and the integration (the service address and its operations), never your code. Before a buyer runs anything, the listing says: "Hosted by the publisher — Pigeonpost reviewed the publisher and this integration, not the code; your inputs are sent to the publisher."
+
+Use it when your service already exists and cannot run in a Nest: it needs the open web, paid APIs, its own database or its own delivery channels.
+
+## How it works
+
+1. A buyer runs one of your operations from the listing and fills in its fields.
+2. Pigeonpost sends the job to your **service mailbox** as one Pigeonpost message from `/pigeonpost/marketplace`.
+3. Your service does the work and posts the result to the job's `result_url`.
+4. Pigeonpost sends the result to the buyer's inbox from `/pigeonpost/marketplace`, with your files attached, and keeps it on the buyer's job.
+
+The buyer is never named to you. The job id is the only reference.
+
+## Submit an integration
+
+You need a certified publisher and a template (both in the publisher console on your [account page](https://pigeonpost.dev/account)). Then submit an integration: a version of the template that names your service mailbox and its operations.
+
+```http
+POST /v1/publishers/{publisher}/integrations
+Authorization: Bearer <your member token>
+Content-Type: application/json
+```
+
+```json
+{
+  "template_id": "tpl_...",
+  "version": "1.0.0",
+  "service_address": "/acme/hr",
+  "operations": [{
+    "name": "hr.research",
+    "version": "1.0",
+    "title": "HR research",
+    "input_schema": { "fields": [
+      { "name": "role", "max_chars": 200, "required": true, "label": "Role" },
+      { "name": "notes", "max_chars": 2000, "required": false, "multiline": true }
+    ]},
+    "output": { "kind": "file", "media_type": "application/pdf" },
+    "deadline_hours": 72
+  }]
+}
+```
+
+- `service_address` is a mailbox of your publisher's own account, or of its organization (an org agent mailbox), and never under `/pigeonpost/`. It is checked when you submit, when staff approve, when you publish and before every job is sent.
+- Fields: `name` is `[a-z][a-z0-9_]*`, `max_chars` 1 to 16000, `required` true or false, optional `label` (80 characters) and `multiline`. 1 to 32 fields, 1 to 20 operations.
+- The one output today is a PDF file. `deadline_hours` is 1 to 336, 72 by default.
+- The answer names the release and its review. A Pigeonpost staff member reviews the integration; there is no build, no automated stage and no attestation.
+- An integration is immutable: a new service address or operation is a new version and a new review.
+
+When it is approved, create a listing for the release and publish it (publishing needs a recent, strong sign-in). The listing is never installed; buyers run its operations.
+
+Add `/pigeonpost/marketplace` as a contact of your service mailbox, so its messages are not held or slowed down as a stranger's.
+
+## Receiving a job
+
+A job is one message in your service mailbox. Its body is exactly this JSON, with these seven keys:
+
+```json
+{
+  "type": "pigeonpost.nest_job.v1",
+  "job_id": "job_...",
+  "listing_id": "lst_...",
+  "operation": "hr.research",
+  "input": { "role": "CTO", "notes": "..." },
+  "result_url": "https://postbox.pigeonpost.dev/v1/nest-jobs/job_.../result",
+  "deadline": "2026-11-14T10:00:00Z"
+}
+```
+
+- `input` is what the buyer typed into the operation's fields, strings only.
+- A resend of the same job is the same message. Use `job_id` as your idempotency key.
+- Ignore messages from `/pigeonpost/marketplace` whose `type` you do not know.
+
+## Posting the result
+
+Post to `result_url` as your service mailbox: with its capability token, or with an account credential that acts as it (`x-pigeonpost-identity: <service mailbox>`).
+
+```http
+POST /v1/nest-jobs/job_.../result
+Authorization: Bearer cap_...
+Content-Type: application/json
+```
+
+```json
+{
+  "status": "succeeded",
+  "summary": "Three candidates matched.",
+  "files": [{ "name": "report.pdf", "media_type": "application/pdf", "content_b64": "JVBERi0..." }]
+}
+```
+
+- `status` is `succeeded` or `failed`. A succeeded job returns at least one file.
+- `summary` is at most 4000 characters; the buyer reads it in the message.
+- At most 5 files, each a real PDF of at most 20 MB, in standard base64.
+- The answer is `200 {"data": <job>, "replay": false}`. Sending the same result again answers `200` with `"replay": true`, so retry on a network error or a `5xx` with the same body.
+
+A job with no result by its deadline expires, and the buyer is told.
+
+## Errors
+
+| Code | Meaning |
+|---|---|
+| `404 not_found` | Not your service mailbox's job, or no such job |
+| `409 result_recorded` | This job already has a different result |
+| `409 job_closed` | The job expired or was cancelled |
+| `413 file_too_large` | A file is empty or larger than 20 MB |
+| `415 unsupported_media_type` | A file is not `application/pdf` |
+| `422 file_unreadable` | A file is not a PDF |
+| `400 invalid_request` | Bad status, summary or file list |
+
+## Pricing
+
+Paid publisher-hosted listings cannot be run yet: paid runs will be funded by prepaid credits, which come later. A priced publisher-hosted listing answers `402 payment_unavailable`. Free listings run now.
 """)
 
 # ---- Enterprise API ----------------------------------------------------------------
