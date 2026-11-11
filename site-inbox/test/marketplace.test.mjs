@@ -701,7 +701,7 @@ test("a decision refused for a stake reads as a conflict", async (t) => {
 
 // ---- the account page ---------------------------------------------------------------------------
 
-async function accountPage(t, { features, nested = false, url = "https://pigeonpost.dev/account", before = null }) {
+async function accountPage(t, { features, nested = false, url = "https://pigeonpost.dev/account", before = null, staffRoles = null }) {
   // jsdom does not navigate: a sign-in redirect only reports "Not implemented: navigation" here.
   const navigations = [];
   const virtualConsole = new VirtualConsole();
@@ -732,6 +732,7 @@ async function accountPage(t, { features, nested = false, url = "https://pigeonp
         : res({ error: "step_up_required", acr_values: "gold", max_age: 300 }, 401);
     }
     if (path.startsWith("/v1/publishers/pub_1/")) return res({ data: [] });
+    if (path === "/v1/staff/me" && staffRoles) return res({ data: { account_id: "acct_s", roles: staffRoles, platform_owner: false } });
     if (path.startsWith("/v1/staff/")) return res({ error: "staff_required", detail: "staff only" }, 403);
     if (path === "/v1/orgs") return res({ orgs: [] });
     if (path === "/api/v1/credits/packs") return res({ packs: [{ pack_id: "usd_10", amount_cents: 1000 }, { pack_id: "usd_25", amount_cents: 2500 }], currencies: ["USD"] });
@@ -749,17 +750,31 @@ async function accountPage(t, { features, nested = false, url = "https://pigeonp
 test("the account page mounts the publisher console only with the marketplace feature, and staff only for staff", async (t) => {
   const off = await accountPage(t, { features: ["nests"] });
   assert.equal(off.doc.querySelector("#ac-publisher").hidden, true);
-  assert.equal(off.doc.querySelector("#ac-staff").hidden, true);
-  assert.equal(off.calls.some((c) => c.path.startsWith("/v1/publishers") || c.path.startsWith("/v1/staff")), false);
+  assert.equal(off.doc.querySelector("#ac-staff"), null, "the staff card moved to the back office");
+  assert.equal(off.doc.querySelector("#ac-nav-staff").hidden, true);
+  assert.equal(off.calls.some((c) => c.path.startsWith("/v1/publishers")), false);
+  assert.deepEqual(off.calls.filter((c) => c.path.startsWith("/v1/staff")).map((c) => c.path), ["/v1/staff/me"], "only the back office probe");
   assert.equal(off.doc.querySelector("#credits").hidden, true, "credits come with the marketplace");
   assert.equal(off.calls.some((c) => c.path.startsWith("/api/v1/credits")), false);
 
   const on = await accountPage(t, { features: ["nests", "marketplace"] });
   assert.equal(on.doc.querySelector("#ac-publisher").hidden, false);
   assert.match(on.doc.querySelector("#mp-pub-title").textContent, /Publish on the marketplace/);
-  assert.equal(on.doc.querySelector("#ac-staff").hidden, true, "a 403 staff_required keeps the staff card hidden");
+  assert.equal(on.doc.querySelector("#ac-nav-staff").hidden, true, "a 403 staff_required keeps the back office link hidden");
   assert.equal(on.doc.querySelector("#credits").hidden, false);
   assert.match(on.doc.querySelector("#cr-balance").textContent, /Balance: \$12\.34/);
+});
+
+test("staff get a back office link, and the old staff hashes go to /staff", async (t) => {
+  const staff = await accountPage(t, { features: ["nests"], staffRoles: ["support"] });
+  const nav = staff.doc.querySelector("#ac-nav-staff");
+  assert.equal(nav.hidden, false);
+  assert.equal(nav.querySelector("a").getAttribute("href"), "/staff");
+  for (const hash of ["#staff", "#ac-staff"]) {
+    const old = await accountPage(t, { features: ["nests", "marketplace"], url: `https://pigeonpost.dev/account${hash}` });
+    assert.equal(old.navigations.length > 0, true, `${hash} navigates away`);
+    assert.equal(old.doc.querySelector("#ac-app"), null, `${hash} draws no account shell`);
+  }
 });
 
 // ---- the account page's sections and deep links ---------------------------------------------

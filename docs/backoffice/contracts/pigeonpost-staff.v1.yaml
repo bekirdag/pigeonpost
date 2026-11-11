@@ -1,0 +1,1049 @@
+# Pigeonpost back office (Piyote staff only), Phase 1: the postbox's `/v1/staff/*` read APIs and the
+# saas_be credits proxy. Plan: docs/planning/2026-11-11-backoffice-plan.md. The marketplace staff
+# routes the back office also uses (reviews, publishers, listings, reports, kills, quotas, builds,
+# hosted jobs, staff roles) are in docs/nests/contracts/pigeonpost-nests.v1.yaml.
+# After editing, regenerate the JSON mirror:
+#   python .github/scripts/openapi/export_json.py docs/backoffice/contracts/pigeonpost-staff.v1.yaml
+openapi: 3.1.0
+info:
+  title: Pigeonpost back office API
+  version: 0.1.0
+  summary: Staff-only reads over accounts, handles, mailboxes, organizations, plans and the audit log, and the credits proxy.
+  description: |
+    For Piyote staff only. Every operation needs a person (never an API key, a connector or a
+    mailbox token) holding one of the staff roles it names (`x-pigeonpost-roles`), from the
+    postbox's `staff_roles` table; the configured platform owner always holds `owner`.
+
+    Step-up (`x-pigeonpost-step-up`): `none` for the overview; `read` for personal data, where a
+    strong sign-in (`acr` in the configured list) up to an hour old suffices; `write` for anything
+    that changes state, which keeps the configured window (10 minutes in production). A refusal
+    is `401 step_up_required` with `details.acr_values` and `details.max_age`.
+
+    Every read of personal data and every write appends to the platform audit log
+    (`x-pigeonpost-audit`, actor kind `human`) in the same transaction as the read; nothing is
+    returned without the record. Message bodies are never read. Push tokens, store and provider
+    references, org API keys and IBANs are masked server-side; key material, capability hashes and
+    domain verification tokens are never selected.
+
+    Lists are paged: `limit` and an opaque `cursor`; `next_cursor` is `null` on the last page.
+
+    The credits operations are proxied to saas_be marketplace credits/finance with a server-side
+    token (`POSTBOX_SAAS_FINANCE_URL`, `POSTBOX_SAAS_FINANCE_TOKEN_FILE`); unconfigured or not
+    answering is `503 finance_unavailable`. Their bodies are saas_be's.
+servers:
+  - url: https://postbox.pigeonpost.dev
+security:
+  - memberToken: []
+tags:
+  - name: Staff
+    description: The back office.
+paths:
+  /v1/staff/me:
+    get:
+      tags: [Staff]
+      operationId: staffMe
+      summary: "Who the caller is as staff"
+      description: "Roles: any staff role. Step-up: none. Audit: none."
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: StaffOverview
+      x-pigeonpost-roles: ["owner", "support", "finance", "reviewer", "ops"]
+      x-pigeonpost-step-up: none
+      x-pigeonpost-audit: "none"
+      security:
+        - memberToken: []
+      responses:
+        '200':
+          description: OK.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: {$ref: '#/components/schemas/StaffMe'}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /v1/staff/dashboard:
+    get:
+      tags: [Staff]
+      operationId: staffDashboard
+      summary: "Platform counts"
+      description: "Roles: any staff role. Step-up: none. Audit: none."
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: StaffOverview
+      x-pigeonpost-roles: ["owner", "support", "finance", "reviewer", "ops"]
+      x-pigeonpost-step-up: none
+      x-pigeonpost-audit: "none"
+      security:
+        - memberToken: []
+      responses:
+        '200':
+          description: OK.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: {$ref: '#/components/schemas/StaffDashboard'}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /v1/staff/accounts:
+    get:
+      tags: [Staff]
+      operationId: staffSearchAccounts
+      summary: "Search accounts"
+      description: "Roles: owner, support. Step-up: read. Audit: staff.accounts.search."
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: StaffPeopleRead
+      x-pigeonpost-roles: ["owner", "support"]
+      x-pigeonpost-step-up: read
+      x-pigeonpost-audit: "staff.accounts.search"
+      security:
+        - memberToken: []
+      parameters:
+        - name: q
+          in: query
+          required: false
+          schema: {"type": "string", "maxLength": 128}
+          description: "Search text, case-insensitive; `%` and `_` are literal."
+        - name: limit
+          in: query
+          required: false
+          schema: {"type": "integer", "minimum": 1, "maximum": 100, "default": 25}
+        - name: cursor
+          in: query
+          required: false
+          schema: {"type": "string", "pattern": "^o[0-9]+$"}
+          description: "`next_cursor` of the previous page."
+      responses:
+        '200':
+          description: OK.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/StaffAccountRow'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /v1/staff/accounts/{account}:
+    get:
+      tags: [Staff]
+      operationId: staffReadAccount
+      summary: "One account in full"
+      description: "Roles: owner, support. Step-up: read. Audit: staff.accounts.read."
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: StaffPeopleRead
+      x-pigeonpost-roles: ["owner", "support"]
+      x-pigeonpost-step-up: read
+      x-pigeonpost-audit: "staff.accounts.read"
+      security:
+        - memberToken: []
+      parameters:
+        - name: account
+          in: path
+          required: true
+          schema: {"type": "string"}
+      responses:
+        '200':
+          description: OK.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: {type: object}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/staff/handles:
+    get:
+      tags: [Staff]
+      operationId: staffSearchHandles
+      summary: "Every namespace and its holder"
+      description: "Roles: owner, support. Step-up: read. Audit: staff.handles.search."
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: StaffPeopleRead
+      x-pigeonpost-roles: ["owner", "support"]
+      x-pigeonpost-step-up: read
+      x-pigeonpost-audit: "staff.handles.search"
+      security:
+        - memberToken: []
+      parameters:
+        - name: q
+          in: query
+          required: false
+          schema: {"type": "string", "maxLength": 128}
+          description: "Search text, case-insensitive; `%` and `_` are literal."
+        - name: source
+          in: query
+          required: false
+          schema: {"type": "string", "enum": ["apple", "google", "entitlement", "grant", "test_preview", "github", "realm"]}
+        - name: limit
+          in: query
+          required: false
+          schema: {"type": "integer", "minimum": 1, "maximum": 100, "default": 25}
+        - name: cursor
+          in: query
+          required: false
+          schema: {"type": "string", "pattern": "^o[0-9]+$"}
+          description: "`next_cursor` of the previous page."
+      responses:
+        '200':
+          description: OK.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Page'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /v1/staff/handles/{namespace}:
+    get:
+      tags: [Staff]
+      operationId: staffReadHandle
+      summary: "One namespace: holder, mailboxes, holds, history"
+      description: "Roles: owner, support. Step-up: read. Audit: staff.handles.read."
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: StaffPeopleRead
+      x-pigeonpost-roles: ["owner", "support"]
+      x-pigeonpost-step-up: read
+      x-pigeonpost-audit: "staff.handles.read"
+      security:
+        - memberToken: []
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema: {"type": "string"}
+      responses:
+        '200':
+          description: OK.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: {type: object}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/staff/mailboxes:
+    get:
+      tags: [Staff]
+      operationId: staffSearchMailboxes
+      summary: "Search mailboxes"
+      description: "Roles: owner, support. Step-up: read. Audit: staff.mailboxes.search."
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: StaffPeopleRead
+      x-pigeonpost-roles: ["owner", "support"]
+      x-pigeonpost-step-up: read
+      x-pigeonpost-audit: "staff.mailboxes.search"
+      security:
+        - memberToken: []
+      parameters:
+        - name: q
+          in: query
+          required: false
+          schema: {"type": "string", "maxLength": 128}
+          description: "Search text, case-insensitive; `%` and `_` are literal."
+        - name: kind
+          in: query
+          required: false
+          schema: {"type": "string", "enum": ["account", "org_agent", "nest", "anonymous"]}
+        - name: limit
+          in: query
+          required: false
+          schema: {"type": "integer", "minimum": 1, "maximum": 100, "default": 25}
+        - name: cursor
+          in: query
+          required: false
+          schema: {"type": "string", "pattern": "^o[0-9]+$"}
+          description: "`next_cursor` of the previous page."
+      responses:
+        '200':
+          description: OK.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Page'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /v1/staff/orgs:
+    get:
+      tags: [Staff]
+      operationId: staffSearchOrgs
+      summary: "Search organizations"
+      description: "Roles: owner, support. Step-up: read. Audit: staff.orgs.search."
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: StaffPeopleRead
+      x-pigeonpost-roles: ["owner", "support"]
+      x-pigeonpost-step-up: read
+      x-pigeonpost-audit: "staff.orgs.search"
+      security:
+        - memberToken: []
+      parameters:
+        - name: q
+          in: query
+          required: false
+          schema: {"type": "string", "maxLength": 128}
+          description: "Search text, case-insensitive; `%` and `_` are literal."
+        - name: status
+          in: query
+          required: false
+          schema: {"type": "string", "enum": ["pending", "active", "past_due", "read_only", "suspended", "deleted", "paid_unprovisioned"]}
+        - name: limit
+          in: query
+          required: false
+          schema: {"type": "integer", "minimum": 1, "maximum": 100, "default": 25}
+        - name: cursor
+          in: query
+          required: false
+          schema: {"type": "string", "pattern": "^o[0-9]+$"}
+          description: "`next_cursor` of the previous page."
+      responses:
+        '200':
+          description: OK.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Page'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /v1/staff/orgs/{org}:
+    get:
+      tags: [Staff]
+      operationId: staffReadOrg
+      summary: "One organization: members, domains, agents, API keys (masked)"
+      description: "Roles: owner, support. Step-up: read. Audit: staff.orgs.read."
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: StaffPeopleRead
+      x-pigeonpost-roles: ["owner", "support"]
+      x-pigeonpost-step-up: read
+      x-pigeonpost-audit: "staff.orgs.read"
+      security:
+        - memberToken: []
+      parameters:
+        - name: org
+          in: path
+          required: true
+          schema: {"type": "string"}
+      responses:
+        '200':
+          description: OK.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: {type: object}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/staff/entitlements:
+    get:
+      tags: [Staff]
+      operationId: staffSearchEntitlements
+      summary: "Account and org entitlements"
+      description: "Roles: support, finance. Step-up: read. Audit: staff.plans.search."
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: StaffPlansRead
+      x-pigeonpost-roles: ["support", "finance"]
+      x-pigeonpost-step-up: read
+      x-pigeonpost-audit: "staff.plans.search"
+      security:
+        - memberToken: []
+      parameters:
+        - name: q
+          in: query
+          required: false
+          schema: {"type": "string", "maxLength": 128}
+          description: "Search text, case-insensitive; `%` and `_` are literal."
+        - name: source
+          in: query
+          required: false
+          schema: {"type": "string", "enum": ["apple", "google", "iyzico", "grant", "test"]}
+        - name: status
+          in: query
+          required: false
+          schema: {"type": "string", "enum": ["active", "past_due", "grace", "expired", "canceled"]}
+        - name: limit
+          in: query
+          required: false
+          schema: {"type": "integer", "minimum": 1, "maximum": 100, "default": 25}
+        - name: cursor
+          in: query
+          required: false
+          schema: {"type": "string", "pattern": "^o[0-9]+$"}
+          description: "`next_cursor` of the previous page."
+      responses:
+        '200':
+          description: OK.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Page'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /v1/staff/subscriptions:
+    get:
+      tags: [Staff]
+      operationId: staffSearchSubscriptions
+      summary: "Store subscriptions and Nest store purchases"
+      description: "Roles: support, finance. Step-up: read. Audit: staff.plans.subscriptions."
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: StaffPlansRead
+      x-pigeonpost-roles: ["support", "finance"]
+      x-pigeonpost-step-up: read
+      x-pigeonpost-audit: "staff.plans.subscriptions"
+      security:
+        - memberToken: []
+      parameters:
+        - name: q
+          in: query
+          required: false
+          schema: {"type": "string", "maxLength": 128}
+          description: "Search text, case-insensitive; `%` and `_` are literal."
+        - name: store
+          in: query
+          required: false
+          schema: {"type": "string", "enum": ["apple", "google", "nest"], "default": "apple"}
+        - name: limit
+          in: query
+          required: false
+          schema: {"type": "integer", "minimum": 1, "maximum": 100, "default": 25}
+        - name: cursor
+          in: query
+          required: false
+          schema: {"type": "string", "pattern": "^o[0-9]+$"}
+          description: "`next_cursor` of the previous page."
+      responses:
+        '200':
+          description: OK.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Page'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /v1/staff/audit:
+    get:
+      tags: [Staff]
+      operationId: staffSearchAudit
+      summary: "The platform audit log"
+      description: "Roles: owner. Step-up: read. Audit: staff.audit.search (staff.audit.export with export=1)."
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: StaffAuditRead
+      x-pigeonpost-roles: ["owner"]
+      x-pigeonpost-step-up: read
+      x-pigeonpost-audit: "staff.audit.search (staff.audit.export with export=1)"
+      security:
+        - memberToken: []
+      parameters:
+        - name: actor
+          in: query
+          required: false
+          schema: {"type": "string", "maxLength": 200}
+          description: "An account id, exact."
+        - name: action
+          in: query
+          required: false
+          schema: {"type": "string", "maxLength": 200}
+          description: "Exact, or a prefix ending in `.` (`staff.`)."
+        - name: target
+          in: query
+          required: false
+          schema: {"type": "string", "maxLength": 200}
+          description: "Exact, or a prefix ending in `:` (`account:`)."
+        - name: from
+          in: query
+          required: false
+          schema: {"type": "string"}
+          description: "Unix seconds, RFC 3339 or `YYYY-MM-DD` (UTC)."
+        - name: to
+          in: query
+          required: false
+          schema: {"type": "string"}
+          description: "Inclusive; same forms as `from`."
+        - name: export
+          in: query
+          required: false
+          schema: {"type": "string", "enum": ["1", "true"]}
+          description: "Up to 500 rows, recorded as an export."
+        - name: limit
+          in: query
+          required: false
+          schema: {"type": "integer", "minimum": 1, "maximum": 500, "default": 25}
+          description: "At most 100, or 500 with `export=1`."
+        - name: cursor
+          in: query
+          required: false
+          schema: {"type": "string", "pattern": "^a[0-9]+$"}
+          description: "`next_cursor` of the previous page (a row id)."
+      responses:
+        '200':
+          description: OK.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/StaffAuditRow'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /v1/staff/credits/owners/{kind}/{owner}/balance:
+    get:
+      tags: [Staff]
+      operationId: staffCreditBalance
+      summary: "A credit owner's balance (saas_be)"
+      description: "Roles: finance. Step-up: read. Audit: staff.credits.balance."
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: StaffFinanceRead
+      x-pigeonpost-roles: ["finance"]
+      x-pigeonpost-step-up: read
+      x-pigeonpost-audit: "staff.credits.balance"
+      security:
+        - memberToken: []
+      parameters:
+        - name: kind
+          in: path
+          required: true
+          schema: {"type": "string", "enum": ["account", "org"]}
+        - name: owner
+          in: path
+          required: true
+          schema: {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$"}
+      responses:
+        '200':
+          description: OK.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: {type: object}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /v1/staff/credits/owners/{kind}/{owner}/history:
+    get:
+      tags: [Staff]
+      operationId: staffCreditHistory
+      summary: "Purchases, holds, sales, refunds and adjustments (saas_be)"
+      description: "Roles: finance. Step-up: read. Audit: staff.credits.history."
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: StaffFinanceRead
+      x-pigeonpost-roles: ["finance"]
+      x-pigeonpost-step-up: read
+      x-pigeonpost-audit: "staff.credits.history"
+      security:
+        - memberToken: []
+      parameters:
+        - name: kind
+          in: path
+          required: true
+          schema: {"type": "string", "enum": ["account", "org"]}
+        - name: owner
+          in: path
+          required: true
+          schema: {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$"}
+        - name: limit
+          in: query
+          required: false
+          schema: {"type": "integer", "minimum": 1, "maximum": 100, "default": 25}
+        - name: cursor
+          in: query
+          required: false
+          schema: {"type": "string", "maxLength": 256}
+          description: "saas_be's own cursor, passed through."
+      responses:
+        '200':
+          description: OK.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Page'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /v1/staff/credits/sales:
+    get:
+      tags: [Staff]
+      operationId: staffCreditSales
+      summary: "Credit sales with commission (saas_be)"
+      description: "Roles: finance. Step-up: read. Audit: staff.credits.sales."
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: StaffFinanceRead
+      x-pigeonpost-roles: ["finance"]
+      x-pigeonpost-step-up: read
+      x-pigeonpost-audit: "staff.credits.sales"
+      security:
+        - memberToken: []
+      parameters:
+        - name: publisher_id
+          in: query
+          required: false
+          schema: {"type": "string"}
+        - name: owner_kind
+          in: query
+          required: false
+          schema: {"type": "string", "enum": ["account", "org"]}
+        - name: owner_id
+          in: query
+          required: false
+          schema: {"type": "string"}
+        - name: from
+          in: query
+          required: false
+          schema: {"type": "string", "format": "date-time"}
+        - name: to
+          in: query
+          required: false
+          schema: {"type": "string", "format": "date-time"}
+        - name: limit
+          in: query
+          required: false
+          schema: {"type": "integer", "minimum": 1, "maximum": 100, "default": 25}
+        - name: cursor
+          in: query
+          required: false
+          schema: {"type": "string", "pattern": "^o[0-9]+$"}
+          description: "`next_cursor` of the previous page."
+      responses:
+        '200':
+          description: OK.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Page'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /v1/staff/credits/refunds:
+    get:
+      tags: [Staff]
+      operationId: staffCreditRefunds
+      summary: "Credit refunds (saas_be)"
+      description: "Roles: finance. Step-up: read. Audit: staff.credits.refunds."
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: StaffFinanceRead
+      x-pigeonpost-roles: ["finance"]
+      x-pigeonpost-step-up: read
+      x-pigeonpost-audit: "staff.credits.refunds"
+      security:
+        - memberToken: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema: {"type": "string", "enum": ["pending", "succeeded", "failed", "uncertain"]}
+        - name: limit
+          in: query
+          required: false
+          schema: {"type": "integer", "minimum": 1, "maximum": 100, "default": 25}
+        - name: cursor
+          in: query
+          required: false
+          schema: {"type": "string", "pattern": "^o[0-9]+$"}
+          description: "`next_cursor` of the previous page."
+      responses:
+        '200':
+          description: OK.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Page'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /v1/staff/publishers/{publisher}/payout-profile:
+    get:
+      tags: [Staff]
+      operationId: staffPayoutProfile
+      summary: "A publisher's payout details, IBAN masked (saas_be)"
+      description: "Roles: finance. Step-up: read. Audit: staff.publishers.payout_profile."
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: StaffFinanceRead
+      x-pigeonpost-roles: ["finance"]
+      x-pigeonpost-step-up: read
+      x-pigeonpost-audit: "staff.publishers.payout_profile"
+      security:
+        - memberToken: []
+      parameters:
+        - name: publisher
+          in: path
+          required: true
+          schema: {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$"}
+      responses:
+        '200':
+          description: OK.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: {$ref: '#/components/schemas/StaffPayoutProfile'}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /v1/staff/credits/purchases/{purchase}/refund:
+    post:
+      tags: [Staff]
+      operationId: staffCreditRefund
+      summary: "Refund a credit purchase"
+      description: "Roles: finance. Step-up: write. Audit: staff.credits.refund (requested, then the outcome)."
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: StaffFinanceWrite
+      x-pigeonpost-roles: ["finance"]
+      x-pigeonpost-step-up: write
+      x-pigeonpost-audit: "staff.credits.refund (requested, then the outcome)"
+      security:
+        - memberToken: []
+      parameters:
+        - name: purchase
+          in: path
+          required: true
+          schema: {"type": "string", "format": "uuid"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StaffRefundRequest'
+      responses:
+        '200':
+          description: OK.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: {type: object}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /v1/staff/credits/refunds/{refund}/resolve:
+    post:
+      tags: [Staff]
+      operationId: staffCreditRefundResolve
+      summary: "Resolve a stuck refund"
+      description: "Roles: finance. Step-up: write. Audit: staff.credits.resolve (requested, then the outcome)."
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: StaffFinanceWrite
+      x-pigeonpost-roles: ["finance"]
+      x-pigeonpost-step-up: write
+      x-pigeonpost-audit: "staff.credits.resolve (requested, then the outcome)"
+      security:
+        - memberToken: []
+      parameters:
+        - name: refund
+          in: path
+          required: true
+          schema: {"type": "string", "format": "uuid"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StaffResolveRequest'
+      responses:
+        '200':
+          description: OK.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: {type: object}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /v1/staff/credits/adjustments:
+    post:
+      tags: [Staff]
+      operationId: staffCreditAdjust
+      summary: "Adjust a credit balance"
+      description: "Roles: finance. Step-up: write. Audit: staff.credits.adjust (requested, then the outcome)."
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: StaffFinanceWrite
+      x-pigeonpost-roles: ["finance"]
+      x-pigeonpost-step-up: write
+      x-pigeonpost-audit: "staff.credits.adjust (requested, then the outcome)"
+      security:
+        - memberToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StaffAdjustRequest'
+      responses:
+        '201':
+          description: OK.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: {type: object}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+components:
+  securitySchemes:
+    memberToken:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Keycloak member access token for a signed-in person. Its validated `auth_time` and `acr` decide step-up.
+  responses:
+    BadRequest:
+      description: Malformed request (`invalid_json`, `invalid_request`, `invalid_cursor`) or refused by saas_be (`finance_refused`).
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+    Unauthorized:
+      description: No valid credential (`unauthorized`), or a strong sign-in is needed (`step_up_required`, with `details.acr_values` and `details.max_age`).
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+    Forbidden:
+      description: Not a person (`human_required`), not holding a role this operation names (`staff_required`), or step-up not configured (`step_up_unavailable`).
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+    NotFound:
+      description: No such record (`not_found`).
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+    Conflict:
+      description: saas_be refused this in the record's current state (`finance_conflict`).
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+    Unavailable:
+      description: The finance service is not configured or not answering (`finance_unavailable`).
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, doc_url]
+          properties:
+            code: {type: string}
+            message: {type: string}
+            doc_url: {type: string}
+            details: {type: object}
+    Page:
+      type: object
+      required: [data, next_cursor]
+      properties:
+        data:
+          type: array
+          items: {type: object}
+        next_cursor:
+          type: [string, 'null']
+    StaffRoleName:
+      type: string
+      enum: [owner, support, finance, reviewer, ops]
+    StaffMe:
+      type: object
+      required: [account_id, roles, platform_owner, step_up, finance_configured]
+      properties:
+        account_id: {type: string}
+        roles:
+          type: array
+          items: {$ref: '#/components/schemas/StaffRoleName'}
+        platform_owner: {type: boolean}
+        step_up:
+          type: object
+          required: [acr_values, write_max_age, read_max_age]
+          properties:
+            acr_values: {type: string}
+            write_max_age: {type: integer}
+            read_max_age: {type: integer}
+        finance_configured: {type: boolean}
+    StaffDashboard:
+      type: object
+      required: [counts, alerts, as_of]
+      properties:
+        counts:
+          type: object
+          additionalProperties: {type: integer}
+          description: accounts, signups_today, signups_7d, active_accounts_30d, handles, mailboxes, orgs_active, nests_running, open_reviews, open_reports, publisher_applications, hosted_jobs_failed_24h, charges_refused.
+        alerts:
+          type: array
+          items:
+            type: object
+            required: [code]
+            properties:
+              code: {type: string, enum: [charges_refused, finance_unconfigured]}
+              count: {type: integer}
+        as_of: {type: string, format: date-time}
+    StaffAccountRow:
+      type: object
+      required: [id, created_at, sign_in_address, mailboxes, handles, staff]
+      properties:
+        id: {type: string}
+        created_at: {type: string, format: date-time}
+        sign_in_address: {type: [string, 'null'], description: The realm-proved sign-in address.}
+        mailboxes: {type: integer}
+        handles: {type: integer}
+        staff: {type: boolean}
+    StaffAuditRow:
+      type: object
+      required: [id, at, actor_account, actor_kind, action, target, org_id, details]
+      properties:
+        id: {type: integer}
+        at: {type: string, format: date-time}
+        actor_account: {type: [string, 'null']}
+        actor_kind: {type: string, enum: [human, agent, api_key, system]}
+        action: {type: string}
+        target: {type: [string, 'null']}
+        org_id: {type: [string, 'null']}
+        details: {}
+    StaffPayoutProfile:
+      type: object
+      required: [publisher_id, iban]
+      properties:
+        publisher_id: {type: string}
+        iban: {type: [string, 'null'], description: Masked; the last four digits only.}
+        bank_name: {type: [string, 'null']}
+        country: {type: [string, 'null']}
+        currency: {type: [string, 'null']}
+        status: {type: [string, 'null']}
+        verified_at: {type: [string, 'null']}
+        verified_by: {type: [string, 'null']}
+    StaffRefundRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason: {type: string, minLength: 1, maxLength: 255}
+    StaffResolveRequest:
+      type: object
+      additionalProperties: false
+      required: [outcome, reason]
+      properties:
+        outcome: {type: string, enum: [succeeded, failed]}
+        reason: {type: string, minLength: 1, maxLength: 255}
+        provider_reference: {type: string, maxLength: 128}
+    StaffAdjustRequest:
+      type: object
+      additionalProperties: false
+      required: [owner_kind, owner_id, amount_cents, reason, idempotency_key]
+      properties:
+        owner_kind: {type: string, enum: [account, org]}
+        owner_id: {type: string, pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$'}
+        amount_cents: {type: integer, minimum: -1000000, maximum: 1000000, not: {const: 0}, description: 'USD cents; positive adds credit. At most $10,000 either way.'}
+        reason: {type: string, minLength: 1, maxLength: 255}
+        idempotency_key: {type: string, pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$', description: Made when the form opens; a resubmitted form adjusts once.}

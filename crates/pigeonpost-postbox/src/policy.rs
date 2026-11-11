@@ -142,6 +142,25 @@ pub(crate) enum Action {
     PayoutApprove,
     /// Assign, list or revoke staff roles: the platform owner only.
     StaffRolesManage,
+    /// Back office (`/v1/staff/me`, `/v1/staff/dashboard`): who one is as staff, and platform
+    /// counts. No personal data, so a role and a person suffice; no step-up.
+    StaffOverview,
+    /// Back office people screens (accounts, handles, mailboxes, organizations): personal data,
+    /// so a step-up no older than [`STAFF_READ_STEP_UP_SECS`].
+    StaffPeopleRead,
+    /// Back office plans screen (entitlements and store subscriptions): personal data.
+    StaffPlansRead,
+    /// Back office credit reads proxied to saas_be (balances, history, sales, refunds).
+    StaffFinanceRead,
+    /// Back office credit writes proxied to saas_be (refund, resolve a refund, adjust a balance):
+    /// money moves, so the write step-up window.
+    StaffFinanceWrite,
+    /// The platform-wide audit log reader.
+    StaffAuditRead,
+    /// Marketplace operations: listings and their moderation, buyer reports, kill switches,
+    /// publisher quotas, source builds and hosted jobs. Reviews, attestations and release
+    /// security stay `NestReview`/`NestAttest`/`NestQuarantine` (reviewers only).
+    MarketplaceOps,
     /// Take part in a group as one's own mailbox: read, post, leave, own keys (SDS §4.4). Agents
     /// may; a connector acting for the member may not reach E2EE content at all.
     GroupParticipate,
@@ -293,28 +312,49 @@ pub(crate) enum Resource<'a> {
 }
 
 /// A role in `staff_roles`. Which actions each role covers is decided here, not in the routes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum StaffRole {
-    Reviewer,
+    /// The back office's owner screens: people, the platform audit log. Managing staff roles is
+    /// still the configured platform owner only (`StaffRolesManage`), never a role row.
+    Owner,
+    /// People and plans: accounts, handles, mailboxes, organizations, entitlements.
+    Support,
+    /// Money: credits, and plans.
     Finance,
+    /// Marketplace review: publishers, reviews, attestations, release security; and marketplace
+    /// operations.
+    Reviewer,
+    /// Marketplace operations (listings, reports, kills, quotas, builds, hosted jobs).
+    Ops,
 }
 
 impl StaffRole {
+    pub(crate) const ALL: [StaffRole; 5] = [
+        StaffRole::Owner,
+        StaffRole::Support,
+        StaffRole::Finance,
+        StaffRole::Reviewer,
+        StaffRole::Ops,
+    ];
+
     pub(crate) fn as_str(self) -> &'static str {
         match self {
-            StaffRole::Reviewer => "reviewer",
+            StaffRole::Owner => "owner",
+            StaffRole::Support => "support",
             StaffRole::Finance => "finance",
+            StaffRole::Reviewer => "reviewer",
+            StaffRole::Ops => "ops",
         }
     }
 
     pub(crate) fn parse(text: &str) -> Option<Self> {
-        match text {
-            "reviewer" => Some(StaffRole::Reviewer),
-            "finance" => Some(StaffRole::Finance),
-            _ => None,
-        }
+        StaffRole::ALL.into_iter().find(|r| r.as_str() == text)
     }
 }
+
+/// How fresh a strong sign-in must be to read personal data in the back office: at most an hour
+/// (writes keep the configured, shorter window). Never looser than the write window.
+pub(crate) const STAFF_READ_STEP_UP_SECS: u64 = 3600;
 
 /// The kind of credential an action accepts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -342,6 +382,12 @@ enum Requirement {
     /// A person holding the live staff role the action names, signed in recently and strongly.
     /// Staff is a principal kind of its own: never automation, and never an account by itself.
     Staff,
+    /// The same, for reads of personal data: the strong sign-in may be up to
+    /// [`STAFF_READ_STEP_UP_SECS`] old.
+    StaffRead,
+    /// A person holding one of the action's staff roles, without step-up: back office reads with
+    /// no personal data in them.
+    StaffView,
 }
 
 impl Action {
@@ -407,18 +453,31 @@ impl Action {
             | Action::NestAttest
             | Action::NestQuarantine
             | Action::PayoutPrepare
-            | Action::PayoutApprove => Requirement::Staff,
+            | Action::PayoutApprove
+            | Action::StaffFinanceWrite
+            | Action::MarketplaceOps => Requirement::Staff,
+            Action::StaffPeopleRead
+            | Action::StaffPlansRead
+            | Action::StaffFinanceRead
+            | Action::StaffAuditRead => Requirement::StaffRead,
+            Action::StaffOverview => Requirement::StaffView,
         }
     }
 
-    /// The staff role that covers a `Staff` action.
-    fn staff_role(self) -> Option<StaffRole> {
+    /// The staff roles that cover a staff action (any one of them suffices). Empty for every
+    /// other action.
+    pub(crate) fn staff_roles(self) -> &'static [StaffRole] {
+        use StaffRole::*;
         match self {
-            Action::NestReview | Action::NestAttest | Action::NestQuarantine => {
-                Some(StaffRole::Reviewer)
-            }
-            Action::PayoutPrepare | Action::PayoutApprove => Some(StaffRole::Finance),
-            _ => None,
+            Action::NestReview | Action::NestAttest | Action::NestQuarantine => &[Reviewer],
+            Action::PayoutPrepare | Action::PayoutApprove => &[Finance],
+            Action::StaffOverview => &StaffRole::ALL,
+            Action::StaffPeopleRead => &[Owner, Support],
+            Action::StaffPlansRead => &[Support, Finance],
+            Action::StaffFinanceRead | Action::StaffFinanceWrite => &[Finance],
+            Action::StaffAuditRead => &[Owner],
+            Action::MarketplaceOps => &[Reviewer, Ops],
+            _ => &[],
         }
     }
 }
@@ -570,7 +629,11 @@ pub(crate) fn authorize_with(
         (Requirement::OrgKey, Actor::OrgKey { .. }) => {}
         // Re-authenticating cannot turn an org API key into a person (SDS §3.4).
         (
-            Requirement::Human | Requirement::HumanStepUp | Requirement::Staff,
+            Requirement::Human
+            | Requirement::HumanStepUp
+            | Requirement::Staff
+            | Requirement::StaffRead
+            | Requirement::StaffView,
             Actor::OrgKey { .. },
         ) => return Err(DenyReason::Auth(AuthDenial::HumanRequired)),
         (_, Actor::OrgKey { .. }) | (Requirement::OrgKey, _) => {
@@ -612,23 +675,28 @@ pub(crate) fn authorize_with(
             )
             .map_err(DenyReason::Auth)?;
         }
-        (Requirement::Staff, Actor::Principal(p)) => {
+        (
+            requirement @ (Requirement::Staff | Requirement::StaffRead | Requirement::StaffView),
+            Actor::Principal(p),
+        ) => {
             require_human(p).map_err(DenyReason::Auth)?;
             // The role before step-up: re-authenticating cannot make someone staff, so a person
             // without the role is told so rather than sent through a sign-in that cannot help.
             if !action
-                .staff_role()
-                .is_some_and(|role| facts.staff_roles.contains(&role))
+                .staff_roles()
+                .iter()
+                .any(|role| facts.staff_roles.contains(role))
             {
                 return Err(DenyReason::StaffRequired);
             }
-            require_step_up(
-                p,
-                facts.step_up.max_age,
-                &facts.step_up.acr_values,
-                facts.now,
-            )
-            .map_err(DenyReason::Auth)?;
+            let max_age = match requirement {
+                Requirement::StaffRead => facts.step_up.max_age.max(STAFF_READ_STEP_UP_SECS),
+                _ => facts.step_up.max_age,
+            };
+            if requirement != Requirement::StaffView {
+                require_step_up(p, max_age, &facts.step_up.acr_values, facts.now)
+                    .map_err(DenyReason::Auth)?;
+            }
         }
     }
 
@@ -643,7 +711,7 @@ pub(crate) fn authorize_with(
     let granted = match (actor, resource) {
         // These two are bound to their own resources. The general arms below grant on ownership,
         // and owning an account must never reach a staff action or the staff table.
-        _ if action.staff_role().is_some() => matches!(resource, Resource::StaffSubject(_)),
+        _ if !action.staff_roles().is_empty() => matches!(resource, Resource::StaffSubject(_)),
         _ if action == Action::StaffRolesManage => {
             matches!(resource, Resource::StaffRoles) && facts.platform_owner
         }
@@ -1656,12 +1724,22 @@ mod tests {
 
     // ---- marketplace foundations (build plan §4, M0) -------------------------------------------
 
-    const STAFF_ACTIONS: [Action; 5] = [
+    /// The staff actions that need the write step-up window.
+    const STAFF_ACTIONS: [Action; 7] = [
         Action::NestReview,
         Action::NestAttest,
         Action::NestQuarantine,
         Action::PayoutPrepare,
         Action::PayoutApprove,
+        Action::StaffFinanceWrite,
+        Action::MarketplaceOps,
+    ];
+    /// The back office reads of personal data (an hour-old step-up suffices).
+    const STAFF_READ_ACTIONS: [Action; 4] = [
+        Action::StaffPeopleRead,
+        Action::StaffPlansRead,
+        Action::StaffFinanceRead,
+        Action::StaffAuditRead,
     ];
 
     fn connector(account: &str) -> Principal {
@@ -1683,14 +1761,14 @@ mod tests {
     }
 
     fn role_for(action: Action) -> StaffRole {
-        action.staff_role().expect("a staff action")
+        *action.staff_roles().first().expect("a staff action")
     }
 
     /// Every credential that is not a person, for a staff action: refused before any role is read.
     #[test]
     fn staff_actions_refuse_every_kind_of_automation() {
         let subject = Resource::StaffSubject("rel_1");
-        let all_roles = staff(&[StaffRole::Reviewer, StaffRole::Finance]);
+        let all_roles = staff(&StaffRole::ALL);
         let mb = mailbox(Some("a1"));
         let service_account = member_principal(
             "a1",
@@ -1701,7 +1779,11 @@ mod tests {
                 ..MemberSession::default()
             },
         );
-        for action in STAFF_ACTIONS {
+        for action in STAFF_ACTIONS
+            .into_iter()
+            .chain(STAFF_READ_ACTIONS)
+            .chain([Action::StaffOverview])
+        {
             for p in [&api_key("a1"), &connector("a1"), &mb, &service_account] {
                 assert_eq!(
                     authorize(&Actor::Principal(p), action, &subject, &all_roles),
@@ -1868,6 +1950,114 @@ mod tests {
                 Err(DenyReason::NotPermitted),
                 "{action:?}"
             );
+        }
+    }
+
+    /// The back office role matrix: each staff action against each single role.
+    #[test]
+    fn back_office_actions_follow_the_role_matrix() {
+        use StaffRole::*;
+        let strong = human("a1", Some("gold"));
+        let subject = Resource::StaffSubject("accounts");
+        let matrix: &[(Action, &[StaffRole])] = &[
+            (
+                Action::StaffOverview,
+                &[Owner, Support, Finance, Reviewer, Ops],
+            ),
+            (Action::StaffPeopleRead, &[Owner, Support]),
+            (Action::StaffPlansRead, &[Support, Finance]),
+            (Action::StaffFinanceRead, &[Finance]),
+            (Action::StaffFinanceWrite, &[Finance]),
+            (Action::StaffAuditRead, &[Owner]),
+            (Action::MarketplaceOps, &[Reviewer, Ops]),
+            (Action::NestReview, &[Reviewer]),
+            (Action::NestQuarantine, &[Reviewer]),
+        ];
+        for (action, allowed) in matrix {
+            for role in StaffRole::ALL {
+                let got = authorize(
+                    &Actor::Principal(&strong),
+                    *action,
+                    &subject,
+                    &staff(&[role]),
+                );
+                if allowed.contains(&role) {
+                    assert!(got.is_ok(), "{action:?} {role:?}: {got:?}");
+                } else {
+                    assert_eq!(got, Err(DenyReason::StaffRequired), "{action:?} {role:?}");
+                }
+            }
+        }
+    }
+
+    /// Personal-data reads accept a strong sign-in up to an hour old; writes keep the configured
+    /// window; the overview needs no step-up at all, but still a person with a role.
+    #[test]
+    fn back_office_step_up_windows() {
+        let subject = Resource::StaffSubject("accounts");
+        let all = staff(&StaffRole::ALL);
+        let half_hour = human_at("a1", "gold", NOW - 1800);
+        let over_an_hour = human_at("a1", "gold", NOW - STAFF_READ_STEP_UP_SECS - 1);
+        let weak = human("a1", Some("1"));
+        for action in STAFF_READ_ACTIONS {
+            assert!(authorize(&Actor::Principal(&half_hour), action, &subject, &all).is_ok());
+            for p in [&over_an_hour, &weak] {
+                let e = authorize(&Actor::Principal(p), action, &subject, &all).unwrap_err();
+                assert_eq!(e.code(), "step_up_required", "{action:?}");
+                // The challenge names the read window, so the browser asks for exactly that.
+                match e {
+                    DenyReason::Auth(AuthDenial::StepUpRequired { max_age, .. }) => {
+                        assert_eq!(max_age, STAFF_READ_STEP_UP_SECS)
+                    }
+                    other => panic!("{other:?}"),
+                }
+            }
+        }
+        for action in [Action::StaffFinanceWrite, Action::MarketplaceOps] {
+            let e = authorize(&Actor::Principal(&half_hour), action, &subject, &all).unwrap_err();
+            assert_eq!(
+                e.code(),
+                "step_up_required",
+                "{action:?}: writes keep 10 minutes"
+            );
+        }
+        for p in [&weak, &over_an_hour] {
+            assert!(authorize(&Actor::Principal(p), Action::StaffOverview, &subject, &all).is_ok());
+            assert_eq!(
+                authorize(
+                    &Actor::Principal(p),
+                    Action::StaffOverview,
+                    &subject,
+                    &facts()
+                ),
+                Err(DenyReason::StaffRequired)
+            );
+        }
+        // A back office action reaches only a staff subject.
+        for resource in [
+            Resource::Account("a1"),
+            Resource::Platform,
+            Resource::StaffRoles,
+        ] {
+            assert_eq!(
+                authorize(
+                    &Actor::Principal(&half_hour),
+                    Action::StaffPeopleRead,
+                    &resource,
+                    &all
+                ),
+                Err(DenyReason::NotPermitted)
+            );
+        }
+    }
+
+    #[test]
+    fn every_staff_role_round_trips_and_nothing_else_parses() {
+        for role in StaffRole::ALL {
+            assert_eq!(StaffRole::parse(role.as_str()), Some(role));
+        }
+        for bad in ["", "Owner", "admin", "staff", "finance "] {
+            assert_eq!(StaffRole::parse(bad), None, "{bad:?}");
         }
     }
 

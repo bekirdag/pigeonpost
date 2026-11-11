@@ -61,6 +61,10 @@ mod appstore;
 mod appstore_routes;
 mod audit;
 mod avatars;
+mod backoffice;
+mod backoffice_finance;
+#[cfg(test)]
+mod backoffice_tests;
 mod billing_internal;
 #[cfg(test)]
 mod billing_tests;
@@ -276,6 +280,9 @@ struct AppState {
     nests: Arc<nests::Runtime>,
     /// Marketplace payments: the billing bridge's internal routes (`POSTBOX_BRIDGE_URL`).
     mp_bridge: Arc<marketplace_pay::Bridge>,
+    /// Back office credits: saas_be marketplace finance, for staff only
+    /// (`POSTBOX_SAAS_FINANCE_URL`, `POSTBOX_SAAS_FINANCE_TOKEN_FILE`).
+    staff_finance: Arc<backoffice_finance::Finance>,
 }
 
 /// Namespaces where a name is authorised by proving control of it at an identity provider, rather
@@ -721,6 +728,7 @@ fn build_state(cfg: &Config, master_key: [u8; 32]) -> Result<AppState, store::St
         summaries_policy: meetings::SummariesPolicy::from_env(),
         nests: Arc::new(nests::Runtime::from_env()),
         mp_bridge: Arc::new(marketplace_pay::Bridge::from_env()),
+        staff_finance: Arc::new(backoffice_finance::Finance::from_env()),
     })
 }
 
@@ -1106,6 +1114,9 @@ fn build_router(state: AppState) -> Router {
         .merge(marketplace_pay::router())
         // Publisher-hosted listings: integrations, hosted jobs and their results.
         .merge(marketplace_hosted::router())
+        // The Piyote back office (staff only, not behind the marketplace flag).
+        .merge(backoffice::router())
+        .merge(backoffice_finance::router())
         // Phase 3B: calendar and scheduled meetings (SDS §14B.5, docs/calendar.md).
         .route(
             "/v1/calendars",
@@ -7432,6 +7443,7 @@ mod tests {
             summaries_policy: meetings::SummariesPolicy::All,
             nests: Arc::new(nests::Runtime::default()),
             mp_bridge: Arc::new(marketplace_pay::Bridge::default()),
+            staff_finance: Arc::new(backoffice_finance::Finance::default()),
         }
     }
 
@@ -10266,6 +10278,7 @@ mod tests {
             summaries_policy: meetings::SummariesPolicy::All,
             nests: Arc::new(nests::Runtime::default()),
             mp_bridge: Arc::new(marketplace_pay::Bridge::default()),
+            staff_finance: Arc::new(backoffice_finance::Finance::default()),
         };
         let _ = build_router(state);
     }

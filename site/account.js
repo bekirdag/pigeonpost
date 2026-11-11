@@ -274,13 +274,14 @@
     publish:      { view: "publish",    label: "Publish",          group: "Marketplace", needs: "#ac-publisher" },
     security:     { view: "security",   label: "Two-factor",       group: "Security & privacy" },
     privacy:      { view: "privacy",    label: "Account deletion", group: "Security & privacy" },
-    staff:        { view: "staff",      label: "Marketplace review", group: "Staff", needs: "#ac-staff" },
   };
   // Hashes other sites and apps already link to. `#products` is the Linux and web apps' "buy
   // Nests" link and `#nests` the Windows app's (1.0.x); both open the Nests tab, as they always did.
-  const ROUTE_ALIASES = { products: "nests", publisher: "publish", "ac-staff": "staff" };
+  const ROUTE_ALIASES = { products: "nests", publisher: "publish" };
   // A step-up sign-in from a marketplace card comes back to that card (`pp_mp_return`).
-  const MP_RETURN_ROUTE = { publisher: "publish", staff: "staff", services: "services" };
+  const MP_RETURN_ROUTE = { publisher: "publish", services: "services" };
+  // Staff tools moved to the back office (/staff); old links to them land there.
+  const STAFF_HASHES = ["#staff", "#ac-staff"];
 
   function routeName(raw) {
     const name = String(raw || "").replace(/^#/, "");
@@ -423,10 +424,14 @@
       g.items.push(`<li><a class="ac-nav-link" href="#${route}" data-route="${route}">${icon(route)}<span>${esc(spec.label)}</span></a></li>`);
     }
     return groups.map((g) => `
-      <div class="ac-nav-group"${g.key === "Staff" ? ' id="ac-nav-staff" hidden' : ""}>
+      <div class="ac-nav-group">
         ${g.key ? `<p class="ac-nav-label" id="ac-nav-${esc(g.key.replace(/[^a-z]+/gi, "-").toLowerCase())}">${esc(g.key)}</p>` : ""}
         <ul${g.key ? ` aria-labelledby="ac-nav-${esc(g.key.replace(/[^a-z]+/gi, "-").toLowerCase())}"` : ""}>${g.items.join("")}</ul>
-      </div>`).join("");
+      </div>`).join("") + `
+      <div class="ac-nav-group" id="ac-nav-staff" hidden>
+        <p class="ac-nav-label" id="ac-nav-staff-l">Staff</p>
+        <ul aria-labelledby="ac-nav-staff-l"><li><a class="ac-nav-link" href="/staff" id="ac-backoffice">${icon("staff")}<span>Back office</span></a></li></ul>
+      </div>`;
   }
 
   // One section's heading. `solo` sections hold a single card whose own heading repeats this one;
@@ -443,6 +448,7 @@
     const el = root();
     if (!el) return;
     const shell = (on) => { if (document.body) document.body.classList.toggle("ac-shell", on); };
+    if (STAFF_HASHES.includes(window.location.hash)) { window.location.replace("/staff"); return; }
     if (window.location.hash === "#delete-account") { mode = "deletion"; shell(false); return renderDeletion(el); }
     if (!getToken()) { mode = "signed-out"; shell(false); return renderSignedOut(el); }
     mode = "member"; shell(true);
@@ -628,11 +634,6 @@
               <a class="btn btn-danger" href="#delete-account">Delete your account and associated data</a></div>
           </section>
 
-          <section class="ac-view ac-view-solo" data-view="staff" aria-labelledby="ac-h-staff" hidden>
-            ${viewHead("staff", "Marketplace review", "")}
-            <div class="ac-card" id="ac-staff" hidden></div>
-            <div class="ac-empty" id="ac-empty-staff"><p class="muted">Staff tools appear here for Pigeonpost staff accounts.</p></div>
-          </section>
         </div>
       </div>`;
     $("#ac-logout").onclick = logout;
@@ -650,6 +651,17 @@
     loadPostbox();
     loadKeys();
     mountProducts();
+    findBackOffice();
+  }
+
+  // Staff get a sidebar link to the back office. `/v1/staff/me` answers staff with their roles
+  // and everyone else with a refusal; nothing else here depends on it.
+  async function findBackOffice() {
+    try {
+      const me = await pbFetch("/v1/staff/me");
+      const link = $("#ac-nav-staff");
+      if (link && me && me.data && Array.isArray(me.data.roles) && me.data.roles.length) link.hidden = false;
+    } catch (_) { /* not staff, or an older postbox */ }
   }
 
   let documentWired = false;
@@ -680,10 +692,10 @@
       });
     }
     // A card that unhides itself (credits and the publisher console with the marketplace feature,
-    // the staff dashboard for staff) brings its sidebar entry with it.
+    // the publisher console) brings its sidebar entry with it.
     if (window.MutationObserver) {
       const watch = new MutationObserver(syncNav);
-      for (const id of ["#credits", "#ac-publisher", "#ac-staff"]) {
+      for (const id of ["#credits", "#ac-publisher"]) {
         const node = $(id); if (node) watch.observe(node, { attributes: true, attributeFilter: ["hidden"] });
       }
     }
@@ -699,7 +711,6 @@
     const creditsOn = visible("#credits");
     show('#ac-side [data-route="credits"]', creditsOn || marketplaceOn === null);
     show('#ac-side [data-route="publish"]', visible("#ac-publisher") || marketplaceOn === null);
-    show("#ac-nav-staff", visible("#ac-staff"));
     show("#ac-dash-credits", creditsOn);
     show("#ac-quick-credits", creditsOn);
     if (!creditsOn) show("#ac-credit-chip", false);
@@ -926,16 +937,14 @@
   // A run elsewhere on the page spent or freed credit: show the new balance.
   window.addEventListener("pp-credits-changed", () => { if (credits) credits.reload(); });
 
-  // ---- marketplace publisher console and staff dashboard -------------------------------------
+  // ---- marketplace publisher console -----------------------------------------------------------
   //
-  // Only with the postbox's `marketplace` feature on. The staff card unhides itself only for a
-  // staff account; the publisher card is for anyone who wants to apply or already publishes.
+  // Only with the postbox's `marketplace` feature on. The publisher card is for anyone who wants
+  // to apply or already publishes. Staff tools are in the back office (/staff).
   function mountMarketplace(stepUp) {
     const deps = { pb: (path, init) => pbFetch(path, init), toast, stepUp };
     const pub = $("#ac-publisher");
     if (pub && window.PPMarketplace.publisher) { pub.hidden = false; window.PPMarketplace.publisher(pub, deps); }
-    const staff = $("#ac-staff");
-    if (staff && window.PPMarketplace.staff) window.PPMarketplace.staff(staff, deps);
   }
 
   function renderDeletion(el) {

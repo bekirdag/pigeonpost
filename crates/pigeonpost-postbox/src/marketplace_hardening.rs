@@ -20,11 +20,11 @@
 //!
 //! | Route | Action | Who |
 //! |---|---|---|
-//! | `POST /v1/staff/marketplace/listings/{listing}/kill` | `NestQuarantine` | staff with step-up |
-//! | `POST /v1/staff/marketplace/publishers/{publisher}/kill` | `NestQuarantine` | staff with step-up |
-//! | `PUT /v1/staff/marketplace/publishers/{publisher}/quotas` | `NestQuarantine` | staff with step-up |
-//! | `POST /v1/staff/marketplace/source-builds` | `NestReview` | staff with step-up |
-//! | `GET /v1/staff/marketplace/source-builds/{build}` | `NestReview` | staff with step-up |
+//! | `POST /v1/staff/marketplace/listings/{listing}/kill` | `MarketplaceOps` | a reviewer or ops, with step-up |
+//! | `POST /v1/staff/marketplace/publishers/{publisher}/kill` | `MarketplaceOps` | a reviewer or ops, with step-up |
+//! | `PUT /v1/staff/marketplace/publishers/{publisher}/quotas` | `MarketplaceOps` | a reviewer or ops, with step-up |
+//! | `POST /v1/staff/marketplace/source-builds` | `MarketplaceOps` | a reviewer or ops, with step-up |
+//! | `GET /v1/staff/marketplace/source-builds/{build}` | `MarketplaceOps` | a reviewer or ops, with step-up |
 
 use crate::groups::{GErr, GResult};
 use crate::marketplace::{caller, deny, facts, into_response, ip_of, not_found};
@@ -1010,7 +1010,7 @@ async fn kill(
         &state,
         &principal,
         &account,
-        Action::NestQuarantine,
+        Action::MarketplaceOps,
         &target,
     )
     .await?;
@@ -1163,7 +1163,7 @@ async fn set_quotas(
                 return Err(GErr::bad("invalid_request", "quotas are whole numbers from 0"));
             }
         }
-        staff_only(&state, &principal, &account, Action::NestQuarantine, &publisher).await?;
+        staff_only(&state, &principal, &account, Action::MarketplaceOps, &publisher).await?;
         let now = now_unix() as i64;
         let audit = state.auditor.row(
             crate::audit::ActorKind::of(&principal),
@@ -1462,7 +1462,7 @@ async fn request_build(
             &state,
             &principal,
             &account,
-            Action::NestReview,
+            Action::MarketplaceOps,
             &req.publisher_id,
         )
         .await?;
@@ -1487,7 +1487,7 @@ async fn read_build(
 ) -> Response {
     let result = async {
         let (principal, account) = caller(&state, &headers).await?;
-        staff_only(&state, &principal, &account, Action::NestReview, &build).await?;
+        staff_only(&state, &principal, &account, Action::MarketplaceOps, &build).await?;
         let v = read_source_build(&state, &build)
             .await?
             .ok_or_else(not_found)?;

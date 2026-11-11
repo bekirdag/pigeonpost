@@ -2,14 +2,14 @@
 //!
 //! | Route | Action | Who |
 //! |---|---|---|
-//! | `GET|POST /v1/staff/roles`, `DELETE /v1/staff/roles/{role}` | `StaffRolesManage` | the platform owner, a person, with step-up |
+//! | `GET|POST /v1/staff/roles`, `DELETE /v1/staff/roles/{role}` | `StaffRolesManage` | the platform owner, a person, with step-up (not behind the flag) |
 //! | `POST /v1/publisher-applications` | `PublisherApply` | a person, for their account or an org they own or administer |
 //! | `GET /v1/publisher-applications/{application}` | `PublisherManage` | the applicant's account, or the org's owner or admins |
 //! | `GET /v1/staff/publisher-applications/{application}` | `NestReview` | a reviewer with step-up and no stake in the publisher |
 //! | `GET /v1/marketplace/listings/{listing}` | `NestDiscover` | anyone, for a published public or unlisted listing; the publisher for its own |
 //!
-//! Everything answers `404 feature_disabled` unless the `marketplace` flag is on for the caller's
-//! account. Schemas are in `docs/nests/contracts/pigeonpost-nests.v1.yaml`; errors and successes
+//! Everything except the staff role routes answers `404 feature_disabled` unless the
+//! `marketplace` flag is on for the caller's account. Schemas are in `docs/nests/contracts/pigeonpost-nests.v1.yaml`; errors and successes
 //! use the envelope that contract defines. The platform owner is the account named by
 //! `POSTBOX_PLATFORM_OWNER_ACCOUNT`; unset means nobody can assign a staff role.
 
@@ -123,8 +123,14 @@ pub(crate) fn into_response<T: IntoResponse>(result: GResult<T>) -> Response {
 
 /// The platform owner, with a recent strong sign-in. Who that is comes from server configuration
 /// only, never from the request or the staff table, so no staff row can promote itself.
+///
+/// Not behind the `marketplace` flag: staff roles now cover the whole back office
+/// (`backoffice.rs`), not only marketplace review.
 async fn owner(state: &AppState, headers: &HeaderMap) -> GResult<(Principal, String)> {
-    let (principal, account) = caller(state, headers).await?;
+    let principal = principal_for_token(state, crate::bearer(headers)).await?;
+    let account = capabilities::principal_account(&principal)
+        .unwrap_or_default()
+        .to_string();
     let mut f = facts(state);
     f.platform_owner = state.platform_owner.as_deref() == Some(account.as_str());
     authorize(
@@ -186,7 +192,12 @@ async fn assign_staff_role(
         let (principal, account) = owner(&state, &headers).await?;
         let req: AssignReq = parse(body)?;
         let role = StaffRole::parse(&req.role)
-            .ok_or_else(|| GErr::bad("invalid_role", "role must be reviewer or finance"))?;
+            .ok_or_else(|| {
+                GErr::bad(
+                    "invalid_role",
+                    "role must be owner, support, finance, reviewer or ops",
+                )
+            })?;
         let now = now_unix();
         let id = format!("stf_{}", crate::groups::rand_b32(16));
         let (rid, target, by) = (id.clone(), req.account_id.clone(), account.clone());

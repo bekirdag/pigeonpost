@@ -12,7 +12,8 @@ export_json.py writes from the YAML; regenerate it with that script after editin
 
 Usage: check_openapi.py [path ...]
        (default: openapi/pigeonpost.v1.yaml openapi/pigeonpost-org.v1.yaml
-        docs/nests/contracts/pigeonpost-nests.v1.yaml)
+        docs/nests/contracts/pigeonpost-nests.v1.yaml
+        docs/backoffice/contracts/pigeonpost-staff.v1.yaml)
 """
 
 import json
@@ -28,6 +29,7 @@ DEFAULT_SPECS = [
     "openapi/pigeonpost.v1.yaml",
     "openapi/pigeonpost-org.v1.yaml",
     "docs/nests/contracts/pigeonpost-nests.v1.yaml",
+    "docs/backoffice/contracts/pigeonpost-staff.v1.yaml",
 ]
 
 

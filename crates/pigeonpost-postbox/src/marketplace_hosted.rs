@@ -12,7 +12,7 @@
 //! | `POST /v1/marketplace/hosted-jobs` | `NestInstall` | a person, for their own account |
 //! | `GET /v1/marketplace/hosted-jobs`, `GET …/{job}`, `GET …/{job}/files/{index}` | `NestJobRead` | the account that ran the job |
 //! | `POST /v1/nest-jobs/{job}/result` | the service mailbox's own credential | the listing's service mailbox |
-//! | `GET /v1/staff/hosted-jobs?state=` | `NestReview` | a reviewer with step-up |
+//! | `GET /v1/staff/hosted-jobs?state=` | `MarketplaceOps` | a reviewer or ops, with step-up |
 //!
 //! - **Integration**: a release row whose manifest is the integration descriptor
 //!   (`kind: publisher_hosted`, `service_address`, `operations`) and `build_isolation =
@@ -1868,7 +1868,14 @@ async fn staff_jobs(
     Query(q): Query<HashMap<String, String>>,
 ) -> Response {
     let result = async {
-        staff_gate(&state, &headers, Action::NestReview, "hosted-jobs", None).await?;
+        staff_gate(
+            &state,
+            &headers,
+            Action::MarketplaceOps,
+            "hosted-jobs",
+            None,
+        )
+        .await?;
         let filter = q.get("state").cloned();
         if filter.as_deref().is_some_and(|s| {
             ![
