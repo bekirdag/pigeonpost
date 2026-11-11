@@ -234,6 +234,9 @@ test("billing details come before a plan", async (t) => {
   await page.buy();
   assert.equal(page.window.document.querySelector("#ac-plan-names"), null);
   assert.match(page.window.document.querySelector("#ac-toast").textContent, /billing details/);
+  // The purchase walks the member from Get a handle to the Billing details section.
+  assert.equal(page.window.document.querySelector("#ac-billing").closest(".ac-view").hidden, false);
+  assert.equal(page.window.location.hash, "#billing");
 });
 
 test("a full plan points to a plan change instead of a second subscription", async (t) => {
@@ -243,6 +246,63 @@ test("a full plan points to a plan change instead of a second subscription", asy
   assert.equal(page.window.document.querySelector("#ac-plan-names"), null);
   assert.match(page.window.document.querySelector("#ac-toast").textContent, /larger plan/);
   assert.ok(page.window.document.querySelector("[data-change-plan]"));
+  assert.equal(page.window.location.hash, "#plan");
+});
+
+// ---- sections survive the sign-in round trip ----------------------------------------------------
+
+test("signing in from a section comes back to it: the OIDC redirect carries no fragment", async (t) => {
+  const dom = new JSDOM('<main id="account-root"></main>', { url: "https://pigeonpost.dev/account#credits", runScripts: "outside-only", virtualConsole: new VirtualConsole() });
+  t.after(async () => { for (let i = 0; i < 20; i++) await tick(); dom.window.close(); });
+  const { window } = dom;
+  if (!window.crypto.subtle) Object.defineProperty(window.crypto, "subtle", { value: globalThis.crypto.subtle });
+  window.eval(config);
+  window.fetch = async () => ({ ok: false, status: 404, json: async () => ({}) });
+  window.eval(source); // jsdom fires DOMContentLoaded itself, once
+  for (let i = 0; i < 10; i++) await tick();
+  assert.ok(window.document.querySelector("#ac-signin"), "signed out: the plain sign-in card, no shell");
+  assert.equal(window.document.querySelector("#ac-app"), null);
+  window.document.querySelector("#ac-signin").click();
+  for (let i = 0; i < 20; i++) await tick();
+  assert.equal(window.localStorage.getItem("pp_return_view"), "credits");
+});
+
+test("the sign-in return restores the parked section and opens it in the shell", async (t) => {
+  const dom = new JSDOM('<main id="account-root"></main>', { url: "https://pigeonpost.dev/account?code=fixture-code&state=fixture-state", runScripts: "outside-only", virtualConsole: new VirtualConsole() });
+  t.after(() => dom.window.close());
+  const { window } = dom;
+  window.eval(config);
+  window.localStorage.setItem("pp_state", "fixture-state");
+  window.localStorage.setItem("pp_pkce", "fixture-verifier");
+  window.localStorage.setItem("pp_return_view", "invoices");
+  window.fetch = async (url) => {
+    const path = new URL(url, window.location.origin).pathname;
+    const body = path === "/api/v1/auth/exchange" ? { session: "member-token" } : { identities: [], keys: [], handles: [], invoices: [], billingProfiles: [] };
+    return { ok: true, status: 200, json: async () => body };
+  };
+  window.eval(source); // jsdom fires DOMContentLoaded itself, once
+  for (let i = 0; i < 30; i++) await tick();
+  assert.equal(window.location.search, "", "the code and state leave the address bar");
+  assert.equal(window.location.hash, "#invoices");
+  assert.equal(window.localStorage.getItem("pp_return_view"), null);
+  assert.equal(window.document.querySelector("#ac-invoices").closest(".ac-view").hidden, false);
+  assert.equal(window.document.querySelector('#ac-side [aria-current="page"]').getAttribute("data-route"), "invoices");
+});
+
+test("#delete-account leaves the shell for the standalone deletion page and back", async (t) => {
+  const page = await checkoutPage(t, { url: "https://pigeonpost.dev/account#security" });
+  const { window } = page;
+  assert.equal(window.document.querySelector("#ac-2fa").closest(".ac-view").hidden, false);
+  assert.ok(window.document.body.classList.contains("ac-shell"));
+  window.location.hash = "#delete-account";
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.ok(window.document.querySelector("#ac-deletion-body"));
+  assert.equal(window.document.querySelector("#ac-app"), null);
+  assert.equal(window.document.body.classList.contains("ac-shell"), false);
+  window.location.hash = "#privacy";
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.ok(window.document.querySelector("#ac-app"));
+  assert.equal(window.document.querySelector('#ac-side [aria-current="page"]').getAttribute("data-route"), "privacy");
 });
 
 test("the return from iyzico polls the bridge and never trusts the redirect", async (t) => {
