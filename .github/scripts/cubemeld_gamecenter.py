@@ -33,6 +33,8 @@ EDITABLE_STATES = {"PREPARE_FOR_SUBMISSION", "DEVELOPER_REJECTED", "REJECTED"}
 MAX_NAME = 30
 MAX_DESCRIPTION = 200
 FORMATTERS = {"INTEGER"}
+# App Store Connect's placeholder ID for a resource created inline in the same request.
+NEW_VERSION = "${new-version}"
 
 
 # MARK: Manifest
@@ -258,8 +260,13 @@ def sync_achievement(client: Client, detail_id, remote, item) -> bool:
                                      "vendorIdentifier": vendor, "points": item["points"],
                                      "showBeforeEarned": item["showBeforeEarned"],
                                      "repeatable": False},
-                      "relationships": {"gameCenterDetail": relation(
-                          "gameCenterDetails", detail_id)}}},
+                      "relationships": {
+                          "gameCenterDetail": relation("gameCenterDetails", detail_id),
+                          # v2 requires the first version in the same request.
+                          "versions": {"data": [
+                              {"type": "gameCenterAchievementVersions", "id": NEW_VERSION}]},
+                      }},
+             "included": [{"type": "gameCenterAchievementVersions", "id": NEW_VERSION}]},
         )["data"]
         print(f"  achievement: created id={remote['id']}")
     else:
@@ -304,8 +311,12 @@ def sync_leaderboard(client: Client, detail_id, remote, board) -> bool:
                       "attributes": {key: board[key] for key in (
                           "referenceName", "vendorIdentifier", "defaultFormatter",
                           "submissionType", "scoreSortType")},
-                      "relationships": {"gameCenterDetail": relation(
-                          "gameCenterDetails", detail_id)}}},
+                      "relationships": {
+                          "gameCenterDetail": relation("gameCenterDetails", detail_id),
+                          "versions": {"data": [
+                              {"type": "gameCenterLeaderboardVersions", "id": NEW_VERSION}]},
+                      }},
+             "included": [{"type": "gameCenterLeaderboardVersions", "id": NEW_VERSION}]},
         )["data"]
         print(f"  leaderboard: created id={remote['id']}")
     else:
