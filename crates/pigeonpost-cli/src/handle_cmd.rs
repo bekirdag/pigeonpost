@@ -1737,18 +1737,34 @@ mod tests {
             )
             .unwrap();
 
-        rotate(
-            &recipient,
-            &registry_url,
-            "/github/alice",
-            ClaimProof {
-                mock_name: Some("alice".into()),
-                no_browser: true,
-            },
-            true,
-        )
-        .await
-        .unwrap();
+        // Importing the trust bundle releases the identity lease as it returns, but on a loaded
+        // runner the release can trail the call (macOS CI, run 43043874402). "Busy" here is the
+        // precondition not being ready yet, the same race as the proof-pause test below; any
+        // other error still panics with its message.
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
+        loop {
+            match rotate(
+                &recipient,
+                &registry_url,
+                "/github/alice",
+                ClaimProof {
+                    mock_name: Some("alice".into()),
+                    no_browser: true,
+                },
+                true,
+            )
+            .await
+            {
+                Ok(_) => break,
+                Err(error)
+                    if error.to_string().contains("identity is busy")
+                        && std::time::Instant::now() < deadline =>
+                {
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                }
+                Err(error) => panic!("rebinding the lost handle failed: {error}"),
+            }
+        }
 
         let sender_directory = crate::test_support::private_tempdir();
         let sender_home = sender_directory.path().join("agent");
