@@ -219,20 +219,9 @@
   const post = (path, body, method = "POST") => pb(path, { method, body: JSON.stringify(body || {}) });
 
   // ---- theme -------------------------------------------------------------------------------------
-
-  const THEMES = ["system", "light", "dark"];
-  function theme() { try { return THEMES.includes(SS.getItem("pp_theme")) ? SS.getItem("pp_theme") : "system"; } catch (_) { return "system"; } }
-  function applyTheme(t) {
-    const root = document.documentElement;
-    if (t === "system") root.removeAttribute("data-theme"); else root.setAttribute("data-theme", t);
-    const b = $("#st-theme");
-    if (b) { b.setAttribute("aria-label", `Theme: ${t}. Change theme`); b.title = `Theme: ${t}`; b.innerHTML = icon(t === "dark" ? "moon" : t === "light" ? "sun" : "auto"); }
-  }
-  function cycleTheme() {
-    const next = THEMES[(THEMES.indexOf(theme()) + 1) % THEMES.length];
-    try { SS.setItem("pp_theme", next); } catch (_) { /* private mode */ }
-    applyTheme(next);
-  }
+  // The shared switch (site/theme.js, loaded in <head>) owns the choice, its storage and
+  // `html[data-theme]`; this page only places a `data-theme-toggle` button and asks it to draw.
+  const refreshTheme = () => { if (window.PPTheme) window.PPTheme.refresh(); };
 
   // ---- icons -------------------------------------------------------------------------------------
 
@@ -261,9 +250,6 @@
     menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
     close: '<path d="M6 6l12 12M18 6 6 18"/>',
     out: '<path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 16l-4-4 4-4M6 12h10"/>',
-    sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
-    moon: '<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z"/>',
-    auto: '<circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16Z" fill="currentColor"/>',
     back: '<path d="m15 6-6 6 6 6"/>',
     search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
     account: '<circle cx="12" cy="8" r="4"/><path d="M5 21a7 7 0 0 1 14 0"/>',
@@ -1204,7 +1190,7 @@
           <span class="ac-top-sep" aria-hidden="true"></span>
           <span class="ac-top-title" id="ac-top-title" aria-hidden="true"></span>
           <span class="ac-top-fill"></span>
-          <button type="button" class="ac-icon-btn st-theme" id="st-theme"></button>
+          <button type="button" class="theme-toggle" id="st-theme" data-theme-toggle aria-label="Theme: System"></button>
           <div class="ac-user">
             <button type="button" class="ac-user-btn" id="ac-user-btn" aria-haspopup="true" aria-expanded="false" aria-controls="ac-user-menu">
               <span class="ac-avatar" aria-hidden="true"></span><span class="ac-user-name"></span>
@@ -1229,8 +1215,7 @@
     $(".ac-user-name").textContent = name;
     $(".ac-user-id strong").textContent = name;
     $(".st-roles").textContent = `${(me.roles || []).join(", ")}${me.platform_owner ? " · platform owner" : ""}`;
-    applyTheme(theme());
-    $("#st-theme").onclick = cycleTheme;
+    refreshTheme();
     $("#st-logout").onclick = () => { clearSession(); window.location.assign("/account"); };
     const app = $("#ac-app");
     const openDrawer = () => { app.classList.add("ac-nav-open"); $("#ac-nav-toggle").setAttribute("aria-expanded", "true"); $("#ac-scrim").hidden = false; const f = $("#ac-side [aria-current]") || $("#ac-side a"); if (f) f.focus(); };
@@ -1281,7 +1266,6 @@
 
   async function start() {
     const rootEl = $("#staff-root"); if (!rootEl) return;
-    applyTheme(theme());
     await completeLoginIfReturning();
     if (!getToken()) {
       renderPlain(rootEl, "Back office", "Sign in with your Pigeonpost staff account.",

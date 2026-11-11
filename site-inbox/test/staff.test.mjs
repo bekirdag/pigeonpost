@@ -10,6 +10,7 @@ const accountConfig = read("../../site/account-config.js");
 const core = read("../../site/marketplace-core.js");
 const mpStaff = read("../../site/marketplace-staff.js");
 const staffJs = read("../../site/staff.js");
+const themeJs = read("../../site/theme.js");
 const staffHtml = read("../../site/staff.html");
 const staffCss = read("../../site/staff.css");
 const tick = async (n = 30) => { for (let i = 0; i < n; i++) await new Promise((r) => setImmediate(r)); };
@@ -53,6 +54,7 @@ async function page(t, { hash = "#dashboard", token = "fixture-token", routes = 
     return res(out);
   };
   window.PIGEONPOST_STAFF = { manualStart: true };
+  window.eval(themeJs);
   window.eval(accountConfig);
   for (const s of [core, mpStaff, staffJs]) window.eval(s);
   await window.PPStaff.start();
@@ -259,18 +261,25 @@ test("a step-up refusal offers the strong sign-in and comes back to the same scr
   assert.ok(p.window.sessionStorage.getItem("pp_staff_pkce"));
 });
 
-test("the theme switch cycles system, light and dark and remembers the choice", async (t) => {
-  const p = await page(t, { routes: (m, path) => (path === "/v1/staff/me" ? ME(["ops"]) : path === "/v1/staff/dashboard" ? DASH : undefined), storage: { pp_theme: "dark" } });
+test("the shared theme switch sits in the top bar and keeps the account page's choice", async (t) => {
+  // The key and attribute are theme.js's, shared with the account page and the inbox.
+  const p = await page(t, { routes: (m, path) => (path === "/v1/staff/me" ? ME(["ops"]) : path === "/v1/staff/dashboard" ? DASH : undefined), storage: { ppi_theme: "dark" } });
   const root = p.window.document.documentElement;
+  const b = p.$("#st-theme");
+  assert.ok(b.hasAttribute("data-theme-toggle"));
   assert.equal(root.getAttribute("data-theme"), "dark", "a stored choice applies on load");
-  p.$("#st-theme").click();
+  assert.equal(b.getAttribute("data-choice"), "dark", "the switch drawn after load is refreshed");
+  assert.ok(b.querySelector(".theme-icon-dark"), "theme.js drew its icons");
+  b.click();
   assert.equal(root.hasAttribute("data-theme"), false, "system");
-  assert.equal(p.window.localStorage.getItem("pp_theme"), "system");
-  p.$("#st-theme").click();
+  assert.equal(p.window.localStorage.getItem("ppi_theme"), null);
+  b.click();
   assert.equal(root.getAttribute("data-theme"), "light");
-  p.$("#st-theme").click();
+  assert.equal(p.window.localStorage.getItem("ppi_theme"), "light");
+  b.click();
   assert.equal(root.getAttribute("data-theme"), "dark");
-  assert.match(p.$("#st-theme").getAttribute("aria-label"), /Theme: dark/);
+  assert.match(b.getAttribute("aria-label"), /Theme: Dark/);
+  assert.equal(p.window.localStorage.getItem("pp_theme"), null, "no second, page-own key");
 });
 
 test("the credits screen sends refunds and adjustments with a reason, the owner and one key per adjustment", async (t) => {
@@ -327,8 +336,9 @@ test("staff.html reuses the account shell, loads nothing from elsewhere and is k
   assert.match(staffHtml, /<meta name="robots" content="noindex, nofollow">/);
   for (const src of staffHtml.matchAll(/(?:src|href)="([^"]+)"/g)) assert.ok(src[1].startsWith("/"), `${src[1]} is same-origin`);
   assert.ok(!/<script>/.test(staffHtml), "no inline script");
-  // An explicit theme re-declares the account tokens both ways, and the tables fold at phone width.
-  assert.match(staffCss, /:root\[data-theme="light"\][^}]*--ac-bg/);
-  assert.match(staffCss, /:root\[data-theme="dark"\][^}]*--ac-bg/);
+  // The shared switch, before any stylesheet; the account tokens are account.css's alone.
+  assert.ok(staffHtml.indexOf('<script src="/theme.js') > 0 && staffHtml.indexOf('<script src="/theme.js') < staffHtml.indexOf("<link rel=\"stylesheet\""));
+  assert.doesNotMatch(staffCss, /--ac-bg\s*:/);
+  assert.match(staffCss, /:root\[data-theme="dark"\][^}]*--st-warn/);
   assert.match(staffCss, /@media \(max-width: 720px\)[\s\S]*td::before \{ content: attr\(data-label\)/);
 });
