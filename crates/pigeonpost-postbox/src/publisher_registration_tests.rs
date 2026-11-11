@@ -10,20 +10,96 @@ use serde_json::{json, Value};
 
 const TCKN: &str = "10000000146";
 const IBAN: &str = "TR330006100519786457841326";
-const PDF: &[u8] =
-    b"%PDF-1.4\n1 0 obj << /Type /Catalog >> endobj\ntrailer << /Root 1 0 R >>\n%%EOF\n";
+const PDF: &[u8] = b"%PDF-1.4\n1 0 obj << /Type /Catalog >> endobj\nxref\n0 1\ntrailer << /Root 1 0 R >>\nstartxref\n9\n%%EOF\n";
 
 fn code(v: &Value) -> &str {
     v["error"]["code"].as_str().unwrap_or_default()
 }
 
+/// A staging postbox with the KYC sandbox on (the only place the sandbox exists).
 async fn setup() -> Srv {
     let srv = serve_with(|s| {
         s.blobs = Some(Arc::new(crate::blobs::Blobs::for_test("devreg")));
+        let mut rt = nests::Runtime::capture();
+        rt.mp.staging = true;
+        rt.mp.kyc_sandbox = true;
+        s.nests = Arc::new(rt);
     })
     .await;
     srv.global_flag("marketplace").await;
     srv
+}
+
+/// A production postbox: no staging, no sandbox, no Shufti credentials.
+async fn production() -> Srv {
+    let srv = serve_with(|s| {
+        s.blobs = Some(Arc::new(crate::blobs::Blobs::for_test("devregprod")));
+    })
+    .await;
+    srv.global_flag("marketplace").await;
+    srv
+}
+
+/// A publisher profile in `status`, for tests of other features. `verified`: behind it is an
+/// approved verified registration (the only way to certification); otherwise it is an M0 profile
+/// with its legacy application row.
+pub(crate) async fn seed_publisher(
+    srv: &Srv,
+    kind: &str,
+    owner: &str,
+    applied_by: &str,
+    name: &str,
+    status: &str,
+    verified: bool,
+) -> String {
+    let id = format!("pub_{}", crate::groups::rand_b32(16));
+    let app = format!("pap_{}", crate::groups::rand_b32(16));
+    let (k, o, by, n, st, pid) = (
+        kind.to_string(),
+        owner.to_string(),
+        applied_by.to_string(),
+        name.to_string(),
+        status.to_string(),
+        id.clone(),
+    );
+    srv.state
+        .store
+        .group_tx(move |tx| -> crate::groups::GResult<()> {
+            let now = now_unix() as i64;
+            tx.execute(
+                "INSERT INTO publisher_profiles (id, owner_kind, owner_id, display_name, status,
+                    applied_by, created_at, updated_at, verified_application_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7, ?8)",
+                rusqlite::params![pid, k, o, n, st, by, now, verified.then(|| app.clone())],
+            )?;
+            if verified {
+                tx.execute(
+                    "INSERT INTO publisher_applications (id, owner_kind, owner_id, applicant,
+                        account_type, state, publisher_id, public_name, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, 'approved', ?6, ?7, ?8, ?8)",
+                    rusqlite::params![
+                        app,
+                        k,
+                        o,
+                        by,
+                        if k == "org" {
+                            "company_tr"
+                        } else {
+                            "individual_tr"
+                        },
+                        pid,
+                        n,
+                        now
+                    ],
+                )?;
+            } else {
+                crate::store::publisher_registration::backfill_legacy(tx)?;
+            }
+            Ok(())
+        })
+        .await
+        .unwrap();
+    id
 }
 
 async fn staff(srv: &Srv, who: &Person, role: &str) {
@@ -151,6 +227,7 @@ fn approve_body(revision: i64) -> Value {
         "decision": "approved",
         "revision": revision,
         "acknowledge_sandbox_kyc": true,
+        "acknowledge_unscanned_documents": true,
         "checklist": {
             "names_match_documents": true, "documents_authentic": true, "registry_consistent": true,
             "sanctions_reviewed": true, "bank_holder_matches": true,
@@ -837,6 +914,7 @@ async fn the_kyc_callback_needs_its_signature_and_a_replay_changes_nothing() {
 async fn legacy_applications_map_to_the_new_model_and_upgrade_into_a_draft() {
     let srv = setup().await;
     let dev = srv.person("reglegacy").await;
+    // The M0 route is closed: it points to the registration.
     let (s, v) = srv
         .post(
             "/v1/publisher-applications",
@@ -844,8 +922,18 @@ async fn legacy_applications_map_to_the_new_model_and_upgrade_into_a_draft() {
             json!({ "display_name": "Old Way" }),
         )
         .await;
-    assert_eq!(s, 201, "{v}");
-    let publisher = v["data"]["id"].as_str().unwrap().to_string();
+    assert_eq!((s, code(&v)), (410, "registration_required"), "{v}");
+    // An application made before it closed.
+    let publisher = seed_publisher(
+        &srv,
+        "account",
+        &dev.account,
+        &dev.account,
+        "Old Way",
+        "applied",
+        false,
+    )
+    .await;
     let (s, v) = srv.get("/v1/publisher-registrations", &dev.token).await;
     assert_eq!(s, 200, "{v}");
     let rows = v["data"].as_array().unwrap();
@@ -854,6 +942,18 @@ async fn legacy_applications_map_to_the_new_model_and_upgrade_into_a_draft() {
     assert_eq!(rows[0]["state"], "submitted");
     assert_eq!(rows[0]["publisher_id"], publisher.as_str());
     let legacy = rows[0]["id"].as_str().unwrap().to_string();
+    // The M0 staff route cannot certify a profile with no verified registration.
+    let rev = srv.person("reglegacyrev").await;
+    staff(&srv, &rev, "reviewer").await;
+    let certify = format!("/v1/staff/publisher-applications/{publisher}/decisions");
+    let (s, v) = srv
+        .post(
+            &certify,
+            &rev.strong,
+            json!({ "decision": "approved", "reason": "ok" }),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (409, "registration_required"), "{v}");
     // Starting a verified registration turns it into a draft, same id and publisher.
     let (s, v) = srv
         .post(
@@ -866,26 +966,72 @@ async fn legacy_applications_map_to_the_new_model_and_upgrade_into_a_draft() {
     assert_eq!(v["data"]["id"], legacy.as_str());
     assert_eq!(v["data"]["state"], "draft");
     assert_eq!(v["data"]["public_name"], "Old Way");
-    // The M0 staff route no longer decides it.
-    let rev = srv.person("reglegacyrev").await;
-    staff(&srv, &rev, "reviewer").await;
     let (s, v) = srv
         .post(
-            &format!("/v1/staff/publisher-applications/{publisher}/decisions"),
+            &certify,
             &rev.strong,
             json!({ "decision": "approved", "reason": "ok" }),
         )
         .await;
     assert_eq!((s, code(&v)), (409, "registration_in_progress"), "{v}");
-    // Nor may the old route open a second application beside it.
-    let (s, v) = srv
-        .post(
-            "/v1/publisher-applications",
-            &dev.token,
-            json!({ "display_name": "Again" }),
+}
+
+async fn hold_of(srv: &Srv, p: &str) -> (String, Option<String>) {
+    let p = p.to_string();
+    srv.state
+        .store
+        .group_read(
+            move |c| -> crate::groups::GResult<(String, Option<String>)> {
+                Ok(c.query_row(
+                    "SELECT status, payout_hold FROM publisher_profiles WHERE id = ?1",
+                    [&p],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )?)
+            },
         )
-        .await;
-    assert_eq!((s, code(&v)), (409, "application_exists"), "{v}");
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn publishers_certified_before_registration_stay_certified_and_are_held_for_payouts() {
+    let srv = setup().await;
+    let old = srv.person("regheldold").await;
+    let new = srv.person("regheldnew").await;
+    let m0 = seed_publisher(
+        &srv,
+        "account",
+        &old.account,
+        &old.account,
+        "Old",
+        "approved",
+        false,
+    )
+    .await;
+    let v2 = seed_publisher(
+        &srv,
+        "account",
+        &new.account,
+        &new.account,
+        "New",
+        "approved",
+        true,
+    )
+    .await;
+    srv.state
+        .store
+        .group_tx(|tx| -> crate::groups::GResult<()> {
+            crate::store::publisher_registration::hold_unverified(tx)?;
+            crate::store::publisher_registration::hold_unverified(tx)?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        hold_of(&srv, &m0).await,
+        ("approved".into(), Some("verification_required".into()))
+    );
+    assert_eq!(hold_of(&srv, &v2).await, ("approved".into(), None));
 }
 
 #[tokio::test]
@@ -901,6 +1047,7 @@ async fn the_payee_payload_carries_the_verified_details_for_saas_be() {
             ..Bank::default()
         },
         spec,
+        Some("US"),
     )
     .unwrap();
     let (tax, check) = crate::publisher_registration::clean_tax(
@@ -924,7 +1071,10 @@ async fn the_payee_payload_carries_the_verified_details_for_saas_be() {
         state: "approved".into(),
         publisher_id: Some("pub_x".into()),
         public_name: "Acme".into(),
-        profile: Default::default(),
+        profile: crate::publisher_registration::Profile {
+            country: Some("US".into()),
+            ..Default::default()
+        },
         bank_sealed: None,
         bank_masked: None,
         tax_sealed: None,
@@ -969,6 +1119,7 @@ async fn the_payee_payload_carries_the_verified_details_for_saas_be() {
             ..Bank::default()
         },
         tr,
+        None,
     )
     .is_err());
     let b = crate::publisher_registration::clean_bank(
@@ -979,9 +1130,42 @@ async fn the_payee_payload_carries_the_verified_details_for_saas_be() {
             ..Bank::default()
         },
         tr,
+        None,
     )
     .unwrap();
     assert_eq!(b.currency.as_deref(), Some("TRY"));
+    // A foreign payee: the declared country is the payout country, never the bank code's; no
+    // Turkish bank; ACH only for US payees; the country must be known first.
+    let fi = type_spec("individual_foreign").unwrap();
+    let swift = |bic: &str| Bank {
+        holder_name: "Ada L".into(),
+        method: "swift".into(),
+        account_number: Some("12345678".into()),
+        swift_bic: Some(bic.into()),
+        bank_name: Some("Bank".into()),
+        ..Bank::default()
+    };
+    let e =
+        crate::publisher_registration::clean_bank(swift("TGBATRIS"), fi, Some("DE")).unwrap_err();
+    assert_eq!(e.code, "swift_must_be_foreign");
+    let e = crate::publisher_registration::clean_bank(swift("DEUTDEFF"), fi, None).unwrap_err();
+    assert_eq!(e.code, "country_required");
+    let ach = Bank {
+        holder_name: "Ada L".into(),
+        method: "ach".into(),
+        routing_number: Some("021000021".into()),
+        account_number: Some("000123456789".into()),
+        ..Bank::default()
+    };
+    let e = crate::publisher_registration::clean_bank(ach, fi, Some("DE")).unwrap_err();
+    assert_eq!(e.code, "ach_requires_us");
+    let b = crate::publisher_registration::clean_bank(swift("CHASUS33"), fi, Some("GB")).unwrap();
+    let mut gb = app.clone();
+    gb.account_type = "individual_foreign".into();
+    gb.profile.country = Some("GB".into());
+    let p =
+        crate::publisher_registration_worker::payee_payload(&gb, &b, &tax, "acct_staff", 0, None);
+    assert_eq!(p["country"], "GB", "the declared country, not the BIC's US");
 }
 
 #[test]
@@ -996,4 +1180,504 @@ fn names_are_compared_with_turkish_letters_folded() {
     ));
     assert!(!names_match("Ada Lovelace", "Grace Hopper"));
     assert!(!names_match("", "Ada"));
+}
+
+// ---- security review fixes ------------------------------------------------------------------------
+
+/// Production, no Shufti: KYC is unavailable. Nothing falls back to the sandbox, nobody who needs
+/// KYC can submit, and a sandbox acknowledgement is refused outright.
+#[tokio::test]
+async fn without_shufti_production_kyc_is_unavailable_never_the_sandbox() {
+    let srv = production().await;
+    let dev = srv.person("regprod").await;
+    let (s, v) = srv
+        .get("/v1/publisher-registration/requirements", &dev.token)
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["data"]["kyc_provider"], "unavailable");
+    assert_eq!(v["data"]["kyc_unavailable_reason"], "not_configured");
+    let (_, v) = srv
+        .post(
+            "/v1/publisher-registrations",
+            &dev.token,
+            json!({ "account_type": "individual_tr", "public_name": "Prod Tools" }),
+        )
+        .await;
+    let id = v["data"]["id"].as_str().unwrap().to_string();
+    let (s, v) = srv
+        .post(
+            &format!("/v1/publisher-registrations/{id}/kyc"),
+            &dev.token,
+            json!({}),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (503, "kyc_unavailable"), "{v}");
+    assert_eq!(
+        count(&srv, "SELECT COUNT(*) FROM publisher_kyc_checks").await,
+        0
+    );
+    let (s, v) = srv
+        .post(
+            &format!("/v1/publisher-registrations/{id}/submit"),
+            &dev.strong,
+            json!({}),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (422, "application_incomplete"), "{v}");
+    let kyc = v["error"]["details"]["checklist"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["id"] == "kyc")
+        .unwrap()
+        .clone();
+    assert!(
+        kyc["detail"]
+            .as_str()
+            .unwrap()
+            .contains("temporarily unavailable"),
+        "{kyc}"
+    );
+    // A sandbox check left over (or forged into the store) neither counts nor can be simulated.
+    let aid = id.clone();
+    srv.state
+        .store
+        .group_tx(move |tx| -> crate::groups::GResult<()> {
+            tx.execute(
+                "INSERT INTO publisher_kyc_checks (id, application_id, subject, provider, reference,
+                    event, result, created_by, created_at, updated_at)
+                 VALUES ('kyc_forgedforgedforged', ?1, 'applicant', 'mock', 'ppk_forged',
+                    'request.pending', 'pending', 'x', 1, 1)",
+                [&aid],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let (s, _) = srv
+        .post(
+            &format!("/v1/publisher-registrations/{id}/kyc/kyc_forgedforgedforged/simulate"),
+            &dev.token,
+            json!({ "outcome": "accepted" }),
+        )
+        .await;
+    assert_eq!(s, 404);
+    // Staff can never acknowledge a sandbox KYC on production.
+    let rev = srv.person("regprodrev").await;
+    staff(&srv, &rev, "reviewer").await;
+    let aid = id.clone();
+    srv.state
+        .store
+        .group_tx(move |tx| -> crate::groups::GResult<()> {
+            tx.execute(
+                "UPDATE publisher_applications SET state = 'submitted' WHERE id = ?1",
+                [&aid],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let detail = format!("/v1/staff/publisher-registrations/{id}");
+    let (_, v) = srv.get(&detail, &rev.strong).await;
+    let revision = v["data"]["revision"].as_i64().unwrap();
+    let (s, v) = srv
+        .post(
+            &format!("{detail}/decisions"),
+            &rev.strong,
+            approve_body(revision),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (422, "sandbox_kyc_not_allowed"), "{v}");
+}
+
+/// A named credential file that cannot be read is an error, never "not configured".
+#[test]
+fn an_unreadable_shufti_secret_file_is_a_configuration_error() {
+    std::env::set_var("PP_TEST_KYC_SECRET_FILE", "/nonexistent/pp-test-secret");
+    let e = crate::publisher_kyc::secret_from_env("PP_TEST_KYC_SECRET").unwrap_err();
+    assert!(e.contains("could not be read"), "{e}");
+    let empty = std::env::temp_dir().join(format!("pp-kyc-empty-{}", std::process::id()));
+    std::fs::write(&empty, "  \n").unwrap();
+    std::env::set_var("PP_TEST_KYC_EMPTY_FILE", &empty);
+    assert!(crate::publisher_kyc::secret_from_env("PP_TEST_KYC_EMPTY").is_err());
+    std::env::remove_var("PP_TEST_KYC_SECRET_FILE");
+    std::env::remove_var("PP_TEST_KYC_EMPTY_FILE");
+    assert_eq!(
+        crate::publisher_kyc::secret_from_env("PP_TEST_KYC_UNSET").unwrap(),
+        None
+    );
+}
+
+/// The sandbox only finishes checks while the application is editable.
+#[tokio::test]
+async fn a_sandbox_check_cannot_be_simulated_once_submitted() {
+    let srv = setup().await;
+    let dev = srv.person("reglocked").await;
+    let id = ready_individual(&srv, &dev).await;
+    let (s, v) = srv
+        .post(
+            &format!("/v1/publisher-registrations/{id}/kyc"),
+            &dev.token,
+            json!({}),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (409, "kyc_done"), "{v}");
+    let (s, _) = srv
+        .post(
+            &format!("/v1/publisher-registrations/{id}/submit"),
+            &dev.strong,
+            json!({}),
+        )
+        .await;
+    assert_eq!(s, 200);
+    let (_, v) = srv
+        .get(&format!("/v1/publisher-registrations/{id}"), &dev.token)
+        .await;
+    let check = v["data"]["kyc"][0]["id"].as_str().unwrap().to_string();
+    let (s, v) = srv
+        .post(
+            &format!("/v1/publisher-registrations/{id}/kyc/{check}/simulate"),
+            &dev.token,
+            json!({ "outcome": "declined" }),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (409, "application_locked"), "{v}");
+}
+
+fn png() -> Vec<u8> {
+    let img = image::RgbImage::from_pixel(4, 4, image::Rgb([200, 10, 10]));
+    let mut out = std::io::Cursor::new(Vec::new());
+    img.write_to(&mut out, image::ImageFormat::Png).unwrap();
+    out.into_inner()
+}
+
+/// Structure, not just the signature: polyglots and appended payloads are refused.
+#[test]
+fn documents_must_be_well_formed_not_just_correctly_signed() {
+    use crate::publisher_registration::structure_ok;
+    assert_eq!(structure_ok("application/pdf", PDF), Ok(()));
+    assert_eq!(
+        structure_ok(
+            "application/pdf",
+            b"%PDF-1.4\n<html><script>alert(1)</script>\nstartxref\n9\n%%EOF\n"
+        ),
+        Err("pdf_polyglot")
+    );
+    let mut trailing = PDF.to_vec();
+    trailing.extend_from_slice(b"<html>payload</html>");
+    assert_eq!(
+        structure_ok("application/pdf", &trailing),
+        Err("pdf_trailing_data")
+    );
+    assert_eq!(
+        structure_ok("application/pdf", b"%PDF-1.4\nno trailer"),
+        Err("pdf_trailer")
+    );
+    assert_eq!(
+        structure_ok("application/pdf", b"%PDF-9.9\nstartxref\n%%EOF"),
+        Err("pdf_header")
+    );
+    let good = png();
+    assert_eq!(structure_ok("image/png", &good), Ok(()));
+    let mut appended = good.clone();
+    appended.extend_from_slice(b"PK\x03\x04zip");
+    assert_eq!(
+        structure_ok("image/png", &appended),
+        Err("image_trailing_data")
+    );
+    let mut broken = good.clone();
+    let mid = broken.len() / 2;
+    broken[mid..mid + 8].copy_from_slice(&[0u8; 8]);
+    assert_eq!(structure_ok("image/png", &broken), Err("image_decode"));
+    assert_eq!(
+        structure_ok("image/jpeg", &[0xFF, 0xD8, 0xFF, 0xE0, 0, 0, 0xFF, 0xD9]),
+        Err("image_decode")
+    );
+}
+
+#[tokio::test]
+async fn a_polyglot_upload_is_refused() {
+    let srv = setup().await;
+    let dev = srv.person("regpoly").await;
+    let (_, v) = srv
+        .post(
+            "/v1/publisher-registrations",
+            &dev.token,
+            json!({ "account_type": "individual_tr" }),
+        )
+        .await;
+    let id = v["data"]["id"].as_str().unwrap().to_string();
+    let mut poly = PDF.to_vec();
+    poly.extend_from_slice(b"\n<script>x</script>");
+    let (s, v) = upload(
+        &srv,
+        &dev.token,
+        &id,
+        "type=bank_letter&filename=a.pdf",
+        &poly,
+    )
+    .await;
+    assert_eq!((s, code(&v)), (415, "malformed_document"), "{v}");
+    let (s, v) = upload(
+        &srv,
+        &dev.token,
+        &id,
+        "type=bank_letter&filename=a.png",
+        &png(),
+    )
+    .await;
+    assert_eq!(s, 201, "{v}");
+    assert_eq!(v["data"]["content_type"], "image/png");
+}
+
+/// Approval with unscanned documents needs an explicit acknowledgement, which is audited; reviewer
+/// checks a name mismatch or AML hit fails need a written, audited override.
+#[tokio::test]
+async fn unscanned_documents_and_name_mismatches_need_explicit_audited_staff_acts() {
+    let srv = setup().await;
+    let dev = srv.person("regmismatch").await;
+    let rev = srv.person("regmismatchrev").await;
+    staff(&srv, &rev, "reviewer").await;
+    let id = ready_individual(&srv, &dev).await;
+    // The bank account is in someone else's name.
+    let (s, v) = srv
+        .patch(
+            &format!("/v1/publisher-registrations/{id}"),
+            &dev.token,
+            json!({ "bank": { "holder_name": "Grace Hopper", "method": "iban", "iban": IBAN } }),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (s, v) = srv
+        .post(
+            &format!("/v1/publisher-registrations/{id}/submit"),
+            &dev.strong,
+            json!({}),
+        )
+        .await;
+    assert_eq!(
+        s, 200,
+        "a reviewer judges names, so the developer can submit: {v}"
+    );
+    let detail = format!("/v1/staff/publisher-registrations/{id}");
+    let (_, v) = srv.get(&detail, &rev.strong).await;
+    let revision = v["data"]["revision"].as_i64().unwrap();
+    let decide = format!("{detail}/decisions");
+    let (s, v) = srv.post(&decide, &rev.strong, approve_body(revision)).await;
+    assert_eq!((s, code(&v)), (422, "checks_failing"), "{v}");
+    assert_eq!(v["error"]["details"]["failing"], json!(["names_match"]));
+    assert_eq!(v["error"]["details"]["overridable"], json!(["names_match"]));
+    let mut short = approve_body(revision);
+    short["overrides"] = json!({ "names_match": "ok" });
+    let (s, _) = srv.post(&decide, &rev.strong, short).await;
+    assert_eq!(s, 400, "an override needs a real reason");
+    let mut body = approve_body(revision);
+    body["overrides"] =
+        json!({ "names_match": "Spouse's joint account; marriage certificate seen" });
+    body["acknowledge_unscanned_documents"] = json!(false);
+    let (s, v) = srv.post(&decide, &rev.strong, body.clone()).await;
+    assert_eq!((s, code(&v)), (422, "documents_not_scanned"), "{v}");
+    body["acknowledge_unscanned_documents"] = json!(true);
+    let (s, v) = srv.post(&decide, &rev.strong, body).await;
+    assert_eq!(s, 201, "{v}");
+    let details: String = srv
+        .state
+        .store
+        .group_read(|c| -> crate::groups::GResult<String> {
+            Ok(c.query_row(
+                "SELECT details FROM audit_log WHERE action = 'staff.publisher_registration.decision'",
+                [],
+                |r| r.get(0),
+            )?)
+        })
+        .await
+        .unwrap();
+    assert!(details.contains("marriage certificate seen"), "{details}");
+    assert!(
+        details.contains("\"documents_not_malware_scanned\":true"),
+        "{details}"
+    );
+}
+
+/// A KYC result reversed after approval is not ignored: alert, payout hold, owner told; a staff
+/// member resolves it with a reason.
+#[tokio::test]
+async fn a_kyc_reversal_after_approval_holds_payouts_until_staff_resolve_it() {
+    let srv = setup().await;
+    let dev = srv.person("regrevdev").await;
+    let rev = srv.person("regrevrev").await;
+    staff(&srv, &rev, "reviewer").await;
+    let id = ready_individual(&srv, &dev).await;
+    srv.post(
+        &format!("/v1/publisher-registrations/{id}/submit"),
+        &dev.strong,
+        json!({}),
+    )
+    .await;
+    let detail = format!("/v1/staff/publisher-registrations/{id}");
+    let (_, v) = srv.get(&detail, &rev.strong).await;
+    let (s, v) = srv
+        .post(
+            &format!("{detail}/decisions"),
+            &rev.strong,
+            approve_body(v["data"]["revision"].as_i64().unwrap()),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let publisher = v["data"]["publisher_id"].as_str().unwrap().to_string();
+    // Shufti changes its outcome; the signed status read applies it.
+    let aid = id.clone();
+    let reference: String = srv
+        .state
+        .store
+        .group_read(move |c| -> crate::groups::GResult<String> {
+            Ok(c.query_row(
+                "SELECT reference FROM publisher_kyc_checks WHERE application_id = ?1",
+                [&aid],
+                |r| r.get(0),
+            )?)
+        })
+        .await
+        .unwrap();
+    let body = json!({ "reference": reference, "event": "verification.declined",
+                       "declined_reason": "Document reported stolen" });
+    let bytes = body.to_string().into_bytes();
+    let o = crate::publisher_kyc::outcome(&body);
+    let changed = srv
+        .state
+        .store
+        .group_tx(move |tx| -> crate::groups::GResult<Option<String>> {
+            crate::publisher_kyc::apply_kyc_message_in(tx, &bytes, &o, "status", now_unix() as i64)
+        })
+        .await
+        .unwrap();
+    assert_eq!(changed.as_deref(), Some(id.as_str()));
+    crate::publisher_registration::kyc_changed(&srv.state, &id).await;
+    crate::publisher_registration::kyc_changed(&srv.state, &id).await;
+    assert_eq!(
+        hold_of(&srv, &publisher).await.1.as_deref(),
+        Some("kyc_reversed")
+    );
+    assert_eq!(
+        count(&srv, &format!("SELECT COUNT(*) FROM publisher_staff_alerts WHERE application_id = '{id}' AND kind = 'kyc_reversed' AND resolved_at IS NULL")).await,
+        1,
+        "one alert, however often it is reported"
+    );
+    assert_eq!(
+        count(&srv, &format!("SELECT COUNT(*) FROM publisher_application_notices WHERE application_id = '{id}' AND channel = 'staff'")).await,
+        1
+    );
+    let (s, v) = srv
+        .get("/v1/staff/publisher-registration-alerts", &rev.strong)
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let alert = v["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["application_id"] == id.as_str())
+        .unwrap()
+        .clone();
+    let (_, v) = srv.get(&detail, &rev.strong).await;
+    assert_eq!(v["data"]["payout_hold"], "kyc_reversed");
+    let resolve = format!("{detail}/alerts/{}/resolve", alert["id"].as_str().unwrap());
+    let (s, _) = srv
+        .post(&resolve, &rev.strong, json!({ "reason": "short" }))
+        .await;
+    assert_eq!(s, 400);
+    let (s, v) = srv
+        .post(
+            &resolve,
+            &rev.strong,
+            json!({ "reason": "New passport verified by phone; Shufti re-run accepted" }),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(hold_of(&srv, &publisher).await.1, None);
+    assert_eq!(
+        count(&srv, "SELECT COUNT(*) FROM audit_log WHERE action = 'staff.publisher_registration.alert.resolve'").await,
+        1
+    );
+}
+
+/// The retention sweep marks purged exactly what it deletes in a pass.
+#[tokio::test]
+async fn retention_marks_purged_only_the_batch_it_deletes() {
+    let srv = setup().await;
+    let dev = srv.person("regretain").await;
+    let (_, v) = srv
+        .post(
+            "/v1/publisher-registrations",
+            &dev.token,
+            json!({ "account_type": "individual_tr" }),
+        )
+        .await;
+    let id = v["data"]["id"].as_str().unwrap().to_string();
+    let total = crate::publisher_registration_worker::PURGE_BATCH + 5;
+    let aid = id.clone();
+    srv.state
+        .store
+        .group_tx(move |tx| -> crate::groups::GResult<()> {
+            for i in 0..total {
+                tx.execute(
+                    "INSERT INTO publisher_application_documents (id, application_id, doc_type, filename,
+                        content_type, size, sha256, blob, uploaded_by, created_at, retain_until)
+                     VALUES (?1, ?2, 'bank_letter', 'a.pdf', 'application/pdf', 1, 'x', ?3, 'u', 1, 2)",
+                    rusqlite::params![format!("pad_r{i:04}"), aid, format!("{:064x}", i)],
+                )?;
+            }
+            Ok(())
+        })
+        .await
+        .unwrap();
+    crate::publisher_registration_worker::sweep_retention(&srv.state).await;
+    let purged = format!("SELECT COUNT(*) FROM publisher_application_documents WHERE application_id = '{id}' AND purged_at IS NOT NULL");
+    let unpurged_without_blob = format!("SELECT COUNT(*) FROM publisher_application_documents WHERE application_id = '{id}' AND purged_at IS NULL AND blob IS NULL");
+    assert_eq!(
+        count(&srv, &purged).await,
+        crate::publisher_registration_worker::PURGE_BATCH
+    );
+    assert_eq!(
+        count(&srv, &unpurged_without_blob).await,
+        0,
+        "no row lost its blob without being purged"
+    );
+    crate::publisher_registration_worker::sweep_retention(&srv.state).await;
+    assert_eq!(count(&srv, &purged).await, total);
+}
+
+/// A payee push that fails for good raises a dashboard alert and tells the owner, once.
+#[tokio::test]
+async fn a_final_payee_push_failure_alerts_staff() {
+    let srv = setup().await;
+    let dev = srv.person("regpushfail").await;
+    let (_, v) = srv
+        .post(
+            "/v1/publisher-registrations",
+            &dev.token,
+            json!({ "account_type": "individual_tr" }),
+        )
+        .await;
+    let id = v["data"]["id"].as_str().unwrap().to_string();
+    let aid = id.clone();
+    srv.state
+        .store
+        .group_tx(move |tx| -> crate::groups::GResult<()> {
+            for _ in 0..2 {
+                crate::publisher_registration_worker::payee_push_failed_in(
+                    tx, &aid, "pub_x", "http 400", 5,
+                )?;
+            }
+            Ok(())
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        count(&srv, &format!("SELECT COUNT(*) FROM publisher_staff_alerts WHERE application_id = '{id}' AND kind = 'payee_push_failed'")).await,
+        1
+    );
+    assert_eq!(
+        count(&srv, &format!("SELECT COUNT(*) FROM publisher_application_notices WHERE application_id = '{id}' AND channel = 'staff' AND state = 'payee_push_failed'")).await,
+        1
+    );
 }

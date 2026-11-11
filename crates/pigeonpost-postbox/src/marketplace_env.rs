@@ -4,6 +4,7 @@
 //! | Variable | Default | Meaning |
 //! |---|---|---|
 //! | `POSTBOX_STAGING_MODE` | off | `1`: this postbox is a staging postbox. Every response carries `x-pigeonpost-environment: staging`, every route that applies a real payment is refused, and the hosted test Nest routes exist. |
+//! | `POSTBOX_KYC_SANDBOX` | off | `on`, on a staging postbox only: publisher registration KYC uses the sandbox provider when Shufti Pro is not configured. Ignored on production. |
 //! | `POSTBOX_MARKETPLACE_TEST_NESTS_URL`, `…_TOKEN` | unset | the test pool's nestd (staging only; never the production one) |
 //! | `POSTBOX_MARKETPLACE_TEST_NEST_DAYS` | 7 | how long a test Nest lives (1-30) |
 //! | `POSTBOX_MARKETPLACE_GIT_HOSTS` | `github.com,gitlab.com,codeberg.org,bitbucket.org` | hosts a build's source may come from |
@@ -28,6 +29,9 @@ const DEFAULT_TEST_DAYS: u64 = 7;
 pub(crate) struct MpEnv {
     /// `POSTBOX_STAGING_MODE=1`.
     pub(crate) staging: bool,
+    /// `POSTBOX_KYC_SANDBOX=on` on a staging postbox: publisher KYC may use the sandbox provider.
+    /// Never on production, whatever the variable says.
+    pub(crate) kyc_sandbox: bool,
     /// The test pool's nestd: staging only, and never the production pool's URL.
     pub(crate) test_pool: Option<Arc<crate::nests::Runtime>>,
     /// How long a new test Nest lives, in seconds.
@@ -40,6 +44,7 @@ impl Default for MpEnv {
     fn default() -> Self {
         MpEnv {
             staging: false,
+            kyc_sandbox: false,
             test_pool: None,
             test_nest_secs: DEFAULT_TEST_DAYS * 86_400,
             git_hosts: DEFAULT_GIT_HOSTS.iter().map(|h| h.to_string()).collect(),
@@ -97,6 +102,10 @@ impl MpEnv {
                 })
             })
         };
+        let sandbox_asked = matches!(var("POSTBOX_KYC_SANDBOX").as_str(), "on" | "1" | "true");
+        if sandbox_asked && !staging {
+            tracing::warn!("POSTBOX_KYC_SANDBOX is ignored: this is not a staging postbox");
+        }
         if staging {
             tracing::warn!(
                 test_pool = test_pool.is_some(),
@@ -105,6 +114,7 @@ impl MpEnv {
         }
         MpEnv {
             staging,
+            kyc_sandbox: staging && sandbox_asked,
             test_pool,
             test_nest_secs: days * 86_400,
             git_hosts,

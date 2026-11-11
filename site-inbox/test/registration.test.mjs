@@ -251,3 +251,13 @@ test("Turkish browsers get Turkish labels", async (t) => {
   assert.equal(p.$("#mp-reg-title").textContent, "Doğrulanmış yayıncı olun");
   assert.match(p.$('[data-step="1"]').textContent, /Ödeme ve vergi/);
 });
+
+test("when identity verification is unavailable the page says so and offers nothing to start", async (t) => {
+  const p = page(t, { current: app({ kyc_provider: "unavailable", kyc: [] }) });
+  await tick();
+  p.click('[data-step="3"]');
+  await tick();
+  assert.match(p.$("#mp-reg-kyc-unavailable").textContent, /temporarily unavailable/);
+  assert.equal(p.$("#mp-reg-kyc-start"), null);
+  assert.equal(p.$("#mp-reg-sandbox"), null);
+});

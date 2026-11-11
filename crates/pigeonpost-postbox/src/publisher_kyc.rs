@@ -7,8 +7,13 @@
 //! `POST /v1/integrations/shufti/callback`. The worker polls `POST /status` as a fallback for
 //! checks that stay pending or whose status changed at Shufti.
 //!
-//! **Configuration** (all optional; with no credentials the adapter runs in **mock** mode, where
-//! the page offers "simulate accepted/declined" and those go through the same signed-message path):
+//! **Configuration.** With both Shufti credentials the provider is live. Without them KYC is
+//! **unavailable**: nobody who needs it can submit, and the page says verification is temporarily
+//! unavailable. The **sandbox** (mock) provider, whose "simulate accepted/declined" goes through the
+//! same signed-message path, exists only with `POSTBOX_KYC_SANDBOX=on` on a staging postbox
+//! (`POSTBOX_STAGING_MODE=1`); on production the flag is ignored. A credential file that is named but
+//! unreadable or empty, or only one of the two credentials, is a configuration error: the postbox
+//! refuses to start ([`check_config`]) and, should it change underneath, KYC is unavailable.
 //!
 //! | Variable | Meaning |
 //! |---|---|
@@ -63,9 +68,10 @@ pub(crate) enum Provider {
         address: bool,
         redirect_url: String,
     },
-    Mock {
-        secret: String,
-    },
+    /// The sandbox: staging postboxes with `POSTBOX_KYC_SANDBOX=on` only.
+    Mock { secret: String },
+    /// No usable provider: nothing can be verified, and no message is accepted.
+    Unavailable { why: &'static str },
 }
 
 impl Provider {
@@ -73,41 +79,70 @@ impl Provider {
         match self {
             Provider::Shufti { .. } => "shufti",
             Provider::Mock { .. } => "mock",
+            Provider::Unavailable { .. } => "unavailable",
         }
     }
 
-    fn signing_secret(&self) -> &str {
+    /// The key a provider message is signed with; none while unavailable.
+    fn signing_secret(&self) -> Option<&str> {
         match self {
-            Provider::Shufti { secret, .. } | Provider::Mock { secret } => secret,
+            Provider::Shufti { secret, .. } | Provider::Mock { secret } => Some(secret),
+            Provider::Unavailable { .. } => None,
         }
     }
 
     fn scheme(&self) -> Scheme {
         match self {
             Provider::Shufti { scheme, .. } => *scheme,
-            Provider::Mock { .. } => Scheme::HashedSecret,
+            _ => Scheme::HashedSecret,
         }
     }
 }
 
-fn secret_from_env(name: &str) -> Option<String> {
+/// A credential from `<NAME>_FILE` (preferred) or `<NAME>`. `Ok(None)`: not configured.
+/// `Err`: a file is named but cannot be read or is empty. Never silently "not configured".
+pub(crate) fn secret_from_env(name: &str) -> Result<Option<String>, String> {
     let file = std::env::var(format!("{name}_FILE")).unwrap_or_default();
-    let v = if file.trim().is_empty() {
-        std::env::var(name).unwrap_or_default()
-    } else {
-        std::fs::read_to_string(file.trim()).unwrap_or_default()
-    };
-    let v = v.trim().to_string();
-    (!v.is_empty()).then_some(v)
+    if !file.trim().is_empty() {
+        let v = std::fs::read_to_string(file.trim())
+            .map_err(|e| format!("{name}_FILE could not be read: {e}"))?;
+        let v = v.trim().to_string();
+        if v.is_empty() {
+            return Err(format!("{name}_FILE is empty"));
+        }
+        return Ok(Some(v));
+    }
+    let v = std::env::var(name).unwrap_or_default().trim().to_string();
+    Ok((!v.is_empty()).then_some(v))
 }
 
-/// The configured provider: Shufti Pro with both credentials, otherwise the mock.
-pub(crate) fn provider(state: &AppState) -> Provider {
+/// Whether this postbox may run the sandbox provider: staging only, and only when asked for.
+pub(crate) fn sandbox_allowed(state: &AppState) -> bool {
+    state.nests.mp.staging && state.nests.mp.kyc_sandbox
+}
+
+/// The live credentials, `Ok(None)` when none are configured, `Err` when they are broken.
+fn credentials() -> Result<Option<(String, String)>, String> {
     match (
-        secret_from_env("POSTBOX_SHUFTI_CLIENT_ID"),
-        secret_from_env("POSTBOX_SHUFTI_SECRET_KEY"),
+        secret_from_env("POSTBOX_SHUFTI_CLIENT_ID")?,
+        secret_from_env("POSTBOX_SHUFTI_SECRET_KEY")?,
     ) {
-        (Some(client_id), Some(secret)) => Provider::Shufti {
+        (Some(id), Some(secret)) => Ok(Some((id, secret))),
+        (None, None) => Ok(None),
+        _ => Err("only one of the Shufti Pro client id and secret key is configured".into()),
+    }
+}
+
+/// At startup: a broken Shufti configuration stops the postbox instead of degrading quietly.
+pub(crate) fn check_config() -> Result<(), String> {
+    credentials().map(|_| ())
+}
+
+/// The configured provider: Shufti Pro with both credentials; the sandbox where allowed; else
+/// unavailable.
+pub(crate) fn provider(state: &AppState) -> Provider {
+    match credentials() {
+        Ok(Some((client_id, secret))) => Provider::Shufti {
             client_id,
             secret,
             base_url: std::env::var("POSTBOX_SHUFTI_BASE_URL")
@@ -125,10 +160,27 @@ pub(crate) fn provider(state: &AppState) -> Provider {
                 .filter(|v| v.starts_with("https://"))
                 .unwrap_or_else(|| "https://pigeonpost.dev/account#publish".into()),
         },
-        _ => Provider::Mock {
+        Ok(None) if sandbox_allowed(state) => Provider::Mock {
             secret: hex(&state.vault.subkey(MOCK_LABEL)),
         },
+        Ok(None) => Provider::Unavailable {
+            why: "not_configured",
+        },
+        Err(e) => {
+            tracing::error!(error = %e, "shufti: credentials unusable; KYC unavailable");
+            Provider::Unavailable {
+                why: "misconfigured",
+            }
+        }
     }
+}
+
+pub(crate) fn kyc_unavailable() -> GErr {
+    GErr::new(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "kyc_unavailable",
+        "identity verification is temporarily unavailable",
+    )
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -418,7 +470,7 @@ pub(crate) fn request_body(p: &Provider, s: &Start<'_>) -> Value {
             redirect_url,
             ..
         } => (*address, redirect_url.clone()),
-        Provider::Mock { .. } => (false, String::new()),
+        _ => (false, String::new()),
     };
     let mut body = json!({
         "reference": s.reference,
@@ -460,6 +512,7 @@ pub(crate) fn request_body(p: &Provider, s: &Start<'_>) -> Value {
 /// Create the verification at the provider. Mock: nothing leaves the postbox and there is no URL.
 pub(crate) async fn create(p: &Provider, s: &Start<'_>) -> GResult<Outcome> {
     match p {
+        Provider::Unavailable { .. } => Err(kyc_unavailable()),
         Provider::Mock { .. } => Ok(Outcome {
             reference: s.reference.to_string(),
             event: "request.pending".into(),
@@ -515,7 +568,7 @@ pub(crate) fn mock_message(
         })
     };
     let bytes = body.to_string().into_bytes();
-    let sig = signature(&bytes, p.signing_secret(), p.scheme());
+    let sig = signature(&bytes, p.signing_secret().unwrap_or_default(), p.scheme());
     (bytes, sig)
 }
 
@@ -529,7 +582,10 @@ pub(crate) async fn handle_callback(
 ) -> Response {
     let p = provider(&state);
     let sig = headers.get("signature").and_then(|v| v.to_str().ok());
-    if !shufti_signature_ok(&body, sig, p.signing_secret(), p.scheme()) {
+    let verified = p
+        .signing_secret()
+        .is_some_and(|secret| shufti_signature_ok(&body, sig, secret, p.scheme()));
+    if !verified {
         return (
             StatusCode::UNAUTHORIZED,
             Json(json!({ "error": { "code": "bad_signature", "message": "signature mismatch" } })),

@@ -110,6 +110,22 @@ pub(crate) fn notice_text(
     (subject.replace(['\r', '\n'], " "), lines)
 }
 
+/// Subject and lines of a staff alert to the platform owner. Ids and states only.
+pub(crate) fn staff_text(kind: &str, a: &App) -> (String, Vec<String>) {
+    let what = match kind {
+        "kyc_reversed" => "Identity verification was reversed after approval",
+        "payee_push_failed" => "The payee profile could not be sent to finance",
+        _ => "A publisher registration needs attention",
+    };
+    (
+        format!("Staff alert: {what}"),
+        vec![
+            format!("{what}: application {} (publisher {}).", a.id, a.publisher_id.as_deref().unwrap_or("none")),
+            "Payouts to this publisher are held until a staff member resolves the alert in the back office.".into(),
+        ],
+    )
+}
+
 fn email(subject: &str, lines: &[String]) -> (String, String) {
     use crate::mail_layout::{self as layout, escape as esc, BODY, INK, MUTED};
     let body: String = lines
@@ -242,7 +258,11 @@ async fn deliver_notices(state: &AppState) {
         .build()
         .ok();
     for n in due {
-        let (subject, lines) = notice_text(&n.state, &n.app.public_name, n.message.as_deref());
+        let (subject, lines) = if n.channel == "staff" {
+            staff_text(&n.state, &n.app)
+        } else {
+            notice_text(&n.state, &n.app.public_name, n.message.as_deref())
+        };
         let outcome: Result<(), String> = match n.channel.as_str() {
             "email" => match (&mail, &client, n.app.profile.contact_email.as_deref()) {
                 (Some(cfg), Some(client), Some(to)) => {
@@ -261,11 +281,27 @@ async fn deliver_notices(state: &AppState) {
                 }
                 _ => Err("skipped".into()),
             },
-            _ => {
+            channel => {
                 let a = n.app.clone();
+                let owner = state.platform_owner.as_deref().map(str::to_string);
+                let staff = channel == "staff";
                 let to = state
                     .store
-                    .group_read(move |c| -> GResult<Option<String>> { Ok(mailbox_for(c, &a)?) })
+                    .group_read(move |c| -> GResult<Option<String>> {
+                        if staff {
+                            // The platform owner's first mailbox: staff alerts go to the owner.
+                            let Some(owner) = owner else { return Ok(None) };
+                            return Ok(c
+                                .query_row(
+                                    "SELECT address FROM identities WHERE account_id = ?1
+                                      ORDER BY created_at, address LIMIT 1",
+                                    [&owner],
+                                    |r| r.get(0),
+                                )
+                                .optional()?);
+                        }
+                        Ok(mailbox_for(c, &a)?)
+                    })
                     .await
                     .ok()
                     .flatten();
@@ -364,7 +400,13 @@ pub(crate) fn payee_payload(
         "ach_account_type": bank.ach_account_type,
         "bank_name": bank.bank_name,
         "bank_address": bank.bank_address,
-        "country": bank.bank_country,
+        // The payee's declared country (Turkish types are always TR), never one derived from a
+        // bank code.
+        "country": if spec.is_some_and(|s| s.turkish) {
+            Some("TR".to_string())
+        } else {
+            a.profile.country.clone()
+        },
         "currency": bank.currency,
         "tax_id": tax.tax_id,
         "tax_profile": {
@@ -475,6 +517,7 @@ async fn push_payees(state: &AppState) {
             tracing::warn!(push = %id, %why, "publisher payee push failed");
         }
         let attempts = attempts + 1;
+        let alert_app = app.clone();
         let _ = state
             .store
             .group_tx(move |tx| -> GResult<()> {
@@ -484,17 +527,44 @@ async fn push_payees(state: &AppState) {
                             remote_revision = ?4, last_error = NULL WHERE id = ?1",
                         params![id, attempts, now, rev],
                     )?,
-                    Err((final_, why)) => tx.execute(
-                        "UPDATE publisher_payee_pushes SET attempts = ?2, last_error = ?3,
-                            status = CASE WHEN ?4 OR ?2 >= ?5 THEN 'failed' ELSE 'pending' END, next_at = ?6
-                          WHERE id = ?1",
-                        params![id, attempts, why, final_, MAX_ATTEMPTS, now + backoff(attempts)],
-                    )?,
+                    Err((final_, why)) => {
+                        let n = tx.execute(
+                            "UPDATE publisher_payee_pushes SET attempts = ?2, last_error = ?3,
+                                status = CASE WHEN ?4 OR ?2 >= ?5 THEN 'failed' ELSE 'pending' END, next_at = ?6
+                              WHERE id = ?1",
+                            params![id, attempts, why, final_, MAX_ATTEMPTS, now + backoff(attempts)],
+                        )?;
+                        if *final_ || attempts >= MAX_ATTEMPTS {
+                            payee_push_failed_in(tx, &alert_app, &publisher, why, now)?;
+                        }
+                        n
+                    }
                 };
                 Ok(())
             })
             .await;
     }
+}
+
+/// A payee push failed for good: a staff alert on the dashboard (once while open) and a message
+/// to the platform owner, instead of a log line nobody reads.
+pub(crate) fn payee_push_failed_in(
+    c: &Connection,
+    application: &str,
+    publisher: &str,
+    why: &str,
+    now: i64,
+) -> rusqlite::Result<()> {
+    let n = c.execute(
+        "INSERT OR IGNORE INTO publisher_staff_alerts (id, application_id, publisher_id, kind, detail, created_at)
+         VALUES (?1, ?2, ?3, 'payee_push_failed', ?4, ?5)",
+        params![crate::marketplace_m2::new_id("psa"), application, publisher,
+                format!("Payee push to finance failed: {why}"), now],
+    )?;
+    if n > 0 {
+        crate::publisher_registration::staff_notice_in(c, application, "payee_push_failed", now)?;
+    }
+    Ok(())
 }
 
 // ---- malware scan -------------------------------------------------------------------------------------
@@ -627,7 +697,10 @@ async fn scan_documents(state: &AppState) {
 
 // ---- retention ------------------------------------------------------------------------------------------
 
-async fn sweep_retention(state: &AppState) {
+/// Documents purged per pass.
+pub(crate) const PURGE_BATCH: i64 = 200;
+
+pub(crate) async fn sweep_retention(state: &AppState) {
     let now = now_unix() as i64;
     let draft_days = crate::env_num::<i64>("POSTBOX_PUBLISHER_DRAFT_DAYS", 180);
     let rejected_days = crate::publisher_registration_staff::rejected_retention_days();
@@ -641,20 +714,27 @@ async fn sweep_retention(state: &AppState) {
                     (SELECT id FROM publisher_applications WHERE state = 'draft' AND updated_at < ?1 - ?2 * 86400)",
                 params![now, draft_days],
             )?;
-            let blobs: Vec<String> = {
+            // One batch: exactly the rows whose bytes this pass deletes are marked purged; the
+            // rest wait for the next pass.
+            let due: Vec<(String, Option<String>)> = {
                 let mut stmt = tx.prepare(
-                    "SELECT blob FROM publisher_application_documents
+                    "SELECT id, blob FROM publisher_application_documents
                       WHERE retain_until IS NOT NULL AND retain_until <= ?1 AND purged_at IS NULL
-                        AND blob IS NOT NULL LIMIT 200",
+                      ORDER BY retain_until, id LIMIT ?2",
                 )?;
-                let rows = stmt.query_map([now], |r| r.get(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+                let rows = stmt
+                    .query_map(params![now, PURGE_BATCH], |r| Ok((r.get(0)?, r.get(1)?)))?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
                 rows
             };
-            tx.execute(
-                "UPDATE publisher_application_documents SET purged_at = ?1, blob = NULL
-                  WHERE retain_until IS NOT NULL AND retain_until <= ?1 AND purged_at IS NULL",
-                [now],
-            )?;
+            for (id, _) in &due {
+                tx.execute(
+                    "UPDATE publisher_application_documents SET purged_at = ?2, blob = NULL
+                      WHERE id = ?1 AND purged_at IS NULL",
+                    params![id, now],
+                )?;
+            }
+            let blobs: Vec<String> = due.into_iter().filter_map(|(_, b)| b).collect();
             // A rejected application's sealed bank and tax details go with its documents; the
             // masked copies stay as the record of what was reviewed.
             tx.execute(

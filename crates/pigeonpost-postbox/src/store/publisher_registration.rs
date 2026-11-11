@@ -153,7 +153,8 @@ BEGIN SELECT RAISE(ABORT, 'publisher_application_events are append-only'); END;
 CREATE TABLE IF NOT EXISTS publisher_application_notices (
     id             TEXT PRIMARY KEY,
     application_id TEXT NOT NULL REFERENCES publisher_applications(id),
-    channel        TEXT NOT NULL CHECK (channel IN ('email','message')),
+    -- `staff`: an alert to the platform owner's mailbox (a KYC reversal, a failed payee push).
+    channel        TEXT NOT NULL CHECK (channel IN ('email','message','staff')),
     state          TEXT NOT NULL,
     status         TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','sent','failed','skipped')),
     attempts       INTEGER NOT NULL DEFAULT 0,
@@ -181,12 +182,33 @@ CREATE TABLE IF NOT EXISTS publisher_payee_pushes (
     sent_at        INTEGER
 );
 CREATE INDEX IF NOT EXISTS publisher_payee_pushes_due ON publisher_payee_pushes(status, next_at);
+
+-- Things staff must look at on the back office dashboard: a KYC result reversed after approval,
+-- a payee push that failed for good. Open until a staff member resolves it with a reason.
+CREATE TABLE IF NOT EXISTS publisher_staff_alerts (
+    id             TEXT PRIMARY KEY,
+    application_id TEXT NOT NULL REFERENCES publisher_applications(id),
+    publisher_id   TEXT,
+    kind           TEXT NOT NULL CHECK (kind IN ('kyc_reversed','payee_push_failed')),
+    detail         TEXT NOT NULL,
+    created_at     INTEGER NOT NULL,
+    resolved_at    INTEGER,
+    resolved_by    TEXT,
+    resolution     TEXT
+);
+CREATE INDEX IF NOT EXISTS publisher_staff_alerts_open ON publisher_staff_alerts(resolved_at, created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS publisher_staff_alerts_one_open
+    ON publisher_staff_alerts(application_id, kind) WHERE resolved_at IS NULL;
 ";
 
 /// Columns added to tables that already exist.
 const COLUMNS: &[(&str, &str, &str)] = &[
     // The application whose verification certified this publisher (none for legacy approvals).
     ("publisher_profiles", "verified_application_id", "TEXT"),
+    // Why payouts to this publisher are held, until staff or a verified registration clears it:
+    // `verification_required` (certified before verified registration existed),
+    // `kyc_reversed` (identity verification reversed after approval).
+    ("publisher_profiles", "payout_hold", "TEXT"),
 ];
 
 fn has_column(c: &Connection, table: &str, column: &str) -> rusqlite::Result<bool> {
@@ -215,7 +237,20 @@ pub(crate) fn migrate(c: &Connection) -> rusqlite::Result<()> {
             c.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {def}"))?;
         }
     }
-    backfill_legacy(c)
+    backfill_legacy(c)?;
+    hold_unverified(c)
+}
+
+/// Publishers certified through the M0 application stay certified, but are held for payouts until
+/// they complete a verified registration. Idempotent.
+pub(crate) fn hold_unverified(c: &Connection) -> rusqlite::Result<()> {
+    c.execute(
+        "UPDATE publisher_profiles SET payout_hold = 'verification_required'
+          WHERE owner_kind IN ('account','org') AND status = 'approved'
+            AND verified_application_id IS NULL AND payout_hold IS NULL",
+        [],
+    )?;
+    Ok(())
 }
 
 /// One `legacy` application for every account or org publisher profile that has none.

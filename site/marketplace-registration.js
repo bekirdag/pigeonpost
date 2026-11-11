@@ -95,6 +95,7 @@
     startKyc: ["Start identity verification", "Kimlik doğrulamasını başlat"],
     restartKyc: ["Start again", "Yeniden başlat"],
     openKyc: ["Open in a new tab", "Yeni sekmede aç"],
+    kycUnavailable: ["Identity verification is temporarily unavailable, so the application can't be submitted yet. Your draft is saved; come back later.", "Kimlik doğrulaması geçici olarak kullanılamıyor, bu yüzden başvuru şimdilik gönderilemez. Taslağınız kayıtlı; daha sonra tekrar deneyin."],
     sandbox: ["Sandbox: Shufti Pro isn't connected on this server yet, so nothing is verified for real.", "Deneme ortamı: Shufti Pro bu sunucuya henüz bağlı değil, gerçek doğrulama yapılmıyor."],
     simulateOk: ["Simulate: verified", "Dene: doğrulandı"],
     simulateNo: ["Simulate: declined", "Dene: reddedildi"],
@@ -153,6 +154,11 @@
     documents_unavailable: "Document uploads aren't available on this server yet.",
     kyc_unavailable: "Identity verification isn't answering right now. Try again shortly.",
     kyc_done: "Your identity is already verified.",
+    malformed_document: "That file isn't a well-formed PDF, JPEG or PNG. Export it again and upload the new file.",
+    swift_must_be_foreign: "Payees outside Turkey are paid in USD to a bank outside Turkey.",
+    ach_requires_us: "ACH is for payees in the United States.",
+    country_required: "Give your country in the Details step first.",
+    document_not_scanned: "This file hasn't passed the malware scan yet.",
     agreement_version_mismatch: "The agreements changed. Read and accept the current versions.",
     registration_unavailable: "Publisher registration isn't available right now.",
   };
@@ -420,6 +426,8 @@
       const box = el("fieldset", { id: "mp-reg-kyc" }, el("legend", { text: S.steps[TR ? 1 : 0][3] }),
         el("p", { text: t("identityIntro", { who: x.kyc_subject === "signatory" ? t("theSignatory") : t("you") }) }));
       if (a.kyc_provider === "mock") box.append(el("p", { class: "pp-warn", id: "mp-reg-sandbox", text: t("sandbox") }));
+      const unavailable = a.kyc_provider === "unavailable";
+      if (unavailable) box.append(el("p", { class: "pp-warn", id: "mp-reg-kyc-unavailable", role: "status", text: t("kycUnavailable") }));
       if (c) {
         box.append(el("p", { id: "mp-reg-kyc-state" }, el("strong", { text: t(`kyc.${c.result}`) }), c.declined_reason ? ` — ${c.declined_reason}` : ""));
         if (c.result === "pending" && c.verification_url) {
@@ -432,7 +440,7 @@
             el("button", { type: "button", class: "btn btn-small btn-quiet", id: "mp-reg-sim-no", onclick: () => act(() => json("POST", `${path()}/kyc/${encodeURIComponent(c.id)}/simulate`, { outcome: "declined" })) }, t("simulateNo"))));
         }
       }
-      if (a.editable && (!c || c.result !== "accepted")) {
+      if (a.editable && !unavailable && (!c || c.result !== "accepted")) {
         box.append(el("button", { type: "button", class: "btn btn-primary", id: "mp-reg-kyc-start", onclick: () => act(() => json("POST", `${path()}/kyc`, {}), null, () => load(a.id)) }, c ? t("restartKyc") : t("startKyc")));
       }
       return [box, nav(() => { st.step = 4; draw(); })];

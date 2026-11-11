@@ -619,15 +619,16 @@ async fn third_party_publishers_keep_the_conflict_rule() {
     assign_reviewer(&srv, &owner, &rev.account).await;
     assign_reviewer(&srv, &owner, &other.account).await;
     // A publisher the reviewer owns, with a release under review.
-    let (s, v) = srv
-        .post(
-            "/v1/publisher-applications",
-            &rev.token,
-            json!({ "display_name": "Rev Apps" }),
-        )
-        .await;
-    assert_eq!(s, 201, "{v}");
-    let publisher = v["data"]["id"].as_str().unwrap().to_string();
+    let publisher = crate::publisher_registration_tests::seed_publisher(
+        &srv,
+        "account",
+        &rev.account,
+        &rev.account,
+        "Rev Apps",
+        "applied",
+        true,
+    )
+    .await;
     let p = publisher.clone();
     srv.state
         .store

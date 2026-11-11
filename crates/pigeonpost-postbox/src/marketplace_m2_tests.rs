@@ -49,12 +49,24 @@ pub(crate) async fn reviewer(srv: &Srv, owner: &Person, name: &str) -> Person {
     rev
 }
 
+/// A publisher waiting for certification, with the verified registration behind it (the M0
+/// application route is closed; registration is the only way in).
 pub(crate) async fn apply(srv: &Srv, who: &Person, body: Value) -> String {
-    let (s, v) = srv
-        .post("/v1/publisher-applications", &who.token, body)
-        .await;
-    assert_eq!(s, 201, "{v}");
-    v["data"]["id"].as_str().unwrap().to_string()
+    let name = body["display_name"].as_str().unwrap_or("Publisher");
+    let (kind, owner) = match body["org_id"].as_str() {
+        Some(org) => ("org", org.to_string()),
+        None => ("account", who.account.clone()),
+    };
+    crate::publisher_registration_tests::seed_publisher(
+        srv,
+        kind,
+        &owner,
+        &who.account,
+        name,
+        "applied",
+        true,
+    )
+    .await
 }
 
 pub(crate) async fn certify(

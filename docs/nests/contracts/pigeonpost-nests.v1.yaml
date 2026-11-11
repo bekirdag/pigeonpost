@@ -492,8 +492,8 @@ paths:
     post:
       tags: [Publisher applications]
       operationId: applyPublisher
-      summary: Apply for publisher status
-      description: Submit a new application to become a publisher.
+      summary: Apply for publisher status (closed)
+      description: 'Closed: answers `410 registration_required` with `details.registration_url` once the caller could have applied. Publishers register through the verified registration (`/v1/publisher-registrations`).'
       x-pigeonpost-status: implemented
       x-pigeonpost-action: PublisherApply
       security:
@@ -526,6 +526,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+        '410':
+          description: New applications go through the verified registration (`registration_required`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
   /v1/publisher-applications/{application}:
     get:
@@ -4371,6 +4377,69 @@ paths:
         '422':
           $ref: '#/components/responses/RegistrationInvalid'
 
+  /v1/staff/publisher-registration-alerts:
+    get:
+      tags: [Staff]
+      operationId: staffListPublisherRegistrationAlerts
+      summary: Registration alerts
+      description: 'The back office dashboard flags: `kyc_reversed` (identity verification reversed after approval; payouts held) and `payee_push_failed`. Open ones by default; `state=all` for every one.'
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: NestReview
+      security:
+        - memberToken: []
+      parameters:
+        - name: state
+          in: query
+          required: false
+          schema: { type: string, enum: [open, all] }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistrationAlertList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/staff/publisher-registrations/{application}/alerts/{alert}/resolve:
+    post:
+      tags: [Staff]
+      operationId: staffResolvePublisherRegistrationAlert
+      summary: Resolve a registration alert
+      description: 'Close an alert with a written reason (audited `staff.publisher_registration.alert.resolve`). Resolving a `kyc_reversed` alert lifts that payout hold. Reviewer, step-up, no stake.'
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: NestReview
+      security:
+        - memberToken: []
+      parameters:
+        - $ref: '#/components/parameters/RegistrationApplication'
+        - name: alert
+          in: path
+          required: true
+          schema: { type: string, pattern: '^psa_[a-z2-7]{16,32}$' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegistrationAlertResolve'
+      responses:
+        '200':
+          description: Resolved.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   /v1/integrations/shufti/callback:
     post:
       tags: [Publisher registration]
@@ -4645,7 +4714,7 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     UnsupportedDocument:
-      description: Not a PDF, JPEG or PNG by its bytes (`unsupported_document`).
+      description: 'Not a PDF, JPEG or PNG by its bytes (`unsupported_document`), or not well formed, such as a polyglot or a file with data appended (`malformed_document`, `details.reason`).'
       content:
         application/json:
           schema:
@@ -4787,7 +4856,8 @@ components:
             document_max_bytes: { type: integer }
             agreement_version: { type: string }
             content_policy_version: { type: string }
-            kyc_provider: { type: string, enum: [shufti, mock] }
+            kyc_provider: { type: string, enum: [shufti, mock, unavailable], description: '`mock` only on a staging postbox with POSTBOX_KYC_SANDBOX=on; `unavailable` when Shufti Pro is not (or not correctly) configured: nobody who needs KYC can submit.' }
+            kyc_unavailable_reason: { type: string, enum: [not_configured, misconfigured] }
     RegistrationSummary:
       type: object
       required: [id, owner_kind, owner_id, account_type, state, revision]
@@ -4987,8 +5057,9 @@ components:
       required: [id, ok, blocking, detail]
       properties:
         id: { type: string, enum: [account_type, profile_complete, bank_account, tax_profile, documents_required, documents_current, documents_scanned, kyc, aml, names_match, agreements] }
-        ok: { type: [boolean, 'null'], description: null when only a reviewer can judge. }
+        ok: { type: [boolean, 'null'], description: null when only a reviewer can judge (or, for documents_scanned, when no scanner is configured). }
         blocking: { type: boolean }
+        blocks: { type: string, enum: [submit, approval, none], description: '`approval`: blocks a staff approval but not the submission (names_match and aml can be overridden with a written reason).' }
         detail: { type: string }
     Registration:
       allOf:
@@ -5001,7 +5072,7 @@ components:
             agreement: { type: object }
             documents: { type: array, items: { $ref: '#/components/schemas/RegistrationDocument' } }
             kyc: { type: array, items: { $ref: '#/components/schemas/KycCheck' } }
-            kyc_provider: { type: string, enum: [shufti, mock] }
+            kyc_provider: { type: string, enum: [shufti, mock, unavailable] }
             checklist: { type: array, items: { $ref: '#/components/schemas/ChecklistItem' } }
             events:
               type: array
@@ -5051,6 +5122,33 @@ components:
                       attempts: { type: integer }
                       last_error: { type: [string, 'null'] }
                 publisher: { type: [object, 'null'] }
+                payout_hold: { type: [string, 'null'], enum: [verification_required, kyc_reversed, null] }
+                alerts: { type: array, items: { $ref: '#/components/schemas/RegistrationAlert' } }
+    RegistrationAlert:
+      type: object
+      required: [id, application_id, kind, detail, created_at]
+      properties:
+        id: { type: string }
+        application_id: { type: string }
+        publisher_id: { type: [string, 'null'] }
+        kind: { type: string, enum: [kyc_reversed, payee_push_failed] }
+        detail: { type: string }
+        created_at: { type: string, format: date-time }
+        resolved_at: { type: [string, 'null'], format: date-time }
+        resolved_by: { type: [string, 'null'] }
+        resolution: { type: [string, 'null'] }
+    RegistrationAlertList:
+      type: object
+      required: [data]
+      properties:
+        data: { type: array, items: { $ref: '#/components/schemas/RegistrationAlert' } }
+        next_cursor: { type: 'null' }
+    RegistrationAlertResolve:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason: { type: string, minLength: 10, maxLength: 1000 }
     RegistrationReveal:
       type: object
       additionalProperties: false
@@ -5084,7 +5182,15 @@ components:
             registry_consistent: { type: boolean }
             sanctions_reviewed: { type: boolean }
             bank_holder_matches: { type: boolean }
-        acknowledge_sandbox_kyc: { type: boolean }
+        acknowledge_sandbox_kyc: { type: boolean, description: 'Staging only; refused with 422 `sandbox_kyc_not_allowed` on production.' }
+        acknowledge_unscanned_documents: { type: boolean, description: 'Needed to approve while no malware scanner is configured; audited.' }
+        overrides:
+          type: object
+          additionalProperties: false
+          description: A written reason (10–1000 characters, audited) to approve past a failing names_match or aml check.
+          properties:
+            names_match: { type: string, minLength: 10, maxLength: 1000 }
+            aml: { type: string, minLength: 10, maxLength: 1000 }
     IntegrationField:
       type: object
       additionalProperties: false
@@ -5853,6 +5959,14 @@ components:
                 - invalid_bank_method
                 - iban_must_be_turkish
                 - iban_must_be_foreign
+                - registration_required
+                - sandbox_kyc_not_allowed
+                - documents_not_scanned
+                - document_not_scanned
+                - malformed_document
+                - swift_must_be_foreign
+                - ach_requires_us
+                - country_required
             message:
               type: string
               description: Human-readable text. May change; do not parse it.

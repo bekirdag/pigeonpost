@@ -434,15 +434,16 @@ async fn the_kill_switch_stops_a_listing_or_a_publisher_until_restored() {
 // ---- W1.3/W1.5 source builds on the remote build plane ---------------------------------------------
 
 async fn third_party_publisher(srv: &Srv, owner_of: &Person) -> String {
-    let (s, v) = srv
-        .post(
-            "/v1/publisher-applications",
-            &owner_of.token,
-            json!({ "display_name": "Acme Apps" }),
-        )
-        .await;
-    assert_eq!(s, 201, "{v}");
-    let p = v["data"]["id"].as_str().unwrap().to_string();
+    let p = crate::publisher_registration_tests::seed_publisher(
+        srv,
+        "account",
+        &owner_of.account,
+        &owner_of.account,
+        "Acme Apps",
+        "applied",
+        true,
+    )
+    .await;
     sql(
         srv,
         format!("UPDATE publisher_profiles SET status = 'approved' WHERE id = '{p}'"),

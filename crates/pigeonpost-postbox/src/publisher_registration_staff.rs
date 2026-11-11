@@ -9,6 +9,12 @@
 //! | `GET /v1/staff/publisher-registrations/{application}/documents/{document}` | `NestReview` or `PayoutPrepare` | a reviewer or finance, step-up, no stake | `…document` |
 //! | `POST /v1/staff/publisher-registrations/{application}/reveal` | `NestReview` or `PayoutPrepare` | same | `…reveal` (fields and reason) |
 //! | `POST /v1/staff/publisher-registrations/{application}/decisions` | `NestReview` | a reviewer, step-up, no stake | `…decision` |
+//! | `GET /v1/staff/publisher-registration-alerts` | `NestReview` | a reviewer with step-up | — |
+//! | `POST /v1/staff/publisher-registrations/{application}/alerts/{alert}/resolve` | `NestReview` | a reviewer, step-up, no stake | `…alert.resolve` |
+//!
+//! **Alerts** are the dashboard flags: `kyc_reversed` (identity verification reversed after
+//! approval; the publisher's payouts are held) and `payee_push_failed` (finance never received the
+//! payee profile). Resolving the last open `kyc_reversed` alert lifts that payout hold.
 //!
 //! **Roles hook.** Reviews use the existing reviewer check (`NestReview`). Documents and the
 //! reveal of bank and tax details are for reviewers *and* finance (who verify payout details
@@ -27,7 +33,7 @@ use crate::policy::{authorize, Action, Actor, Resource};
 use crate::publisher_registration::{
     self as reg, app_in, apps_where, base_json, blocking_failures, checks_in, current_check,
     docs_in, events_in, facts_for, open_sealed, record_event_in, serve_document, type_spec, App,
-    Bank, Tax, MANUAL_CHECKS,
+    Bank, Gate, Tax, MANUAL_CHECKS, OVERRIDABLE,
 };
 use crate::store::marketplace as mstore;
 use crate::store::publisher_registration as rstore;
@@ -77,6 +83,14 @@ pub(crate) fn router() -> Router<AppState> {
         .route(
             "/v1/staff/publisher-registrations/{application}/decisions",
             post(staff_decide_registration),
+        )
+        .route(
+            "/v1/staff/publisher-registration-alerts",
+            get(staff_list_registration_alerts),
+        )
+        .route(
+            "/v1/staff/publisher-registrations/{application}/alerts/{alert}/resolve",
+            post(staff_resolve_registration_alert),
         )
 }
 
@@ -238,6 +252,7 @@ async fn staff_list_registrations(
                         "infected": docs.iter().filter(|d| d.scan_state == "infected").count(),
                     });
                     v["conflict"] = json!(rstore::application_conflict_in(c, &account, &a.id)?);
+                    v["open_alerts"] = json!(open_alerts_in(c, &a.id)?.len());
                     out.push(v);
                     if out.len() >= limit {
                         break;
@@ -279,11 +294,22 @@ async fn staff_view(state: &AppState, id: &str) -> GResult<Value> {
                 rows
             };
             let publisher = match &a.publisher_id {
-                Some(p) => crate::marketplace_m2::pub_in(c, p)?.map(|p| {
-                    json!({
-                        "id": p.id, "status": p.status, "display_name": p.display_name,
+                Some(p) => {
+                    let hold: Option<String> = c
+                        .query_row(
+                            "SELECT payout_hold FROM publisher_profiles WHERE id = ?1",
+                            [p],
+                            |r| r.get(0),
+                        )
+                        .optional()?
+                        .flatten();
+                    crate::marketplace_m2::pub_in(c, p)?.map(|p| {
+                        json!({
+                            "id": p.id, "status": p.status, "display_name": p.display_name,
+                            "payout_hold": hold,
+                        })
                     })
-                }),
+                }
                 None => None,
             };
             Ok((
@@ -299,6 +325,9 @@ async fn staff_view(state: &AppState, id: &str) -> GResult<Value> {
     let (docs, checks, list) = facts_for(state, &a, docs, checks, now_unix() as i64);
     let mut v = base_json(&a);
     v["applicant"] = json!(a.applicant);
+    v["payout_hold"] = json!(publisher
+        .as_ref()
+        .and_then(|p| p["payout_hold"].as_str().map(str::to_string)));
     v["reviewer"] = json!(a.reviewer);
     v["profile"] = serde_json::to_value(&a.profile).unwrap_or(json!({}));
     v["bank"] = a.bank_masked.clone().unwrap_or(Value::Null);
@@ -332,6 +361,15 @@ async fn staff_view(state: &AppState, id: &str) -> GResult<Value> {
         "decided_by": a.decided_by, "reason": a.decision_reason, "checklist": a.checklist,
     });
     v["payee_pushes"] = json!(pushes);
+    let aid = a.id.clone();
+    v["alerts"] = json!(
+        state
+            .store
+            .group_read(move |c| -> GResult<Vec<Value>> {
+                Ok(alerts_in(c, "application_id = ?1", &aid)?)
+            })
+            .await?
+    );
     v["publisher"] = json!(publisher);
     Ok(v)
 }
@@ -558,9 +596,16 @@ struct DecideReq {
     /// The reviewer's own judgements ([`MANUAL_CHECKS`]); an approval needs every one `true`.
     #[serde(default)]
     checklist: Map<String, Value>,
-    /// Approving on a sandbox (mock) KYC result needs this, explicitly.
+    /// Approving on a sandbox (mock) KYC result needs this, explicitly. Refused on production.
     #[serde(default)]
     acknowledge_sandbox_kyc: bool,
+    /// Approving while no malware scanner is configured needs this, explicitly (audited).
+    #[serde(default)]
+    acknowledge_unscanned_documents: bool,
+    /// A written reason for approving past a failing reviewer-judged check
+    /// ([`OVERRIDABLE`]: `names_match`, `aml`), audited.
+    #[serde(default)]
+    overrides: Map<String, Value>,
 }
 
 /// `POST /v1/staff/publisher-registrations/{application}/decisions` —
@@ -598,15 +643,44 @@ async fn staff_decide_registration(
             .await?;
         let (_, checks, list) = facts_for(&state, &a, docs, checks, now);
         let mut manual = Map::new();
+        let mut overrides = Map::new();
+        let production = !state.nests.mp.staging;
+        if req.acknowledge_sandbox_kyc && production {
+            return Err(GErr::new(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "sandbox_kyc_not_allowed",
+                "a sandbox identity check never approves a publisher on production",
+            ));
+        }
         if req.decision == "approved" {
-            let failing = blocking_failures(&list, false);
+            for (k, v) in &req.overrides {
+                if !OVERRIDABLE.contains(&k.as_str()) {
+                    return Err(GErr::bad("invalid_request", "overrides: names_match or aml"));
+                }
+                let reason = crate::marketplace_m2::text(v.as_str().unwrap_or_default(), "override reason", 10, 1000)?;
+                overrides.insert(k.clone(), json!(reason));
+            }
+            let failing: Vec<String> = blocking_failures(&list, Gate::Approve)
+                .into_iter()
+                .filter(|id| !overrides.contains_key(id))
+                .collect();
             if !failing.is_empty() {
+                let overridable: Vec<&String> = failing.iter().filter(|f| OVERRIDABLE.contains(&f.as_str())).collect();
                 return Err(GErr::new(
                     StatusCode::UNPROCESSABLE_ENTITY,
                     "checks_failing",
                     "the automated checks must pass before approval",
                 )
-                .with("failing", failing));
+                .with("failing", failing.clone())
+                .with("overridable", json!(overridable)));
+            }
+            let unscanned = list.iter().any(|i| i["id"] == "documents_scanned" && i["ok"].is_null());
+            if unscanned && !req.acknowledge_unscanned_documents {
+                return Err(GErr::new(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "documents_not_scanned",
+                    "no malware scanner is configured; acknowledge that the documents are not malware-scanned",
+                ));
             }
             let missing: Vec<&str> = MANUAL_CHECKS
                 .iter()
@@ -634,10 +708,13 @@ async fn staff_decide_registration(
                 manual.insert(k.clone(), json!(v == &Value::Bool(true)));
             }
         }
+        let unscanned_ack = req.decision == "approved" && req.acknowledge_unscanned_documents;
         let record = json!({
             "automated": list,
             "reviewer": manual,
+            "overrides": overrides,
             "sandbox_kyc_acknowledged": req.acknowledge_sandbox_kyc,
+            "documents_not_malware_scanned_acknowledged": unscanned_ack,
         });
         let row = registration_audit(
             &state,
@@ -645,7 +722,15 @@ async fn staff_decide_registration(
             &account,
             "staff.publisher_registration.decision",
             format!("publisher_application:{}", a.id),
-            json!({ "decision": req.decision, "revision": a.revision }),
+            json!({
+                "decision": req.decision,
+                "revision": a.revision,
+                "overrides": overrides,
+                "acknowledged": {
+                    "sandbox_kyc": req.acknowledge_sandbox_kyc,
+                    "documents_not_malware_scanned": unscanned_ack,
+                },
+            }),
             &client_ip,
             &headers,
         );
@@ -789,7 +874,8 @@ fn certify_in(
             };
             tx.execute(
                 "UPDATE publisher_profiles SET status = 'approved', display_name = ?2, decided_by = ?3,
-                    decided_at = ?4, decision_reason = ?5, updated_at = ?4, verified_application_id = ?6
+                    decided_at = ?4, decision_reason = ?5, updated_at = ?4, verified_application_id = ?6,
+                    payout_hold = NULL
                   WHERE id = ?1",
                 params![p, a.public_name, by, now, reason, a.id],
             )?;
@@ -813,4 +899,137 @@ fn certify_in(
         params![new_id("crt"), id, reason, by, now],
     )?;
     Ok(id)
+}
+
+// ---- alerts ------------------------------------------------------------------------------------------
+
+fn alert_json(r: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
+    Ok(json!({
+        "id": r.get::<_, String>(0)?,
+        "application_id": r.get::<_, String>(1)?,
+        "publisher_id": r.get::<_, Option<String>>(2)?,
+        "kind": r.get::<_, String>(3)?,
+        "detail": r.get::<_, String>(4)?,
+        "created_at": iso(r.get::<_, i64>(5)?),
+        "resolved_at": r.get::<_, Option<i64>>(6)?.map(iso),
+        "resolved_by": r.get::<_, Option<String>>(7)?,
+        "resolution": r.get::<_, Option<String>>(8)?,
+    }))
+}
+
+pub(crate) fn alerts_in(
+    c: &rusqlite::Connection,
+    filter: &str,
+    arg: &str,
+) -> rusqlite::Result<Vec<Value>> {
+    let mut stmt = c.prepare(&format!(
+        "SELECT id, application_id, publisher_id, kind, detail, created_at, resolved_at, resolved_by,
+                resolution FROM publisher_staff_alerts WHERE {filter} ORDER BY created_at, id LIMIT 200"
+    ))?;
+    let rows = stmt.query_map([arg], alert_json)?.collect();
+    rows
+}
+
+pub(crate) fn open_alerts_in(c: &rusqlite::Connection, app: &str) -> rusqlite::Result<Vec<Value>> {
+    alerts_in(c, "application_id = ?1 AND resolved_at IS NULL", app)
+}
+
+/// `GET /v1/staff/publisher-registration-alerts?state=open|all` — the dashboard flags.
+async fn staff_list_registration_alerts(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<HashMap<String, String>>,
+) -> Response {
+    let result = async {
+        staff_gate(
+            &state,
+            &headers,
+            Action::NestReview,
+            "publisher-registration-alerts",
+            None,
+        )
+        .await?;
+        let all = q.get("state").is_some_and(|s| s == "all");
+        let rows = state
+            .store
+            .group_read(move |c| -> GResult<Vec<Value>> {
+                Ok(if all {
+                    alerts_in(c, "?1 = ?1", "")?
+                } else {
+                    alerts_in(c, "resolved_at IS NULL AND ?1 = ?1", "")?
+                })
+            })
+            .await?;
+        Ok(Json(json!({ "data": rows, "next_cursor": null })))
+    }
+    .await;
+    into_response(result)
+}
+
+/// `POST /v1/staff/publisher-registrations/{application}/alerts/{alert}/resolve` `{reason}` — close
+/// an alert with a written reason (audited). The last open `kyc_reversed` alert lifts that hold.
+async fn staff_resolve_registration_alert(
+    State(state): State<AppState>,
+    client_ip: Option<Extension<ClientIp>>,
+    headers: HeaderMap,
+    Path((id, alert)): Path<(String, String)>,
+    body: Result<Json<Value>, JsonRejection>,
+) -> Response {
+    let result = async {
+        let req: ResolveReq = parse(body)?;
+        let reason = crate::marketplace_m2::text(&req.reason, "reason", 10, 1000)?;
+        let (principal, account, a) = app_gate(&state, &headers, &[Action::NestReview], &id).await?;
+        let row = registration_audit(
+            &state,
+            &principal,
+            &account,
+            "staff.publisher_registration.alert.resolve",
+            format!("publisher_application:{}", a.id),
+            json!({ "alert_id": alert, "reason": reason }),
+            &client_ip,
+            &headers,
+        );
+        let now = now_unix() as i64;
+        let (aid, by) = (a.id.clone(), account.clone());
+        let out = state
+            .store
+            .group_tx(move |tx| -> GResult<Value> {
+                let kind: Option<String> = tx
+                    .query_row(
+                        "SELECT kind FROM publisher_staff_alerts
+                          WHERE id = ?1 AND application_id = ?2 AND resolved_at IS NULL",
+                        params![alert, aid],
+                        |r| r.get(0),
+                    )
+                    .optional()?;
+                let Some(kind) = kind else { return Err(not_found()) };
+                tx.execute(
+                    "UPDATE publisher_staff_alerts SET resolved_at = ?2, resolved_by = ?3, resolution = ?4
+                      WHERE id = ?1",
+                    params![alert, now, by, reason],
+                )?;
+                if kind == "kyc_reversed" {
+                    if let Some(p) = &a.publisher_id {
+                        tx.execute(
+                            "UPDATE publisher_profiles SET payout_hold = NULL, updated_at = ?2
+                              WHERE id = ?1 AND payout_hold = 'kyc_reversed'",
+                            params![p, now],
+                        )?;
+                    }
+                }
+                record_event_in(tx, &aid, &by, "staff", "alert_resolved", None, None, Some(&reason), now)?;
+                crate::store::audit::append_in(tx, &row)?;
+                Ok(json!({ "alert_id": alert, "kind": kind, "resolved": true }))
+            })
+            .await?;
+        Ok(Json(json!({ "data": out })))
+    }
+    .await;
+    into_response(result)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ResolveReq {
+    reason: String,
 }

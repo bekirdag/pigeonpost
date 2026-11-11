@@ -1099,15 +1099,16 @@ async fn org_webhooks_hear_publisher_and_installation_events_by_id_only() {
     let boss = srv.person("mbboss7").await;
     let org = srv.org(&boss, "acmepub7", 5).await;
     hook(&srv, &org).await;
-    let (s, v) = srv
-        .post(
-            "/v1/publisher-applications",
-            &boss.token,
-            json!({ "display_name": "Acme Org", "org_id": org }),
-        )
-        .await;
-    assert_eq!(s, 201, "{v}");
-    let p = v["data"]["id"].as_str().unwrap().to_string();
+    let p = crate::publisher_registration_tests::seed_publisher(
+        &srv,
+        "org",
+        &org,
+        &boss.account,
+        "Acme Org",
+        "applied",
+        true,
+    )
+    .await;
     let (s, v) = certify(&srv, &rev, &p, "approved").await;
     assert_eq!(s, 201, "{v}");
     let t = template(&srv, &boss, &p, "team-digest").await;
@@ -1296,15 +1297,16 @@ async fn install_counts_reports_staff_listings_price_terms_and_roles_by_member()
     let org = srv.org(&boss, "acmepub8", 5).await;
     let dev = srv.person("mbdev8").await;
     let (dev_member, _) = srv.join(&org, &boss, &dev, "dev8", &[]).await;
-    let (s, v) = srv
-        .post(
-            "/v1/publisher-applications",
-            &boss.token,
-            json!({ "display_name": "Acme Org 8", "org_id": org }),
-        )
-        .await;
-    assert_eq!(s, 201, "{v}");
-    let op = v["data"]["id"].as_str().unwrap().to_string();
+    let op = crate::publisher_registration_tests::seed_publisher(
+        &srv,
+        "org",
+        &org,
+        &boss.account,
+        "Acme Org 8",
+        "applied",
+        true,
+    )
+    .await;
     let (s, v) = srv
         .post(
             &format!("/v1/publishers/{op}/roles"),

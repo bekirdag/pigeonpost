@@ -585,6 +585,12 @@ async fn serve(cfg: Config) {
     marketplace_pay::start_sweeper(state.clone());
     // Publisher-hosted jobs: dispatch to the publisher's service, expire, deliver results.
     marketplace_hosted::start_worker(state.clone());
+    // A Shufti Pro credential file that is named but unreadable is a broken deployment, not
+    // "KYC not configured".
+    if let Err(e) = publisher_kyc::check_config() {
+        tracing::error!(error = %e, "publisher KYC configuration is broken; refusing to start");
+        std::process::exit(1);
+    }
     // Publisher registration: notices, payee push, malware scan, KYC polling, retention.
     publisher_registration_worker::start_worker(state.clone());
     start_internal_listener(&state).await;

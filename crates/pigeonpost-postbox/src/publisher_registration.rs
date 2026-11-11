@@ -880,8 +880,22 @@ fn invalid_code(field: &str, code: &'static str) -> GErr {
     bad(code, format!("{field} is not valid")).with("field", field)
 }
 
-/// Normalise and check bank details for the account type. Returns the cleaned details.
-pub(crate) fn clean_bank(b: Bank, spec: &TypeSpec) -> GResult<Bank> {
+/// Normalise and check bank details for the account type and the payee's declared country.
+/// Returns the cleaned details.
+pub(crate) fn clean_bank(b: Bank, spec: &TypeSpec, declared: Option<&str>) -> GResult<Bank> {
+    // A foreign payee's country is what they declared, never guessed from a bank code; it has
+    // to be known before the account can be checked against it.
+    let declared = match declared {
+        Some(c) => c.to_string(),
+        None if spec.turkish => "TR".to_string(),
+        None => {
+            return Err(bad(
+                "country_required",
+                "give your country in the details step first",
+            )
+            .with("field", "country"))
+        }
+    };
     let holder = clean(&b.holder_name, "bank.holder_name", 140)?;
     if holder.chars().count() < 2 {
         return Err(invalid_code("bank.holder_name", "invalid_holder_name"));
@@ -895,12 +909,18 @@ pub(crate) fn clean_bank(b: Bank, spec: &TypeSpec) -> GResult<Bank> {
         bank_address,
         ..Bank::default()
     };
+    let turkish = spec.turkish;
     let bic = |raw: &Option<String>| -> GResult<Option<String>> {
         match raw.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
             None => Ok(None),
-            Some(s) => Ok(Some(
-                v::swift_bic(s).map_err(|c| invalid_code("bank.swift_bic", c))?,
-            )),
+            Some(s) => {
+                let code = v::swift_bic(s).map_err(|c| invalid_code("bank.swift_bic", c))?;
+                // USD payouts go to a bank outside Turkey; a Turkish bank is paid in TRY.
+                if !turkish && &code[4..6] == "TR" {
+                    return Err(invalid_code("bank.swift_bic", "swift_must_be_foreign"));
+                }
+                Ok(Some(code))
+            }
         }
     };
     match out.method.as_str() {
@@ -951,6 +971,12 @@ pub(crate) fn clean_bank(b: Bank, spec: &TypeSpec) -> GResult<Bank> {
                 v::account_number(b.account_number.as_deref().unwrap_or_default(), true)
                     .map_err(|c| invalid_code("bank.account_number", c))?,
             );
+            if declared != "US" {
+                return Err(
+                    bad("ach_requires_us", "ACH is for payees in the United States")
+                        .with("field", "bank.method"),
+                );
+            }
             let kind = b.ach_account_type.as_deref().unwrap_or("checking");
             if !matches!(kind, "checking" | "savings") {
                 return Err(invalid_code(
@@ -1175,8 +1201,25 @@ pub(crate) fn names_match(a: &str, b: &str) -> bool {
 /// One checklist line: `ok` is `Some(true|false)` for automated checks and `None` for what only a
 /// reviewer can judge. `blocking` items must pass to submit (developer) or approve (staff).
 fn item(id: &str, ok: Option<bool>, blocking: bool, detail: impl Into<String>) -> Value {
-    json!({ "id": id, "ok": ok, "blocking": blocking, "detail": detail.into() })
+    json!({ "id": id, "ok": ok, "blocking": blocking, "blocks": if blocking { "submit" } else { "none" },
+            "detail": detail.into() })
 }
+
+/// A check that blocks a staff approval but not the developer's submission (the reviewer judges
+/// it, or it can only pass later, like a malware scan).
+fn approval_item(id: &str, ok: Option<bool>, detail: impl Into<String>) -> Value {
+    json!({ "id": id, "ok": ok, "blocking": true, "blocks": "approval", "detail": detail.into() })
+}
+
+/// What the checklist is gating.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Gate {
+    Submit,
+    Approve,
+}
+
+/// Checks a reviewer may approve past, each only with a written reason that is audited.
+pub(crate) const OVERRIDABLE: &[&str] = &["names_match", "aml"];
 
 /// The reviewer's own judgements an approval must confirm (plan §2 "Flow" step 5).
 pub(crate) const MANUAL_CHECKS: &[(&str, &str)] = &[
@@ -1209,6 +1252,10 @@ pub(crate) struct Facts<'a> {
     pub treaty: bool,
     pub bank_holder: Option<String>,
     pub now: i64,
+    /// The KYC provider in use now (`shufti`, `mock`, `unavailable`).
+    pub provider: &'static str,
+    /// A malware scanner is configured.
+    pub scanner: bool,
 }
 
 /// The automated checklist, the same for the developer (what is missing) and staff.
@@ -1351,17 +1398,33 @@ pub(crate) fn checklist(f: &Facts<'_>) -> Vec<Value> {
         },
     ));
     let infected = live.iter().filter(|d| d.scan_state == "infected").count();
-    let pending = live.iter().filter(|d| d.scan_state == "pending").count();
-    out.push(item(
-        "documents_scanned",
-        Some(infected == 0),
-        true,
-        match (infected, pending) {
-            (0, 0) => "Every document passed the malware scan".to_string(),
-            (0, n) => format!("{n} document(s) waiting for the malware scan"),
-            (n, _) => format!("{n} document(s) failed the malware scan; remove them"),
-        },
-    ));
+    let unclean = live.iter().filter(|d| d.scan_state != "clean").count();
+    if infected > 0 {
+        out.push(item(
+            "documents_scanned",
+            Some(false),
+            true,
+            format!("{infected} document(s) failed the malware scan; remove them"),
+        ));
+    } else if !f.scanner {
+        // Nothing can say these files are safe: approving needs the reviewer's explicit,
+        // audited acknowledgement.
+        out.push(approval_item(
+            "documents_scanned",
+            None,
+            "No malware scanner is configured: documents are not malware-scanned",
+        ));
+    } else {
+        out.push(approval_item(
+            "documents_scanned",
+            Some(unclean == 0),
+            if unclean == 0 {
+                "Every document passed the malware scan".to_string()
+            } else {
+                format!("{unclean} document(s) not scanned clean yet")
+            },
+        ));
+    }
     // Only a check of the person this account type verifies counts (a changed type needs a new one).
     let relevant: Vec<Check> = f
         .checks
@@ -1371,11 +1434,19 @@ pub(crate) fn checklist(f: &Facts<'_>) -> Vec<Value> {
         .collect();
     let check = current_check(&relevant);
     let (kyc_ok, kyc_detail) = match check.map(|c| (c.result.as_str(), c.provider.as_str())) {
-        Some(("accepted", "mock")) => (
+        // A sandbox result counts only while this postbox runs the sandbox.
+        Some(("accepted", "mock")) if f.provider == "mock" => (
             true,
             "Identity verified in the sandbox (not a real verification)",
         ),
+        Some(("accepted", "mock")) => (
+            false,
+            "A sandbox verification does not count here; verify again",
+        ),
         Some(("accepted", _)) => (true, "Identity verified by Shufti Pro"),
+        _ if f.provider == "unavailable" => {
+            (false, "Identity verification is temporarily unavailable")
+        }
         Some(("pending", _)) => (false, "Identity verification is in progress"),
         Some(("declined", _)) => (false, "Identity verification was declined; try again"),
         Some(_) => (
@@ -1397,12 +1468,11 @@ pub(crate) fn checklist(f: &Facts<'_>) -> Vec<Value> {
             }
         ),
     ));
-    out.push(item(
+    out.push(approval_item(
         "aml",
         check
             .and_then(|c| c.aml_result.as_deref())
             .map(|r| r == "clear"),
-        false,
         match check.and_then(|c| c.aml_result.as_deref()) {
             Some("clear") => "No sanctions or PEP match",
             Some("match") => "Possible sanctions or PEP match: review it",
@@ -1426,14 +1496,13 @@ pub(crate) fn checklist(f: &Facts<'_>) -> Vec<Value> {
         (Some(a), Some(b)) => Some(names_match(a, b)),
         _ => None,
     };
-    out.push(item(
+    out.push(approval_item(
         "names_match",
         match (kyc_match, bank_match) {
             (Some(x), Some(y)) => Some(x && y),
             (Some(false), _) | (_, Some(false)) => Some(false),
             _ => None,
         },
-        false,
         format!(
             "KYC name {} the {}; bank holder {} the legal name",
             match kyc_match {
@@ -1468,16 +1537,21 @@ pub(crate) fn checklist(f: &Facts<'_>) -> Vec<Value> {
     out
 }
 
-pub(crate) fn blocking_failures(list: &[Value], allow_pending_kyc: bool) -> Vec<String> {
+/// The checks that fail for `gate`. Submitting may go ahead while KYC is still in progress and
+/// before the reviewer-only checks; an approval needs everything (overrides are the caller's).
+pub(crate) fn blocking_failures(list: &[Value], gate: Gate) -> Vec<String> {
     list.iter()
         .filter(|i| i["blocking"] == true && i["ok"] == false)
-        .filter(|i| {
-            !(allow_pending_kyc
-                && i["id"] == "kyc"
-                && i["detail"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .contains("in progress"))
+        .filter(|i| match gate {
+            Gate::Approve => true,
+            Gate::Submit => {
+                i["blocks"] == "submit"
+                    && !(i["id"] == "kyc"
+                        && i["detail"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .contains("in progress"))
+            }
         })
         .map(|i| i["id"].as_str().unwrap_or_default().to_string())
         .collect()
@@ -1512,6 +1586,8 @@ pub(crate) fn facts_for(
         treaty: tax.as_ref().is_some_and(|t| t.treaty_country.is_some()),
         bank_holder: bank.map(|b| b.holder_name),
         now,
+        provider: kyc::provider(state).name(),
+        scanner: crate::publisher_registration_worker::scanner().is_some(),
     });
     (docs, checks, list)
 }
@@ -1767,7 +1843,13 @@ pub(crate) async fn kyc_changed(state: &AppState, application: &str) {
                 return Ok(Vec::new());
             };
             let checks = checks_in(tx, &id)?;
-            if let Some(c) = current_check(&checks) {
+            let subject = type_spec(&a.account_type).map(|s| s.kyc_subject);
+            let relevant: Vec<Check> = checks
+                .iter()
+                .filter(|c| Some(c.subject.as_str()) == subject)
+                .cloned()
+                .collect();
+            if let Some(c) = current_check(&relevant) {
                 if matches!(a.state.as_str(), "submitted" | "in_review") {
                     record_event_in(
                         tx,
@@ -1781,12 +1863,75 @@ pub(crate) async fn kyc_changed(state: &AppState, application: &str) {
                         now,
                     )?;
                 }
+                // Approval needed an accepted check: anything else now is a reversal.
+                if a.state == "approved" && c.result != "accepted" {
+                    kyc_reversed_in(tx, &a, &c.result, now)?;
+                }
             }
             announce_in(tx, &a, &a.state, now)
         })
         .await
         .unwrap_or_default();
     crate::marketplace_m2::wake(state, woke);
+}
+
+/// Identity verification of an approved publisher was reversed at the provider: record it, open a
+/// staff alert (once), hold the publisher's payouts and tell the platform owner. Staff resolve it.
+pub(crate) fn kyc_reversed_in(
+    tx: &Transaction<'_>,
+    a: &App,
+    result: &str,
+    now: i64,
+) -> GResult<()> {
+    let open: bool = tx.query_row(
+        "SELECT EXISTS (SELECT 1 FROM publisher_staff_alerts
+                         WHERE application_id = ?1 AND kind = 'kyc_reversed' AND resolved_at IS NULL)",
+        [&a.id],
+        |r| r.get(0),
+    )?;
+    if open {
+        return Ok(());
+    }
+    let detail = format!("Identity verification is now {result} after approval");
+    tx.execute(
+        "INSERT INTO publisher_staff_alerts (id, application_id, publisher_id, kind, detail, created_at)
+         VALUES (?1, ?2, ?3, 'kyc_reversed', ?4, ?5)",
+        params![crate::marketplace_m2::new_id("psa"), a.id, a.publisher_id, detail, now],
+    )?;
+    if let Some(p) = &a.publisher_id {
+        tx.execute(
+            "UPDATE publisher_profiles SET payout_hold = 'kyc_reversed', updated_at = ?2 WHERE id = ?1",
+            params![p, now],
+        )?;
+    }
+    record_event_in(
+        tx,
+        &a.id,
+        "kyc",
+        "system",
+        "kyc_reversed",
+        None,
+        None,
+        Some(&detail),
+        now,
+    )?;
+    staff_notice_in(tx, &a.id, "kyc_reversed", now)?;
+    Ok(())
+}
+
+/// Queue a message to the platform owner's mailbox about an application (`kind` is the alert).
+pub(crate) fn staff_notice_in(
+    c: &Connection,
+    app: &str,
+    kind: &str,
+    now: i64,
+) -> rusqlite::Result<()> {
+    c.execute(
+        "INSERT INTO publisher_application_notices (id, application_id, channel, state, next_at, created_at)
+         VALUES (?1, ?2, 'staff', ?3, ?4, ?4)",
+        params![crate::marketplace_m2::new_id("pan"), app, kind, now],
+    )?;
+    Ok(())
 }
 
 // ---- developer routes ------------------------------------------------------------------------------------
@@ -1804,7 +1949,11 @@ async fn registration_requirements(State(state): State<AppState>, headers: Heade
         )
         .map_err(|d| deny(d, false))?;
         let mut v = requirements_json();
-        v["kyc_provider"] = json!(kyc::provider(&state).name());
+        let p = kyc::provider(&state);
+        v["kyc_provider"] = json!(p.name());
+        if let kyc::Provider::Unavailable { why } = &p {
+            v["kyc_unavailable_reason"] = json!(why);
+        }
         Ok(Json(json!({ "data": v })))
     }
     .await;
@@ -2081,13 +2230,21 @@ async fn update_registration(
             Some(n) => Some(crate::marketplace_m2::text(n, "public_name", 2, 80)?),
             None => None,
         };
+        // The payee's declared country: from this save, else from the saved profile.
+        let declared = req
+            .profile
+            .as_ref()
+            .and_then(|p| p.country.clone())
+            .or_else(|| a.profile.country.clone())
+            .map(|c| c.trim().to_ascii_uppercase())
+            .filter(|c| !c.is_empty());
         let profile = match req.profile {
             Some(p) => Some(serde_json::to_string(&clean_profile(p, spec)?).unwrap_or_default()),
             None => None,
         };
         let bank = match req.bank {
             Some(b) => {
-                let b = clean_bank(b, spec)?;
+                let b = clean_bank(b, spec, declared.as_deref())?;
                 Some((seal_part(&state, &a.id, "bank", &b)?, mask_bank(&b).to_string()))
             }
             None => None,
@@ -2202,6 +2359,85 @@ pub(crate) fn sniff(bytes: &[u8]) -> Option<&'static str> {
     }
 }
 
+/// Markup or archive markers that have no business near the start of a PDF or image.
+fn foreign_markers(head: &[u8]) -> bool {
+    let lower: Vec<u8> = head.iter().map(u8::to_ascii_lowercase).collect();
+    [
+        &b"<html"[..],
+        b"<script",
+        b"<svg",
+        b"<!doctype",
+        b"<?xml-stylesheet",
+        b"<iframe",
+    ]
+    .iter()
+    .any(|m| lower.windows(m.len()).any(|w| w == *m))
+        || head.windows(4).any(|w| w == b"PK\x03\x04")
+}
+
+/// The whole file is the format its signature claims: a PDF with its header, `startxref` and a
+/// final `%%EOF` with nothing after it; a JPEG or PNG that decodes (bounded) and ends where the
+/// format ends. Rejects polyglots and appended payloads.
+pub(crate) fn structure_ok(content_type: &str, bytes: &[u8]) -> Result<(), &'static str> {
+    let head = &bytes[..bytes.len().min(1024)];
+    let tail = &bytes[bytes.len().saturating_sub(1024)..];
+    match content_type {
+        "application/pdf" => {
+            let version_ok = bytes.len() > 8
+                && matches!(
+                    &bytes[5..8],
+                    b"1.0" | b"1.1" | b"1.2" | b"1.3" | b"1.4" | b"1.5" | b"1.6" | b"1.7" | b"2.0"
+                );
+            if !version_ok {
+                return Err("pdf_header");
+            }
+            let Some(eof) = tail.windows(5).rposition(|w| w == b"%%EOF") else {
+                return Err("pdf_trailer");
+            };
+            if !tail[eof + 5..].iter().all(u8::is_ascii_whitespace) {
+                return Err("pdf_trailing_data");
+            }
+            if !tail.windows(9).any(|w| w == b"startxref") {
+                return Err("pdf_trailer");
+            }
+            if foreign_markers(head) {
+                return Err("pdf_polyglot");
+            }
+            Ok(())
+        }
+        "image/jpeg" | "image/png" => {
+            let png = content_type == "image/png";
+            let ends = if png {
+                bytes.len() >= 12 && &bytes[bytes.len() - 8..bytes.len() - 4] == b"IEND"
+            } else {
+                bytes.ends_with(&[0xFF, 0xD9])
+            };
+            if !ends {
+                return Err("image_trailing_data");
+            }
+            if foreign_markers(head) {
+                return Err("image_polyglot");
+            }
+            use image::{ImageFormat, ImageReader, Limits};
+            let mut reader = ImageReader::with_format(
+                std::io::Cursor::new(bytes),
+                if png {
+                    ImageFormat::Png
+                } else {
+                    ImageFormat::Jpeg
+                },
+            );
+            let mut limits = Limits::default();
+            limits.max_image_width = Some(20_000);
+            limits.max_image_height = Some(20_000);
+            limits.max_alloc = Some(512 * 1024 * 1024);
+            reader.limits(limits);
+            reader.decode().map(|_| ()).map_err(|_| "image_decode")
+        }
+        _ => Err("unsupported"),
+    }
+}
+
 fn hex_sha256(bytes: &[u8]) -> String {
     use sha2::Digest;
     sha2::Sha256::digest(bytes)
@@ -2247,6 +2483,16 @@ async fn upload_document(
         }
         let content_type = sniff(&body)
             .ok_or_else(|| GErr::new(StatusCode::UNSUPPORTED_MEDIA_TYPE, "unsupported_document", "upload a PDF, JPEG or PNG file"))?;
+        // The signature alone admits polyglots (a PDF that is also HTML, an image with a payload
+        // appended): the whole file has to be the format it claims.
+        let check = body.clone();
+        tokio::task::spawn_blocking(move || structure_ok(content_type, &check))
+            .await
+            .map_err(|_| store_error("document check failed"))?
+            .map_err(|why| {
+                GErr::new(StatusCode::UNSUPPORTED_MEDIA_TYPE, "malformed_document", "the file is not a well-formed PDF, JPEG or PNG")
+                    .with("reason", why)
+            })?;
         let filename = crate::blobs::safe_filename(q.get("filename").map(String::as_str).unwrap_or("document"));
         let date = |key: &str| -> GResult<Option<String>> {
             match q.get(key).map(|s| s.trim()).filter(|s| !s.is_empty()) {
@@ -2356,6 +2602,13 @@ pub(crate) fn serve_document(state: &AppState, d: &Doc, inline: bool) -> GResult
         return Err(GErr::conflict(
             "document_infected",
             "this file failed the malware scan and is not served",
+        ));
+    }
+    // With a scanner, only what it passed leaves the postbox.
+    if d.scan_state != "clean" && crate::publisher_registration_worker::scanner().is_some() {
+        return Err(GErr::conflict(
+            "document_not_scanned",
+            "this file has not passed the malware scan yet",
         ));
     }
     let blobs = doc_blobs(state).ok_or_else(documents_unavailable)?;
@@ -2620,6 +2873,7 @@ async fn simulate_kyc(
             ));
         }
         let ctx = dev_gate(&state, &headers, &id, Action::PublisherApply).await?;
+        editable(&ctx.app)?;
         let p = kyc::provider(&state);
         if !matches!(p, kyc::Provider::Mock { .. }) {
             return Err(not_found());
@@ -2725,7 +2979,7 @@ async fn submit_registration(
             })
             .await?;
         let (_, _, list) = facts_for(&state, &a, docs, checks, now);
-        let failing = blocking_failures(&list, true);
+        let failing = blocking_failures(&list, Gate::Submit);
         if !failing.is_empty() {
             return Err(GErr::new(
                 StatusCode::UNPROCESSABLE_ENTITY,

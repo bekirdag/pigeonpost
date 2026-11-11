@@ -59,16 +59,18 @@ async fn assign(srv: &Srv, owner: &Person, account: &str, role: &str) -> (u16, V
     .await
 }
 
+/// A publisher waiting for certification, verified registration behind it (M0 apply is closed).
 async fn apply(srv: &Srv, who: &Person, name: &str) -> String {
-    let (s, v) = srv
-        .post(
-            "/v1/publisher-applications",
-            &who.token,
-            json!({ "display_name": name }),
-        )
-        .await;
-    assert_eq!(s, 201, "{v}");
-    v["data"]["id"].as_str().unwrap().to_string()
+    crate::publisher_registration_tests::seed_publisher(
+        srv,
+        "account",
+        &who.account,
+        &who.account,
+        name,
+        "applied",
+        true,
+    )
+    .await
 }
 
 /// Every route of the milestone answers 404 feature_disabled while the flag is off, for the
@@ -368,13 +370,17 @@ async fn publisher_applications_are_a_persons_and_stay_private() {
         .await;
     assert_eq!((s, code(&v)), (400, "invalid_request"), "{v}");
 
+    // New applications go through the verified registration now.
+    let (s, v) = srv
+        .post(path, &ann.token, json!({"display_name": "Ann's Workshop"}))
+        .await;
+    assert_eq!((s, code(&v)), (410, "registration_required"), "{v}");
+    assert_eq!(
+        v["error"]["details"]["registration_url"],
+        "/v1/publisher-registrations"
+    );
     let id = apply(&srv, &ann, "Ann's Workshop").await;
     assert!(id.starts_with("pub_"), "{id}");
-    let (s, v) = srv
-        .post(path, &ann.token, json!({"display_name": "Again"}))
-        .await;
-    assert_eq!((s, code(&v)), (409, "application_exists"), "{v}");
-    assert_eq!(v["error"]["details"]["application_id"], id.as_str(), "{v}");
 
     let one = format!("{path}/{id}");
     let (s, v) = srv.get(&one, &ann.token).await;
@@ -425,9 +431,17 @@ async fn an_org_applies_through_its_owner_or_admin_only() {
     let (s, v) = srv.post(path, &out.token, body.clone()).await;
     assert!(s == 403 || s == 404, "an outsider is refused: {s} {v}");
     let (s, v) = srv.post(path, &boss.token, body.clone()).await;
-    assert_eq!(s, 201, "{v}");
-    assert_eq!(v["data"]["owner_kind"], "org");
-    let id = v["data"]["id"].as_str().unwrap().to_string();
+    assert_eq!((s, code(&v)), (410, "registration_required"), "{v}");
+    let id = crate::publisher_registration_tests::seed_publisher(
+        &srv,
+        "org",
+        &org,
+        &boss.account,
+        "MPCo",
+        "applied",
+        true,
+    )
+    .await;
 
     let one = format!("{path}/{id}");
     assert_eq!(srv.get(&one, &boss.token).await.0, 200);

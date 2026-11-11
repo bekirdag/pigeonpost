@@ -149,6 +149,10 @@ pub(crate) const TABLES: &[(&str, Rule)] = &[
         Keep("Delivery outbox of an application; the application blocks the purge"),
     ),
     (
+        "publisher_staff_alerts",
+        Keep("Staff alerts about an application; the application blocks the purge"),
+    ),
+    (
         "publisher_payee_pushes",
         Keep("Payee push outbox of an application; the application blocks the purge"),
     ),

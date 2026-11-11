@@ -3566,6 +3566,21 @@ async fn staff_certify(
                     )
                     .with("application_id", reg));
                 }
+                // Certification needs a verified registration behind the profile: no KYC,
+                // documents or bank details, no certificate.
+                let verified: Option<Option<String>> = tx
+                    .query_row(
+                        "SELECT verified_application_id FROM publisher_profiles WHERE id = ?1",
+                        [&application],
+                        |r| r.get(0),
+                    )
+                    .optional()?;
+                if verified.flatten().is_none() {
+                    return Err(conflict_code(
+                        "registration_required",
+                        "this publisher has no verified registration; decide that instead",
+                    ));
+                }
                 let n = tx.execute(
                     "UPDATE publisher_profiles SET status = ?2, decided_by = ?3, decided_at = ?4,
                         decision_reason = ?5, updated_at = ?4 WHERE id = ?1 AND status = 'applied'",

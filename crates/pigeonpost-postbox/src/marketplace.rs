@@ -3,7 +3,7 @@
 //! | Route | Action | Who |
 //! |---|---|---|
 //! | `GET|POST /v1/staff/roles`, `DELETE /v1/staff/roles/{role}` | `StaffRolesManage` | the platform owner, a person, with step-up (not behind the flag) |
-//! | `POST /v1/publisher-applications` | `PublisherApply` | a person, for their account or an org they own or administer |
+//! | `POST /v1/publisher-applications` | `PublisherApply` | closed: `410 registration_required` (use `/v1/publisher-registrations`) |
 //! | `GET /v1/publisher-applications/{application}` | `PublisherManage` | the applicant's account, or the org's owner or admins |
 //! | `GET /v1/staff/publisher-applications/{application}` | `NestReview` | a reviewer with step-up and no stake in the publisher |
 //! | `GET /v1/marketplace/listings/{listing}` | `NestDiscover` | anyone, for a published public or unlisted listing; the publisher for its own |
@@ -413,67 +413,18 @@ async fn apply_publisher(
             &f,
         )
         .map_err(|d| deny(d, false))?;
-        let now = now_unix() as i64;
-        let id = format!("pub_{}", crate::groups::rand_b32(16));
-        let (rid, oid, name, by) = (id.clone(), owner.clone(), display_name.clone(), account.clone());
-        state
-            .store
-            .group_tx(move |tx| -> GResult<()> {
-                let live: Option<String> = tx
-                    .query_row(
-                        "SELECT id FROM publisher_profiles
-                          WHERE owner_kind = ?1 AND owner_id = ?2 AND status IN ('applied','approved')",
-                        params![kind, oid],
-                        |r| r.get(0),
-                    )
-                    .optional()?;
-                if let Some(existing) = live {
-                    return Err(GErr::conflict(
-                        "application_exists",
-                        "this owner already has a live publisher application",
-                    )
-                    .with("application_id", existing));
-                }
-                // Verified registration (`publisher_registration`) is the way in now; this M0
-                // route stays for existing clients. An owner with an open registration is sent there.
-                let open: Option<String> = tx
-                    .query_row(
-                        "SELECT id FROM publisher_applications WHERE owner_kind = ?1 AND owner_id = ?2
-                           AND state IN ('draft','submitted','in_review','needs_info')",
-                        params![kind, oid],
-                        |r| r.get(0),
-                    )
-                    .optional()?;
-                if let Some(existing) = open {
-                    return Err(GErr::conflict(
-                        "application_exists",
-                        "this owner already has an open publisher registration",
-                    )
-                    .with("application_id", existing));
-                }
-                tx.execute(
-                    "INSERT INTO publisher_profiles
-                        (id, owner_kind, owner_id, display_name, status, applied_by, created_at, updated_at)
-                     VALUES (?1, ?2, ?3, ?4, 'applied', ?5, ?6, ?6)",
-                    params![rid, kind, oid, name, by, now],
-                )?;
-                crate::store::publisher_registration::backfill_legacy(tx)?;
-                Ok(())
-            })
-            .await?;
-        let application = Application {
-            id,
-            owner_kind: kind.to_string(),
-            owner_id: owner,
-            display_name,
-            status: "applied".to_string(),
-            created_at: now,
-            updated_at: now,
-        };
-        Ok((
-            StatusCode::CREATED,
-            Json(json!({ "data": application.json() })),
-        ))
+        // Closed (developer program plan §2): a publisher is certified only through the verified
+        // registration (KYB/KYC, documents, bank and tax profile). The checks above still run, so
+        // a caller who could not have applied is told so first.
+        let _ = (display_name, kind);
+        Err::<Json<Value>, _>(
+            GErr::new(
+                StatusCode::GONE,
+                "registration_required",
+                "publisher applications moved to the verified registration; start one at /v1/publisher-registrations",
+            )
+            .with("registration_url", "/v1/publisher-registrations"),
+        )
     }
     .await;
     into_response(result)
