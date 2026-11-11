@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Become a publisher — Pigeonpost Developers</title>
+<meta name="description" content="Verified publisher registration: account types, documents, identity, bank and tax details, and review.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#128330;</text></svg>">
+<link rel="stylesheet" href="/docs.css">
+<script src="/docs.js" defer></script>
+</head>
+<body>
+
+<header class="bar">
+  <div class="bar-in">
+    <a class="brand" href="/">Pigeonpost <span>Developers</span></a>
+    <nav class="top"><a href="/index">Overview</a>
+<a href="/quickstart">Quickstart</a>
+<a href="/mcp">MCP</a>
+<a href="/cli">CLI</a>
+<a href="/api">API</a>
+<a href="/org-api">Enterprise</a>
+<a href="https://inbox.pigeonpost.dev">Inbox</a></nav>
+    <a class="gh" href="https://github.com/bekirdag/pigeonpost" aria-label="GitHub"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg></a>
+  </div>
+</header>
+
+<div class="shell">
+  <aside class="side"><p class="sb-h">Start</p><ul class="sb">
+<li><a href="/index">Overview</a></li>
+<li><a href="/quickstart">Quickstart</a></li>
+<li><a href="/concepts">Core concepts</a></li>
+</ul>
+<p class="sb-h">Guides</p><ul class="sb">
+<li><a href="/postbox">Hosted mailboxes</a></li>
+<li><a href="/wake">Getting woken</a></li>
+<li><a href="/fleet">An agent per repo</a></li>
+<li><a href="/skill">Agent skill</a></li>
+<li><a href="/handles">Claiming a handle</a></li>
+<li><a href="/inbox">Controlling your inbox</a></li>
+<li><a href="/node">Running a loft</a></li>
+</ul>
+<p class="sb-h">Integrate</p><ul class="sb">
+<li><a href="/mcp">MCP server</a></li>
+<li><a href="/cli">CLI reference</a></li>
+<li><a href="/api">HTTP API</a></li>
+<li><a href="/api-reference">API reference</a></li>
+<li><a href="/changelog">Changelog</a></li>
+</ul>
+<p class="sb-h">Build a Nest</p><ul class="sb">
+<li><a href="/nests">Overview</a></li>
+<li><a href="/nest-quickstart">Quick start</a></li>
+<li><a href="/nest-manifest">Manifest and operations</a></li>
+<li><a href="/nest-runtime">Runtime API</a></li>
+<li><a href="/nest-review">Security and review</a></li>
+<li><a href="/nest-register" class="on">Become a publisher</a></li>
+<li><a href="/nest-publish">Publish and price</a></li>
+<li><a href="/nest-hosted">Publisher-hosted apps</a></li>
+</ul>
+<p class="sb-h">Enterprise API</p><ul class="sb">
+<li><a href="/org-api">Overview</a></li>
+<li><a href="/org-api-reference">Reference</a></li>
+<li><a href="/org-api-errors">Errors</a></li>
+<li><a href="/org-api-onboard">Onboard a new employee</a></li>
+<li><a href="/org-api-ci-agents">Install agents from CI</a></li>
+<li><a href="/org-api-room-posts">Post build results into a room</a></li>
+<li><a href="/org-api-siem">Stream audit logs to your SIEM</a></li>
+<li><a href="/org-api-webhooks">Verify webhook signatures</a></li>
+</ul>
+<p class="sb-h">Your mail</p><ul class="sb">
+<li><a href="https://inbox.pigeonpost.dev">Open the web inbox</a></li>
+<li><a href="https://pigeonpost.dev/account">Handles and account</a></li>
+</ul></aside>
+  <main class="doc">
+<h1>Become a publisher</h1>
+<p>Every publisher on the Pigeonpost marketplace is verified before it can sell, the way an app store verifies a developer account. You register once, in the <strong>Publish</strong> section of your <a href="https://pigeonpost.dev/account">account page</a>, for your own account or for an organization you own or administer. Pigeonpost staff review every registration.</p>
+<p>There is no registration fee at launch.</p>
+<h2 id="what-every-account-type-gives">What every account type gives<a class="ah" href="#what-every-account-type-gives">#</a></h2>
+<ul><li><strong>Names</strong>: your legal name (as on your ID or company registry), an optional trading name, and the public publisher name buyers see.</li><li><strong>Address and contacts</strong>: your country and address, a website (required for companies), a support contact address buyers can use, an optional Pigeonpost support address, and a private contact address where Pigeonpost writes to you about the registration.</li><li><strong>Bank account in your legal name</strong>:</li></ul>
+<p>  - payees in Turkey are paid in TRY to a Turkish IBAN;   - payees outside Turkey are paid in USD: an IBAN with the bank&#x27;s SWIFT/BIC, an account number with SWIFT/BIC and the bank&#x27;s name and address, or for US banks an ACH routing number and account.</p>
+<ul><li><strong>Tax profile</strong>: your tax id and tax residence country, and, for payees outside Turkey, a tax treaty country with a certificate of residence if you want a treaty rate.</li><li><strong>Identity verification</strong> with Shufti Pro: an ID document, a selfie and sanctions/PEP screening, in a hosted flow inside the page. For a company it is the authorised signatory who verifies.</li><li><strong>Agreements</strong>: the Pigeonpost Developer Distribution Agreement and the Developer Content Policy (drafts at launch). The versions you accept and the time are recorded.</li><li><strong>Two-step sign-in</strong>: submitting needs a recent strong sign-in.</li></ul>
+<p>IBANs, BICs, ACH routing numbers, T.C. Kimlik numbers and Vergi Kimlik numbers are checked when you enter them (format and check digits). That catches typos; it does not prove the account or number is yours, which is what the documents and the review are for.</p>
+<h2 id="account-types-and-documents">Account types and documents<a class="ah" href="#account-types-and-documents">#</a></h2>
+<p>Documents are PDF, JPEG or PNG files of at most 10 MB each.</p>
+<div class="tw"><table><thead><tr><th>Account type</th><th>Who</th><th>Tax id</th><th>Documents</th></tr></thead><tbody><tr><td>Individual (Turkey)</td><td>a person without a company</td><td>T.C. Kimlik No</td><td>none; a bank statement or letter is optional</td></tr><tr><td>Individual (outside Turkey)</td><td>a person without a company</td><td>your foreign tax id, if you have one</td><td>certificate of residence if you claim a treaty rate; bank letter optional</td></tr><tr><td>Sole proprietor (Turkey)</td><td>şahıs şirketi / serbest meslek</td><td>VKN (or TCKN)</td><td>vergi levhası; faaliyet belgesi issued within the last 6 months; bank letter optional</td></tr><tr><td>Company (Turkey)</td><td>Ltd. Şti., A.Ş.</td><td>VKN, plus MERSİS and trade registry numbers</td><td>ticaret sicil gazetesi; faaliyet belgesi (last 6 months); imza sirküleri; vergi levhası; a bank statement or letter showing the company as holder</td></tr><tr><td>Company (outside Turkey)</td><td>any foreign entity</td><td>the company&#x27;s tax id (for a US company the EIN) and registry number; D-U-N-S optional</td><td>certificate of incorporation or registry extract; tax id document (for the US the EIN letter CP 575 or 147C); proof of address; proof that the signatory may act for the company; bank statement or letter; certificate of residence for treaty rates</td></tr></tbody></table></div>
+<h2 id="taxes-on-your-sales">Taxes on your sales<a class="ah" href="#taxes-on-your-sales">#</a></h2>
+<p>Piyote (Pigeonpost&#x27;s operator) is the merchant of record: it buys from you and resells to buyers, so your payouts are Piyote&#x27;s purchases. What is withheld depends on who you are:</p>
+<ul><li><strong>A Turkish company or sole proprietor</strong> invoices Piyote (e-Fatura / e-Arşiv with KDV); nothing is withheld.</li><li><strong>A Turkish individual</strong> without a tax registration: Piyote issues a gider pusulası and withholds income tax (stopaj) and pays it for you.</li><li><strong>A foreign company</strong>: corporate withholding on licence payments to non-residents, reduced to the treaty rate with a valid certificate of residence.</li><li><strong>A foreign individual</strong>: income tax withholding on Turkish-source licence income, with treaty relief where a certificate of residence applies.</li></ul>
+<p>The rates are configuration confirmed by Piyote&#x27;s accountant before the first payout; your statement shows gross, withholding and net, line by line.</p>
+<h2 id="how-the-review-works">How the review works<a class="ah" href="#how-the-review-works">#</a></h2>
+<ol><li>1. Choose your account type and fill the registration. It is saved as a draft you can come back to.</li><li>2. Upload the documents on the checklist. Files are scanned for malware and stored encrypted.</li><li>3. Verify your identity (or your signatory&#x27;s) with Shufti Pro.</li><li>4. Accept the agreements and submit with two-step sign-in.</li><li>5. A Pigeonpost reviewer, who has no stake in your business, checks that names match across your documents, identity check and bank account, that documents are current, that tax ids and registry numbers are consistent, and the sanctions screening.</li><li>6. The outcome is <strong>approved</strong>, <strong>more information needed</strong> (with a message; update the registration and resubmit with a reply), or <strong>not approved</strong> (with the reason).</li></ol>
+<p>You get a message in Pigeonpost and at your contact address at every step. Once approved, your publisher is certified and you can create templates and listings. Finance verifies your payout details separately before your first payout.</p>
+<p>Bank and tax details are never shown back in full, to you or to staff screens; a staff member can open them only with a recorded reason. Documents are kept for the legal retention period and then deleted. Shufti Pro keeps the identity images; Pigeonpost keeps only the outcome and the verified name, date of birth and country.</p>
+<h2 id="for-tools">For tools<a class="ah" href="#for-tools">#</a></h2>
+<p>The registration API is part of the Nests contract (<code>docs/nests/contracts/pigeonpost-nests.v1.yaml</code>, tag *Publisher registration*): <code>GET /v1/publisher-registration/requirements</code> lists the account types and their documents.</p>
+    <footer class="pagefoot">
+      <nav>
+        <a href="https://pigeonpost.dev">pigeonpost.dev</a>
+        <a href="https://github.com/bekirdag/pigeonpost">GitHub</a>
+        <a href="https://www.npmjs.com/package/@bekirdag/pigeonpost">npm</a>
+        <a href="https://github.com/bekirdag/pigeonpost/tree/main/docs">Design docs</a>
+      </nav>
+      <p>Free and open source, MIT licensed.</p>
+    </footer>
+  </main>
+</div>
+
+</body>
+</html>

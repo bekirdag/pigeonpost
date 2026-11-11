@@ -45,13 +45,13 @@ pub(crate) fn enqueue_in(
     Ok(())
 }
 
-struct Config {
-    url: String,
-    key: String,
-    from: String,
+pub(crate) struct Config {
+    pub(crate) url: String,
+    pub(crate) key: String,
+    pub(crate) from: String,
 }
 
-fn config() -> Option<Config> {
+pub(crate) fn config() -> Option<Config> {
     let url = std::env::var("POSTBOX_NOTIFY_URL")
         .ok()?
         .trim()

@@ -119,6 +119,39 @@ pub(crate) const TABLES: &[(&str, Rule)] = &[
             "(owner_kind = 'account' AND owner_id = ?1) OR applied_by = ?1",
         ),
     ),
+    // A publisher application is a legal record (KYB/KYC, bank and tax details) with its own
+    // retention; documents are purged by the registration worker, not by an account purge.
+    (
+        "publisher_applications",
+        Block(
+            A,
+            "(owner_kind = 'account' AND owner_id = ?1) OR applicant = ?1",
+        ),
+    ),
+    (
+        "publisher_application_documents",
+        Keep("Registration evidence; the application blocks the purge and sets retention"),
+    ),
+    (
+        "publisher_kyc_checks",
+        Keep("KYC outcome of an application; the application blocks the purge"),
+    ),
+    (
+        "publisher_kyc_events",
+        Keep("Append-only provider message digests for replay protection"),
+    ),
+    (
+        "publisher_application_events",
+        Keep("Append-only application history; the application blocks the purge"),
+    ),
+    (
+        "publisher_application_notices",
+        Keep("Delivery outbox of an application; the application blocks the purge"),
+    ),
+    (
+        "publisher_payee_pushes",
+        Keep("Payee push outbox of an application; the application blocks the purge"),
+    ),
     (
         "nest_templates",
         Keep("Catalog record of a publisher; the publisher profile blocks the purge"),

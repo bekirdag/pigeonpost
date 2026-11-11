@@ -125,6 +125,9 @@ pub(crate) enum Action {
     PublisherApply,
     /// Read or change one's own publisher profile.
     PublisherManage,
+    /// Submit (or resubmit) a verified publisher registration: a person with step-up, so the
+    /// developer account has two-factor sign-in (developer program plan §2).
+    PublisherSubmit,
     /// Publish a release or listing: a person with step-up.
     NestPublish,
     /// Record a review decision on a release; also what a reviewer reads to get there.
@@ -448,7 +451,9 @@ impl Action {
             | Action::NestMarketplacePurchase
             | Action::PublisherApply
             | Action::PublisherManage => Requirement::Human,
-            Action::NestPublish | Action::StaffRolesManage => Requirement::HumanStepUp,
+            Action::NestPublish | Action::PublisherSubmit | Action::StaffRolesManage => {
+                Requirement::HumanStepUp
+            }
             Action::NestReview
             | Action::NestAttest
             | Action::NestQuarantine

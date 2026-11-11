@@ -942,7 +942,7 @@
   // Only with the postbox's `marketplace` feature on. The publisher card is for anyone who wants
   // to apply or already publishes. Staff tools are in the back office (/staff).
   function mountMarketplace(stepUp) {
-    const deps = { pb: (path, init) => pbFetch(path, init), toast, stepUp };
+    const deps = { pb: (path, init) => pbFetch(path, init), pbRaw: (path, init) => pbRaw(path, init), toast, stepUp };
     const pub = $("#ac-publisher");
     if (pub && window.PPMarketplace.publisher) { pub.hidden = false; window.PPMarketplace.publisher(pub, deps); }
   }
@@ -1045,6 +1045,28 @@
       throw e;
     }
     return body;
+  }
+
+  // Bytes to and from the postbox (publisher registration documents): the body is sent as is and
+  // a download comes back as a Blob. Errors read like pbFetch's.
+  async function pbRaw(path, opts) {
+    const o = opts || {};
+    const res = await fetch(POSTBOX + path, {
+      method: o.method || "GET",
+      headers: { authorization: `Bearer ${getToken()}` },
+      body: o.body,
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      const nested = body && typeof body.error === "object" && body.error ? body.error : null;
+      const flat = nested ? { ...(nested.details || {}), error: nested.code || null, detail: nested.message || "" } : body;
+      const e = new Error(flat.detail || flat.error || `postbox ${res.status}`);
+      e.status = res.status;
+      e.body = flat;
+      e.code = flat.error || null;
+      throw e;
+    }
+    return o.as === "blob" ? res.blob() : res.json();
   }
 
   async function loadPostbox() {

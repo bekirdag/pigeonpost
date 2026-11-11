@@ -60,7 +60,9 @@ tags:
   - name: Staff
     description: Platform staff roles and staff reads. Staff is a principal kind; every action needs a person, a live role and step-up.
   - name: Publisher applications
-    description: Applying to the publisher programme as an account or an organization.
+    description: 'Applying to the publisher programme as an account or an organization (M0; the account page uses the verified registration now).'
+  - name: Publisher registration
+    description: 'Verified publisher registration (developer program plan §2–§3): account types, documents, bank and tax profile, Shufti Pro KYC, submission with step-up and the staff review. Bank and tax details are sealed and masked on every read except an audited staff reveal.'
   - name: Marketplace listings
     description: Public metadata of a listing.
   - name: Nest jobs
@@ -3829,6 +3831,567 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+  /v1/publisher-registration/requirements:
+    get:
+      tags: [Publisher registration]
+      operationId: publisherRegistrationRequirements
+      summary: Registration requirements
+      description: 'Account types (individual TR/foreign, sole proprietor TR, company TR/foreign), the documents each needs, the agreement versions to accept and the KYC provider (`shufti` or the `mock` sandbox).'
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: PublisherApply
+      security:
+        - memberToken: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistrationRequirementsEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/publisher-registrations:
+    get:
+      tags: [Publisher registration]
+      operationId: listPublisherRegistrations
+      summary: List my registrations
+      description: "The caller's applications (own account, and orgs they administer), newest first. Legacy M0 applications appear with `account_type: legacy`."
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: PublisherApply
+      security:
+        - memberToken: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistrationList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [Publisher registration]
+      operationId: createPublisherRegistration
+      summary: Start a registration
+      description: 'Start a draft. Individuals and sole proprietors register for their own account; companies for their account or an org they own or administer. An open legacy application of the same owner becomes this draft (same id).'
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: PublisherApply
+      security:
+        - memberToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegistrationCreate'
+      responses:
+        '201':
+          description: The draft.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistrationEnvelope'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /v1/publisher-registrations/{application}:
+    get:
+      tags: [Publisher registration]
+      operationId: readPublisherRegistration
+      summary: Read my registration
+      description: 'The application with masked bank and tax details, documents, KYC checks, the checklist and history. Others get 404.'
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: PublisherApply
+      security:
+        - memberToken: []
+      parameters:
+        - $ref: '#/components/parameters/RegistrationApplication'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistrationEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Publisher registration]
+      operationId: updatePublisherRegistration
+      summary: Save the draft
+      description: 'Each part given replaces what was saved (bank and tax whole; they are sealed and never shown back unmasked). Editable in `draft` and `needs_info` only. Field errors are 422 with `details.field` and a check code (`iban_checksum`, `tckn_checksum`, `vkn_checksum`, `swift_format`, `routing_checksum`, `country_mismatch`, …).'
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: PublisherApply
+      security:
+        - memberToken: []
+      parameters:
+        - $ref: '#/components/parameters/RegistrationApplication'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegistrationUpdate'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistrationEnvelope'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/RegistrationInvalid'
+
+  /v1/publisher-registrations/{application}/documents:
+    post:
+      tags: [Publisher registration]
+      operationId: uploadPublisherRegistrationDocument
+      summary: Upload a document
+      description: 'The raw file as the body: PDF, JPEG or PNG by its bytes, at most 10 MB. Sealed under the vault and kept in the blob store; scanned for malware (`scan: pending` until then).'
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: PublisherApply
+      security:
+        - memberToken: []
+      parameters:
+        - $ref: '#/components/parameters/RegistrationApplication'
+        - $ref: '#/components/parameters/DocumentType'
+        - $ref: '#/components/parameters/DocumentFilename'
+        - $ref: '#/components/parameters/DocumentIssuedOn'
+        - $ref: '#/components/parameters/DocumentExpiresOn'
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        '201':
+          description: The document.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistrationDocumentEnvelope'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedDocument'
+        '503':
+          $ref: '#/components/responses/RegistrationUnavailable'
+
+  /v1/publisher-registrations/{application}/documents/{document}:
+    get:
+      tags: [Publisher registration]
+      operationId: downloadPublisherRegistrationDocument
+      summary: Download a document
+      description: "The applicant's own copy, as an attachment, `Cache-Control: no-store`. A file that failed the malware scan is not served."
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: PublisherApply
+      security:
+        - memberToken: []
+      parameters:
+        - $ref: '#/components/parameters/RegistrationApplication'
+        - $ref: '#/components/parameters/RegistrationDocument'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/pdf:
+              schema: { type: string, format: binary }
+            image/jpeg:
+              schema: { type: string, format: binary }
+            image/png:
+              schema: { type: string, format: binary }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '410':
+          $ref: '#/components/responses/DocumentGone'
+    delete:
+      tags: [Publisher registration]
+      operationId: removePublisherRegistrationDocument
+      summary: Remove a document
+      description: "While editable. Never submitted: the bytes are deleted at once; otherwise kept, removed, until the application's retention ends."
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: PublisherApply
+      security:
+        - memberToken: []
+      parameters:
+        - $ref: '#/components/parameters/RegistrationApplication'
+        - $ref: '#/components/parameters/RegistrationDocument'
+      responses:
+        '204':
+          description: Removed.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /v1/publisher-registrations/{application}/kyc:
+    post:
+      tags: [Publisher registration]
+      operationId: startPublisherRegistrationKyc
+      summary: Start identity verification
+      description: "Creates a Shufti Pro verification (document, face, AML; address optional) for the applicant or the company's authorised signatory and returns the hosted flow's `verification_url`. In the sandbox there is no URL and the check is finished with `simulate`."
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: PublisherApply
+      security:
+        - memberToken: []
+      parameters:
+        - $ref: '#/components/parameters/RegistrationApplication'
+      responses:
+        '201':
+          description: The check.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KycCheckEnvelope'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/RegistrationUnavailable'
+
+  /v1/publisher-registrations/{application}/kyc/{check}/simulate:
+    post:
+      tags: [Publisher registration]
+      operationId: simulatePublisherRegistrationKyc
+      summary: Finish a sandbox check
+      description: 'Sandbox only (no Shufti credentials configured): `accepted` or `declined`, applied through the same signed-message path as a Shufti callback. 404 when a live provider is configured.'
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: PublisherApply
+      security:
+        - memberToken: []
+      parameters:
+        - $ref: '#/components/parameters/RegistrationApplication'
+        - $ref: '#/components/parameters/KycCheck'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KycSimulate'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistrationEnvelope'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/publisher-registrations/{application}/submit:
+    post:
+      tags: [Publisher registration]
+      operationId: submitPublisherRegistration
+      summary: Submit for review
+      description: 'Submit a draft, or resubmit after `needs_info` with an optional reply `message`. Needs a recent two-factor sign-in (step-up). Refused 422 `application_incomplete` with `details.missing` and `details.checklist` until the blocking checklist items pass (KYC may still be pending).'
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: PublisherSubmit
+      security:
+        - memberToken: []
+      parameters:
+        - $ref: '#/components/parameters/RegistrationApplication'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegistrationSubmit'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistrationEnvelope'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/RegistrationInvalid'
+
+  /v1/staff/publisher-registrations:
+    get:
+      tags: [Staff]
+      operationId: staffListPublisherRegistrations
+      summary: Registration queue
+      description: 'Default `state=open` (submitted and in_review), oldest submission first. Filters: `state` (comma list), `account_type`, `q` (name or id), `limit`. Each row says whether the reviewer has a stake (`conflict`).'
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: NestReview
+      security:
+        - memberToken: []
+      parameters:
+        - $ref: '#/components/parameters/RegistrationStateFilter'
+        - $ref: '#/components/parameters/RegistrationTypeFilter'
+        - $ref: '#/components/parameters/RegistrationQuery'
+        - $ref: '#/components/parameters/RegistrationLimit'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistrationList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/staff/publisher-registrations/{application}:
+    get:
+      tags: [Staff]
+      operationId: staffReadPublisherRegistration
+      summary: Staff read a registration
+      description: 'Everything but sealed values: profile, masked bank and tax, validation results, documents (incl. removed), KYC with verified name/DOB/country and AML, the automated checklist, the reviewer checks to confirm, history and the payee push. Audited `staff.publisher_registration.view`. Reviewer role, step-up, no stake.'
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: NestReview
+      security:
+        - memberToken: []
+      parameters:
+        - $ref: '#/components/parameters/RegistrationApplication'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistrationStaffEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/staff/publisher-registrations/{application}/claim:
+    post:
+      tags: [Staff]
+      operationId: staffClaimPublisherRegistration
+      summary: Take into review
+      description: '`submitted` → `in_review` with the reviewer recorded; notifies the developer.'
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: NestReview
+      security:
+        - memberToken: []
+      parameters:
+        - $ref: '#/components/parameters/RegistrationApplication'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistrationStaffEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /v1/staff/publisher-registrations/{application}/documents/{document}:
+    get:
+      tags: [Staff]
+      operationId: staffReadPublisherRegistrationDocument
+      summary: Staff view a document
+      description: 'Reviewer or finance (`NestReview`, else `PayoutPrepare`), step-up, no stake. Audited `staff.publisher_registration.document` before the bytes leave. `?inline=1` for in-browser viewing (sandboxed CSP).'
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: NestReview
+      security:
+        - memberToken: []
+      parameters:
+        - $ref: '#/components/parameters/RegistrationApplication'
+        - $ref: '#/components/parameters/RegistrationDocument'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/pdf:
+              schema: { type: string, format: binary }
+            image/jpeg:
+              schema: { type: string, format: binary }
+            image/png:
+              schema: { type: string, format: binary }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '410':
+          $ref: '#/components/responses/DocumentGone'
+
+  /v1/staff/publisher-registrations/{application}/reveal:
+    post:
+      tags: [Staff]
+      operationId: staffRevealPublisherRegistration
+      summary: Reveal bank or tax details
+      description: 'The only unmasked read. Reviewer or finance, step-up, no stake; the fields and the reason are audited (`staff.publisher_registration.reveal`) before anything is opened. `Cache-Control: no-store`.'
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: NestReview
+      security:
+        - memberToken: []
+      parameters:
+        - $ref: '#/components/parameters/RegistrationApplication'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegistrationReveal'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistrationRevealEnvelope'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/staff/publisher-registrations/{application}/decisions:
+    post:
+      tags: [Staff]
+      operationId: staffDecidePublisherRegistration
+      summary: Decide a registration
+      description: '`approved` (every blocking automated check passing, every reviewer check confirmed, `acknowledge_sandbox_kyc` when KYC ran in the sandbox), `needs_info` (message to the developer) or `rejected` (reason). Names the revision read. Approval certifies the publisher profile (creating it when needed) and queues the payee and tax profile for saas_be. Every decision notifies the developer at their contact address and by Pigeonpost message.'
+      x-pigeonpost-status: implemented
+      x-pigeonpost-action: NestReview
+      security:
+        - memberToken: []
+      parameters:
+        - $ref: '#/components/parameters/RegistrationApplication'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegistrationDecision'
+      responses:
+        '201':
+          description: The decided application.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistrationStaffEnvelope'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/RegistrationInvalid'
+
+  /v1/integrations/shufti/callback:
+    post:
+      tags: [Publisher registration]
+      operationId: shuftiCallback
+      summary: Shufti Pro callback
+      description: "Shufti Pro's verification result. Authenticated by its `Signature` header alone (sha256 of the body and the secret key, per the account's scheme); a replayed body changes nothing, unknown references are ignored, and a final result never regresses. Not for clients."
+      x-pigeonpost-status: provider
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Accepted (including replays and unknown references).
+        '401':
+          description: Missing or wrong signature (`bad_signature`).
+
 components:
   securitySchemes:
     memberToken:
@@ -3847,6 +4410,74 @@ components:
       bearerFormat: cap_<hex>
       description: Capability token bound to exactly one mailbox (for example a Nest's own agent mailbox). Automation.
   parameters:
+    RegistrationApplication:
+      name: application
+      in: path
+      required: true
+      description: Publisher registration id.
+      schema:
+        type: string
+        pattern: ^pap_[a-z0-9]{1,40}$
+    RegistrationDocument:
+      name: document
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^pad_[a-z2-7]{16,32}$
+    KycCheck:
+      name: check
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^kyc_[a-z2-7]{16,32}$
+    DocumentType:
+      name: type
+      in: query
+      required: true
+      description: A document type the account type takes (see requirements).
+      schema:
+        type: string
+        enum: [bank_letter, residence_certificate, vergi_levhasi, faaliyet_belgesi, ticaret_sicil_gazetesi, imza_sirkuleri, certificate_of_incorporation, tax_id_document, proof_of_address, signatory_authority]
+    DocumentFilename:
+      name: filename
+      in: query
+      required: false
+      schema: { type: string, maxLength: 200 }
+    DocumentIssuedOn:
+      name: issued_on
+      in: query
+      required: false
+      description: Required for documents with a maximum age (faaliyet belgesi, 183 days).
+      schema: { type: string, format: date }
+    DocumentExpiresOn:
+      name: expires_on
+      in: query
+      required: false
+      description: Required for documents that expire (certificate of residence).
+      schema: { type: string, format: date }
+    RegistrationStateFilter:
+      name: state
+      in: query
+      required: false
+      schema: { type: string, description: '`open` (default) or a comma list of draft, submitted, in_review, needs_info, approved, rejected' }
+    RegistrationTypeFilter:
+      name: account_type
+      in: query
+      required: false
+      schema:
+        $ref: '#/components/schemas/RegistrationAccountType'
+    RegistrationQuery:
+      name: q
+      in: query
+      required: false
+      schema: { type: string, maxLength: 80 }
+    RegistrationLimit:
+      name: limit
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1, maximum: 100 }
     Build:
       name: build
       in: path
@@ -4007,6 +4638,30 @@ components:
       schema:
         type: integer
   responses:
+    RegistrationInvalid:
+      description: 'A field or the application is not valid (`invalid_field`, `invalid_country`, `country_mismatch`, `iban_*`, `swift_*`, `routing_*`, `account_number_format`, `tckn_*`, `vkn_*`, `mersis_format`, `duns_format`, `tax_id_format`, `residence_certificate_required`, `residence_certificate_expired`, `application_incomplete`, `checks_failing`, `checklist_incomplete`, `sandbox_kyc`), with `details.field` or `details.missing`.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    UnsupportedDocument:
+      description: Not a PDF, JPEG or PNG by its bytes (`unsupported_document`).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    RegistrationUnavailable:
+      description: Document storage or identity verification is not available (`documents_unavailable`, `kyc_unavailable`).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    DocumentGone:
+      description: The document was deleted under the retention policy or its bytes are missing (`document_purged`, `document_missing`).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
     BadRequest:
       description: Malformed request (`bad_request`, `invalid_json`, `invalid_request`, `invalid_role`, `bad_display_name`, `invalid_operation_payload`, `deadline_invalid`, `not_org_member`, `visibility_not_available`, `invalid_cursor`, `invalid_configuration` (with `details.issues`)).
       content:
@@ -4086,6 +4741,350 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
   schemas:
+    RegistrationAccountType:
+      type: string
+      enum: [individual_tr, individual_foreign, sole_proprietor_tr, company_tr, company_foreign, legacy]
+    RegistrationState:
+      type: string
+      enum: [draft, submitted, in_review, needs_info, approved, rejected]
+    RegistrationRequirementsEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [account_types, document_formats, document_max_bytes, agreement_version, content_policy_version, kyc_provider]
+          properties:
+            account_types:
+              type: array
+              items:
+                type: object
+                required: [id, label, label_tr, company, tax_category, kyc_subject, documents]
+                properties:
+                  id: { $ref: '#/components/schemas/RegistrationAccountType' }
+                  label: { type: string }
+                  label_tr: { type: string }
+                  country: { type: [string, 'null'] }
+                  company: { type: boolean }
+                  tax_category: { type: string, enum: [tr_business, tr_individual, foreign_company, foreign_individual] }
+                  kyc_subject: { type: string, enum: [applicant, signatory] }
+                  org_allowed: { type: boolean }
+                  tax_id: { type: string, enum: [tckn, vkn, foreign_required, foreign_optional] }
+                  payout_currency: { type: string, enum: [TRY, USD] }
+                  bank_methods: { type: array, items: { type: string, enum: [iban, swift, ach] } }
+                  documents:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        type: { type: string }
+                        label: { type: string }
+                        label_tr: { type: string }
+                        need: { type: string, enum: [required, optional, if_treaty] }
+                        max_age_days: { type: [integer, 'null'] }
+                        expires: { type: boolean }
+            document_formats: { type: array, items: { type: string } }
+            document_max_bytes: { type: integer }
+            agreement_version: { type: string }
+            content_policy_version: { type: string }
+            kyc_provider: { type: string, enum: [shufti, mock] }
+    RegistrationSummary:
+      type: object
+      required: [id, owner_kind, owner_id, account_type, state, revision]
+      properties:
+        id: { type: string }
+        owner_kind: { type: string, enum: [account, org] }
+        owner_id: { type: string }
+        account_type: { $ref: '#/components/schemas/RegistrationAccountType' }
+        account_type_label: { type: string }
+        state: { $ref: '#/components/schemas/RegistrationState' }
+        public_name: { type: string }
+        publisher_id: { type: [string, 'null'] }
+        tax_category: { type: [string, 'null'] }
+        kyc_subject: { type: [string, 'null'] }
+        revision: { type: integer }
+        submitted_at: { type: [string, 'null'], format: date-time }
+        decided_at: { type: [string, 'null'], format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        conflict: { type: boolean, description: Staff list only. }
+    RegistrationList:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/RegistrationSummary'
+        next_cursor: { type: 'null' }
+    RegistrationProfile:
+      type: object
+      additionalProperties: false
+      properties:
+        legal_name: { type: string, maxLength: 200 }
+        trading_name: { type: string, maxLength: 200 }
+        country: { type: string, pattern: '^[A-Z]{2}$' }
+        address:
+          type: object
+          additionalProperties: false
+          properties:
+            line1: { type: string }
+            line2: { type: string }
+            city: { type: string }
+            postal_code: { type: string }
+            region: { type: string }
+            country: { type: string }
+        website: { type: string, description: 'https:// only' }
+        support_email: { type: string }
+        support_address: { type: string, description: A Pigeonpost address or handle buyers write to. }
+        contact_email: { type: string, description: Where Pigeonpost writes about the application; never shown to buyers. }
+        registration_number: { type: string }
+        mersis_number: { type: string, pattern: '^[0-9]{16}$' }
+        trade_registry_number: { type: string }
+        duns_number: { type: string, pattern: '^[0-9]{9}$' }
+        signatory:
+          type: object
+          additionalProperties: false
+          properties:
+            name: { type: string }
+            title: { type: string }
+            contact_email: { type: string }
+    RegistrationBank:
+      type: object
+      additionalProperties: false
+      required: [holder_name, method]
+      description: 'Turkish payees: a Turkish IBAN (TRY). Others (USD): `iban` (with `swift_bic`), `swift` (account number, BIC, bank name) or `ach` (US routing + account). Sealed at rest; reads show `BankMasked`.'
+      properties:
+        holder_name: { type: string, maxLength: 140 }
+        method: { type: string, enum: [iban, swift, ach] }
+        iban: { type: string }
+        swift_bic: { type: string }
+        account_number: { type: string }
+        routing_number: { type: string }
+        ach_account_type: { type: string, enum: [checking, savings] }
+        bank_name: { type: string }
+        bank_address: { type: string }
+    RegistrationTax:
+      type: object
+      additionalProperties: false
+      required: [tax_country]
+      description: 'Individual TR: TCKN (check digits validated). Sole proprietor TR: VKN or TCKN. Company TR: VKN. Foreign: tax id (required for companies). A treaty country needs the certificate of residence and its expiry. Sealed at rest; reads show `TaxMasked`.'
+      properties:
+        tax_id: { type: string }
+        tax_country: { type: string }
+        treaty_country: { type: string }
+        residence_certificate_expires_on: { type: string, format: date }
+    BankMasked:
+      type: [object, 'null']
+      properties:
+        holder_name: { type: string }
+        method: { type: string }
+        iban: { type: [string, 'null'], description: 'Country, check digits and last four only: `TR33 •••• … ••13 26`.' }
+        account_number: { type: [string, 'null'] }
+        swift_bic: { type: [string, 'null'] }
+        routing_number: { type: [string, 'null'] }
+        bank_country: { type: [string, 'null'] }
+        currency: { type: [string, 'null'], enum: [TRY, USD, null] }
+        last4: { type: [string, 'null'] }
+    TaxMasked:
+      type: [object, 'null']
+      properties:
+        category: { type: string }
+        tax_id: { type: [string, 'null'], description: Last two digits only. }
+        tax_id_check: { type: string, enum: [tckn, vkn, format, none] }
+        tax_country: { type: string }
+        treaty_country: { type: [string, 'null'] }
+        residence_certificate_expires_on: { type: [string, 'null'] }
+    RegistrationCreate:
+      type: object
+      additionalProperties: false
+      required: [account_type]
+      properties:
+        account_type: { type: string, enum: [individual_tr, individual_foreign, sole_proprietor_tr, company_tr, company_foreign] }
+        org_id: { type: string }
+        public_name: { type: string, minLength: 2, maxLength: 80 }
+    RegistrationUpdate:
+      type: object
+      additionalProperties: false
+      properties:
+        account_type: { type: string }
+        public_name: { type: string, minLength: 2, maxLength: 80 }
+        profile: { $ref: '#/components/schemas/RegistrationProfile' }
+        bank: { $ref: '#/components/schemas/RegistrationBank' }
+        tax: { $ref: '#/components/schemas/RegistrationTax' }
+        accept_agreements:
+          type: object
+          additionalProperties: false
+          required: [agreement_version, content_policy_version]
+          properties:
+            agreement_version: { type: string }
+            content_policy_version: { type: string }
+        revision: { type: integer, description: The revision the form was based on; stale is 409 `revision_mismatch`. }
+    RegistrationSubmit:
+      type: object
+      additionalProperties: false
+      properties:
+        message: { type: string, maxLength: 4000, description: A reply to a request for information. }
+        revision: { type: integer }
+    RegistrationDocument:
+      type: object
+      required: [id, type, filename, content_type, size, sha256, scan]
+      properties:
+        id: { type: string }
+        type: { type: string }
+        filename: { type: string }
+        content_type: { type: string, enum: [application/pdf, image/jpeg, image/png] }
+        size: { type: integer, maximum: 10485760 }
+        sha256: { type: string, description: SHA-256 of the plaintext. }
+        issued_on: { type: [string, 'null'] }
+        expires_on: { type: [string, 'null'] }
+        scan: { type: string, enum: [pending, clean, infected, error] }
+        uploaded_at: { type: string, format: date-time }
+        purged: { type: boolean }
+        removed: { type: boolean, description: Staff view only. }
+    RegistrationDocumentEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/RegistrationDocument' }
+    KycCheck:
+      type: object
+      required: [id, subject, provider, sandbox, result, event]
+      properties:
+        id: { type: string }
+        subject: { type: string, enum: [applicant, signatory] }
+        provider: { type: string, enum: [shufti, mock] }
+        sandbox: { type: boolean }
+        result: { type: string, enum: [pending, accepted, declined, cancelled, error] }
+        event: { type: string, description: "Shufti's latest event (request.pending, verification.accepted, …)." }
+        declined_reason: { type: [string, 'null'] }
+        verification_url: { type: [string, 'null'], description: The hosted flow while pending (developer view only). }
+        reference: { type: string, description: Staff view only. }
+        declined_codes: { type: array, items: { type: string }, description: Staff view only. }
+        aml: { type: [string, 'null'], enum: [clear, match, review, null], description: Staff view only. }
+        verified:
+          type: object
+          description: Staff view only. The only personal data kept from KYC; never images.
+          properties:
+            name: { type: [string, 'null'] }
+            date_of_birth: { type: [string, 'null'] }
+            country: { type: [string, 'null'] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    KycCheckEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/KycCheck' }
+    KycSimulate:
+      type: object
+      additionalProperties: false
+      required: [outcome]
+      properties:
+        outcome: { type: string, enum: [accepted, declined] }
+    ChecklistItem:
+      type: object
+      required: [id, ok, blocking, detail]
+      properties:
+        id: { type: string, enum: [account_type, profile_complete, bank_account, tax_profile, documents_required, documents_current, documents_scanned, kyc, aml, names_match, agreements] }
+        ok: { type: [boolean, 'null'], description: null when only a reviewer can judge. }
+        blocking: { type: boolean }
+        detail: { type: string }
+    Registration:
+      allOf:
+        - $ref: '#/components/schemas/RegistrationSummary'
+        - type: object
+          properties:
+            profile: { $ref: '#/components/schemas/RegistrationProfile' }
+            bank: { $ref: '#/components/schemas/BankMasked' }
+            tax: { $ref: '#/components/schemas/TaxMasked' }
+            agreement: { type: object }
+            documents: { type: array, items: { $ref: '#/components/schemas/RegistrationDocument' } }
+            kyc: { type: array, items: { $ref: '#/components/schemas/KycCheck' } }
+            kyc_provider: { type: string, enum: [shufti, mock] }
+            checklist: { type: array, items: { $ref: '#/components/schemas/ChecklistItem' } }
+            events:
+              type: array
+              items:
+                type: object
+                properties:
+                  by: { type: string, enum: [developer, staff, system] }
+                  kind: { type: string }
+                  from: { type: [string, 'null'] }
+                  to: { type: [string, 'null'] }
+                  message: { type: [string, 'null'] }
+                  at: { type: string, format: date-time }
+            staff_message: { type: [object, 'null'] }
+            editable: { type: boolean }
+    RegistrationEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/Registration' }
+    RegistrationStaffEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          allOf:
+            - $ref: '#/components/schemas/Registration'
+            - type: object
+              properties:
+                applicant: { type: string }
+                reviewer: { type: [string, 'null'] }
+                manual_checks:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      id: { type: string, enum: [names_match_documents, documents_authentic, registry_consistent, sanctions_reviewed, bank_holder_matches] }
+                      label: { type: string }
+                requirements: { type: [array, 'null'] }
+                decision: { type: object }
+                payee_pushes:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      id: { type: string }
+                      status: { type: string, enum: [pending, sent, failed] }
+                      attempts: { type: integer }
+                      last_error: { type: [string, 'null'] }
+                publisher: { type: [object, 'null'] }
+    RegistrationReveal:
+      type: object
+      additionalProperties: false
+      required: [fields, reason]
+      properties:
+        fields: { type: array, minItems: 1, items: { type: string, enum: [bank, tax] } }
+        reason: { type: string, minLength: 5, maxLength: 500 }
+    RegistrationRevealEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          properties:
+            bank: { oneOf: [{ $ref: '#/components/schemas/RegistrationBank' }, { type: 'null' }] }
+            tax: { oneOf: [{ $ref: '#/components/schemas/RegistrationTax' }, { type: 'null' }] }
+    RegistrationDecision:
+      type: object
+      additionalProperties: false
+      required: [decision, revision]
+      properties:
+        decision: { type: string, enum: [approved, needs_info, rejected] }
+        message: { type: string, maxLength: 4000, description: Required for needs_info and rejected. }
+        revision: { type: integer }
+        checklist:
+          type: object
+          description: The reviewer's judgements; an approval needs every one true.
+          properties:
+            names_match_documents: { type: boolean }
+            documents_authentic: { type: boolean }
+            registry_consistent: { type: boolean }
+            sanctions_reviewed: { type: boolean }
+            bank_holder_matches: { type: boolean }
+        acknowledge_sandbox_kyc: { type: boolean }
     IntegrationField:
       type: object
       additionalProperties: false
@@ -4812,6 +5811,48 @@ components:
                 - application_decided
                 - stage_out_of_order
                 - stage_already_recorded
+                - application_incomplete
+                - application_locked
+                - application_not_waiting
+                - revision_mismatch
+                - checks_failing
+                - checklist_incomplete
+                - sandbox_kyc
+                - message_required
+                - invalid_account_type
+                - account_type_required
+                - account_type_needs_person
+                - invalid_field
+                - invalid_country
+                - country_mismatch
+                - invalid_email
+                - invalid_website
+                - invalid_address
+                - invalid_document_type
+                - invalid_date
+                - issued_on_required
+                - expires_on_required
+                - unsupported_document
+                - document_too_large
+                - documents_unavailable
+                - document_purged
+                - document_missing
+                - document_infected
+                - too_many_documents
+                - kyc_unavailable
+                - kyc_done
+                - kyc_attempts_exceeded
+                - agreement_version_mismatch
+                - registration_in_progress
+                - bad_signature
+                - residence_certificate_required
+                - residence_certificate_expired
+                - treaty_not_applicable
+                - swift_required
+                - bank_name_required
+                - invalid_bank_method
+                - iban_must_be_turkish
+                - iban_must_be_foreign
             message:
               type: string
               description: Human-readable text. May change; do not parse it.

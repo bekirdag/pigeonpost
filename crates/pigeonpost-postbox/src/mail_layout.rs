@@ -355,6 +355,10 @@ pub(crate) mod contract {
                 ident(p, "org_id")?;
                 ident(p, "invite_id")
             }
+            "pigeonpost-notice" => match p["notice_kind"].as_str() {
+                Some("sales_lead" | "org_deletion_warning" | "publisher_application") => Ok(()),
+                other => Err(format!("notice_kind: invalid ({other:?})")),
+            },
             other => Err(format!("unknown workflow {other}")),
         }
     }

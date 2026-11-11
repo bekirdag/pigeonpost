@@ -40,6 +40,7 @@ mod nests;
 mod org_api;
 mod org_model;
 mod orgs;
+pub(crate) mod publisher_registration;
 mod purge;
 mod shell;
 mod streams;
@@ -1027,6 +1028,9 @@ impl Store {
         // Publisher-hosted listings and pay-per-job: guarded column adds, the per_job term, two
         // new job tables (`store::marketplace_hosted`).
         marketplace_hosted::migrate(&conn)?;
+        // Verified publisher registration (developer program plan §2–§3): applications, documents,
+        // KYC checks and the outboxes; existing publishers get a `legacy` application.
+        publisher_registration::migrate(&conn)?;
         for stmt in MIGRATIONS
             .iter()
             .chain(filtering::MIGRATIONS)

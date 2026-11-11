@@ -258,6 +258,10 @@ jobs:
           # Calendar screens describe actual contact-address guest delivery, distinct from
           # Pigeonpost messages. The local protocol fixture uses fixed verified OIDC claims
           # to exercise human-only guest invitations without sending any external delivery.
+          # Publisher registration (developer program plan §2) collects a developer's real support
+          # and contact addresses, passes Shufti Pro its fixed KYC request field of that name, and
+          # notifies the developer through saas_be's notification route; it also sends them a
+          # Pigeonpost message for every state change.
           if git grep -n -i -w "$forbidden_word" -- . \
               ':(exclude)site/account.js' \
               ':(exclude)site/account.html' \
@@ -279,6 +283,11 @@ jobs:
               ':(exclude)store-adapter/src/credits.js' \
               ':(exclude)store-adapter/test/credits.test.mjs' \
               ':(exclude)crates/pigeonpost-postbox/src/mail_layout.rs' \
+              ':(exclude)crates/pigeonpost-postbox/src/publisher_kyc.rs' \
+              ':(exclude)crates/pigeonpost-postbox/src/publisher_registration.rs' \
+              ':(exclude)crates/pigeonpost-postbox/src/publisher_registration_worker.rs' \
+              ':(exclude)crates/pigeonpost-postbox/src/store/publisher_registration.rs' \
+              ':(exclude)site/marketplace-registration.js' \
               ':(exclude)apps/ios/Tests/main.swift' \
               ':(exclude)apps/ios/Shared/Auth/Session.swift' \
               ':(exclude)apps/ios/Tests/groups-postbox.mjs' \

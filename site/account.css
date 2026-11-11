@@ -465,6 +465,7 @@ body.ac-shell main.account { padding: 0; }
 .ac-app form input + .btn, .ac-app form input + .btn-small { margin-left: 8px; }
 #ac-pb-list .ac-row > .muted, #ac-pb-keys .ac-row > .muted { flex: 1; }
 
+<<<<<<< HEAD
 /* ---- appearance switch (theme.js draws the icons and keeps the label) ---------------------- */
 .theme-toggle {
   display: inline-grid; place-items: center; flex-shrink: 0;
@@ -505,3 +506,37 @@ body:not(.ac-shell) .wrap > header > a { flex-shrink: 1; min-width: 0; }
 .account .btn-secondary[data-billing-gated]:hover, .account .btn-small[data-billing-gated]:hover { border-color: var(--ac-hair-strong); }
 .ac-needs-billing :is(#credits form, .pp-cards, #mp-buy, #ac-cloud-picker) { opacity: .62; filter: saturate(.5); }
 @media (max-width: 560px) { .ac-gate .btn { width: 100%; } }
+=======
+/* ---- Verified publisher registration (marketplace-registration.js) ------------------------- */
+.mp-registration { display: grid; gap: .25rem; }
+.mp-registration fieldset { display: grid; gap: .35rem; }
+.mp-registration label { font-size: 13px; font-weight: 600; color: var(--ac-ink); margin-top: .35rem; }
+.mp-registration input:not([type="checkbox"]):not([type="file"]), .mp-registration select, .mp-registration textarea {
+  border: 1px solid var(--ac-hair-strong); border-radius: 9px; padding: 8px 11px; font-size: 15px;
+  color: var(--ac-ink); background: var(--ac-input); max-width: 34rem; width: 100%; box-sizing: border-box; }
+.mp-registration input:focus, .mp-registration select:focus, .mp-registration textarea:focus { outline: none; box-shadow: var(--ac-ring); border-color: var(--ac-accent); }
+.mp-registration input[readonly] { background: var(--ac-raised); color: var(--ac-muted); }
+.mp-steps { list-style: none; display: flex; flex-wrap: wrap; gap: .35rem; padding: 0; margin: .6rem 0 .2rem; counter-reset: none; }
+.mp-step .btn-small { background: transparent; }
+.mp-step.is-current .btn-small { background: var(--ac-accent-soft); border-color: var(--ac-accent); color: var(--ac-accent-text); }
+.mp-reg-nav { display: flex; flex-wrap: wrap; gap: .5rem; margin: .6rem 0 .2rem; }
+.mp-reg-nav .btn-primary.btn-small { background: var(--ac-accent); color: #fff; border-color: var(--ac-accent); }
+.mp-doclist > .mp-doc { padding: .7rem 0; border-top: 1px solid var(--ac-hair); display: grid; gap: .35rem; }
+.mp-doclist > .mp-doc:first-child { border-top: 0; }
+.mp-doc-upload { display: flex; flex-wrap: wrap; gap: .5rem .75rem; align-items: center; }
+.mp-doc-upload label { margin: 0; font-weight: 500; display: inline-flex; gap: .35rem; align-items: center; }
+.mp-chip { display: inline-block; font-size: 12px; font-weight: 650; padding: 0 8px; border-radius: 999px; background: var(--ac-accent-soft); color: var(--ac-accent-text); }
+.mp-chip-quiet { background: var(--ac-raised); color: var(--ac-muted); border: 1px solid var(--ac-hair); }
+.mp-checklist .mp-check-item { display: flex; gap: .55rem; align-items: baseline; padding: .3rem 0; }
+.mp-check-mark { width: 1.1rem; flex: none; text-align: center; font-weight: 700; }
+.mp-check-item.is-ok .mp-check-mark { color: var(--ac-ok); }
+.mp-check-item.is-missing { color: var(--ac-ink); }
+.mp-check-item.is-missing .mp-check-mark { color: var(--ac-danger); }
+.mp-check-item.is-info { color: var(--ac-muted); }
+.mp-callout { background: var(--ac-accent-soft); border: 1px solid var(--ac-hair-strong); border-radius: 12px; padding: .65rem .9rem; margin: .5rem 0; color: var(--ac-ink); }
+.mp-badge-approved { background: rgba(21, 128, 61, .12); color: var(--ac-ok); }
+.mp-badge-needs_info, .mp-badge-rejected { background: var(--ac-danger-soft); color: var(--ac-danger); }
+.mp-badge-submitted, .mp-badge-in_review { background: var(--ac-accent-soft); color: var(--ac-accent-text); }
+.mp-kyc-frame { width: 100%; max-width: 40rem; height: 640px; border: 1px solid var(--ac-hair-strong); border-radius: 12px; background: var(--ac-panel); }
+@media (max-width: 640px) { .mp-kyc-frame { height: 560px; } }
+>>>>>>> 029a93d0 (developers: verified publisher registration (KYB/KYC, bank and tax profile))

@@ -5,7 +5,8 @@
 //
 // Calls (all through deps.pb):
 //   GET  /v1/publishers                                   publishers this person acts for, with role
-//   POST /v1/publisher-applications                       {display_name, org_id?}
+//   (applying: the verified registration in marketplace-registration.js; the M0
+//   POST /v1/publisher-applications is no longer used here)
 //   GET  /v1/orgs                                         orgs this person can apply for
 //   GET|POST /v1/publishers/{p}/roles, DELETE …/roles/{id}  org publishers' team
 //   GET|POST /v1/publishers/{p}/templates                 {slug, name}
@@ -26,7 +27,7 @@
   const el = (...a) => MP.el(...a);
 
   const ADMIN_ROLES = ["owner", "org_admin", "publisher_admin"];
-  const ORG_APPLY_ROLES = ["owner", "admin"];
+  const ORG_APPLY_ROLES = ["owner", "admin"]; // who may register an org as a publisher
   const ROLE_TEXT = {
     owner: "Owner", org_admin: "Organization admin", publisher_admin: "Publisher admin", publisher_finance: "Publisher finance (read only)",
   };
@@ -109,12 +110,6 @@
     }
     const post = (path, body, method) => deps.pb(path, { method: method || "POST", body: body === undefined ? "{}" : JSON.stringify(body) });
 
-    function apply(name, org) {
-      const body = { display_name: name.trim() };
-      if (org) body.org_id = org;
-      return act(() => post("/v1/publisher-applications", body), "Application sent. Pigeonpost reviews it and you'll see the decision here.", load);
-    }
-
     async function openReview(id) {
       try {
         st.review = (await deps.pb(`${base()}/reviews/${encodeURIComponent(id)}`)).data;
@@ -132,16 +127,15 @@
 
     // ---- sections -----------------------------------------------------------------------------
 
-    function applyForm() {
-      const name = el("input", { id: "mp-apply-name", required: true, minlength: "2", maxlength: "80", autocomplete: "organization" });
-      const owner = st.orgs.length
-        ? el("select", { id: "mp-apply-owner" }, el("option", { value: "", text: "My own account" }), st.orgs.map((o) => el("option", { value: o.id, text: o.name })))
-        : null;
-      return el("form", { class: "ac-form", id: "mp-apply", onsubmit: (e) => { e.preventDefault(); apply(name.value, owner ? owner.value : ""); } },
-        el("fieldset", {}, el("legend", { text: "Apply to publish" }),
-          el("label", { for: "mp-apply-name" }, "Publisher name buyers will see"), name,
-          owner ? el("label", { for: "mp-apply-owner" }, "Publish as") : null, owner,
-          el("button", { type: "submit", class: "btn btn-secondary" }, "Apply")));
+    // The verified registration (marketplace-registration.js): one mount, kept across redraws so
+    // a half-filled step survives the console refreshing around it.
+    let regBox = null;
+    function registration() {
+      if (!regBox) {
+        regBox = el("div", { id: "mp-registration", class: "mp-registration" });
+        if (MP.registration) MP.registration(regBox, deps, { orgs: st.orgs });
+      }
+      return regBox;
     }
 
     function header(p) {
@@ -478,13 +472,13 @@
       if (st.error) { root.append(el("p", { class: "muted", text: MP.errorText(st.error) })); return; }
       if (!st.publishers) { root.append(el("p", { class: "muted", text: "Loading…" })); return; }
       if (!st.publishers.length) {
-        root.append(el("p", { text: "Publish services that run on Nests. Pigeonpost reviews every publisher and every release before anyone can install it." }), applyForm());
+        root.append(el("p", { text: "Publish services that run on Nests. Pigeonpost verifies every publisher and reviews every release before anyone can install it." }), registration());
         return;
       }
       const p = pub();
       root.append(header(p));
-      if (p.status === "rejected") root.append(applyForm());
-      if (p.status === "applied" || p.status === "rejected") return;
+      // Not certified yet (or no longer): the verified registration is the way in.
+      if (p.status === "applied" || p.status === "rejected") { root.append(registration()); return; }
       const d = st.data;
       if (!d) { root.append(el("p", { class: "muted", text: "Loading…" })); return; }
       const admin = isAdmin() && p.status === "approved";
@@ -492,9 +486,7 @@
       root.append(teamSection(p, d));
       if (st.review) root.append(reviewDetail(d, admin));
       root.append(templatesSection(d, admin), buildsSection(d, admin), reviewsSection(d), listingsSection(d, admin), ...laterSections());
-      if (st.orgs.length) {
-        root.append(el("details", { class: "mp-more" }, el("summary", { text: "Apply for another publisher" }), applyForm()));
-      }
+      root.append(el("details", { class: "mp-more", id: "mp-verification" }, el("summary", { text: "Verification, payout and tax details" }), registration()));
     }
 
     draw();

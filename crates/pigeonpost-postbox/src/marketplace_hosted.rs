@@ -574,7 +574,7 @@ pub(crate) fn decide_in(
 
 /// The mailbox jobs and results are sent from: `POSTBOX_MARKETPLACE_MAILBOX` (default
 /// `/pigeonpost/marketplace`). It must exist and belong to the platform owner's account.
-async fn platform_mailbox(state: &AppState) -> GResult<crate::store::StoredIdentity> {
+pub(crate) async fn platform_mailbox(state: &AppState) -> GResult<crate::store::StoredIdentity> {
     let unavailable = || {
         GErr::new(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -600,7 +600,7 @@ async fn platform_mailbox(state: &AppState) -> GResult<crate::store::StoredIdent
 }
 
 /// A `msg_ref` derived from the job and purpose, so a resend is recognised as the same message.
-fn msg_ref_for(job: &str, purpose: &str) -> String {
+pub(crate) fn msg_ref_for(job: &str, purpose: &str) -> String {
     const B32: &[u8; 32] = b"abcdefghijklmnopqrstuvwxyz234567";
     let d = digest_of(format!("pigeonpost-hosted-job\0{purpose}\0{job}").as_bytes());
     let hex = d.trim_start_matches("sha256:");

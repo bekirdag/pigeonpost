@@ -267,6 +267,22 @@ M2 opens the review pipeline to third-party publishers and adds listings, a cata
 | GET /internal/v1/marketplace/build-requests; POST …/build-requests/{build}/failure | ops service token | the build plane |
 | POST /internal/v1/marketplace/builds with `build_id` (M1 route) | ops service token | the build plane, answering a publisher's build request |
 
+### Verified publisher registration (developer program plan §2–§3)
+
+| Route | Action | Who |
+|---|---|---|
+| GET /v1/publisher-registration/requirements | PublisherApply | a person |
+| GET, POST /v1/publisher-registrations | PublisherApply | a person, for their account or an org they own or administer |
+| GET, PATCH /v1/publisher-registrations/{application} | PublisherApply | the applicant's team; others get 404 |
+| POST …/documents; GET, DELETE …/documents/{document} | PublisherApply | same; editable states only for changes |
+| POST …/kyc; POST …/kyc/{check}/simulate (sandbox only) | PublisherApply | same |
+| POST …/submit | PublisherSubmit (HumanStepUp) | same, with step-up |
+| GET /v1/staff/publisher-registrations[/{application}]; POST …/claim; POST …/decisions | NestReview | a reviewer with step-up and no stake (the detail read is audited) |
+| GET /v1/staff/publisher-registrations/{application}/documents/{document}; POST …/reveal | NestReview or PayoutPrepare | a reviewer or finance with step-up and no stake; audited |
+| POST /v1/integrations/shufti/callback | provider | Shufti Pro, by its `Signature` header |
+
+States: `draft → submitted → in_review → needs_info → submitted … → approved | rejected`. Approval certifies the publisher profile (creating it if needed, `publisher_profiles.verified_application_id`) and queues the payee and tax profile for saas_be (`PUT …/finance/publishers/{publisher}/payout-profile`). The M0 `POST /v1/publisher-applications` still works and its applications are `account_type: legacy`; starting a registration converts an open one into a draft.
+
 The team of a publisher: a personal publisher's own account; for an org publisher, the org's owner and full admins and active members holding a live `publisher_admin` (acts, publishes with step-up) or `publisher_finance` (reads only) role. `GET /v1/publishers/{publisher}/reviews/{review}` is the contract's `getNestReview`, now implemented.
 
 ### How a third-party release gets to a buyer

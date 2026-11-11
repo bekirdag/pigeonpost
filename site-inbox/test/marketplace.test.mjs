@@ -10,6 +10,7 @@ const read = (p) => readFileSync(new URL(p, import.meta.url), "utf8");
 const core = read("../../site/marketplace-core.js");
 const catalogJs = read("../../site/marketplace-catalog.js");
 const publisherJs = read("../../site/marketplace-publisher.js");
+const registrationJs = read("../../site/marketplace-registration.js");
 const staffJs = read("../../site/marketplace-staff.js");
 const products = read("../../site/products.js");
 const creditsJs = read("../../site/credits.js");
@@ -40,7 +41,7 @@ function page(t, routes) {
   const dom = new JSDOM('<div id="root"></div>', { url: "https://pigeonpost.dev/account", runScripts: "outside-only", virtualConsole: new VirtualConsole() });
   t.after(() => dom.window.close());
   const { window } = dom;
-  for (const s of [core, catalogJs, publisherJs, staffJs, creditsJs, products]) window.eval(s);
+  for (const s of [core, catalogJs, registrationJs, publisherJs, staffJs, creditsJs, products]) window.eval(s);
   const calls = [], stepUps = [];
   const pb = async (path, init = {}) => {
     const method = init.method || "GET";
@@ -389,35 +390,44 @@ function publisherPage(t, { publishers = [PUB], orgs = [], roles = [], listings 
   return p;
 }
 
-test("someone with no publisher applies for themselves or for an org they run", async (t) => {
-  const p = publisherPage(t, { publishers: [], orgs: [{ id: "org_1", name: "Acme Ltd", my_roles: ["owner"] }, { id: "org_2", name: "Other", my_roles: ["member"] }] });
-  await tick();
-  assert.equal(p.$("#mp-apply legend").textContent, "Apply to publish");
-  const owner = p.$("#mp-apply-owner");
-  assert.deepEqual([...owner.options].map((o) => o.textContent), ["My own account", "Acme Ltd"], "only orgs they own or administer");
-  p.$("#mp-apply-name").value = " Acme ";
-  owner.value = "org_1";
-  p.submit(p.$("#mp-apply"));
-  await tick();
-  assert.deepEqual(p.calls.find((c) => c.path === "/v1/publisher-applications").body, { display_name: "Acme", org_id: "org_1" });
-  assert.match(p.$("#mp-pub-status").textContent, /Application sent/);
-});
+const REQS = { account_types: [
+  { id: "individual_tr", label: "Individual (resident in Turkey)", label_tr: "Bireysel", country: "TR", company: false, org_allowed: false, kyc_subject: "applicant", tax_id: "tckn", bank_methods: ["iban"], documents: [] },
+  { id: "company_tr", label: "Company in Turkey", label_tr: "Şirket", country: "TR", company: true, org_allowed: true, kyc_subject: "signatory", tax_id: "vkn", bank_methods: ["iban"], documents: [{ type: "vergi_levhasi", label: "Tax plate", label_tr: "Vergi levhası", need: "required" }] },
+], document_max_bytes: 10485760, agreement_version: "dda-x", content_policy_version: "dcp-x" };
 
-test("a second application is explained, not guessed", async (t) => {
-  const p = publisherPage(t, { publishers: [], extra: (m, path) => { if (path === "/v1/publisher-applications") throw fail(409, "application_exists"); } });
+test("someone with no publisher is offered the verified registration, for themselves or an org they run", async (t) => {
+  const p = publisherPage(t, { publishers: [], orgs: [{ id: "org_1", name: "Acme Ltd", my_roles: ["owner"] }, { id: "org_2", name: "Other", my_roles: ["member"] }],
+    extra: (m, path) => {
+      if (path === "/v1/publisher-registration/requirements") return { data: REQS };
+      if (m === "GET" && path === "/v1/publisher-registrations") return { data: [] };
+      if (m === "POST" && path === "/v1/publisher-registrations") throw fail(409, "application_exists");
+    } });
   await tick();
-  p.$("#mp-apply-name").value = "Acme";
-  p.submit(p.$("#mp-apply"));
+  assert.ok(p.$("#mp-registration"), "the registration is mounted");
+  assert.match(p.$("#mp-reg-title").textContent, /verified publisher/i);
+  const owner = p.$("#mp-reg-owner");
+  assert.deepEqual([...owner.options].map((o) => o.textContent), ["My own account", "Acme Ltd"], "only orgs they own or administer");
+  p.$("#mp-reg-type").value = "company_tr";
+  p.$("#mp-reg-type").dispatchEvent(new p.window.Event("change"));
+  owner.value = "org_1";
+  p.$("#mp-reg-name").value = " Acme ";
+  p.submit(p.$("#mp-reg-start"));
   await tick();
-  assert.match(p.$("#mp-pub-status").textContent, /already an open or approved application/);
+  assert.deepEqual(p.calls.find((c) => c.method === "POST" && c.path === "/v1/publisher-registrations").body, { account_type: "company_tr", public_name: "Acme", org_id: "org_1" });
+  assert.match(p.$("#mp-reg-status").textContent, /already an open application/);
+  assert.equal(p.calls.some((c) => c.path === "/v1/publisher-applications"), false, "the M0 application is not used");
 });
 
 test("an application under review shows its state and nothing to build yet", async (t) => {
-  const p = publisherPage(t, { publishers: [{ ...PUB, status: "applied" }] });
+  const p = publisherPage(t, { publishers: [{ ...PUB, status: "applied" }], extra: (m, path) => {
+    if (path === "/v1/publisher-registration/requirements") return { data: REQS };
+    if (path === "/v1/publisher-registrations") return { data: [] };
+  } });
   await tick();
   assert.match(p.$("#mp-pub-state").textContent, /Acme.*personal publisher.*Owner/s);
   assert.match(p.root.textContent, /Application received/);
   assert.equal(p.$("#mp-templates"), null);
+  assert.ok(p.$("#mp-registration"), "an M0 application can be completed as a verified registration");
   assert.equal(p.calls.some((c) => c.path.endsWith("/templates")), false);
 });
 
@@ -741,7 +751,7 @@ async function accountPage(t, { features, nested = false, url = "https://pigeonp
     if (path.startsWith("/api/v1/credits/history")) return res({ entries: [], next_cursor: null });
     return res({ identities: [], keys: [], handles: [], subscriptions: [], invoices: [], paymentMethods: [], billingProfiles: [], data: [], packages: [] });
   };
-  for (const s of [core, catalogJs, publisherJs, staffJs, creditsJs, products]) window.eval(s);
+  for (const s of [core, catalogJs, registrationJs, publisherJs, staffJs, creditsJs, products]) window.eval(s);
   window.eval(accountJs);
   for (let i = 0; i < 40; i++) await tick(1);
   return { window, doc: window.document, calls, navigations };

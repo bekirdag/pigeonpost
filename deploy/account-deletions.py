@@ -260,6 +260,16 @@ def erase(conn, request_id, blob_root, evidence):
         if has(conn, "publisher_profiles"):
             conn.execute("UPDATE publisher_profiles SET status='revoked', owner_id=?, display_name='erased', updated_at=? WHERE owner_kind='account' AND owner_id=?", ("erased_" + request_id, now, account))
             conn.execute("UPDATE publisher_profiles SET applied_by=? WHERE applied_by=?", ("erased_" + request_id, account))
+        if has(conn, "publisher_applications"):
+            # Publisher registrations are KYB/KYC and tax records with a legal retention period:
+            # the account link is pseudonymised and an open application is closed, but the sealed
+            # bank/tax details and documents stay until their retention ends (the postbox worker
+            # purges them then). A decided record with no retention clock gets the after-end one.
+            erased = "erased_" + request_id
+            conn.execute("UPDATE publisher_applications SET state=CASE WHEN state IN ('draft','submitted','in_review','needs_info') THEN 'rejected' ELSE state END, owner_id=?, updated_at=? WHERE owner_kind='account' AND owner_id=?", (erased, now, account))
+            conn.execute("UPDATE publisher_applications SET applicant=? WHERE applicant=?", (erased, account))
+            if has(conn, "publisher_application_documents"):
+                conn.execute("UPDATE publisher_application_documents SET retain_until=? WHERE retain_until IS NULL AND purged_at IS NULL AND application_id IN (SELECT id FROM publisher_applications WHERE owner_id=? OR applicant=?)", (now + 3650 * 86400, erased, erased))
         # Marketplace M1: unused zero-priced quotes and authorizations go; a job keeps its states
         # and ids for the release's record but loses its content and no longer names the person.
         if has(conn, "nest_payment_authorizations"):

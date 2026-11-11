@@ -169,6 +169,13 @@ mod policy;
 mod pow;
 mod principal;
 mod profile_names;
+mod publisher_kyc;
+mod publisher_registration;
+mod publisher_registration_staff;
+#[cfg(test)]
+mod publisher_registration_tests;
+mod publisher_registration_worker;
+mod publisher_validate;
 mod push;
 mod recipients;
 mod reputation;
@@ -578,6 +585,8 @@ async fn serve(cfg: Config) {
     marketplace_pay::start_sweeper(state.clone());
     // Publisher-hosted jobs: dispatch to the publisher's service, expire, deliver results.
     marketplace_hosted::start_worker(state.clone());
+    // Publisher registration: notices, payee push, malware scan, KYC polling, retention.
+    publisher_registration_worker::start_worker(state.clone());
     start_internal_listener(&state).await;
     // Disappearing-message expiry and group maintenance (SDS §17.2, §4.3), every 30 s.
     ephemeral::start_worker(state.clone());
@@ -1117,6 +1126,11 @@ fn build_router(state: AppState) -> Router {
         // The Piyote back office (staff only, not behind the marketplace flag).
         .merge(backoffice::router())
         .merge(backoffice_finance::router())
+        // Verified publisher registration (developer program plan §2–§3): KYB/KYC, documents,
+        // bank and tax profile, and the staff review API.
+        .merge(publisher_registration::router())
+        .merge(publisher_registration::provider_router())
+        .merge(publisher_registration_staff::router())
         // Phase 3B: calendar and scheduled meetings (SDS §14B.5, docs/calendar.md).
         .route(
             "/v1/calendars",

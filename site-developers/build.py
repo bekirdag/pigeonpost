@@ -56,6 +56,7 @@ NAV = [
         ("nest-manifest", "Manifest and operations"),
         ("nest-runtime", "Runtime API"),
         ("nest-review", "Security and review"),
+        ("nest-register", "Become a publisher"),
         ("nest-publish", "Publish and price"),
         ("nest-hosted", "Publisher-hosted apps"),
     ]),
@@ -2529,6 +2530,70 @@ Check these items before submitting your release.
 6. The app answers every operation it declares, with and without a model (`--no-model`).
 """)
 
+page("nest-register", "Become a publisher",
+     "Verified publisher registration: account types, documents, identity, bank and tax details, and review.",
+     """
+# Become a publisher
+
+Every publisher on the Pigeonpost marketplace is verified before it can sell, the way an app store verifies a developer account. You register once, in the **Publish** section of your [account page](https://pigeonpost.dev/account), for your own account or for an organization you own or administer. Pigeonpost staff review every registration.
+
+There is no registration fee at launch.
+
+## What every account type gives
+
+- **Names**: your legal name (as on your ID or company registry), an optional trading name, and the public publisher name buyers see.
+- **Address and contacts**: your country and address, a website (required for companies), a support contact address buyers can use, an optional Pigeonpost support address, and a private contact address where Pigeonpost writes to you about the registration.
+- **Bank account in your legal name**:
+  - payees in Turkey are paid in TRY to a Turkish IBAN;
+  - payees outside Turkey are paid in USD: an IBAN with the bank's SWIFT/BIC, an account number with SWIFT/BIC and the bank's name and address, or for US banks an ACH routing number and account.
+- **Tax profile**: your tax id and tax residence country, and, for payees outside Turkey, a tax treaty country with a certificate of residence if you want a treaty rate.
+- **Identity verification** with Shufti Pro: an ID document, a selfie and sanctions/PEP screening, in a hosted flow inside the page. For a company it is the authorised signatory who verifies.
+- **Agreements**: the Pigeonpost Developer Distribution Agreement and the Developer Content Policy (drafts at launch). The versions you accept and the time are recorded.
+- **Two-step sign-in**: submitting needs a recent strong sign-in.
+
+IBANs, BICs, ACH routing numbers, T.C. Kimlik numbers and Vergi Kimlik numbers are checked when you enter them (format and check digits). That catches typos; it does not prove the account or number is yours, which is what the documents and the review are for.
+
+## Account types and documents
+
+Documents are PDF, JPEG or PNG files of at most 10 MB each.
+
+| Account type | Who | Tax id | Documents |
+|---|---|---|---|
+| Individual (Turkey) | a person without a company | T.C. Kimlik No | none; a bank statement or letter is optional |
+| Individual (outside Turkey) | a person without a company | your foreign tax id, if you have one | certificate of residence if you claim a treaty rate; bank letter optional |
+| Sole proprietor (Turkey) | şahıs şirketi / serbest meslek | VKN (or TCKN) | vergi levhası; faaliyet belgesi issued within the last 6 months; bank letter optional |
+| Company (Turkey) | Ltd. Şti., A.Ş. | VKN, plus MERSİS and trade registry numbers | ticaret sicil gazetesi; faaliyet belgesi (last 6 months); imza sirküleri; vergi levhası; a bank statement or letter showing the company as holder |
+| Company (outside Turkey) | any foreign entity | the company's tax id (for a US company the EIN) and registry number; D-U-N-S optional | certificate of incorporation or registry extract; tax id document (for the US the EIN letter CP 575 or 147C); proof of address; proof that the signatory may act for the company; bank statement or letter; certificate of residence for treaty rates |
+
+## Taxes on your sales
+
+Piyote (Pigeonpost's operator) is the merchant of record: it buys from you and resells to buyers, so your payouts are Piyote's purchases. What is withheld depends on who you are:
+
+- **A Turkish company or sole proprietor** invoices Piyote (e-Fatura / e-Arşiv with KDV); nothing is withheld.
+- **A Turkish individual** without a tax registration: Piyote issues a gider pusulası and withholds income tax (stopaj) and pays it for you.
+- **A foreign company**: corporate withholding on licence payments to non-residents, reduced to the treaty rate with a valid certificate of residence.
+- **A foreign individual**: income tax withholding on Turkish-source licence income, with treaty relief where a certificate of residence applies.
+
+The rates are configuration confirmed by Piyote's accountant before the first payout; your statement shows gross, withholding and net, line by line.
+
+## How the review works
+
+1. Choose your account type and fill the registration. It is saved as a draft you can come back to.
+2. Upload the documents on the checklist. Files are scanned for malware and stored encrypted.
+3. Verify your identity (or your signatory's) with Shufti Pro.
+4. Accept the agreements and submit with two-step sign-in.
+5. A Pigeonpost reviewer, who has no stake in your business, checks that names match across your documents, identity check and bank account, that documents are current, that tax ids and registry numbers are consistent, and the sanctions screening.
+6. The outcome is **approved**, **more information needed** (with a message; update the registration and resubmit with a reply), or **not approved** (with the reason).
+
+You get a message in Pigeonpost and at your contact address at every step. Once approved, your publisher is certified and you can create templates and listings. Finance verifies your payout details separately before your first payout.
+
+Bank and tax details are never shown back in full, to you or to staff screens; a staff member can open them only with a recorded reason. Documents are kept for the legal retention period and then deleted. Shufti Pro keeps the identity images; Pigeonpost keeps only the outcome and the verified name, date of birth and country.
+
+## For tools
+
+The registration API is part of the Nests contract (`docs/nests/contracts/pigeonpost-nests.v1.yaml`, tag *Publisher registration*): `GET /v1/publisher-registration/requirements` lists the account types and their documents.
+""")
+
 page("nest-publish", "Publish, update and price",
      "Submission, listings, versions, updates, rollback and terms at launch.",
      """
@@ -2538,8 +2603,8 @@ The marketplace is open to every account. Everything on this page happens in the
 
 ## Submission and review
 
-1. Apply as a publisher in the publisher console, for your account or for an organization.
-2. Pigeonpost reviews the application. Once it is approved your publisher is certified and the console unlocks the steps below.
+1. Register as a verified publisher in the publisher console, for your account or for an organization: [Become a publisher](/nest-register) lists what each account type needs.
+2. Pigeonpost staff review the registration. Once it is approved your publisher is certified and the console unlocks the steps below.
 3. Create a template: your package, under the name in your manifest.
 4. Submit a build of a pinned commit from an https repository (console or `pigeonpost nest submit`). Pigeonpost builds it from source.
 5. Follow the review stages and read your findings ([Security and review](/nest-review)). A named Pigeonpost staff member makes the final decision.

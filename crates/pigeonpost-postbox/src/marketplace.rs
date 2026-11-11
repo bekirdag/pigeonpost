@@ -434,12 +434,30 @@ async fn apply_publisher(
                     )
                     .with("application_id", existing));
                 }
+                // Verified registration (`publisher_registration`) is the way in now; this M0
+                // route stays for existing clients. An owner with an open registration is sent there.
+                let open: Option<String> = tx
+                    .query_row(
+                        "SELECT id FROM publisher_applications WHERE owner_kind = ?1 AND owner_id = ?2
+                           AND state IN ('draft','submitted','in_review','needs_info')",
+                        params![kind, oid],
+                        |r| r.get(0),
+                    )
+                    .optional()?;
+                if let Some(existing) = open {
+                    return Err(GErr::conflict(
+                        "application_exists",
+                        "this owner already has an open publisher registration",
+                    )
+                    .with("application_id", existing));
+                }
                 tx.execute(
                     "INSERT INTO publisher_profiles
                         (id, owner_kind, owner_id, display_name, status, applied_by, created_at, updated_at)
                      VALUES (?1, ?2, ?3, ?4, 'applied', ?5, ?6, ?6)",
                     params![rid, kind, oid, name, by, now],
                 )?;
+                crate::store::publisher_registration::backfill_legacy(tx)?;
                 Ok(())
             })
             .await?;

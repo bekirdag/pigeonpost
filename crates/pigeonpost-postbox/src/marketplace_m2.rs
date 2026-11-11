@@ -3549,6 +3549,23 @@ async fn staff_certify(
         let (v, wake_list) = state
             .store
             .group_tx(move |tx| -> GResult<(Value, Vec<String>)> {
+                // A publisher under verified registration is decided there, with its checklist.
+                let verifying: Option<String> = tx
+                    .query_row(
+                        "SELECT id FROM publisher_applications WHERE publisher_id = ?1
+                           AND account_type <> 'legacy'
+                           AND state IN ('draft','submitted','in_review','needs_info')",
+                        [&application],
+                        |r| r.get(0),
+                    )
+                    .optional()?;
+                if let Some(reg) = verifying {
+                    return Err(conflict_code(
+                        "registration_in_progress",
+                        "decide this publisher's verified registration instead",
+                    )
+                    .with("application_id", reg));
+                }
                 let n = tx.execute(
                     "UPDATE publisher_profiles SET status = ?2, decided_by = ?3, decided_at = ?4,
                         decision_reason = ?5, updated_at = ?4 WHERE id = ?1 AND status = 'applied'",
@@ -3560,6 +3577,13 @@ async fn staff_certify(
                         "this application is not waiting for a decision",
                     ));
                 }
+                // The legacy application row follows the profile.
+                tx.execute(
+                    "UPDATE publisher_applications SET state = ?2, decided_by = ?3, decided_at = ?4,
+                        decision_reason = ?5, revision = revision + 1, updated_at = ?4
+                      WHERE publisher_id = ?1 AND account_type = 'legacy' AND state = 'submitted'",
+                    params![application, req.decision, account, now, reason],
+                )?;
                 tx.execute(
                     "INSERT INTO publisher_certifications (id, publisher_id, decision, reason, decided_by, created_at)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -3661,6 +3685,7 @@ async fn staff_revoke_publisher(
                      VALUES (?1, ?2, 'revoked', ?3, ?4, ?5)",
                     params![new_id("crt"), publisher, reason, account, now],
                 )?;
+                crate::publisher_registration_worker::certification_ended_in(tx, &publisher, now)?;
                 crate::store::audit::append_in(tx, &audit)?;
                 let w = store::publisher_event_in(
                     tx,

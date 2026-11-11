@@ -552,8 +552,11 @@ fn the_routes_and_the_contract_match() {
     let hosted = include_str!("marketplace_hosted.rs");
     // Credits v1: the per-job price handlers the hosted router mounts (`marketplace_credits.rs`).
     let credits = include_str!("marketplace_credits.rs");
+    // Verified publisher registration: the developer's routes and the staff review.
+    let registration = include_str!("publisher_registration.rs");
+    let registration_staff = include_str!("publisher_registration_staff.rs");
     let source = format!(
-        "{m0}\n{m1}\n{m2}\n{pay}\n{hosted}\n{credits}\n{}",
+        "{m0}\n{m1}\n{m2}\n{pay}\n{hosted}\n{credits}\n{registration}\n{registration_staff}\n{}",
         m2b.join("\n")
     );
     let served: BTreeSet<(String, String)> =
@@ -577,6 +580,14 @@ fn the_routes_and_the_contract_match() {
             ))
             .chain(crate::foundations_tests::routes_in(
                 hosted,
+                "pub(crate) fn router(",
+            ))
+            .chain(crate::foundations_tests::routes_in(
+                registration,
+                "pub(crate) fn router(",
+            ))
+            .chain(crate::foundations_tests::routes_in(
+                registration_staff,
                 "pub(crate) fn router(",
             ))
             .collect();
