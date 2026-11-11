@@ -274,18 +274,25 @@ user, `nestscan`, with its own nftables allowlist, and are only ever read by a s
 
 | Check | Tool (pinned) | Scans | Blocks |
 |---|---|---|---|
-| Dependency CVEs | OSV-Scanner 2.7.0 (`--offline-vulnerabilities`) | lockfile and SBOM | critical/high with a fix |
+| Dependency CVEs | OSV-Scanner 2.7.0 (`--offline-vulnerabilities`, platform `--config`) | lockfile and SBOM | critical/high with a fix (an ungraded one with a fix counts as high) |
 | Image CVEs | Grype 0.121.0 | the saved OCI archive | critical/high with a fix |
-| Malware | ClamAV 1.4.6 LTS + YARA 4.5.2 | source, compiled context, image archive | any hit |
-| SAST | Semgrep 1.181.0, vendored `scanners/semgrep-rules.yml` | source | `ERROR` + `confidence: HIGH` |
-| Secrets | gitleaks 8.30.1 (`--redact`) on top of the built-in rules | source | any hit |
+| Malware | ClamAV 1.4.6 LTS + YARA 4.5.2 | source, compiled context, the image's layers (unpacked inside gVisor) | any hit, and anything ClamAV cannot read in full (`--alert-exceeds-max/-encrypted/-broken`) or YARA reports as an error or timeout |
+| SAST | Semgrep 1.181.0, vendored `scanners/semgrep-rules.yml`, `--disable-nosem`, no size or time cut-off | source (copy without publisher config) | `ERROR` + `confidence: HIGH`; any error or skipped file |
+| Secrets | gitleaks 8.30.1 (`--redact`, platform `--config`, no ignore file, `--ignore-gitleaks-allow`) on top of the built-in rules | source (copy without publisher config) | any hit |
 | Obfuscation | in-process heuristics (entropy, packed JS, base64 blobs, binaries) | source | never |
-| Egress | gVisor strace (`runsc-behaviour`) | the behaviour run | any attempt but the broker, DNS included |
-| Buyer data | per-job canaries | the behaviour run's results and output | a canary outside its job |
-| Resources | the user manager's cgroup | the behaviour run | more than 2x the pool budget |
+| Egress | gVisor strace (`runsc-behaviour`) | the behaviour run | any attempt but the broker, DNS included; a missing boot log or a trace over 64 MiB (`egress.flood`) |
+| Buyer data | random per-job canaries (no fixed prefix) | the run's results and both output streams, whatever the exit; raw, hex, URL-encoded, base64, split across lines | a canary outside its job |
+| Resources | the user manager's cgroup, CPU counted to the end of the run, answers timed when complete | the behaviour run | more than 2x the pool budget |
 
 A tool that cannot run, a ruleset whose digest is not the pinned one, or a database missing or
-older than `max_db_age_hours` is a blocking `scanner.*` finding (fail closed). Each finding is
+older than `max_db_age_hours` is a blocking `scanner.*` finding (fail closed); its id is unique to
+the run, so a re-scan can never take a failure for a finding already answered.
+
+**Publisher-owned scanner configuration is never used.** gitleaks, OSV-Scanner and Semgrep scan
+a copy of the source without `.gitleaks.toml`, `gitleaks.toml`, `.gitleaksignore`,
+`osv-scanner.toml`, `.semgrepignore`, `.semgrep*` and `.gitignore` (each one found is an advisory
+`evasion.scanner_config` finding for staff); each tool gets the platform's own configuration
+(compiled into buildd) and has its inline opt-outs switched off. Each finding is
 `{id, severity, tool, rule, path, package, message, blocking}`; staff see all of it, the publisher
 sees the postbox's redaction (malware signature and rule names, trace destinations and canaries
 stay with staff).
@@ -300,8 +307,33 @@ it bundles secret and misconfiguration scanners this plane already runs separate
 The same queue scans for the postbox: `POST /v1/scans` (submit token) with `kind: files` (a
 publisher-hosted service's result files: ClamAV and YARA) or `kind: release` (the monthly
 re-scan: OSV and Grype on the SBOM, and Grype, ClamAV and YARA on the image while it is here),
-then `GET /v1/scans/{scan_id}`. Builds run first. An image named by a re-scan is kept past
-`keep_days` until no re-scan has named it for 62 days.
+then `GET /v1/scans/{scan_id}`. Builds run first; a scan running when buildd stops runs again at
+start. An image no re-scan has named yet is kept for `keep_unscanned_days` (120); one a re-scan
+has named is kept while re-scans keep naming it, then `keep_days` after its last. A re-scan of an
+image that is gone is a blocking `scanner.image_unavailable` finding (SBOM-only).
+
+### Unannounced checks of publisher-hosted services
+
+The announced conformance run tells a service it is being reviewed. Two checks it cannot tell
+from real use (the postbox, `marketplace_shadow`):
+
+- **Shadow jobs**: ordinary hosted jobs (real listing id, normal job id, the plain contract
+  message, realistic varied input) from the platform owner's account, with no charge to anyone
+  and no delivery. Staff start one with `POST /v1/staff/marketplace/listings/{listing}/shadow-jobs`
+  (step-up, no stake); `POSTBOX_MARKETPLACE_SHADOW_DAYS` (30; `0` off) also schedules one per
+  published publisher-hosted listing at a random time, about once per that many days. Its result
+  gets the conformance checks and ClamAV/YARA here. A failure flags the release; a malware hit
+  also stops the listing (the kill switch, actor `system:analysis`).
+- **Sampled buyer results**: `POSTBOX_MARKETPLACE_RESULT_SAMPLE_PERCENT` (5; `0` off) of real
+  succeeded results go to `POST /v1/scans` after they are recorded (the buyer's delivery does not
+  wait). The files stay on this host only until the scan ends. A hit stops the listing and flags
+  it.
+
+Staff see every flag (re-scan, shadow job, result sample) at
+`GET /v1/staff/marketplace/security-flags`, acknowledge with
+`POST /v1/staff/marketplace/security-flags/{flag}/acknowledge`, and lift a stop with the
+existing kill route (`action: restore`). Keep the shadow schedule, its input pool and the sample
+rate out of publisher-facing text beyond the policy line that such checks exist.
 
 ### Deploy on raijin (operator steps; nothing here is automatic)
 
@@ -317,6 +349,9 @@ install -m 0755 deploy/nests/buildd/nestscan-update /usr/local/sbin/nestscan-upd
 install -m 0755 deploy/nests/buildd/nestbuild-allowlist /usr/local/sbin/nestbuild-allowlist
 install -m 0644 deploy/nests/buildd/nestbuild-tmpfiles.conf /etc/tmpfiles.d/nestbuild.conf
 systemd-tmpfiles --create /etc/tmpfiles.d/nestbuild.conf
+# The behaviour traces on a size-limited tmpfs, never raijin's shared disk:
+echo 'tmpfs /var/lib/pigeonpost-buildd/netlog tmpfs size=512m,mode=0700,uid=2350,gid=2350,nosuid,nodev,noexec 0 0' >> /etc/fstab
+mount /var/lib/pigeonpost-buildd/netlog && df -h /var/lib/pigeonpost-buildd/netlog
 install -o root -g nestbuild -m 0640 deploy/nests/buildd/scanners/semgrep-rules.yml /etc/pigeonpost-buildd/semgrep-rules.yml
 install -o root -g nestscan -m 0640 deploy/nests/buildd/scanners/pigeonpost.yar /etc/pigeonpost-buildd/pigeonpost.yar
 install -o root -g nestscan -m 0640 deploy/nests/buildd/scanners/freshclam.conf /etc/pigeonpost-buildd/freshclam.conf
@@ -384,7 +419,8 @@ systemctl restart pigeonpost-nest-buildd
 ```
 
 On the postbox: `POSTBOX_MARKETPLACE_RESCAN_DAYS=30` (the default; `0` switches the monthly
-re-scan off). The conformance run needs no setting beyond the build plane already configured.
+re-scan off), `POSTBOX_MARKETPLACE_SHADOW_DAYS=30` and `POSTBOX_MARKETPLACE_RESULT_SAMPLE_PERCENT=5`
+(the defaults). The conformance run needs no setting beyond the build plane already configured.
 
 ### Check it works
 
@@ -423,7 +459,8 @@ do not enable `[behaviour]` until the egress unit tests' fixture
 | peak (current + previous + the one being built) | | ~9 GB: keep 12 GB free |
 | images: scanners ~0.3 GB, ClamAV ~0.2 GB, Semgrep ~0.8 GB | nestbuild's storage (scanners + ClamAV also in nestscan's) | ~1.8 GB |
 | retained images of published releases | `/var/lib/pigeonpost-buildd/artifacts` | one archive per published release (0.1–0.5 GB each) |
-| behaviour traces | `/var/lib/pigeonpost-buildd/netlog` | a few MB per run, deleted after it (tmpfiles: 1 day) |
+| behaviour traces | `/var/lib/pigeonpost-buildd/netlog` (tmpfs, 512 MiB) | a few MB per run, read up to 64 MiB, deleted after it (tmpfiles: 1 day) |
+| unpacked image layers | the build's work dir, during the scan | about the image's uncompressed size, deleted with the build |
 
 Per build, the tools add roughly 2–4 minutes of CPU inside the existing slice (ClamAV loading its
 signatures is the largest part, ~30 s; Grype on the image 10–30 s; Semgrep 10–60 s) and ClamAV

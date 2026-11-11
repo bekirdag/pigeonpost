@@ -931,6 +931,13 @@ async fn run_job(
                 if hosting != "publisher" || status != "published" || pstatus != "approved" {
                     return Ok(None);
                 }
+                // Stopped by staff or by a malware hit on one of its results.
+                if crate::marketplace_hardening::killed_in(c, &lid)? {
+                    return Err(conflict_code(
+                        "listing_stopped",
+                        "this service is stopped for a security review",
+                    ));
+                }
                 // An invite or organization grant needs its invoke switch (M2b).
                 let granted = matches!(visibility.as_str(), "invite_only" | "organization")
                     && crate::marketplace_grants::account_grant_in(
@@ -1316,13 +1323,14 @@ pub(crate) async fn dispatch_once(state: &AppState) -> usize {
     };
     let mut n = 0;
     for (job, listing, op, input, mailbox, release, deadline, attempts) in due {
-        let (r, m) = (release.clone(), mailbox.clone());
+        let (r, m, l) = (release.clone(), mailbox.clone(), listing.clone());
         let live = state
             .store
             .group_read(move |c| -> GResult<bool> {
                 let rel = release_in(c, &r)?.ok_or_else(not_found)?;
                 Ok(publishable_in(c, &rel).is_ok()
-                    && rel.manifest["service_mailbox"].as_str() == Some(m.as_str()))
+                    && rel.manifest["service_mailbox"].as_str() == Some(m.as_str())
+                    && !crate::marketplace_hardening::killed_in(c, &l)?)
             })
             .await
             .unwrap_or(false);
@@ -1675,6 +1683,14 @@ async fn post_result(
                 "this postbox stores no files",
             )
         })?;
+        // For the unannounced checks (`marketplace_shadow`): what the result carried.
+        let checked = (
+            status.clone(),
+            files
+                .iter()
+                .map(|(n, _, b)| (n.clone(), b.clone()))
+                .collect::<Vec<_>>(),
+        );
         let mut stored = Vec::new();
         for (name, media, bytes) in &files {
             let sha = blobs.put(bytes).map_err(|_| {
@@ -1721,6 +1737,7 @@ async fn post_result(
         if let Some(a) = w {
             state.event_hub.wake(&a);
         }
+        crate::marketplace_shadow::after_result(&state, &job, &checked.0, checked.1);
         let s = state.clone();
         tokio::spawn(async move {
             deliver_once(&s).await;
@@ -1766,6 +1783,7 @@ pub(crate) async fn deliver_once(state: &AppState) -> usize {
                 "SELECT j.id, j.deliver_to, j.state, j.summary, l.title, j.delivery_attempts
                    FROM nest_hosted_jobs j JOIN nest_listings l ON l.id = j.listing_id
                   WHERE j.delivery = 'pending' AND COALESCE(j.delivery_next_at, 0) <= ?1
+                    AND NOT EXISTS (SELECT 1 FROM nest_shadow_jobs s WHERE s.job_id = j.id)
                   ORDER BY COALESCE(j.delivery_next_at, 0) LIMIT 50",
             )?;
             let rows = stmt
@@ -1915,6 +1933,7 @@ pub(crate) fn start_worker(state: AppState) {
             crate::marketplace_credits::work_once(&state).await;
             crate::marketplace_conformance::work_once(&state).await;
             crate::marketplace_rescan::work_once(&state).await;
+            crate::marketplace_shadow::work_once(&state).await;
         }
     });
 }

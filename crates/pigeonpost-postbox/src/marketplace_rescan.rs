@@ -1,20 +1,29 @@
-//! The monthly re-scan of published releases (developer program plan §4, "After publication").
+//! The monthly re-scan of published releases (developer program plan §4, "After publication"),
+//! and the staff list of security flags it shares with the unannounced checks of publisher-hosted
+//! services (`marketplace_shadow`).
 //!
 //! Every `POSTBOX_MARKETPLACE_RESCAN_DAYS` (30 by default; `0` switches it off), each approved,
 //! built release that a published listing names is sent to the build plane again
 //! (`POST /v1/scans`, `kind: release`): OSV-Scanner and Grype on its SBOM against the newest
 //! databases, and Grype, ClamAV and YARA on its image (the build plane keeps the images of
-//! releases it is asked to re-scan). The scan runs offline in gVisor like the review's own.
+//! releases it is asked to re-scan). A newly published release is re-scanned on the first pass,
+//! so its image is retained from then on. The scan runs offline in gVisor like the review's own.
 //!
-//! A **blocking** finding whose id the release's review (or an earlier flag) did not already have
-//! **flags the release for staff** (`release_rescan_flags`). Nothing else happens: the release is
-//! never quarantined, revoked or unlisted by a re-scan. Staff look at the flag, act with the
-//! existing quarantine and revocation routes when they decide to, and acknowledge it.
+//! A **blocking** finding that was not already blocking in the release's review (or in an earlier
+//! flag) **flags the release for staff** (`release_security_flags`, source `rescan`): a finding
+//! that was advisory then and blocks now flags. Scanner failures (`scanner.*`, the image gone
+//! included) carry ids unique to their run and always flag. Nothing else happens: the release is
+//! never quarantined, revoked or unlisted by a re-scan. Staff act with the existing quarantine
+//! and revocation routes when they decide to, and acknowledge the flag.
+//!
+//! A re-scan the build plane refuses is recorded as failed and retried after a day; one it never
+//! answers is given up after two days and retried, so a lost scan never stops a release from
+//! being re-scanned.
 //!
 //! | Route | Action | Who |
 //! |---|---|---|
-//! | `GET /v1/staff/marketplace/rescan-flags[?all=true]` | `NestReview` | staff with step-up |
-//! | `POST /v1/staff/marketplace/rescan-flags/{flag}/acknowledge` | `NestReview` | staff with step-up |
+//! | `GET /v1/staff/marketplace/security-flags[?all=true]` | `NestReview` | staff with step-up |
+//! | `POST /v1/staff/marketplace/security-flags/{flag}/acknowledge` | `NestReview` | staff with step-up |
 
 use crate::groups::{GErr, GResult};
 use crate::marketplace::{into_response, iso, not_found};
@@ -34,14 +43,18 @@ use std::collections::{BTreeSet, HashMap};
 
 /// Days between sweeps unless `POSTBOX_MARKETPLACE_RESCAN_DAYS` says otherwise.
 const DEFAULT_DAYS: i64 = 30;
+/// A submitted re-scan the build plane has not answered after this long is given up.
+pub(crate) const STALE_SECS: i64 = 2 * 86_400;
+/// A failed re-scan is tried again after this long.
+pub(crate) const RETRY_SECS: i64 = 86_400;
 /// Releases submitted per pass, and scans read per pass.
 const BATCH: usize = 20;
 
 pub(crate) fn router() -> Router<AppState> {
     Router::new()
-        .route("/v1/staff/marketplace/rescan-flags", get(list_flags))
+        .route("/v1/staff/marketplace/security-flags", get(list_flags))
         .route(
-            "/v1/staff/marketplace/rescan-flags/{flag}/acknowledge",
+            "/v1/staff/marketplace/security-flags/{flag}/acknowledge",
             post(acknowledge),
         )
 }
@@ -56,7 +69,8 @@ fn interval_secs() -> i64 {
 }
 
 /// The releases a sweep re-scans: approved, built, not revoked, named by a published listing,
-/// and not re-scanned within `interval`.
+/// and not re-scanned within `interval` (an open re-scan younger than [`STALE_SECS`], or a failed
+/// one younger than [`RETRY_SECS`], also holds it back; an older one does not).
 pub(crate) fn due_in(
     c: &Connection,
     now: i64,
@@ -70,19 +84,40 @@ pub(crate) fn due_in(
             AND COALESCE(r.build_isolation, '') <> 'publisher_hosted'
             AND r.sbom IS NOT NULL
             AND NOT EXISTS (SELECT 1 FROM marketplace_rescans s WHERE s.release_id = r.id
-                              AND (s.state = 'submitted' OR s.submitted_at > ?1))
+                              AND ((s.state = 'submitted' AND s.submitted_at > ?3)
+                                OR (s.state = 'done' AND s.submitted_at > ?1)
+                                OR (s.state = 'failed'
+                                    AND COALESCE(s.finished_at, s.submitted_at) > ?4)))
           ORDER BY r.id LIMIT ?2",
     )?;
     let rows = stmt
-        .query_map(params![now - interval, BATCH as i64], |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
-        })?
+        .query_map(
+            params![
+                now - interval,
+                BATCH as i64,
+                now - STALE_SECS,
+                now - RETRY_SECS
+            ],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(rows)
 }
 
-/// Finding ids the release already answered for: every finding of its reviews' stages, and every
-/// finding an earlier flag raised.
+/// Give up re-scans the build plane has not answered for [`STALE_SECS`] (lost to a restart or a
+/// wiped queue); the release is due again.
+pub(crate) fn expire_stale_in(c: &Connection, now: i64) -> rusqlite::Result<usize> {
+    c.execute(
+        "UPDATE marketplace_rescans SET state = 'failed', finished_at = ?1,
+            error = 'no answer from the build plane'
+          WHERE state = 'submitted' AND submitted_at <= ?2",
+        params![now, now - STALE_SECS],
+    )
+}
+
+/// Finding ids the release already answered for **as blocking**: the blocking findings of its
+/// reviews' stages, and every finding an earlier re-scan flag raised (flags hold blocking ones
+/// only). A finding that was only advisory then is not here, so if it blocks now it flags.
 pub(crate) fn known_in(c: &Connection, release: &str) -> rusqlite::Result<BTreeSet<String>> {
     let mut out = BTreeSet::new();
     let mut stmt = c.prepare(
@@ -92,14 +127,17 @@ pub(crate) fn known_in(c: &Connection, release: &str) -> rusqlite::Result<BTreeS
     let evidence = stmt
         .query_map([release], |r| r.get::<_, String>(0))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
-    let mut stmt = c.prepare("SELECT findings FROM release_rescan_flags WHERE release_id = ?1")?;
+    let mut stmt = c.prepare(
+        "SELECT findings FROM release_security_flags WHERE release_id = ?1 AND source = 'rescan'",
+    )?;
     let flagged = stmt
         .query_map([release], |r| r.get::<_, String>(0))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     for text in evidence {
         let v: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
         for f in v["findings"].as_array().into_iter().flatten() {
-            if let Some(id) = f["id"].as_str() {
+            let blocked = f["blocking"] == true || f["blocker"] == true;
+            if let (true, Some(id)) = (blocked, f["id"].as_str()) {
                 out.insert(id.to_string());
             }
         }
@@ -115,16 +153,61 @@ pub(crate) fn known_in(c: &Connection, release: &str) -> rusqlite::Result<BTreeS
     Ok(out)
 }
 
-/// The blocking findings of a re-scan that the release has not answered for before.
+/// The blocking findings of a re-scan that the release has not answered for before. A scanner
+/// failure (`scanner.*`) is never "answered": it always flags.
 pub(crate) fn new_findings(result: &Value, known: &BTreeSet<String>) -> Vec<Value> {
     result["findings"]
         .as_array()
         .into_iter()
         .flatten()
         .filter(|f| f["blocking"] == true)
-        .filter(|f| f["id"].as_str().is_some_and(|id| !known.contains(id)))
+        .filter(|f| {
+            f["rule"]
+                .as_str()
+                .is_some_and(|r| r.starts_with("scanner."))
+                || f["id"].as_str().is_some_and(|id| !known.contains(id))
+        })
         .cloned()
         .collect()
+}
+
+/// Flag a release for staff (`source`: `rescan`, `shadow_job` or `result_sample`; `action`:
+/// `none` or `quarantined`). Returns the flag id.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn flag_in(
+    c: &Connection,
+    release: &str,
+    listing: Option<&str>,
+    source: &str,
+    reference: &str,
+    findings: &[Value],
+    action: &str,
+    now: i64,
+) -> rusqlite::Result<String> {
+    let id = new_id("rsf");
+    c.execute(
+        "INSERT INTO release_security_flags (id, release_id, listing_id, source, ref_id,
+            findings, action, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+            id,
+            release,
+            listing,
+            source,
+            reference,
+            Value::Array(findings.to_vec()).to_string(),
+            action,
+            now
+        ],
+    )?;
+    tracing::warn!(
+        release,
+        source,
+        reference,
+        action,
+        "release flagged for staff"
+    );
+    Ok(id)
 }
 
 /// Record a finished re-scan; flag the release when it found something new. Never touches the
@@ -147,23 +230,7 @@ pub(crate) fn record_in(
     };
     let fresh = new_findings(result, &known_in(c, release)?);
     if !fresh.is_empty() {
-        c.execute(
-            "INSERT INTO release_rescan_flags (id, release_id, scan_id, findings, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![
-                new_id("rsf"),
-                release,
-                scan,
-                Value::Array(fresh.clone()).to_string(),
-                now
-            ],
-        )?;
-        tracing::warn!(
-            release,
-            scan,
-            new = fresh.len(),
-            "re-scan flagged a release for staff"
-        );
+        flag_in(c, release, None, "rescan", scan, &fresh, "none", now)?;
     }
     c.execute(
         "UPDATE marketplace_rescans SET state = 'done', new_findings = ?2, finished_at = ?3
@@ -231,7 +298,8 @@ pub(crate) async fn work_once(state: &AppState) -> usize {
     }
     let due = state
         .store
-        .group_read(move |c| -> GResult<Vec<(String, String, String)>> {
+        .group_tx(move |c| -> GResult<Vec<(String, String, String)>> {
+            expire_stale_in(c, now)?;
             Ok(due_in(c, now, interval)?)
         })
         .await
@@ -240,52 +308,64 @@ pub(crate) async fn work_once(state: &AppState) -> usize {
         let scan = new_id("scn");
         let body = json!({ "scan_id": scan, "kind": "release", "release_id": release,
                            "image_digest": digest, "sbom": sbom });
-        match state
+        let (st, error) = match state
             .nests
             .marketplace
             .buildd_call(reqwest::Method::POST, "/v1/scans", Some(body))
             .await
         {
-            Ok((200..=299, _)) => {
-                let _ = state
-                    .store
-                    .group_tx(move |tx| -> GResult<()> {
-                        tx.execute(
-                            "INSERT INTO marketplace_rescans (scan_id, release_id, image_digest,
-                                state, submitted_at) VALUES (?1, ?2, ?3, 'submitted', ?4)",
-                            params![scan, release, digest, now],
-                        )?;
-                        Ok(())
-                    })
-                    .await;
-                n += 1;
-            }
-            other => {
-                tracing::warn!(release, ?other, "re-scan not accepted by the build plane");
+            Ok((200..=299, _)) => ("submitted", None),
+            // Refused for this release: recorded and retried later; the others still go.
+            Ok((code, v)) => (
+                "failed",
+                Some(format!(
+                    "the build plane refused the re-scan ({code}): {}",
+                    v["detail"].as_str().unwrap_or("")
+                )),
+            ),
+            Err(e) => {
+                // The build plane is unreachable: nothing else will go through this pass.
+                tracing::warn!(release, error = %e, "re-scans wait for the build plane");
                 break;
             }
+        };
+        if let Some(e) = &error {
+            tracing::warn!(release, error = %e, "re-scan not accepted");
         }
+        let _ = state
+            .store
+            .group_tx(move |tx| -> GResult<()> {
+                tx.execute(
+                    "INSERT INTO marketplace_rescans (scan_id, release_id, image_digest, state,
+                        error, submitted_at, finished_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, CASE WHEN ?4 = 'failed' THEN ?6 END)",
+                    params![scan, release, digest, st, error, now],
+                )?;
+                Ok(())
+            })
+            .await;
+        n += 1;
     }
     n
 }
 
-/// `GET /v1/staff/marketplace/rescan-flags` — open flags (all with `?all=true`), newest first.
+/// `GET /v1/staff/marketplace/security-flags` — open flags (all with `?all=true`), newest first.
 async fn list_flags(
     State(state): State<AppState>,
     headers: HeaderMap,
     Query(q): Query<HashMap<String, String>>,
 ) -> Response {
     let result = async {
-        staff_gate(&state, &headers, Action::NestReview, "rescan-flags", None).await?;
+        staff_gate(&state, &headers, Action::NestReview, "security-flags", None).await?;
         let all = q.get("all").is_some_and(|v| v == "true");
         let rows = state
             .store
             .group_read(move |c| -> GResult<Vec<Value>> {
                 let mut stmt = c.prepare(
-                    "SELECT f.id, f.release_id, r.publisher_id, r.version, f.scan_id, f.findings,
+                    "SELECT f.id, f.release_id, r.publisher_id, r.version, f.ref_id, f.findings,
                             f.created_at, f.acknowledged_at, f.acknowledged_by, f.note,
-                            r.security_state
-                       FROM release_rescan_flags f JOIN nest_releases r ON r.id = f.release_id
+                            r.security_state, f.source, f.listing_id, f.action
+                       FROM release_security_flags f JOIN nest_releases r ON r.id = f.release_id
                       WHERE ?1 OR f.acknowledged_at IS NULL
                       ORDER BY f.created_at DESC LIMIT 100",
                 )?;
@@ -296,7 +376,10 @@ async fn list_flags(
                             "release_id": r.get::<_, String>(1)?,
                             "publisher_id": r.get::<_, String>(2)?,
                             "version": r.get::<_, String>(3)?,
-                            "scan_id": r.get::<_, String>(4)?,
+                            "ref_id": r.get::<_, String>(4)?,
+                            "source": r.get::<_, String>(11)?,
+                            "listing_id": r.get::<_, Option<String>>(12)?,
+                            "action": r.get::<_, String>(13)?,
                             "findings": serde_json::from_str::<Value>(&r.get::<_, String>(5)?)
                                 .unwrap_or(Value::Null),
                             "created_at": iso(r.get(6)?),
@@ -316,7 +399,7 @@ async fn list_flags(
     into_response(result)
 }
 
-/// `POST /v1/staff/marketplace/rescan-flags/{flag}/acknowledge` — `{note}`: staff have looked.
+/// `POST /v1/staff/marketplace/security-flags/{flag}/acknowledge` — `{note}`: staff have looked.
 /// The release is not changed; quarantine and revocation are their own routes.
 async fn acknowledge(
     State(state): State<AppState>,
@@ -326,7 +409,7 @@ async fn acknowledge(
 ) -> Response {
     let result = async {
         let (_, who) =
-            staff_gate(&state, &headers, Action::NestReview, "rescan-flags", None).await?;
+            staff_gate(&state, &headers, Action::NestReview, "security-flags", None).await?;
         let body: Value = body.map(|Json(v)| v).unwrap_or(Value::Null);
         let note = body["note"].as_str().map(|n| {
             n.chars()
@@ -343,7 +426,7 @@ async fn acknowledge(
             .group_tx(move |tx| -> GResult<Value> {
                 let open: Option<Option<i64>> = tx
                     .query_row(
-                        "SELECT acknowledged_at FROM release_rescan_flags WHERE id = ?1",
+                        "SELECT acknowledged_at FROM release_security_flags WHERE id = ?1",
                         [&flag],
                         |r| r.get(0),
                     )
@@ -359,7 +442,7 @@ async fn acknowledge(
                     Some(None) => {}
                 }
                 tx.execute(
-                    "UPDATE release_rescan_flags SET acknowledged_at = ?2, acknowledged_by = ?3,
+                    "UPDATE release_security_flags SET acknowledged_at = ?2, acknowledged_by = ?3,
                         note = ?4 WHERE id = ?1",
                     params![flag, now, who, note],
                 )?;
@@ -427,8 +510,9 @@ mod tests {
         c
     }
 
-    /// The sweep picks published, built, unrevoked releases once per interval; a new blocking
-    /// finding flags the release once, and the release and its listing are never touched.
+    /// The sweep picks published, built, unrevoked releases once per interval; only findings that
+    /// were not already blocking flag (an advisory one that blocks now does), scanner failures
+    /// always flag, and the release and its listing are never touched.
     #[test]
     fn a_rescan_flags_a_published_release_for_staff_and_never_removes_it() {
         let c = db();
@@ -438,45 +522,54 @@ mod tests {
             due.iter().map(|d| d.0.as_str()).collect::<Vec<_>>(),
             ["rel_live"]
         );
-        c.execute(
-            "INSERT INTO marketplace_rescans (scan_id, release_id, image_digest, state,
-                submitted_at) VALUES ('scn_1', 'rel_live', 'sha256:aa', 'submitted', ?1)",
-            [now],
-        )
-        .unwrap();
+        let submit = |id: &str, at: i64| {
+            c.execute(
+                "INSERT INTO marketplace_rescans (scan_id, release_id, image_digest, state,
+                    submitted_at) VALUES (?1, 'rel_live', 'sha256:aa', 'submitted', ?2)",
+                params![id, at],
+            )
+            .unwrap();
+        };
+        submit("scn_1", now);
         assert!(
             due_in(&c, now, 30 * 86_400).unwrap().is_empty(),
             "one at a time"
         );
         let result = json!({ "findings": [
-            { "id": "grype:CVE-2025-1:zlib@1", "blocking": true },
-            { "id": "grype:CVE-2026-9:openssl@3", "blocking": true, "severity": "critical" },
+            // Advisory in the review, blocking now: flags.
+            { "id": "grype:CVE-2025-1:zlib@1", "rule": "vulnerability.image", "blocking": true },
+            { "id": "grype:CVE-2026-9:openssl@3", "rule": "vulnerability.image", "blocking": true },
+            { "id": "grype:CVE-2026-8:libx@1", "rule": "vulnerability.image", "blocking": false },
         ]});
         assert_eq!(
             record_in(&c, "scn_1", "rel_live", Some(&result), None, now).unwrap(),
-            1
+            2
         );
         let flagged: String = c
             .query_row(
-                "SELECT findings FROM release_rescan_flags WHERE release_id = 'rel_live'",
+                "SELECT findings FROM release_security_flags WHERE release_id = 'rel_live'
+                   AND source = 'rescan'",
                 [],
                 |r| r.get(0),
             )
             .unwrap();
         assert!(
-            flagged.contains("CVE-2026-9") && !flagged.contains("CVE-2025-1"),
+            flagged.contains("CVE-2026-9") && flagged.contains("CVE-2025-1"),
             "{flagged}"
         );
-        // The same finding next month is not flagged again.
-        c.execute(
-            "INSERT INTO marketplace_rescans (scan_id, release_id, image_digest, state,
-                submitted_at) VALUES ('scn_2', 'rel_live', 'sha256:aa', 'submitted', ?1)",
-            [now + 31 * 86_400],
-        )
-        .unwrap();
+        assert!(
+            !flagged.contains("CVE-2026-8"),
+            "advisory findings never flag"
+        );
+        // The same findings next month are answered; a scanner failure is not.
+        submit("scn_2", now + 31 * 86_400);
+        let mut again = result.clone();
+        again["findings"].as_array_mut().unwrap().push(json!({
+            "id": "pigeonpost:image_unavailable:ab12cd", "rule": "scanner.image_unavailable",
+            "blocking": true }));
         assert_eq!(
-            record_in(&c, "scn_2", "rel_live", Some(&result), None, now).unwrap(),
-            0
+            record_in(&c, "scn_2", "rel_live", Some(&again), None, now).unwrap(),
+            1
         );
         let (state, security, listing): (String, String, String) = c
             .query_row(
@@ -491,12 +584,7 @@ mod tests {
             ("approved", "normal", "published")
         );
         // A failed scan is recorded as such and flags nothing.
-        c.execute(
-            "INSERT INTO marketplace_rescans (scan_id, release_id, image_digest, state,
-                submitted_at) VALUES ('scn_3', 'rel_live', 'sha256:aa', 'submitted', ?1)",
-            [now],
-        )
-        .unwrap();
+        submit("scn_3", now);
         assert_eq!(
             record_in(&c, "scn_3", "rel_live", None, Some("grype failed"), now).unwrap(),
             0
@@ -509,5 +597,76 @@ mod tests {
             )
             .unwrap();
         assert_eq!(st, "failed");
+    }
+
+    /// A re-scan the build plane never answers is given up after two days and the release is due
+    /// again; a failed one is retried after a day.
+    #[test]
+    fn a_lost_rescan_does_not_hold_the_release_back() {
+        let c = db();
+        let now = 1_800_000_000;
+        c.execute(
+            "INSERT INTO marketplace_rescans (scan_id, release_id, image_digest, state,
+                submitted_at) VALUES ('scn_old', 'rel_live', 'sha256:aa', 'submitted', ?1)",
+            [now - STALE_SECS - 10],
+        )
+        .unwrap();
+        assert_eq!(expire_stale_in(&c, now).unwrap(), 1);
+        assert_eq!(
+            due_in(&c, now, 30 * 86_400).unwrap().len(),
+            0,
+            "failed just now: wait"
+        );
+        assert_eq!(due_in(&c, now + RETRY_SECS, 30 * 86_400).unwrap().len(), 1);
+    }
+
+    /// One refused release does not stop the sweep: it is recorded as failed and the next one goes.
+    #[tokio::test]
+    async fn a_refused_rescan_is_recorded_and_the_sweep_goes_on() {
+        let w = crate::marketplace_hosted_tests::world_with("rs", None).await;
+        for (rel, lst) in [("rel_rs_a", "lst_rs_a"), ("rel_rs_b", "lst_rs_b")] {
+            crate::marketplace_hosted_tests::sql(
+                &w.srv,
+                "INSERT INTO nest_releases (id, template_id, publisher_id, version, image_digest,
+                    status, created_by, created_at, sbom)
+                 VALUES (?1, ?2, ?3, ?1, 'sha256:aa', 'approved', 'x', 0, '{}')",
+                vec![rel.into(), w.template.clone(), w.publisher.clone()],
+            )
+            .await;
+            crate::marketplace_hosted_tests::sql(
+                &w.srv,
+                "INSERT INTO nest_listings (id, publisher_id, release_id, title, summary,
+                    visibility, status, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, 't', 's', 'public', 'published', 0, 0)",
+                vec![lst.into(), w.publisher.clone(), rel.into()],
+            )
+            .await;
+        }
+        let h = &w.srv.state.nests.marketplace;
+        h.buildd_answer(400, json!({ "error": "invalid", "detail": "sbom" }));
+        h.buildd_answer(202, json!({ "state": "queued" }));
+        work_once(&w.srv.state).await;
+        let rows: Vec<(String, String)> = w
+            .srv
+            .state
+            .store
+            .group_read(|c| -> GResult<Vec<(String, String)>> {
+                let mut stmt = c.prepare(
+                    "SELECT release_id, state FROM marketplace_rescans ORDER BY release_id",
+                )?;
+                let rows = stmt
+                    .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(rows)
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            rows,
+            [
+                ("rel_rs_a".to_string(), "failed".to_string()),
+                ("rel_rs_b".to_string(), "submitted".to_string())
+            ]
+        );
     }
 }

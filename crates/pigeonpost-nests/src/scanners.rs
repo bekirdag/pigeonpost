@@ -150,6 +150,16 @@ pub fn vulnerability_blocks(severity: Severity, fix_available: bool) -> bool {
     severity >= Severity::High && fix_available
 }
 
+/// A vulnerability nobody has graded yet: high when a fix exists (so it blocks, rather than
+/// slipping through as advisory), medium otherwise.
+pub fn unknown_severity(fix_available: bool) -> Severity {
+    if fix_available {
+        Severity::High
+    } else {
+        Severity::Medium
+    }
+}
+
 /// A Semgrep result blocks when its rule says `ERROR` and `confidence: HIGH`.
 pub fn sast_blocks(severity: Severity, confidence: &str) -> bool {
     severity >= Severity::High && confidence.eq_ignore_ascii_case("high")
@@ -168,6 +178,12 @@ pub fn display_path(p: &str) -> String {
         if let Some(rest) = p.strip_prefix(prefix) {
             return format!("{shown}{rest}");
         }
+    }
+    if let Some(rest) = p.strip_prefix("/scan/layers/") {
+        return match rest.split_once('/') {
+            Some((n, inner)) => format!("image/layer{n}/{inner}"),
+            None => format!("image/layer{rest}"),
+        };
     }
     if p.starts_with("/scan/image/") {
         return "image".into();
@@ -234,6 +250,7 @@ pub fn parse_osv(text: &str) -> Result<Vec<Finding>, String> {
                     .iter()
                     .filter(|x| x["id"].as_str().is_some_and(|i| ids.iter().any(|g| g == i)))
                     .collect();
+                let fixed = members.iter().find_map(|x| has_fix(x, name));
                 let severity = Severity::parse(&max)
                     .or_else(|| {
                         members.iter().find_map(|x| {
@@ -242,8 +259,7 @@ pub fn parse_osv(text: &str) -> Result<Vec<Finding>, String> {
                                 .and_then(Severity::parse)
                         })
                     })
-                    .unwrap_or(Severity::Medium);
-                let fixed = members.iter().find_map(|x| has_fix(x, name));
+                    .unwrap_or_else(|| unknown_severity(fixed.is_some()));
                 let summary = members
                     .iter()
                     .find_map(|x| x["summary"].as_str())
@@ -289,11 +305,11 @@ pub fn parse_grype(text: &str) -> Result<Vec<Finding>, String> {
         if !seen.insert(key.clone()) {
             continue;
         }
+        let fixed = vuln["fix"]["state"] == "fixed";
         let severity = vuln["severity"]
             .as_str()
             .and_then(Severity::parse)
-            .unwrap_or(Severity::Medium);
-        let fixed = vuln["fix"]["state"] == "fixed";
+            .unwrap_or_else(|| unknown_severity(fixed));
         let versions: Vec<&str> = vuln["fix"]["versions"]
             .as_array()
             .into_iter()
@@ -337,13 +353,36 @@ pub fn parse_clamav(text: &str) -> Vec<Finding> {
             continue;
         };
         let shown = display_path(path);
+        // With --alert-exceeds-max/--alert-encrypted/--alert-broken, content ClamAV could not
+        // read in full is reported as a heuristic hit: unscannable is not clean.
+        let (rule, message) = if sig.starts_with("Heuristics.Limits.Exceeded") {
+            (
+                "malware.limits_exceeded",
+                format!("too large or too deeply nested to scan in full ({sig})"),
+            )
+        } else if sig.starts_with("Heuristics.Encrypted") {
+            (
+                "malware.encrypted",
+                format!("encrypted content that cannot be scanned ({sig})"),
+            )
+        } else if sig.starts_with("Heuristics.Broken") {
+            (
+                "malware.broken",
+                format!("a malformed file that cannot be scanned ({sig})"),
+            )
+        } else {
+            (
+                "malware.signature",
+                format!("matched the malware signature {sig}"),
+            )
+        };
         out.push(
             Finding::of(
                 "clamav",
-                "malware.signature",
+                rule,
                 Severity::Critical,
                 &format!("{sig}:{shown}"),
-                format!("matched the malware signature {sig}"),
+                message,
                 true,
             )
             .at(Some(&shown)),
@@ -420,6 +459,166 @@ pub fn parse_semgrep(text: &str) -> Result<Vec<Finding>, String> {
     }
     Ok(out)
 }
+
+/// What Semgrep did not analyse. Every error and every skipped target blocks: a file too big,
+/// too slow or unparseable must not hide code from the rules (fail closed).
+pub fn semgrep_gaps(text: &str) -> Result<Vec<Finding>, String> {
+    let v: Value = serde_json::from_str(text).map_err(|e| format!("semgrep report: {e}"))?;
+    let mut out = Vec::new();
+    let mut seen = BTreeSet::new();
+    for e in v["errors"].as_array().into_iter().flatten() {
+        let path = e["path"]
+            .as_str()
+            .map(display_path)
+            .unwrap_or_else(|| "(no file)".into());
+        let kind = match &e["type"] {
+            Value::String(t) => t.clone(),
+            Value::Array(a) => a.first().and_then(Value::as_str).unwrap_or("error").into(),
+            _ => "error".into(),
+        };
+        if !seen.insert(format!("{path}:{kind}")) {
+            continue;
+        }
+        out.push(
+            Finding::of(
+                "semgrep",
+                "sast.not_analysed",
+                Severity::High,
+                &format!("error:{path}:{kind}"),
+                format!("Semgrep could not analyse this file ({kind}); it blocks until it can"),
+                true,
+            )
+            .at(Some(&path)),
+        );
+    }
+    for t in v["paths"]["skipped"].as_array().into_iter().flatten() {
+        let path = display_path(t["path"].as_str().unwrap_or(""));
+        let reason = t["reason"].as_str().unwrap_or("skipped");
+        if !seen.insert(format!("{path}:{reason}")) {
+            continue;
+        }
+        out.push(
+            Finding::of(
+                "semgrep",
+                "sast.not_analysed",
+                Severity::High,
+                &format!("skipped:{path}:{reason}"),
+                format!("Semgrep skipped this file ({reason}); it blocks until it is analysed"),
+                true,
+            )
+            .at(Some(&path)),
+        );
+    }
+    Ok(out)
+}
+
+/// Lines on a YARA run's stderr that mean a file was not scanned in full: an error or a timeout.
+pub fn yara_errors(stderr: &str, root: &str) -> Vec<Finding> {
+    let mut out = Vec::new();
+    for line in stderr.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        let lower = line.to_ascii_lowercase();
+        if !(lower.contains("error") || lower.contains("timeout") || lower.contains("timed out")) {
+            continue;
+        }
+        let path = line
+            .split_whitespace()
+            .find(|w| w.starts_with("/scan/"))
+            .map(|w| display_path(w.trim_end_matches(':')));
+        out.push(
+            Finding::of(
+                "pigeonpost",
+                "scanner.error",
+                Severity::High,
+                &format!("yara:{}", path.as_deref().unwrap_or(root)),
+                "yara did not complete: a file was not scanned in full (an error or a timeout)",
+                true,
+            )
+            .at(path.as_deref()),
+        );
+        if out.len() >= 20 {
+            break;
+        }
+    }
+    out
+}
+
+// ---- platform-owned scanner configuration -------------------------------------------------------
+
+/// Files (and one directory) a publisher could use to configure a scanner away: gitleaks
+/// allowlists and ignore files, OSV-Scanner overrides, Semgrep ignore files and configs. They are
+/// left out of the copy gitleaks, OSV-Scanner and Semgrep scan; the platform's own configuration
+/// is passed to each tool instead, and their inline opt-outs (`gitleaks:allow`, `nosemgrep`) are
+/// switched off by flag.
+pub const PUBLISHER_SCANNER_CONFIG: &[&str] = &[
+    ".gitleaks.toml",
+    "gitleaks.toml",
+    ".gitleaksignore",
+    "osv-scanner.toml",
+    ".osv-scanner.toml",
+    ".semgrepignore",
+    ".semgrep.yml",
+    ".semgrep.yaml",
+    ".semgrep",
+    ".gitignore",
+];
+
+/// gitleaks: its built-in rules and nothing else (no publisher allowlist can extend this).
+pub const GITLEAKS_CONFIG: &str =
+    "title = \"pigeonpost analysis plane\"\n\n[extend]\nuseDefault = true\n";
+/// OSV-Scanner: no package overrides, no ignored vulnerabilities.
+pub const OSV_CONFIG: &str = "# pigeonpost analysis plane: no overrides, nothing ignored\n";
+/// Semgrep: an explicit ignore file that ignores nothing (without one, Semgrep's defaults apply).
+pub const SEMGREPIGNORE: &str = "# pigeonpost analysis plane: nothing is ignored\n";
+
+/// Copy `src` into `dest` without any publisher scanner configuration, and put the platform's
+/// `.semgrepignore` at its root. Returns the paths left out.
+pub fn scan_copy(src: &Path, dest: &Path) -> Result<Vec<String>, String> {
+    let _ = std::fs::remove_dir_all(dest);
+    std::fs::create_dir_all(dest).map_err(|e| e.to_string())?;
+    let mut dropped = Vec::new();
+    for f in crate::release::read_tree(src)? {
+        if f.path
+            .split('/')
+            .any(|c| PUBLISHER_SCANNER_CONFIG.contains(&c))
+        {
+            dropped.push(f.path);
+            continue;
+        }
+        let to = dest.join(&f.path);
+        if let Some(parent) = to.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        std::fs::copy(src.join(&f.path), &to).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(dest.join(".semgrepignore"), SEMGREPIGNORE).map_err(|e| e.to_string())?;
+    Ok(dropped)
+}
+
+/// The platform's configuration files, mounted read-only at `/rules`.
+fn platform_rules(dir: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir.join("gitleaksignore"))?;
+    std::fs::write(dir.join("gitleaks.toml"), GITLEAKS_CONFIG)?;
+    std::fs::write(dir.join("osv-scanner.toml"), OSV_CONFIG)
+}
+
+/// Unpack the OCI archive's layers into `/out/layers/<n>/`, inside the scanner image's sandbox
+/// (the archive is untrusted: nothing of it is unpacked on the host). Non-layer blobs (the
+/// manifest, the config) are skipped; a layer that does not unpack fails the step.
+pub const UNPACK_SCRIPT: &str = r#"set -u
+mkdir -p /out/oci /out/layers || exit 3
+tar -xf /scan/image/image.tar -C /out/oci || { echo "the image archive does not unpack" >&2; exit 4; }
+n=0; bad=0
+for b in /out/oci/blobs/sha256/*; do
+  [ -f "$b" ] || continue
+  tar -tf "$b" >/dev/null 2>&1 || continue
+  n=$((n+1)); d=/out/layers/$n; mkdir -p "$d"
+  tar -xf "$b" -C "$d" --no-same-owner --no-same-permissions --exclude='./dev/*' --exclude='dev/*'     || { echo "layer $n did not unpack" >&2; bad=1; }
+done
+chmod -R u+rwX /out/layers 2>/dev/null
+rm -rf /out/oci
+[ "$n" -gt 0 ] || { echo "no layer in the archive" >&2; exit 5; }
+exit $bad
+"#;
 
 /// gitleaks `--report-format=json --redact`: only the rule, file and line are read, never the
 /// match or the secret. Every hit blocks.
@@ -637,7 +836,6 @@ fn tool_failed(tool: &str, why: &str) -> Finding {
 }
 
 /// One tool's container: gVisor, no network, nothing writable but `/out` and a small `/tmp`.
-#[allow(clippy::too_many_arguments)]
 pub fn tool_args(
     cfg: &ScannersConfig,
     runtime: &str,
@@ -645,6 +843,21 @@ pub fn tool_args(
     entrypoint: &str,
     mounts: &[(PathBuf, &str, bool)],
     env: &[(&str, &str)],
+    cmd: &[String],
+) -> Vec<String> {
+    tool_args_in(cfg, runtime, image, entrypoint, mounts, env, None, cmd)
+}
+
+/// [`tool_args`] with a working directory.
+#[allow(clippy::too_many_arguments)]
+pub fn tool_args_in(
+    cfg: &ScannersConfig,
+    runtime: &str,
+    image: &str,
+    entrypoint: &str,
+    mounts: &[(PathBuf, &str, bool)],
+    env: &[(&str, &str)],
+    workdir: Option<&str>,
     cmd: &[String],
 ) -> Vec<String> {
     let mut a: Vec<String> = vec![
@@ -664,6 +877,9 @@ pub fn tool_args(
         format!("--entrypoint={entrypoint}"),
         "--env=HOME=/tmp".into(),
     ];
+    if let Some(w) = workdir {
+        a.push(format!("--workdir={w}"));
+    }
     for (k, v) in env {
         a.push(format!("--env={k}={v}"));
     }
@@ -707,15 +923,77 @@ pub fn security_scan(
         .and_then(|t| serde_json::from_str(&t).ok());
     findings.extend(db_findings(manifest.as_ref(), cfg.max_db_age_hours, now));
 
+    // The platform's own configuration, and a copy of the source without the publisher's.
+    let rules_dir = out.join("rules");
+    if let Err(e) = platform_rules(&rules_dir) {
+        findings.push(tool_failed("configuration", &e.to_string()));
+    }
+    let clean_src = out.join("src");
+    let mut stripped = Vec::new();
+    if let Some(src) = target.src {
+        match scan_copy(src, &clean_src) {
+            Ok(d) => stripped = d,
+            Err(e) => findings.push(tool_failed("source copy", &redact_error(&e))),
+        }
+    }
+    for p in &stripped {
+        findings.push(
+            Finding::of(
+                "pigeonpost",
+                "evasion.scanner_config",
+                Severity::Medium,
+                &format!("scanner_config:{p}"),
+                "a scanner configuration or ignore file in the tree; the scan ignored it and used \
+                 the platform's",
+                false,
+            )
+            .at(Some(p)),
+        );
+    }
+
+    // The image's layers, unpacked inside the sandbox, are what ClamAV and YARA read.
+    let unpacked = out.join("unpack");
+    let mut layers: Option<PathBuf> = None;
+    if let Some(archive) = target.image_archive {
+        if std::fs::create_dir_all(&unpacked).is_ok() {
+            let args = tool_args(
+                cfg,
+                runtime,
+                &cfg.image,
+                "/bin/sh",
+                &[
+                    (archive.to_path_buf(), "/scan/image/image.tar", false),
+                    (unpacked.clone(), "/out", true),
+                ],
+                &[],
+                &["-c".into(), UNPACK_SCRIPT.into()],
+            );
+            let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+            let (ok, _, err) = podman.run_capture(&refs);
+            if ok {
+                layers = Some(unpacked.join("layers"));
+                tools.insert("unpack".into(), json!({ "ran": true }));
+            } else {
+                tools.insert("unpack".into(), json!({ "ran": false }));
+                findings.push(tool_failed("image unpack", &redact_error(&err)));
+            }
+        }
+    }
+
     let mut scan_mounts: Vec<(PathBuf, &str, bool)> = Vec::new();
+    // Where the configurable tools (gitleaks, OSV-Scanner, Semgrep) read the source.
+    let mut config_free_mounts: Vec<(PathBuf, &str, bool)> = Vec::new();
     if let Some(p) = target.src {
         scan_mounts.push((p.to_path_buf(), "/scan/src", false));
+        config_free_mounts.push((clean_src.clone(), "/scan/src", false));
     }
     if let Some(p) = target.artefacts {
         scan_mounts.push((p.to_path_buf(), "/scan/artefacts", false));
     }
-    if let Some(p) = target.image_archive {
-        scan_mounts.push((p.to_path_buf(), "/scan/image/image.tar", false));
+    match (&layers, target.image_archive) {
+        (Some(l), _) => scan_mounts.push((l.clone(), "/scan/layers", false)),
+        (None, Some(p)) => scan_mounts.push((p.to_path_buf(), "/scan/image/image.tar", false)),
+        _ => {}
     }
     if let Some(p) = target.files {
         scan_mounts.push((p.to_path_buf(), "/scan/files", false));
@@ -727,8 +1005,11 @@ pub fn security_scan(
             .is_ok();
         if ok {
             scan_mounts.push((sbom_dir.clone(), "/scan/sbom", false));
+            config_free_mounts.push((sbom_dir.clone(), "/scan/sbom", false));
         }
     }
+    config_free_mounts.push((rules_dir.clone(), "/rules", false));
+    let roots = scan_roots(target, layers.is_some());
     let db = |name: &str| cfg.db_root.join(name);
 
     for tool in wanted(target) {
@@ -737,7 +1018,12 @@ pub fn security_scan(
             findings.push(tool_failed(tool, &e.to_string()));
             continue;
         }
-        let mut mounts = scan_mounts.clone();
+        let configurable = matches!(tool, "osv-scanner" | "semgrep" | "gitleaks");
+        let mut mounts = if configurable {
+            config_free_mounts.clone()
+        } else {
+            scan_mounts.clone()
+        };
         mounts.push((dir.clone(), "/out", true));
         let result: Result<Vec<Finding>, String> = match tool {
             "osv-scanner" => {
@@ -746,6 +1032,8 @@ pub fn security_scan(
                     "scan".into(),
                     "source".into(),
                     "--offline-vulnerabilities".into(),
+                    // The platform's (empty) configuration: no osv-scanner.toml of the tree applies.
+                    "--config=/rules/osv-scanner.toml".into(),
                     "--format=json".into(),
                     "--output=/out/report.json".into(),
                 ];
@@ -775,6 +1063,11 @@ pub fn security_scan(
                 } else {
                     "sbom:/scan/sbom/sbom.cdx.json"
                 };
+                if let Some(p) = target.image_archive {
+                    if layers.is_some() {
+                        mounts.push((p.to_path_buf(), "/scan/image/image.tar", false));
+                    }
+                }
                 let args = tool_args(
                     cfg,
                     runtime,
@@ -806,12 +1099,16 @@ pub fn security_scan(
                     "--infected".into(),
                     "--no-summary".into(),
                     "--log=/out/report.log".into(),
-                    "--max-filesize=1024M".into(),
-                    "--max-scansize=4095M".into(),
+                    "--max-filesize=2000M".into(),
+                    "--max-scansize=4000M".into(),
                     "--max-recursion=16".into(),
                     "--max-files=200000".into(),
+                    // What ClamAV cannot read in full is a hit, never silently clean.
+                    "--alert-exceeds-max=yes".into(),
+                    "--alert-encrypted=yes".into(),
+                    "--alert-broken=yes".into(),
                 ];
-                cmd.extend(scan_roots(target));
+                cmd.extend(roots.iter().cloned());
                 let args = tool_args(
                     cfg,
                     runtime,
@@ -834,29 +1131,48 @@ pub fn security_scan(
             }
             "yara" => {
                 mounts.push((db("yara"), "/db/yara", false));
-                let mut cmd: Vec<String> = vec![
-                    "--compiled-rules".into(),
-                    "--recursive".into(),
-                    "--no-warnings".into(),
-                    "--timeout=120".into(),
-                    "/db/yara/rules.yarc".into(),
-                    "/scan".into(),
-                ];
-                if scan_roots(target).is_empty() {
-                    cmd.pop();
+                // One run per root (yara takes one target); stderr is read too, because yara
+                // exits 0 when a file timed out or could not be read.
+                let mut found = Vec::new();
+                let mut failed = None;
+                for root in &roots {
+                    let cmd: Vec<String> = vec![
+                        "--compiled-rules".into(),
+                        "--recursive".into(),
+                        "--no-warnings".into(),
+                        "--timeout=120".into(),
+                        "/db/yara/rules.yarc".into(),
+                        root.clone(),
+                    ];
+                    let args = tool_args(cfg, runtime, &cfg.image, "yara", &mounts, &[], &cmd);
+                    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+                    let (ok, stdout, stderr) = podman.run_capture(&refs);
+                    found.extend(parse_yara(&stdout));
+                    found.extend(yara_errors(&stderr, root));
+                    if !ok {
+                        failed = Some(redact_error(&stderr));
+                    }
                 }
-                let args = tool_args(cfg, runtime, &cfg.image, "yara", &mounts, &[], &cmd);
-                run(podman, &args)
-                    .map(|stdout| parse_yara(&stdout))
-                    .map_err(|e| redact_error(&e))
+                match failed {
+                    Some(e) if found.iter().all(|f| f.tool != "yara") => Err(e),
+                    Some(e) => {
+                        found.push(tool_failed("yara", &e));
+                        Ok(found)
+                    }
+                    None => Ok(found),
+                }
             }
             "semgrep" => {
                 match crate::util::sha256_hex(
                     &std::fs::read(&cfg.semgrep_rules).unwrap_or_default(),
                 ) {
                     d if d.eq_ignore_ascii_case(&cfg.semgrep_rules_sha256) => {
-                        mounts.push((cfg.semgrep_rules.clone(), "/rules/semgrep.yml", false));
-                        let args = tool_args(
+                        mounts.push((
+                            cfg.semgrep_rules.clone(),
+                            "/rules-semgrep/semgrep.yml",
+                            false,
+                        ));
+                        let args = tool_args_in(
                             cfg,
                             runtime,
                             &cfg.semgrep_image,
@@ -866,22 +1182,33 @@ pub fn security_scan(
                                 ("SEMGREP_SEND_METRICS", "off"),
                                 ("SEMGREP_ENABLE_VERSION_CHECK", "0"),
                             ],
+                            // The platform's .semgrepignore at the copy's root is the one read.
+                            Some("/scan/src"),
                             &[
                                 "scan".into(),
-                                "--config=/rules/semgrep.yml".into(),
+                                "--config=/rules-semgrep/semgrep.yml".into(),
                                 "--json".into(),
                                 "--output=/out/report.json".into(),
                                 "--metrics=off".into(),
                                 "--disable-version-check".into(),
                                 "--oss-only".into(),
                                 "--no-git-ignore".into(),
-                                "--timeout=30".into(),
-                                "--max-target-bytes=2000000".into(),
+                                // No inline opt-outs, no size or time cut-offs: every file is
+                                // analysed, or reported as not analysed (which blocks).
+                                "--disable-nosem".into(),
+                                "--max-target-bytes=0".into(),
+                                "--timeout=0".into(),
+                                "--timeout-threshold=0".into(),
+                                "--verbose".into(),
                                 "/scan/src".into(),
                             ],
                         );
                         let ran = run(podman, &args);
-                        read_report(&dir.join("report.json"), ran).and_then(|t| parse_semgrep(&t))
+                        read_report(&dir.join("report.json"), ran).and_then(|t| {
+                            let mut f = parse_semgrep(&t)?;
+                            f.extend(semgrep_gaps(&t)?);
+                            Ok(f)
+                        })
                     }
                     _ => Err("the Semgrep ruleset is not the pinned one".into()),
                 }
@@ -897,13 +1224,16 @@ pub fn security_scan(
                     &[
                         "dir".into(),
                         "/scan/src".into(),
+                        // The platform's rules, an empty ignore folder, and no gitleaks:allow.
+                        "--config=/rules/gitleaks.toml".into(),
+                        "--gitleaks-ignore-path=/rules/gitleaksignore".into(),
+                        "--ignore-gitleaks-allow".into(),
                         "--report-format=json".into(),
                         "--report-path=/out/report.json".into(),
                         "--redact".into(),
                         "--exit-code=0".into(),
                         "--no-banner".into(),
                         "--log-level=error".into(),
-                        "--max-target-megabytes=10".into(),
                     ],
                 );
                 let ran = run(podman, &args);
@@ -954,11 +1284,22 @@ pub fn security_scan(
             .into(),
         None => Value::Null,
     };
+    // A tool or database failure is this run's, never "the same finding as last time": a re-scan
+    // that fails must not be taken for one already answered.
+    let run_id = crate::util::random_hex(6);
+    for f in findings
+        .iter_mut()
+        .filter(|f| f.rule.starts_with("scanner."))
+    {
+        f.id = format!("{}:{run_id}", f.id);
+    }
     let _ = std::fs::remove_dir_all(out);
     ScanOutcome {
         findings,
         evidence: json!({
             "network": "none",
+            "publisher_scanner_config_ignored": stripped,
+            "image_layers_unpacked": layers.is_some(),
             "runtime": runtime,
             "tools": tools,
             "images": {
@@ -979,7 +1320,7 @@ pub fn security_scan(
     }
 }
 
-fn scan_roots(t: &Target<'_>) -> Vec<String> {
+fn scan_roots(t: &Target<'_>, layers: bool) -> Vec<String> {
     let mut out = Vec::new();
     if t.src.is_some() {
         out.push("/scan/src".into());
@@ -987,7 +1328,9 @@ fn scan_roots(t: &Target<'_>) -> Vec<String> {
     if t.artefacts.is_some() {
         out.push("/scan/artefacts".into());
     }
-    if t.image_archive.is_some() {
+    if layers {
+        out.push("/scan/layers".into());
+    } else if t.image_archive.is_some() {
         out.push("/scan/image".into());
     }
     if t.files.is_some() {
@@ -1077,7 +1420,7 @@ mod tests {
     #[test]
     fn osv_reports_parse_into_grouped_findings_with_the_fix_policy() {
         let f = parse_osv(OSV).unwrap();
-        assert_eq!(f.len(), 3, "{f:#?}");
+        assert_eq!(f.len(), 4, "{f:#?}");
         // Critical, fixed: blocks. The group is one finding, named by its first id.
         let a = by_id(&f, "osv-scanner:RUSTSEC-2024-0001:example-tls@0.4.1");
         assert_eq!(a.severity, Severity::Critical);
@@ -1099,7 +1442,7 @@ mod tests {
     #[test]
     fn grype_reports_parse_with_the_same_policy() {
         let f = parse_grype(GRYPE).unwrap();
-        assert_eq!(f.len(), 4, "{f:#?}");
+        assert_eq!(f.len(), 5, "{f:#?}");
         let crit = by_id(&f, "grype:CVE-2024-45337:golang.org/x/crypto@0.27.0");
         assert!(crit.blocking && crit.severity == Severity::Critical);
         let high = by_id(&f, "grype:CVE-2025-0001:openssl@3.0.15-1~deb12u1");
@@ -1114,7 +1457,7 @@ mod tests {
     #[test]
     fn every_clamav_and_yara_hit_blocks_and_paths_are_shown_relative() {
         let c = parse_clamav(CLAMAV);
-        assert_eq!(c.len(), 2, "{c:#?}");
+        assert_eq!(c.len(), 5, "{c:#?}");
         assert!(c
             .iter()
             .all(|f| f.blocking && f.severity == Severity::Critical));
@@ -1245,12 +1588,24 @@ mod tests {
     }
 
     /// A podman that records each tool's argv and writes the fixture report into its `/out`.
+    #[derive(Default)]
     struct Tools {
         calls: Mutex<Vec<Vec<String>>>,
         fail: Option<&'static str>,
+        /// What yara prints on stderr (it exits 0 all the same).
+        yara_stderr: &'static str,
     }
 
     impl Podman for Tools {
+        fn run_capture(&self, args: &[&str]) -> (bool, String, String) {
+            let is_yara = args.contains(&"--entrypoint=yara");
+            match self.run(args) {
+                Ok(out) if is_yara => (true, out, self.yara_stderr.into()),
+                Ok(out) => (true, out, String::new()),
+                Err(e) => (false, String::new(), e),
+            }
+        }
+
         fn run(&self, args: &[&str]) -> Result<String, String> {
             let argv: Vec<String> = args.iter().map(|s| s.to_string()).collect();
             self.calls.lock().unwrap().push(argv.clone());
@@ -1284,6 +1639,7 @@ mod tests {
                     Err("clamscan: exit status 1".into())
                 }
                 "yara" => Ok(YARA.into()),
+                "/bin/sh" => Ok(String::new()),
                 "semgrep" => {
                     std::fs::write(out.join("report.json"), SEMGREP).unwrap();
                     Ok(String::new())
@@ -1335,10 +1691,7 @@ mod tests {
         std::fs::write(src.join("Cargo.lock"), "# lock\n").unwrap();
         let archive = dir.path().join("image.tar");
         std::fs::write(&archive, b"tar").unwrap();
-        let podman = Tools {
-            calls: Mutex::new(Vec::new()),
-            fail: None,
-        };
+        let podman = Tools::default();
         let outcome = security_scan(
             &podman,
             &cfg,
@@ -1423,8 +1776,8 @@ mod tests {
         let src = dir.path().join("src");
         std::fs::create_dir_all(&src).unwrap();
         let podman = Tools {
-            calls: Mutex::new(Vec::new()),
             fail: Some("gitleaks"),
+            ..Tools::default()
         };
         cfg.semgrep_rules_sha256 = "0".repeat(64);
         let outcome = security_scan(
@@ -1444,8 +1797,14 @@ mod tests {
             .filter(|f| f.rule == "scanner.error")
             .map(|f| f.id.as_str())
             .collect();
-        assert!(errors.contains(&"pigeonpost:gitleaks"), "{errors:?}");
-        assert!(errors.contains(&"pigeonpost:semgrep"), "{errors:?}");
+        assert!(
+            errors.iter().any(|e| e.starts_with("pigeonpost:gitleaks:")),
+            "{errors:?}"
+        );
+        assert!(
+            errors.iter().any(|e| e.starts_with("pigeonpost:semgrep:")),
+            "{errors:?}"
+        );
         assert!(outcome
             .findings
             .iter()
@@ -1470,5 +1829,296 @@ mod tests {
             ..Target::default()
         };
         assert_eq!(wanted(&t), vec!["osv-scanner", "grype"]);
+    }
+
+    #[test]
+    fn unknown_severity_with_a_fix_is_high_and_blocks() {
+        let osv = parse_osv(OSV).unwrap();
+        let f = by_id(&osv, "osv-scanner:GHSA-zzzz-yyyy-xxxx:tar-stream@2.0.0");
+        assert_eq!(f.severity, Severity::High);
+        assert!(f.blocking);
+        let grype = parse_grype(GRYPE).unwrap();
+        let f = by_id(&grype, "grype:CVE-2026-55555:libexample@1.2.3");
+        assert_eq!(f.severity, Severity::High);
+        assert!(f.blocking);
+        assert_eq!(unknown_severity(false), Severity::Medium);
+    }
+
+    #[test]
+    fn clamav_alerts_for_unscannable_content_block() {
+        let c = parse_clamav(CLAMAV);
+        let rule = |p: &str| c.iter().find(|f| f.path.as_deref() == Some(p)).unwrap();
+        let big = rule("image/layer2/usr/share/blob.bin");
+        assert_eq!(big.rule, "malware.limits_exceeded");
+        assert_eq!(rule("assets/secret.zip").rule, "malware.encrypted");
+        assert_eq!(rule("artefacts/bin/tool").rule, "malware.broken");
+        assert!(c.iter().all(|f| f.blocking));
+    }
+
+    #[test]
+    fn semgrep_errors_and_skipped_files_block() {
+        let f = semgrep_gaps(include_str!("../tests/fixtures/scanners/semgrep-gaps.json")).unwrap();
+        let paths: BTreeSet<&str> = f.iter().filter_map(|x| x.path.as_deref()).collect();
+        assert_eq!(
+            paths,
+            BTreeSet::from(["src/broken.js", "dist/app.js", "vendor/huge.js"]),
+            "{f:#?}"
+        );
+        assert!(f
+            .iter()
+            .all(|x| x.blocking && x.rule == "sast.not_analysed"));
+        assert!(semgrep_gaps(SEMGREP).unwrap().is_empty());
+    }
+
+    #[test]
+    fn yara_stderr_errors_and_timeouts_block() {
+        let f = yara_errors(
+            "error scanning /scan/src/big.bin: timeout\nWARN[0000] podman noise\n\
+             error scanning /scan/layers/1/etc/x: could not open file\n",
+            "/scan/src",
+        );
+        assert_eq!(f.len(), 2, "{f:#?}");
+        assert!(f.iter().all(|x| x.blocking && x.rule == "scanner.error"));
+        assert_eq!(f[0].path.as_deref(), Some("big.bin"));
+        assert_eq!(f[1].path.as_deref(), Some("image/layer1/etc/x"));
+        // Through the scan: yara exited 0, the stderr line still fails the scan.
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = config(dir.path());
+        let src = dir.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        let podman = Tools {
+            yara_stderr: "error scanning /scan/src/x.js: timeout",
+            ..Tools::default()
+        };
+        let o = security_scan(
+            &podman,
+            &cfg,
+            "runsc",
+            &Target {
+                src: Some(&src),
+                ..Target::default()
+            },
+            &dir.path().join("out"),
+            1_800_000_000,
+        );
+        assert!(o
+            .findings
+            .iter()
+            .any(|x| x.rule == "scanner.error" && x.id.starts_with("pigeonpost:yara:x.js")));
+    }
+
+    /// Publisher-owned scanner configuration never reaches gitleaks, OSV-Scanner or Semgrep:
+    /// they scan a copy without it, with the platform's configuration and inline opt-outs off.
+    #[test]
+    fn publisher_scanner_configuration_is_ignored() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = config(dir.path());
+        let src = dir.path().join("src");
+        std::fs::create_dir_all(src.join("sub/.semgrep")).unwrap();
+        for (p, body) in [
+            ("Cargo.lock", "# lock\n"),
+            (".gitleaks.toml", "[allowlist]\npaths = ['.*']\n"),
+            (".gitleaksignore", "*\n"),
+            ("osv-scanner.toml", "[[PackageOverrides]]\nignore = true\n"),
+            ("sub/.semgrepignore", "*\n"),
+            ("sub/.semgrep/rules.yml", "rules: []\n"),
+            ("src/main.rs", "fn main() {} // nosemgrep gitleaks:allow\n"),
+        ] {
+            std::fs::create_dir_all(src.join(p).parent().unwrap()).unwrap();
+            std::fs::write(src.join(p), body).unwrap();
+        }
+        let copy = dir.path().join("copy");
+        let mut dropped = scan_copy(&src, &copy).unwrap();
+        dropped.sort();
+        assert_eq!(
+            dropped,
+            [
+                ".gitleaks.toml",
+                ".gitleaksignore",
+                "osv-scanner.toml",
+                "sub/.semgrep/rules.yml",
+                "sub/.semgrepignore"
+            ]
+        );
+        assert!(copy.join("src/main.rs").exists() && copy.join("Cargo.lock").exists());
+        assert_eq!(
+            std::fs::read_to_string(copy.join(".semgrepignore")).unwrap(),
+            SEMGREPIGNORE
+        );
+
+        let podman = Tools::default();
+        let o = security_scan(
+            &podman,
+            &cfg,
+            "runsc",
+            &Target {
+                src: Some(&src),
+                lockfile: Some("Cargo.lock"),
+                ..Target::default()
+            },
+            &dir.path().join("out"),
+            1_800_000_000,
+        );
+        let calls = podman.calls.lock().unwrap().clone();
+        let call = |tool: &str| {
+            calls
+                .iter()
+                .find(|c| c.contains(&format!("--entrypoint={tool}")))
+                .unwrap()
+                .clone()
+        };
+        let original = format!("--volume={}:/scan/src:ro", src.display());
+        for (tool, flags) in [
+            (
+                "gitleaks",
+                &[
+                    "--config=/rules/gitleaks.toml",
+                    "--gitleaks-ignore-path=/rules/gitleaksignore",
+                    "--ignore-gitleaks-allow",
+                ][..],
+            ),
+            ("osv-scanner", &["--config=/rules/osv-scanner.toml"][..]),
+            (
+                "semgrep",
+                &[
+                    "--disable-nosem",
+                    "--max-target-bytes=0",
+                    "--timeout=0",
+                    "--timeout-threshold=0",
+                    "--workdir=/scan/src",
+                ][..],
+            ),
+        ] {
+            let c = call(tool);
+            for f in flags {
+                assert!(c.iter().any(|a| a == f), "{tool} {f}: {c:?}");
+            }
+            assert!(
+                !c.contains(&original),
+                "{tool} reads the publisher's own tree"
+            );
+            assert!(c.iter().any(|a| a.ends_with(":/scan/src:ro")), "{tool}");
+        }
+        assert!(!call("gitleaks")
+            .iter()
+            .any(|a| a.starts_with("--max-target-megabytes")));
+        // ClamAV and YARA still read the tree as published.
+        assert!(call("clamscan").contains(&original));
+        let flagged: Vec<&str> = o
+            .findings
+            .iter()
+            .filter(|f| f.rule == "evasion.scanner_config")
+            .filter_map(|f| f.path.as_deref())
+            .collect();
+        assert_eq!(flagged.len(), 5, "{flagged:?}");
+        assert_eq!(
+            o.evidence["publisher_scanner_config_ignored"]
+                .as_array()
+                .unwrap()
+                .len(),
+            5
+        );
+    }
+
+    /// ClamAV and YARA read the image's unpacked layers, with ClamAV's alert flags; an unpack
+    /// that fails falls back to the archive and blocks.
+    #[test]
+    fn image_layers_are_unpacked_in_the_sandbox_and_scanned() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = config(dir.path());
+        let archive = dir.path().join("image.tar");
+        std::fs::write(&archive, b"tar").unwrap();
+        let target = Target {
+            image_archive: Some(&archive),
+            ..Target::default()
+        };
+        let podman = Tools::default();
+        let o = security_scan(
+            &podman,
+            &cfg,
+            "runsc",
+            &target,
+            &dir.path().join("out"),
+            1_800_000_000,
+        );
+        let calls = podman.calls.lock().unwrap().clone();
+        let unpack = calls
+            .iter()
+            .find(|c| c.contains(&"--entrypoint=/bin/sh".to_string()))
+            .unwrap();
+        assert!(unpack.contains(&"--network=none".to_string()));
+        assert!(unpack.contains(&UNPACK_SCRIPT.to_string()));
+        let clam = calls
+            .iter()
+            .find(|c| c.contains(&"--entrypoint=clamscan".to_string()))
+            .unwrap();
+        for f in [
+            "--alert-exceeds-max=yes",
+            "--alert-encrypted=yes",
+            "--alert-broken=yes",
+            "/scan/layers",
+        ] {
+            assert!(clam.contains(&f.to_string()), "{f}: {clam:?}");
+        }
+        assert!(!clam.contains(&"/scan/image".to_string()));
+        let yara = calls
+            .iter()
+            .find(|c| c.contains(&"--entrypoint=yara".to_string()))
+            .unwrap();
+        assert_eq!(yara.last().unwrap(), "/scan/layers");
+        assert_eq!(o.evidence["image_layers_unpacked"], true);
+
+        let failing = Tools {
+            fail: Some("/bin/sh"),
+            ..Tools::default()
+        };
+        let o = security_scan(
+            &failing,
+            &cfg,
+            "runsc",
+            &target,
+            &dir.path().join("out"),
+            1_800_000_000,
+        );
+        assert!(o
+            .findings
+            .iter()
+            .any(|f| f.rule == "scanner.error" && f.id.starts_with("pigeonpost:image unpack:")));
+        let calls = failing.calls.lock().unwrap().clone();
+        let clam = calls
+            .iter()
+            .find(|c| c.contains(&"--entrypoint=clamscan".to_string()))
+            .unwrap();
+        assert!(clam.contains(&"/scan/image".to_string()));
+    }
+
+    #[test]
+    fn failure_findings_are_unique_to_their_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = config(dir.path());
+        cfg.db_root = dir.path().join("nowhere");
+        let src = dir.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        let ids = || {
+            let o = security_scan(
+                &Tools::default(),
+                &cfg,
+                "runsc",
+                &Target {
+                    src: Some(&src),
+                    ..Target::default()
+                },
+                &dir.path().join("out"),
+                1_800_000_000,
+            );
+            o.findings
+                .into_iter()
+                .filter(|f| f.rule == "scanner.db_missing")
+                .map(|f| f.id)
+                .collect::<BTreeSet<_>>()
+        };
+        let (a, b) = (ids(), ids());
+        assert_eq!(a.len(), 4);
+        assert!(a.is_disjoint(&b), "{a:?} {b:?}");
     }
 }

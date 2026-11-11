@@ -91,7 +91,10 @@ pub(crate) const REVIEW_POLICY: &str = "pigeonpost-nest-review-policy-v2\n\
      human_review: named staff, step-up, no stake in the publisher or the release\n\
      attestation: over the release digest\n\
      after publication: a monthly re-scan against updated vulnerability and malware data; a new \
-     blocking finding flags the release for staff and never removes it by itself\n";
+     blocking finding flags the release for staff and never removes it by itself\n\
+     after publication (publisher-hosted): unannounced jobs and a sample of results get the \
+     conformance checks and ClamAV and YARA; a failure flags the release for staff, a malware \
+     hit also stops the listing until staff review it\n";
 
 /// Vault label for sealed configuration secrets.
 const SECRET_LABEL: &str = "marketplace-config-secret-v1";
@@ -1809,75 +1812,95 @@ async fn read_review(
     into_response(result)
 }
 
-/// The publisher's view of one stage's evidence. Their own scan findings are theirs to see:
-/// id, severity, tool, rule, file or package, message and whether it blocks; a malware match
-/// shows only that a file matched and where (never the signature or rule name). The behaviour
-/// test shows only which rules fired and how bad (the honeytokens, canaries, trace and capture
-/// setup stay with Pigeonpost); the AI review is advisory evidence for staff and shows only a
-/// count. Findings recorded before v2 (`detail`, `blocker`) read the same way.
+/// The publisher's view of one stage's evidence, in the contract's finding shape
+/// (`ReviewFindings`: `rule`, `path`, `detail`, `blocker`, and the optional `id`, `severity`,
+/// `tool`, `package`). Their own scan findings are theirs to see; a malware signature or YARA
+/// match shows only that a file matched and where (never the signature or rule name). The
+/// behaviour test shows only which rules fired and how bad (the honeytokens, canaries, trace and
+/// capture setup stay with Pigeonpost), except the hosted conformance run, which checks the
+/// publisher's own output and so shows its details. The AI review is advisory evidence for staff
+/// and shows only a count. Findings recorded before v2 (`detail`, `blocker`) read the same way.
 pub(crate) fn redact(stage: &str, evidence: &Value) -> Value {
     let findings = evidence["findings"].as_array().cloned().unwrap_or_default();
-    let blocking = |f: &Value| {
+    // v2 findings say `message`/`blocking`; v1 findings and the contract say `detail`/`blocker`.
+    let blocker = |f: &Value| -> Value {
         if f["blocking"].is_boolean() {
             f["blocking"].clone()
         } else {
             f["blocker"].clone()
         }
     };
+    let detail = |f: &Value| -> Value {
+        if f["message"].is_string() {
+            f["message"].clone()
+        } else {
+            f["detail"].clone()
+        }
+    };
+    let hidden_match = |f: &Value| {
+        matches!(
+            f["rule"].as_str(),
+            Some("malware.signature" | "malware.yara")
+        )
+    };
+    let with_optional = |mut v: Value, f: &Value, keys: &[&str]| {
+        for k in keys {
+            if !f[*k].is_null() {
+                v[*k] = f[*k].clone();
+            }
+        }
+        v
+    };
+    let conformance = evidence["evidence"]["kind"] == "hosted_conformance";
     match stage {
         "deterministic_scan" => json!(findings
             .iter()
             .map(|f| {
-                let message = if f["message"].is_string() {
-                    f["message"].clone()
-                } else {
-                    f["detail"].clone()
-                };
-                if matches!(f["tool"].as_str(), Some("clamav" | "yara")) {
-                    return json!({
-                        "severity": f["severity"], "tool": "malware", "rule": "malware.match",
-                        "path": f["path"], "message": "this file matched a malware signature",
-                        "blocking": blocking(f),
-                    });
+                if hidden_match(f) {
+                    return with_optional(
+                        json!({
+                            "rule": "malware.match", "path": f["path"],
+                            "detail": "this file matched a malware signature",
+                            "blocker": blocker(f), "tool": "malware",
+                        }),
+                        f,
+                        &["severity"],
+                    );
                 }
-                let mut v = json!({
-                    "rule": f["rule"], "path": f["path"], "message": message,
-                    "blocking": blocking(f),
-                });
-                for k in ["id", "severity", "tool", "package"] {
-                    if !f[k].is_null() {
-                        v[k] = f[k].clone();
-                    }
-                }
-                v
+                with_optional(
+                    json!({ "rule": f["rule"], "path": f["path"], "detail": detail(f),
+                            "blocker": blocker(f) }),
+                    f,
+                    &["id", "severity", "tool", "package"],
+                )
             })
             .collect::<Vec<_>>()),
-        // The hosted conformance run checks the publisher's own output: its messages are theirs
-        // to read, but a malware match still shows only that it matched.
-        "behavioral_test" if evidence["evidence"]["kind"] == "hosted_conformance" => {
-            json!(findings
-                .iter()
-                .map(|f| {
-                    if matches!(f["tool"].as_str(), Some("clamav" | "yara")) {
-                        json!({ "rule": "malware.match", "severity": f["severity"],
-                            "message": "a result file matched a malware signature",
-                            "blocking": blocking(f) })
-                    } else {
-                        json!({ "rule": f["rule"], "severity": f["severity"],
-                            "message": f["message"], "blocking": blocking(f) })
-                    }
-                })
-                .collect::<Vec<_>>())
-        }
-        "behavioral_test" => json!(findings
+        "behavioral_test" if conformance => json!(findings
             .iter()
             .map(|f| {
-                let mut v = json!({ "rule": f["rule"], "blocking": blocking(f) });
-                if !f["severity"].is_null() {
-                    v["severity"] = f["severity"].clone();
+                if hidden_match(f) {
+                    return with_optional(
+                        json!({ "rule": "malware.match",
+                                "detail": "a result file matched a malware signature",
+                                "blocker": blocker(f) }),
+                        f,
+                        &["severity"],
+                    );
                 }
-                v
+                with_optional(
+                    json!({ "rule": f["rule"], "detail": detail(f), "blocker": blocker(f) }),
+                    f,
+                    &["severity"],
+                )
             })
+            .collect::<Vec<_>>()),
+        "behavioral_test" => json!(findings
+            .iter()
+            .map(|f| with_optional(
+                json!({ "rule": f["rule"], "blocker": blocker(f) }),
+                f,
+                &["severity"]
+            ))
             .collect::<Vec<_>>()),
         _ => json!([]),
     }
@@ -3946,7 +3969,7 @@ mod tests {
     use super::*;
 
     const POLICY_V2_DIGEST: &str =
-        "sha256:cc2253865437d7db0dd5a730299cac63058309cbd77f41976567848462a57415";
+        "sha256:796a2a4db85e9afbe074fa9bc9353c5cbeca257f138e385998676a2c4b40b6a0";
 
     #[test]
     fn stages_follow_the_contract_order() {
@@ -3984,13 +4007,13 @@ mod tests {
         ]});
         let b = redact("behavioral_test", &ev);
         assert_eq!(b[0]["rule"], "behaviour.exfiltration");
-        assert_eq!(b[0]["blocking"], true);
+        assert_eq!(b[0]["blocker"], true);
         assert!(b[0].get("detail").is_none() && b[0].get("message").is_none());
         assert_eq!(redact("ai_analysis", &ev), json!([]));
-        // A v1 finding reads as a v2 one.
+        // A v1 finding keeps the contract's shape.
         let s = redact("deterministic_scan", &ev);
-        assert_eq!(s[0]["message"], "a planted honeytoken left through stdout");
-        assert_eq!(s[0]["blocking"], true);
+        assert_eq!(s[0]["detail"], "a planted honeytoken left through stdout");
+        assert_eq!(s[0]["blocker"], true);
     }
 
     /// v2 findings: the structured fields reach the publisher, except a malware match's
@@ -4012,9 +4035,11 @@ mod tests {
         assert_eq!(s[0]["id"], "osv-scanner:GHSA-1:serde@1.0.0");
         assert_eq!(s[0]["package"], "serde@1.0.0");
         assert_eq!(s[0]["severity"], "high");
+        assert_eq!(s[0]["detail"], "GHSA-1: bad (fixed in 1.0.1)");
+        assert_eq!(s[0]["blocker"], true);
         for m in [&s[1], &s[2]] {
             assert_eq!(m["tool"], "malware");
-            assert_eq!(m["blocking"], true);
+            assert_eq!(m["blocker"], true);
             assert!(m.get("id").is_none());
         }
         let text = s.to_string();
@@ -4022,6 +4047,20 @@ mod tests {
             !text.contains("Mirai") && !text.contains("MAL_Miner"),
             "{text}"
         );
+        // Every finding has exactly the contract's keys (additionalProperties: false).
+        let allowed = [
+            "rule", "path", "detail", "blocker", "id", "severity", "tool", "package",
+        ];
+        for f in s.as_array().unwrap() {
+            assert!(
+                f.as_object()
+                    .unwrap()
+                    .keys()
+                    .all(|k| allowed.contains(&k.as_str())),
+                "{f}"
+            );
+            assert!(f.get("rule").is_some() && f.get("blocker").is_some(), "{f}");
+        }
         let ev = json!({ "findings": [
             { "id": "gvisor:93.184.216.34:443", "severity": "high", "tool": "gvisor",
               "rule": "egress.undeclared", "message": "connect to 93.184.216.34:443",
@@ -4030,7 +4069,18 @@ mod tests {
         let b = redact("behavioral_test", &ev);
         assert_eq!(
             b,
-            json!([{ "rule": "egress.undeclared", "blocking": true, "severity": "high" }])
+            json!([{ "rule": "egress.undeclared", "blocker": true, "severity": "high" }])
+        );
+        // An unscannable file is not a signature: its rule and reason are the publisher's.
+        let ev = json!({ "findings": [
+            { "id": "clamav:x", "severity": "critical", "tool": "clamav",
+              "rule": "malware.encrypted", "path": "a.zip",
+              "message": "encrypted content that cannot be scanned (Heuristics.Encrypted.Zip)",
+              "blocking": true },
+        ]});
+        assert_eq!(
+            redact("deterministic_scan", &ev)[0]["rule"],
+            "malware.encrypted"
         );
     }
 

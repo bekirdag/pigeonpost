@@ -19,8 +19,16 @@
 //! tables allow; its evidence says `kind: hosted_conformance`): `passed`, or `failed`, which blocks
 //! the review like any failed stage. A result the contract refuses is answered as for a buyer's
 //! job (the service may retry until the deadline); the last refusal is the job's finding if it
-//! never sends a good one. Without a build plane the files cannot be scanned: the result is
-//! answered `503` (the service retries), and the job fails at its deadline.
+//! never sends a good one.
+//!
+//! A job lost on Pigeonpost's side is never the publisher's failure: one never sent, one whose
+//! scan the build plane lost (a restart) or could not run, or one whose result could not be taken
+//! for scanning (`503 scan_unavailable`) by its deadline becomes `platform_error` and is replaced
+//! by a fresh job (new id, full deadline), up to three times per operation; after that the stage
+//! waits for staff. The newest job of each operation decides the stage.
+//!
+//! The announced run can be gamed by a service that behaves only when told it is reviewed; the
+//! unannounced checks in `marketplace_shadow` cover that.
 
 use crate::groups::{GErr, GResult};
 use crate::marketplace::{deny, facts, iso, not_found, parse};
@@ -281,7 +289,105 @@ async fn dispatch_once(state: &AppState, now: i64) -> usize {
     n
 }
 
-/// Review jobs past their deadline without an accepted result fail.
+/// A review job Pigeonpost lost (never sent, its scan lost to a restart or never run, a scanner
+/// failure): never the publisher's failure. The job becomes `platform_error` and a fresh one,
+/// with a new id and a full deadline, replaces it, up to [`MAX_PLATFORM_RETRIES`] times per
+/// operation; after that the stage waits for staff instead of failing the publisher.
+fn replace_in(c: &Connection, job: &str, why: &str, now: i64) -> rusqlite::Result<bool> {
+    type Old = (
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        i64,
+        i64,
+    );
+    let old: Option<Old> = c
+        .query_row(
+            "SELECT case_id, release_id, publisher_id, operation, operation_version, input,
+                    service_mailbox, state, created_at, deadline_at
+               FROM nest_review_jobs WHERE id = ?1",
+            [job],
+            |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                    r.get(6)?,
+                    r.get(7)?,
+                    r.get(8)?,
+                    r.get(9)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((case, release, publisher, op, ver, input, mailbox, st, created, deadline)) = old
+    else {
+        return Ok(false);
+    };
+    if matches!(st.as_str(), "passed" | "failed" | "platform_error") {
+        return Ok(false);
+    }
+    c.execute(
+        "UPDATE nest_review_jobs SET state = 'platform_error', last_error = ?2, finished_at = ?3,
+            updated_at = ?3 WHERE id = ?1",
+        params![job, why, now],
+    )?;
+    let lost: i64 = c.query_row(
+        "SELECT COUNT(*) FROM nest_review_jobs WHERE case_id = ?1 AND operation = ?2
+           AND operation_version = ?3 AND state = 'platform_error'",
+        params![case, op, ver],
+        |r| r.get(0),
+    )?;
+    if lost > MAX_PLATFORM_RETRIES {
+        tracing::warn!(
+            case,
+            job,
+            why,
+            "conformance run keeps failing on Pigeonpost's side; staff"
+        );
+        return Ok(false);
+    }
+    c.execute(
+        "INSERT INTO nest_review_jobs (id, case_id, release_id, publisher_id, operation,
+            operation_version, input, service_mailbox, state, next_attempt_at, deadline_at,
+            created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'queued', ?9, ?10, ?9, ?9)",
+        params![
+            new_id("job"),
+            case,
+            release,
+            publisher,
+            op,
+            ver,
+            input,
+            mailbox,
+            now,
+            now + (deadline - created).max(3600)
+        ],
+    )?;
+    tracing::warn!(
+        case,
+        job,
+        why,
+        "review job lost on Pigeonpost's side; sent again"
+    );
+    Ok(true)
+}
+
+/// Replacements one operation's review job may have before the stage waits for staff.
+pub(crate) const MAX_PLATFORM_RETRIES: i64 = 3;
+
+/// Review jobs past their deadline without an accepted result. A job the service could not
+/// answer because of Pigeonpost (never sent, its scan never done, the result refused as
+/// `scan_unavailable`) is replaced; any other fails.
 async fn expire_once(state: &AppState, now: i64) -> GResult<usize> {
     state
         .store
@@ -298,26 +404,35 @@ async fn expire_once(state: &AppState, now: i64) -> GResult<usize> {
                 rows
             };
             for (job, last, st) in &due {
-                let f = match (st.as_str(), last) {
-                    ("scanning", _) => finding(
-                        "conformance.unscanned",
-                        job,
-                        "the result's files were not scanned before the deadline",
-                    ),
-                    (_, Some(e)) => finding(
-                        "conformance.result",
-                        job,
-                        format!(
-                            "no acceptable result before the deadline; the last was refused: {e}"
-                        ),
-                    ),
-                    _ => finding(
-                        "conformance.deadline",
-                        job,
-                        "no result before the operation's deadline",
-                    ),
-                };
-                fail_in(tx, job, vec![f], now)?;
+                match (st.as_str(), last.as_deref()) {
+                    ("queued", _) => {
+                        replace_in(tx, job, "never sent before the deadline", now)?;
+                    }
+                    ("scanning", _) => {
+                        replace_in(tx, job, "the result was not scanned before the deadline", now)?;
+                    }
+                    (_, Some("scan_unavailable")) => {
+                        replace_in(tx, job, "the build plane could not take the result", now)?;
+                    }
+                    (_, Some(e)) => {
+                        let f = finding(
+                            "conformance.result",
+                            job,
+                            format!(
+                                "no acceptable result before the deadline; the last was refused: {e}"
+                            ),
+                        );
+                        fail_in(tx, job, vec![f], now)?;
+                    }
+                    _ => {
+                        let f = finding(
+                            "conformance.deadline",
+                            job,
+                            "no result before the operation's deadline",
+                        );
+                        fail_in(tx, job, vec![f], now)?;
+                    }
+                }
             }
             Ok(due.len())
         })
@@ -458,18 +573,33 @@ pub(crate) async fn post_result(
                 "the result cannot be scanned right now; send it again",
             )
         };
-        if matches!(state.nests.marketplace.buildd, Buildd::Disabled) {
+        let accepted = !matches!(state.nests.marketplace.buildd, Buildd::Disabled)
+            && matches!(
+                state
+                    .nests
+                    .marketplace
+                    .buildd_call(reqwest::Method::POST, "/v1/scans", Some(body))
+                    .await,
+                Ok((200..=299, _))
+            );
+        if !accepted {
+            // Pigeonpost's side: if the deadline passes like this, the job is replaced, not
+            // failed (see `expire_once`).
+            let j = job.to_string();
+            let _ = state
+                .store
+                .group_tx(move |tx| -> GResult<()> {
+                    tx.execute(
+                        "UPDATE nest_review_jobs SET last_error = 'scan_unavailable',
+                            updated_at = ?2 WHERE id = ?1 AND state = 'running'",
+                        params![j, now],
+                    )?;
+                    Ok(())
+                })
+                .await;
             return Err(unavailable());
         }
-        match state
-            .nests
-            .marketplace
-            .buildd_call(reqwest::Method::POST, "/v1/scans", Some(body))
-            .await
-        {
-            Ok((200..=299, _)) => Some(scan_id),
-            _ => return Err(unavailable()),
-        }
+        Some(scan_id)
     } else {
         None
     };
@@ -527,49 +657,76 @@ async fn poll_scans(state: &AppState, now: i64) -> usize {
         .unwrap_or_default();
     let mut n = 0;
     for (job, scan) in due {
-        let Ok((200, v)) = state
+        let answer = state
             .nests
             .marketplace
             .buildd_call(reqwest::Method::GET, &format!("/v1/scans/{scan}"), None)
-            .await
-        else {
+            .await;
+        enum Outcome {
+            Wait,
+            Passed,
+            Failed(Vec<Value>),
+            Lost(&'static str),
+        }
+        let outcome = match answer {
+            // The build plane no longer knows the scan (its queue was lost): ours to redo.
+            Ok((404, _)) => Outcome::Lost("the build plane lost the result's scan"),
+            Ok((200, v)) => {
+                let v = if v["data"].is_object() {
+                    v["data"].clone()
+                } else {
+                    v
+                };
+                match v["state"].as_str() {
+                    Some("succeeded") => {
+                        let blocking: Vec<Value> = v["result"]["findings"]
+                            .as_array()
+                            .cloned()
+                            .unwrap_or_default()
+                            .into_iter()
+                            .filter(|f| f["blocking"] == true)
+                            .collect();
+                        // A scanner that could not run is Pigeonpost's problem, not a verdict.
+                        if blocking.iter().any(|f| {
+                            f["rule"]
+                                .as_str()
+                                .is_some_and(|r| r.starts_with("scanner."))
+                        }) {
+                            Outcome::Lost("the build plane's scanners did not complete")
+                        } else if blocking.is_empty() {
+                            Outcome::Passed
+                        } else {
+                            Outcome::Failed(blocking)
+                        }
+                    }
+                    Some("failed") => Outcome::Lost("the build plane could not scan the result"),
+                    _ => Outcome::Wait,
+                }
+            }
+            _ => Outcome::Wait,
+        };
+        if matches!(outcome, Outcome::Wait) {
             continue;
-        };
-        let v = if v["data"].is_object() {
-            v["data"].clone()
-        } else {
-            v
-        };
-        let found: Option<Vec<Value>> = match v["state"].as_str() {
-            Some("succeeded") => Some(
-                v["result"]["findings"]
-                    .as_array()
-                    .cloned()
-                    .unwrap_or_default()
-                    .into_iter()
-                    .filter(|f| f["blocking"] == true)
-                    .collect(),
-            ),
-            Some("failed") => Some(vec![finding(
-                "conformance.unscanned",
-                &job,
-                "the result's files could not be scanned",
-            )]),
-            _ => None,
-        };
-        let Some(found) = found else { continue };
+        }
         let j = job.clone();
         let _ = state
             .store
             .group_tx(move |tx| -> GResult<()> {
-                if found.is_empty() {
-                    tx.execute(
-                        "UPDATE nest_review_jobs SET state = 'passed', finished_at = ?2,
-                            updated_at = ?2 WHERE id = ?1 AND state = 'scanning'",
-                        params![j, now],
-                    )?;
-                } else {
-                    fail_in(tx, &j, found, now)?;
+                match outcome {
+                    Outcome::Passed => {
+                        tx.execute(
+                            "UPDATE nest_review_jobs SET state = 'passed', finished_at = ?2,
+                                updated_at = ?2 WHERE id = ?1 AND state = 'scanning'",
+                            params![j, now],
+                        )?;
+                    }
+                    Outcome::Failed(found) => {
+                        fail_in(tx, &j, found, now)?;
+                    }
+                    Outcome::Lost(why) => {
+                        replace_in(tx, &j, why, now)?;
+                    }
+                    Outcome::Wait => {}
                 }
                 Ok(())
             })
@@ -587,7 +744,9 @@ fn finish_in(tx: &Transaction<'_>, platform_owner: Option<&str>, now: i64) -> GR
               JOIN review_cases c ON c.id = j.case_id
               WHERE c.status = 'open'
                 AND NOT EXISTS (SELECT 1 FROM nest_review_jobs o WHERE o.case_id = j.case_id
-                                  AND o.state NOT IN ('passed','failed'))
+                                  AND o.state NOT IN ('passed','failed','platform_error'))
+                AND EXISTS (SELECT 1 FROM nest_review_jobs v WHERE v.case_id = j.case_id
+                              AND v.state IN ('passed','failed'))
                 AND NOT EXISTS (SELECT 1 FROM review_decisions d WHERE d.case_id = j.case_id
                                   AND d.stage = 'behavioral_test')
               LIMIT 20",
@@ -613,7 +772,7 @@ fn finish_in(tx: &Transaction<'_>, platform_owner: Option<&str>, now: i64) -> GR
             let mut stmt = tx.prepare(
                 "SELECT id, operation, state, problems, result_digest, COALESCE(files, '[]'),
                         created_at, deadline_at, finished_at
-                   FROM nest_review_jobs WHERE case_id = ?1 ORDER BY created_at, id",
+                   FROM nest_review_jobs WHERE case_id = ?1 ORDER BY created_at, rowid",
             )?;
             let rows = stmt
                 .query_map([case], |r| {
@@ -632,14 +791,25 @@ fn finish_in(tx: &Transaction<'_>, platform_owner: Option<&str>, now: i64) -> GR
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             rows
         };
+        // The newest job of each operation decides; one Pigeonpost lost for good (replacements
+        // used up) leaves the stage to staff rather than failing the publisher.
+        let mut latest: std::collections::BTreeMap<&str, &str> = Default::default();
+        for j in &jobs {
+            latest.insert(j.1.as_str(), j.2.as_str());
+        }
+        if latest.values().any(|st| *st == "platform_error") {
+            continue;
+        }
         let mut findings: Vec<Value> = Vec::new();
         let mut facts = Vec::new();
         for (id, op, st, problems, digest, files, created, deadline, finished) in &jobs {
-            let p: Vec<Value> = serde_json::from_str(problems).unwrap_or_default();
-            if st == "failed" && p.is_empty() {
-                findings.push(finding("conformance.failed", id, "the review job failed"));
+            if st != "platform_error" {
+                let p: Vec<Value> = serde_json::from_str(problems).unwrap_or_default();
+                if st == "failed" && p.is_empty() {
+                    findings.push(finding("conformance.failed", id, "the review job failed"));
+                }
+                findings.extend(p);
             }
-            findings.extend(p);
             facts.push(json!({
                 "job_id": id, "operation": op, "state": st, "result_digest": digest,
                 "files": serde_json::from_str::<Value>(files).unwrap_or(Value::Null),
@@ -647,10 +817,10 @@ fn finish_in(tx: &Transaction<'_>, platform_owner: Option<&str>, now: i64) -> GR
                 "deadline_at": iso(*deadline),
             }));
         }
-        let passed = jobs.iter().all(|j| j.2 == "passed") && findings.is_empty();
+        let passed = latest.values().all(|st| *st == "passed") && findings.is_empty();
         let decision = if passed { "passed" } else { "failed" };
         let reason = if passed {
-            format!("{} review job(s) answered and conformant", jobs.len())
+            format!("{} review job(s) answered and conformant", latest.len())
         } else {
             format!("{} conformance finding(s)", findings.len())
         };

@@ -21,6 +21,9 @@ reproducible = true
 max_queued = 20
 # Saved release images are deleted after this many days (nests-1 keeps its pulled copy).
 keep_days = 14
+# An image no re-scan has named yet is kept this long (at least keep_days and 45), so the first
+# re-scan of a published release always finds it.
+keep_unscanned_days = 120
 
 # The advisory AI review on the self-hosted model (mswarm's self-hosted LB). Optional; when unset
 # the postbox records the AI stage some other way or the review waits for it.

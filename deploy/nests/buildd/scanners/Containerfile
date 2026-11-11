@@ -38,11 +38,15 @@ RUN set -eu; \
     chmod 0755 osv-scanner grype gitleaks
 
 FROM ${DEBIAN}
-# YARA 4.5 (YARA-Forge's rules need it) from bookworm-backports, pinned to the exact package.
+# YARA 4.5 (YARA-Forge's rules need it) from bookworm-backports, pinned to the exact package;
+# zstd and xz so the in-sandbox layer unpack (scanners.rs UNPACK_SCRIPT) reads any OCI layer.
 ARG YARA_VERSION=4.5.2-1~bpo12+1
+ARG ZSTD_VERSION=1.5.4+dfsg2-5
+ARG XZ_VERSION=5.4.1-1+deb12u1
 RUN echo 'deb http://deb.debian.org/debian bookworm-backports main' > /etc/apt/sources.list.d/backports.list \
  && apt-get update \
  && apt-get install -y --no-install-recommends -t bookworm-backports "yara=${YARA_VERSION}" \
+ && apt-get install -y --no-install-recommends "zstd=${ZSTD_VERSION}" "xz-utils=${XZ_VERSION}" \
  && rm -rf /var/lib/apt/lists/*
 COPY --from=fetch /fetch/osv-scanner /fetch/grype /fetch/gitleaks /usr/local/bin/
 # The scan never writes outside /out and /tmp (the root is read-only at run time).

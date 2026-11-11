@@ -269,8 +269,16 @@ pub(crate) const TABLES: &[(&str, Rule)] = &[
         Keep("Re-scan record of a published release; no account data"),
     ),
     (
-        "release_rescan_flags",
-        Keep("Staff flag on a published release's re-scan; append-only review history"),
+        "release_security_flags",
+        Keep("Staff security flag on a release (re-scan, shadow job, result sample)"),
+    ),
+    (
+        "nest_shadow_jobs",
+        Keep("Marks a platform-owned hosted job as a staff check; the job row decides"),
+    ),
+    (
+        "nest_result_scans",
+        Keep("Malware-scan record of a hosted result; no file content"),
     ),
     (
         "nest_installation_licences",

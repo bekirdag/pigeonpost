@@ -515,6 +515,15 @@ pub fn pinned_image(image: &str) -> bool {
 /// runtime on the machine.
 pub trait Podman: Send + Sync {
     fn run(&self, args: &[&str]) -> Result<String, String>;
+
+    /// Both streams whatever the exit status: `(succeeded, stdout, stderr)`. A tool that exits 0
+    /// while reporting errors on stderr, or a run ended by its timeout, still has both.
+    fn run_capture(&self, args: &[&str]) -> (bool, String, String) {
+        match self.run(args) {
+            Ok(out) => (true, out, String::new()),
+            Err(err) => (false, String::new(), err),
+        }
+    }
 }
 
 /// The real thing.
@@ -523,6 +532,10 @@ pub struct HostPodman;
 impl Podman for HostPodman {
     fn run(&self, args: &[&str]) -> Result<String, String> {
         crate::storage::run("podman", args)
+    }
+
+    fn run_capture(&self, args: &[&str]) -> (bool, String, String) {
+        crate::storage::run_capture("podman", args)
     }
 }
 

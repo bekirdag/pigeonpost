@@ -60,6 +60,18 @@ pub(crate) fn run(program: &str, args: &[&str]) -> Result<String, String> {
     }
 }
 
+/// Run and keep both streams whatever the exit status: `(succeeded, stdout, stderr)`.
+pub(crate) fn run_capture(program: &str, args: &[&str]) -> (bool, String, String) {
+    match Command::new(program).args(args).output() {
+        Ok(out) => (
+            out.status.success(),
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        ),
+        Err(e) => (false, String::new(), format!("{program}: {e}")),
+    }
+}
+
 /// Run with a secret on stdin (cryptsetup `--key-file -`), so it never appears in argv or a file
 /// other than the root-only key file.
 fn run_with_stdin(program: &str, args: &[&str], stdin: &[u8]) -> Result<(), String> {

@@ -717,3 +717,216 @@ async fn a_non_conformant_integration_fails_the_run_and_is_blocked() {
         assert_eq!(v["data"]["status"], "changes_requested", "{v}");
     }
 }
+
+/// A review job Pigeonpost loses (its scan unknown to the build plane after a restart) is sent
+/// again under a new id, never counted against the publisher; the replacement decides the stage.
+#[tokio::test]
+async fn a_review_job_lost_on_pigeonposts_side_is_retried_not_failed() {
+    let w = world("f").await;
+    let (s, v) = w
+        .srv
+        .post(
+            &format!("/v1/publishers/{}/integrations", w.publisher),
+            &w.ann.token,
+            integration(&w, &w.service.address, "1.0.0"),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let review = v["data"]["review_id"].as_str().unwrap().to_string();
+    crate::marketplace_conformance::work_once(&w.srv.state).await;
+    let first = inbox(&w.srv, &w.service.cap)
+        .await
+        .iter()
+        .filter_map(|m| serde_json::from_str::<Value>(m["body"].as_str()?).ok())
+        .find(|b| b["review"] == true)
+        .unwrap()["job_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let h = &w.srv.state.nests.marketplace;
+    h.buildd_answer(202, json!({ "state": "queued" }));
+    h.buildd_answer(404, json!({ "error": "not_found" }));
+    let (s, v) = result(
+        &w.srv,
+        &w.service.cap,
+        &first,
+        pdf_result_of(CONFORMING_PDF),
+    )
+    .await;
+    assert_eq!(s, 200, "{v}");
+    // The scan is gone: the job is Pigeonpost's loss, replaced, and nothing is recorded.
+    crate::marketplace_conformance::work_once(&w.srv.state).await;
+    let r = review.clone();
+    let states: Vec<String> = w
+        .srv
+        .state
+        .store
+        .group_read(move |c| -> Result<Vec<String>, crate::groups::GErr> {
+            let mut stmt = c.prepare(
+                "SELECT state FROM nest_review_jobs WHERE case_id = ?1 ORDER BY created_at, rowid",
+            )?;
+            let rows = stmt
+                .query_map([&r], |row| row.get(0))?
+                .collect::<rusqlite::Result<Vec<String>>>()?;
+            Ok(rows)
+        })
+        .await
+        .unwrap();
+    assert_eq!(states, ["platform_error", "queued"], "{states:?}");
+    // The replacement goes out under a new id and decides the stage.
+    let (decision, msg) = conform(&w, &review, &pdf_result_of(CONFORMING_PDF), &[]).await;
+    assert_ne!(msg["job_id"].as_str().unwrap(), first);
+    assert_eq!(decision, "passed");
+}
+
+/// A shadow job looks like a buyer's: the plain contract message with the real listing id and
+/// realistic input, no `review` key. Nothing is charged or delivered. A malware hit on its
+/// result stops the listing and flags it for staff.
+#[tokio::test]
+async fn a_shadow_job_is_indistinguishable_and_a_malware_hit_stops_the_listing() {
+    let w = world("g").await;
+    let (listing, _) = live_listing(&w).await;
+    let (s, v) = w
+        .srv
+        .post(
+            &format!("/v1/staff/marketplace/listings/{listing}/shadow-jobs"),
+            &w.rev.strong,
+            json!({}),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let job = v["data"]["job_id"].as_str().unwrap().to_string();
+    assert!(job.starts_with("job_") && job.len() == 4 + 26, "{job}");
+    // Staff only.
+    let (s, _) = w
+        .srv
+        .post(
+            &format!("/v1/staff/marketplace/listings/{listing}/shadow-jobs"),
+            &w.ann.token,
+            json!({}),
+        )
+        .await;
+    assert!(s == 403 || s == 404, "{s}");
+    dispatch_once(&w.srv.state).await;
+    let got = inbox(&w.srv, &w.service.cap).await;
+    let body: Value = got
+        .iter()
+        .filter_map(|m| serde_json::from_str::<Value>(m["body"].as_str()?).ok())
+        .find(|b| b["job_id"] == job.as_str())
+        .unwrap_or_else(|| panic!("no shadow job message: {got:?}"));
+    assert_eq!(
+        body.as_object().unwrap().len(),
+        7,
+        "the buyer job's exact keys: {body}"
+    );
+    assert_eq!(body["listing_id"], listing.as_str());
+    assert!(body.get("review").is_none());
+    let role = body["input"]["role"].as_str().unwrap();
+    assert!(!role.is_empty() && !role.contains("review"), "{role}");
+
+    let h = &w.srv.state.nests.marketplace;
+    h.buildd_answer(202, json!({ "state": "queued" }));
+    h.buildd_answer(
+        200,
+        json!({ "state": "succeeded", "result": { "findings": [
+            { "id": "clamav:Unix.Trojan.X:result/0.bin", "tool": "clamav",
+              "rule": "malware.signature", "severity": "critical", "blocking": true,
+              "message": "matched" }
+        ]}}),
+    );
+    let (s, v) = result(&w.srv, &w.service.cap, &job, pdf_result_of(CONFORMING_PDF)).await;
+    assert_eq!(s, 200, "{v}");
+    let mut flagged = Value::Null;
+    for _ in 0..100 {
+        crate::marketplace_shadow::work_once(&w.srv.state).await;
+        let (s, v) = w
+            .srv
+            .get("/v1/staff/marketplace/security-flags", &w.rev.strong)
+            .await;
+        assert_eq!(s, 200, "{v}");
+        if let Some(f) = v["data"].as_array().and_then(|a| a.first()).cloned() {
+            flagged = f;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+    }
+    assert_eq!(flagged["source"], "shadow_job", "{flagged}");
+    assert_eq!(flagged["action"], "quarantined");
+    assert_eq!(flagged["listing_id"], listing.as_str());
+    // The listing is stopped for buyers until staff restore it.
+    let (s, v) = run(&w, &listing, json!({ "role": "CTO" })).await;
+    assert_eq!((s, code(&v)), (409, "listing_stopped"), "{v}");
+    // No charge, and the result was delivered to no one.
+    let j = job.clone();
+    let (charges, delivery): (i64, String) = w
+        .srv
+        .state
+        .store
+        .group_read(move |c| -> Result<(i64, String), crate::groups::GErr> {
+            Ok((
+                c.query_row(
+                    "SELECT COUNT(*) FROM nest_hosted_charges WHERE job_id = ?1",
+                    [&j],
+                    |r| r.get(0),
+                )?,
+                c.query_row(
+                    "SELECT COALESCE(delivery, '') FROM nest_hosted_jobs WHERE id = ?1",
+                    [&j],
+                    |r| r.get(0),
+                )?,
+            ))
+        })
+        .await
+        .unwrap();
+    assert_eq!((charges, delivery.as_str()), (0, "delivered"));
+    deliver_once(&w.srv.state).await;
+    assert!(inbox(&w.srv, &w.bob_box.cap).await.is_empty());
+}
+
+/// A sampled buyer result that matches malware stops the listing and flags it; a clean one does
+/// nothing.
+#[tokio::test]
+async fn a_sampled_buyer_result_with_malware_stops_the_listing() {
+    let w = world("h").await;
+    let (listing, _) = live_listing(&w).await;
+    let (s, v) = run(&w, &listing, json!({ "role": "CTO" })).await;
+    assert_eq!(s, 201, "{v}");
+    let job = v["data"]["job_id"].as_str().unwrap().to_string();
+    dispatch_once(&w.srv.state).await;
+    let (s, v) = result(&w.srv, &w.service.cap, &job, pdf_result_of(CONFORMING_PDF)).await;
+    assert_eq!(s, 200, "{v}");
+    let h = &w.srv.state.nests.marketplace;
+    h.buildd_answer(202, json!({ "state": "queued" }));
+    h.buildd_answer(
+        200,
+        json!({ "state": "succeeded", "result": { "findings": [
+            { "id": "yara:MAL_X:result/0.bin", "tool": "yara", "rule": "malware.yara",
+              "severity": "critical", "blocking": true, "message": "matched" }
+        ]}}),
+    );
+    crate::marketplace_shadow::check_result_sampled(
+        &w.srv.state,
+        &job,
+        "succeeded",
+        vec![("report.pdf".into(), CONFORMING_PDF.to_vec())],
+        100,
+    )
+    .await
+    .unwrap();
+    let calls = h.buildd_calls();
+    let scan = calls
+        .iter()
+        .rfind(|c| c.method == "POST" && c.path == "/v1/scans")
+        .unwrap();
+    assert_eq!(scan.body.as_ref().unwrap()["kind"], "files");
+    crate::marketplace_shadow::work_once(&w.srv.state).await;
+    let (s, v) = w
+        .srv
+        .get("/v1/staff/marketplace/security-flags", &w.rev.strong)
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["data"][0]["source"], "result_sample", "{v}");
+    assert_eq!(v["data"][0]["action"], "quarantined");
+    let (s, v) = run(&w, &listing, json!({ "role": "CTO" })).await;
+    assert_eq!((s, code(&v)), (409, "listing_stopped"), "{v}");
+}

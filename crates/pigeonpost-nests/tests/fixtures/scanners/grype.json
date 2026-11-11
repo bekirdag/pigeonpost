@@ -123,6 +123,38 @@
     "language": "",
     "purl": "pkg:deb/debian/zlib1g@1%3A1.2.13.dfsg-1?arch=amd64"
    }
+  },
+  {
+   "vulnerability": {
+    "id": "CVE-2026-55555",
+    "dataSource": "https://github.com/advisories/GHSA-vh95-rmgr-6w4m",
+    "namespace": "github:language:go",
+    "severity": "Unknown",
+    "urls": [],
+    "description": "golang.org/x/crypto/ssh: SSH connection truncation allows for bypassing authentication checks.",
+    "fix": {
+     "versions": [
+      "1.2.4"
+     ],
+     "state": "fixed"
+    }
+   },
+   "relatedVulnerabilities": [],
+   "matchDetails": [],
+   "artifact": {
+    "id": "b6f9e8d4a7c2",
+    "name": "libexample",
+    "version": "1.2.3",
+    "type": "deb",
+    "locations": [
+     {
+      "path": "/app/go.mod",
+      "layerID": "sha256:abc123def456"
+     }
+    ],
+    "language": "go",
+    "purl": "pkg:golang/golang.org/x/crypto@0.27.0"
+   }
   }
  ],
  "source": {

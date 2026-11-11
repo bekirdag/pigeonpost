@@ -2500,6 +2500,8 @@ A scanner that cannot run, or a database older than three days, fails the scan r
 
 After publication, Pigeonpost scans published releases again every month against the newest databases. A new finding is flagged to Pigeonpost staff, who contact you. A scan never removes your listing by itself.
 
+Publisher-hosted services are also checked without notice after publication. Some jobs are sent by Pigeonpost, and some results are scanned with ClamAV and YARA. A failure is flagged to staff. A malware match also stops the listing until staff review it.
+
 ### Deterministic scan rules
 
 This offline scan blocks a release if it finds any of these issues.

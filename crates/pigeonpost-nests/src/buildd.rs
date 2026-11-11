@@ -89,9 +89,14 @@ pub struct BuilddConfig {
     /// Most builds waiting at once (all publishers together).
     #[serde(default = "default_max_queued")]
     pub max_queued: i64,
-    /// Saved images older than this are deleted (a pulled image lives on the worker host).
+    /// Saved images older than this are deleted (a pulled image lives on the worker host) once a
+    /// re-scan has named them.
     #[serde(default = "default_keep_days")]
     pub keep_days: i64,
+    /// An image no re-scan has named yet is kept this long, so the first re-scan of a release
+    /// (the postbox sends one as soon as it is published) still finds it.
+    #[serde(default = "default_keep_unscanned_days")]
+    pub keep_unscanned_days: i64,
     /// The AI review route file (`analysis::ReviewRouteConfig`), when the advisory review runs here.
     #[serde(default)]
     pub ai_review_route: Option<PathBuf>,
@@ -168,6 +173,9 @@ fn default_max_queued() -> i64 {
 fn default_keep_days() -> i64 {
     14
 }
+fn default_keep_unscanned_days() -> i64 {
+    120
+}
 fn default_behaviour_secs() -> u64 {
     60
 }
@@ -240,6 +248,13 @@ impl BuilddConfig {
         }
         if self.max_queued < 1 || self.keep_days < 1 {
             return Err("max_queued and keep_days must be positive".into());
+        }
+        if self.keep_unscanned_days < self.keep_days.max(45) {
+            return Err(
+                "keep_unscanned_days: at least keep_days and 45 (a release reviewed and \
+                 published in that time is re-scanned with its image)"
+                    .into(),
+            );
         }
         for p in [&self.work_root, &self.artifact_root] {
             if !p.is_absolute() {
@@ -506,6 +521,10 @@ struct ByRef<'a>(&'a dyn Podman);
 impl Podman for ByRef<'_> {
     fn run(&self, args: &[&str]) -> Result<String, String> {
         self.0.run(args)
+    }
+
+    fn run_capture(&self, args: &[&str]) -> (bool, String, String) {
+        self.0.run_capture(args)
     }
 }
 
@@ -777,23 +796,71 @@ pub fn cgroup_sample(dir: &Path) -> Option<(u64, u64)> {
 }
 
 /// The gVisor strace logs of one behaviour container, read and removed.
-fn take_trace(trace_root: &Path, cid_file: &Path) -> Option<String> {
-    let id = std::fs::read_to_string(cid_file).ok()?;
+/// The most trace one behaviour run may leave (`runsc-behaviour`'s debug logs) before it counts as
+/// a flood. `netlog/` itself is a size-limited tmpfs (README); this is the reader's own cap.
+pub const TRACE_MAX_BYTES: u64 = 64 << 20;
+
+/// What the egress trace of one behaviour run holds.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Trace {
+    /// No container id, no directory, or no readable boot (sentry) log: nothing was observed.
+    Missing,
+    /// More than [`TRACE_MAX_BYTES`]: the release drowned its own trace.
+    Flood(u64),
+    Text(String),
+}
+
+/// The gVisor strace logs of one behaviour container, read (bytes, so a non-UTF-8 process name
+/// cannot hide a line) with a cap, and removed. The sentry's boot log must be among them: the
+/// strace lines are there, and without it a run proves nothing.
+pub fn take_trace(trace_root: &Path, cid_file: &Path) -> Trace {
+    let Some(id) = std::fs::read_to_string(cid_file).ok() else {
+        return Trace::Missing;
+    };
     let id = id.trim();
     if id.len() < 12 || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return None;
+        return Trace::Missing;
     }
     let dir = trace_root.join(id);
-    let mut text = String::new();
-    let mut any = false;
-    for e in std::fs::read_dir(&dir).ok()?.flatten() {
-        if let Ok(t) = std::fs::read_to_string(e.path()) {
-            any |= !t.is_empty();
-            text.push_str(&t);
-        }
-    }
+    let out = read_trace_dir(&dir);
     let _ = std::fs::remove_dir_all(&dir);
-    any.then_some(text)
+    out
+}
+
+fn read_trace_dir(dir: &Path) -> Trace {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Trace::Missing;
+    };
+    let mut text = String::new();
+    let mut total = 0u64;
+    let mut boot = false;
+    for e in entries.flatten() {
+        let name = e.file_name().to_string_lossy().to_string();
+        let size = e.metadata().map(|m| m.len()).unwrap_or(0);
+        total = total.saturating_add(size);
+        if total > TRACE_MAX_BYTES {
+            return Trace::Flood(total);
+        }
+        let mut bytes = Vec::new();
+        let read = std::fs::File::open(e.path())
+            .and_then(|f| f.take(TRACE_MAX_BYTES + 1).read_to_end(&mut bytes));
+        if read.is_err() {
+            if name.contains(".boot") {
+                return Trace::Missing;
+            }
+            continue;
+        }
+        if name.contains(".boot") && !bytes.is_empty() {
+            boot = true;
+        }
+        text.push_str(&String::from_utf8_lossy(&bytes));
+        text.push('\n');
+    }
+    if boot {
+        Trace::Text(text)
+    } else {
+        Trace::Missing
+    }
 }
 
 /// The behaviour test (R-63) on the build plane, after the scan: the image just built runs under
@@ -869,29 +936,36 @@ pub fn behaviour_test(
     let base = cgroup.and_then(cgroup_sample);
     let mut peak = 0u64;
     let mut answered_at: std::collections::BTreeMap<String, u64> = Default::default();
-    let mut cpu_at_last_answer = None;
     let out_dir = volume.join("jobs/out");
-    let mut poll = |peak: &mut u64, answered_at: &mut std::collections::BTreeMap<String, u64>| {
-        let sample = cgroup.and_then(cgroup_sample);
-        if let Some((mem, _)) = sample {
+    let poll = |peak: &mut u64, answered_at: &mut std::collections::BTreeMap<String, u64>| {
+        if let Some((mem, _)) = cgroup.and_then(cgroup_sample) {
             *peak = (*peak).max(mem);
         }
-        let mut new = false;
+        // An answer counts from when it is a complete, valid result, not when a file appears:
+        // a release cannot start the clock with an empty or partial file.
         if let Ok(dir) = std::fs::read_dir(&out_dir) {
             for e in dir.flatten() {
                 let name = e.file_name().to_string_lossy().to_string();
-                if let std::collections::btree_map::Entry::Vacant(e) = answered_at.entry(name) {
-                    e.insert(started.elapsed().as_millis() as u64);
-                    new = true;
+                if answered_at.contains_key(&name) {
+                    continue;
+                }
+                let valid = std::fs::read(e.path())
+                    .ok()
+                    .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+                    .is_some_and(|v| v["status"].is_string());
+                if valid {
+                    answered_at.insert(name, started.elapsed().as_millis() as u64);
                 }
             }
         }
-        if new {
-            cpu_at_last_answer = sample.map(|(_, cpu)| cpu);
-        }
     };
+    // Both streams, whatever the exit status (the timeout ends a worker, so it never exits 0).
     let output = std::thread::scope(|s| {
-        let run = s.spawn(|| run_args(podman, &args).unwrap_or_else(|e| e));
+        let run = s.spawn(|| {
+            let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+            let (_, stdout, stderr) = podman.run_capture(&refs);
+            format!("{stdout}\n{stderr}")
+        });
         while !run.is_finished() {
             poll(&mut peak, &mut answered_at);
             std::thread::sleep(std::time::Duration::from_millis(250));
@@ -937,7 +1011,23 @@ pub fn behaviour_test(
     ));
     let (egress_facts, attempts) = match observe {
         Some(o) => match take_trace(&o.trace_root, &cid_file) {
-            Some(trace) => {
+            Trace::Flood(bytes) => {
+                seen.push(Finding::of(
+                    "gvisor",
+                    "egress.flood",
+                    analysis::Severity::High,
+                    "flood",
+                    format!(
+                        "the run left {} MiB of network trace (limit {} MiB); its attempts \
+                         cannot all be read",
+                        bytes >> 20,
+                        TRACE_MAX_BYTES >> 20
+                    ),
+                    true,
+                ));
+                (json!({ "traced": false, "flood": true }), Vec::new())
+            }
+            Trace::Text(trace) => {
                 let attempts = analysis::parse_strace(&trace);
                 let found = analysis::egress_findings(&manifest.egress, &attempts);
                 let n = found.len();
@@ -947,7 +1037,7 @@ pub fn behaviour_test(
                     attempts,
                 )
             }
-            None => {
+            Trace::Missing => {
                 seen.push(analysis::egress_unobserved(true));
                 (json!({ "traced": false }), Vec::new())
             }
@@ -970,11 +1060,13 @@ pub fn behaviour_test(
                     Some(d)
                 })
                 .max();
-            let active_ms = times.last().copied().unwrap_or(total_ms).max(1);
+            // CPU counts until the run ends: work done after the last answer is still the
+            // release's.
+            let active_ms = total_ms.max(1);
             let usage = analysis::Usage {
                 // The cgroup's own baseline (the user's systemd and podman) is not the release's.
                 peak_memory_bytes: peak.max(mem0).saturating_sub(mem0),
-                cpu_usec: cpu_at_last_answer.unwrap_or(cpu1).saturating_sub(cpu0),
+                cpu_usec: cpu1.saturating_sub(cpu0),
                 active_ms,
                 slowest_job_ms: slowest,
             };
@@ -1077,6 +1169,12 @@ CREATE TABLE IF NOT EXISTS retained_images (
     image_digest TEXT PRIMARY KEY,
     release_id   TEXT NOT NULL,
     updated_at   INTEGER NOT NULL
+);
+-- Every image a re-scan has ever named. Until an image is here, its archive is kept for
+-- keep_unscanned_days (not keep_days), so the first re-scan of a release always finds it.
+CREATE TABLE IF NOT EXISTS rescanned_images (
+    image_digest TEXT PRIMARY KEY,
+    first_at     INTEGER NOT NULL
 );
 ";
 
@@ -1254,6 +1352,12 @@ impl Buildd {
         conn.execute(
             "UPDATE builds SET state = 'failed', error = 'interrupted', updated_at = ?1
               WHERE state = 'running'",
+            params![now()],
+        )
+        .map_err(|e| e.to_string())?;
+        // A scan that was running is run again (its files are still in the work root).
+        conn.execute(
+            "UPDATE scans SET state = 'queued', updated_at = ?1 WHERE state = 'running'",
             params![now()],
         )
         .map_err(|e| e.to_string())?;
@@ -1597,6 +1701,11 @@ impl Buildd {
                          VALUES (?1, ?2, ?3)
                          ON CONFLICT (image_digest) DO UPDATE SET updated_at = excluded.updated_at",
                         params![digest, release, now()],
+                    )?;
+                    c.execute(
+                        "INSERT OR IGNORE INTO rescanned_images (image_digest, first_at)
+                         VALUES (?1, ?2)",
+                        params![digest, now()],
                     )
                 })?;
                 json!({ "kind": "release", "release_id": release, "image_digest": digest,
@@ -1731,6 +1840,19 @@ impl Buildd {
                     now(),
                 );
                 o.evidence["image_scanned"] = json!(archive.is_some());
+                if archive.is_none() {
+                    // The image is gone: only the SBOM was scanned. Never a quiet pass; unique to
+                    // this run, so every re-scan without it says so again.
+                    o.findings.push(Finding::of(
+                        "pigeonpost",
+                        "scanner.image_unavailable",
+                        analysis::Severity::High,
+                        &format!("image_unavailable:{}", crate::util::random_hex(6)),
+                        "the release image is not on the build plane; only its SBOM was \
+                         re-scanned (no image CVE, ClamAV or YARA scan)",
+                        true,
+                    ));
+                }
                 o
             }
             _ => return Err("unknown scan kind".into()),
@@ -1744,8 +1866,9 @@ impl Buildd {
         }))
     }
 
-    /// Delete saved images older than `keep_days` (unless a published release still names them),
-    /// retained images no re-scan has named for two months, and finished scans after 30 days.
+    /// Delete saved images older than `keep_days` once a re-scan has named them (or older than
+    /// `keep_unscanned_days` when none ever has), unless a published release still names them;
+    /// retained images no re-scan has named for two months; and finished scans after 30 days.
     pub fn prune(&self) -> Result<usize, ApiErr> {
         let t = now();
         self.with(|c| {
@@ -1759,12 +1882,17 @@ impl Buildd {
             )
         })?;
         let cutoff = t - self.cfg.keep_days * 86_400;
+        let unscanned_cutoff = t - self.cfg.keep_unscanned_days * 86_400;
         let old: Vec<(String, String)> = self.with(|c| {
             let mut stmt = c.prepare(
                 "SELECT id, archive FROM builds WHERE archive IS NOT NULL AND updated_at < ?1
-                   AND image_digest NOT IN (SELECT image_digest FROM retained_images)",
+                   AND image_digest NOT IN (SELECT image_digest FROM retained_images)
+                   AND (updated_at < ?2
+                        OR image_digest IN (SELECT image_digest FROM rescanned_images))",
             )?;
-            let rows = stmt.query_map(params![cutoff], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            let rows = stmt.query_map(params![cutoff, unscanned_cutoff], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })?;
             rows.collect()
         })?;
         for (id, archive) in &old {
@@ -2022,6 +2150,7 @@ pub(crate) fn test_config(dir: &Path) -> BuilddConfig {
         reproducible: true,
         max_queued: 2,
         keep_days: 14,
+        keep_unscanned_days: 120,
         ai_review_route: None,
         behaviour_test: true,
         behaviour_timeout_secs: 30,
@@ -2134,6 +2263,12 @@ mod tests {
         malware: bool,
         /// The observed behaviour run: the gVisor trace it leaves under this root.
         trace: Option<(PathBuf, String)>,
+        /// The behaviour run prints its jobs' input on stdout, then is ended by its timeout.
+        log_input: bool,
+        /// The behaviour run burns CPU after answering: this cgroup's cpu.stat jumps.
+        burn: Option<PathBuf>,
+        /// The behaviour run leaves only partial result files.
+        partial: bool,
     }
 
     /// What the fake `pip download` writes for `name==version`; tests pin its hash.
@@ -2156,6 +2291,38 @@ mod tests {
     }
 
     impl Podman for FakeBuildPodman {
+        fn run_capture(&self, args: &[&str]) -> (bool, String, String) {
+            let behaviour = args.iter().any(|a| a.ends_with(":/nest:rw"));
+            match self.run(args) {
+                Ok(out) if behaviour && self.log_input => {
+                    let nest = args
+                        .iter()
+                        .find_map(|a| a.strip_prefix("--volume=")?.strip_suffix(":/nest:rw"))
+                        .map(PathBuf::from)
+                        .unwrap();
+                    let mut dump = out;
+                    for e in std::fs::read_dir(nest.join("jobs/in")).unwrap().flatten() {
+                        // Logged base64-wrapped, as a careless release might.
+                        let text = std::fs::read_to_string(e.path()).unwrap();
+                        let enc = crate::analysis::encodings(&text)
+                            .into_iter()
+                            .nth(6)
+                            .unwrap_or_default();
+                        let wrapped: Vec<String> = enc
+                            .as_bytes()
+                            .chunks(40)
+                            .map(|c| String::from_utf8_lossy(c).into_owned())
+                            .collect();
+                        dump.push_str(&format!("received:\n{}\n", wrapped.join("\n")));
+                    }
+                    // The timeout ends the worker: a failure, with both streams.
+                    (false, dump, "timed out".into())
+                }
+                Ok(out) => (true, out, String::new()),
+                Err(e) => (false, String::new(), e),
+            }
+        }
+
         fn run(&self, args: &[&str]) -> Result<String, String> {
             let argv: Vec<String> = args.iter().map(|s| s.to_string()).collect();
             self.calls.lock().unwrap().push(argv.clone());
@@ -2219,6 +2386,11 @@ mod tests {
                     if self.silent {
                         return Err("timed out".into());
                     }
+                    if self.partial {
+                        std::fs::write(nest.join("jobs/out/job_behaviour00.json"), "{\"sta")
+                            .unwrap();
+                        return Err("timed out".into());
+                    }
                     let secret = std::fs::read_to_string(nest.join(".config/credentials"))
                         .unwrap_or_default();
                     for entry in std::fs::read_dir(nest.join("jobs/in")).unwrap().flatten() {
@@ -2236,6 +2408,9 @@ mod tests {
                                 .to_string(),
                         )
                         .unwrap();
+                    }
+                    if let Some(cg) = &self.burn {
+                        std::fs::write(cg.join("cpu.stat"), "usage_usec 900000000\n").unwrap();
                     }
                     Ok("worker stopped\n".into())
                 }
@@ -2745,7 +2920,9 @@ mod tests {
             .iter()
             .filter(|c| c.iter().any(|a| a.ends_with(":/out:rw")))
             .collect();
-        assert_eq!(scans.len(), 6, "{scans:#?}");
+        // The layer unpack, then OSV, Grype, ClamAV, YARA (source, artefacts, layers), Semgrep
+        // and gitleaks.
+        assert_eq!(scans.len(), 9, "{scans:#?}");
         for c in &scans {
             assert!(c.contains(&"--network=none".to_string()), "{c:?}");
             assert!(c.contains(&"--runtime=runsc".to_string()), "{c:?}");
@@ -2757,7 +2934,7 @@ mod tests {
         for mount in [
             ":/scan/src:ro",
             ":/scan/artefacts:ro",
-            ":/scan/image/image.tar:ro",
+            ":/scan/layers:ro",
             ":/db/clamav:ro",
         ] {
             assert!(clam.iter().any(|a| a.ends_with(mount)), "{mount}: {clam:?}");
@@ -2892,6 +3069,240 @@ mod tests {
             .findings
             .iter()
             .any(|f| f.rule == "egress.unobserved" && f.blocking));
+    }
+
+    /// The egress trace is read as bytes (a non-UTF-8 process name cannot hide its lines), needs
+    /// the sentry's boot log, and a trace over the cap is a flood, not a clean run.
+    #[test]
+    fn the_trace_reader_fails_closed() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("netlog");
+        let id = "0123456789abcdef0123456789abcdef";
+        let cid = dir.path().join("cid");
+        std::fs::write(&cid, id).unwrap();
+        let logs = root.join(id);
+        std::fs::create_dir_all(&logs).unwrap();
+        let mut boot = b"I1111 strace.go:614] [ 3: 3] \xff\xfeevil E connect(0x3 socket:[1], 0x1 {Family: AF_INET, Addr: 93.184.216.34, Port: 443}, 0x10)\n".to_vec();
+        boot.extend_from_slice(b"\xc3\x28 more invalid UTF-8\n");
+        std::fs::write(logs.join("runsc.log.20261111-100000.boot.txt"), &boot).unwrap();
+        let Trace::Text(t) = take_trace(&root, &cid) else {
+            panic!("boot log present")
+        };
+        let attempts = crate::analysis::parse_strace(&t);
+        assert!(
+            attempts.iter().any(|a| a.addr == "93.184.216.34"),
+            "{attempts:?}"
+        );
+        assert!(!logs.exists(), "removed after reading");
+        // Only a gofer log: no boot log, nothing observed.
+        std::fs::create_dir_all(&logs).unwrap();
+        std::fs::write(logs.join("runsc.log.20261111-100000.gofer.txt"), "x").unwrap();
+        assert_eq!(take_trace(&root, &cid), Trace::Missing);
+        // Over the cap.
+        std::fs::create_dir_all(&logs).unwrap();
+        let f = std::fs::File::create(logs.join("runsc.log.boot.txt")).unwrap();
+        f.set_len(TRACE_MAX_BYTES + 1).unwrap();
+        assert!(matches!(take_trace(&root, &cid), Trace::Flood(_)));
+        std::fs::remove_file(&cid).unwrap();
+        assert_eq!(take_trace(&root, &cid), Trace::Missing);
+    }
+
+    fn observed(dir: &Path, trace_root: &Path, cgroup: &Path) -> BuilddConfig {
+        std::fs::create_dir_all(cgroup).unwrap();
+        std::fs::write(cgroup.join("memory.current"), "52428800\n").unwrap();
+        std::fs::write(cgroup.join("cpu.stat"), "usage_usec 1000\n").unwrap();
+        let mut cfg = test_config(dir);
+        cfg.behaviour_timeout_secs = 5;
+        cfg.behaviour = Some(BehaviourConfig {
+            runtime: "runsc-behaviour".into(),
+            trace_root: trace_root.to_path_buf(),
+            cgroup: Some(cgroup.to_path_buf()),
+            budget: Budget {
+                memory_mib: 512,
+                cpu_millis: 1000,
+                job_seconds: 30,
+            },
+        });
+        cfg
+    }
+
+    /// Buyer-data markers are found in the output even when the run is ended by its timeout
+    /// (both streams are kept) and when they are base64-wrapped across lines; they carry no fixed
+    /// prefix.
+    #[test]
+    fn buyer_data_in_the_output_is_found_whatever_the_exit_and_encoding() {
+        let dir = tempfile::tempdir().unwrap();
+        let trace = dir.path().join("trace");
+        let cfg = observed(dir.path(), &trace, &dir.path().join("cg"));
+        let quiet = "I1111 strace.go:614] app E connect(0x3 socket:[1], 0x1 {Family: AF_UNIX, Addr: \"/x\"}, 0x10)\n";
+        let podman = FakeBuildPodman {
+            log_input: true,
+            trace: Some((trace.clone(), quiet.into())),
+            ..Default::default()
+        };
+        let b = build_from_source(
+            &podman,
+            &cfg,
+            "https://git.example.org/acme/x.git",
+            COMMIT,
+            &dir.path().join("w"),
+        )
+        .unwrap()
+        .behaviour
+        .unwrap();
+        assert!(
+            b.findings
+                .iter()
+                .any(|f| f.rule == "data.in_logs" && f.blocking),
+            "{:#?}",
+            b.findings
+        );
+        let (a, c) = (crate::analysis::canary(), crate::analysis::canary());
+        assert_eq!(a.len(), 24);
+        assert!(a.bytes().all(|x| x.is_ascii_alphanumeric()));
+        assert_ne!(a[..4], c[..4], "no fixed prefix");
+    }
+
+    /// CPU counts until the run ends (burning after the last answer does not escape the budget),
+    /// and only complete, valid result files are timed as answers.
+    #[test]
+    fn resource_use_counts_the_whole_run_and_only_valid_answers() {
+        let dir = tempfile::tempdir().unwrap();
+        let trace = dir.path().join("trace");
+        let cg = dir.path().join("cg");
+        let cfg = observed(dir.path(), &trace, &cg);
+        let quiet = "I1111 strace.go:614] app E connect(0x3 socket:[1], 0x1 {Family: AF_UNIX, Addr: \"/x\"}, 0x10)\n";
+        let burner = FakeBuildPodman {
+            burn: Some(cg.clone()),
+            trace: Some((trace.clone(), quiet.into())),
+            ..Default::default()
+        };
+        let b = build_from_source(
+            &burner,
+            &cfg,
+            "https://git.example.org/acme/x.git",
+            COMMIT,
+            &dir.path().join("burn"),
+        )
+        .unwrap()
+        .behaviour
+        .unwrap();
+        assert!(
+            b.findings
+                .iter()
+                .any(|f| f.rule == "resources.cpu" && f.blocking),
+            "{:#?}",
+            b.findings
+        );
+        std::fs::write(cg.join("cpu.stat"), "usage_usec 1000\n").unwrap();
+        let partial = FakeBuildPodman {
+            partial: true,
+            trace: Some((trace.clone(), quiet.into())),
+            ..Default::default()
+        };
+        let b = build_from_source(
+            &partial,
+            &cfg,
+            "https://git.example.org/acme/x.git",
+            COMMIT,
+            &dir.path().join("partial"),
+        )
+        .unwrap()
+        .behaviour
+        .unwrap();
+        assert_eq!(
+            b.evidence["observed"]["resources"]["slowest_job_ms"],
+            Value::Null,
+            "{}",
+            b.evidence
+        );
+        assert!(b.findings.iter().any(|f| f.rule == "behaviour.unanswered"));
+    }
+
+    /// A scan running when the service stopped runs again; a release re-scan without its image
+    /// says so (blocking, unique to the run); an image no re-scan has named yet outlives
+    /// `keep_days`.
+    #[tokio::test]
+    async fn scans_survive_a_restart_and_images_wait_for_their_first_rescan() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = test_config(dir.path());
+        cfg.db = dir.path().join("buildd.db");
+        cfg.scanners = Some(scanners_config(dir.path()));
+        let open = || {
+            Arc::new(
+                Buildd::open(
+                    cfg.clone(),
+                    Arc::new(FakeBuildPodman::default()),
+                    sha256_hex(b"s"),
+                    sha256_hex(b"a"),
+                    None,
+                )
+                .unwrap(),
+            )
+        };
+        let b = open();
+        let req = ScanReq {
+            scan_id: "scn_cccccccccccccccccccccccccc".into(),
+            kind: "release".into(),
+            files: vec![],
+            release_id: Some("rel_gone".into()),
+            image_digest: Some(format!("sha256:{}", "7".repeat(64))),
+            sbom: Some("{\"bomFormat\":\"CycloneDX\"}".into()),
+        };
+        b.submit_scan(&req).unwrap();
+        b.with(|c| c.execute("UPDATE scans SET state = 'running'", []))
+            .unwrap();
+        drop(b);
+        let b = open();
+        assert_eq!(
+            b.read_scan(&req.scan_id).unwrap().unwrap()["state"],
+            "queued"
+        );
+        assert!(b.run_one_scan().await);
+        let v = b.read_scan(&req.scan_id).unwrap().unwrap();
+        let gone: Vec<&Value> = v["result"]["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|f| f["rule"] == "scanner.image_unavailable")
+            .collect();
+        assert_eq!(gone.len(), 1, "{v}");
+        assert_eq!(gone[0]["blocking"], true);
+        assert_eq!(v["result"]["evidence"]["image_scanned"], false);
+
+        // keep_days (14) has passed for both; only the one a re-scan has named goes.
+        let old = now() - 30 * 86_400;
+        for (id, digest, archive) in [("sbd_a", "1", "a.tar"), ("sbd_b", "2", "b.tar")] {
+            let path = dir.path().join(archive);
+            std::fs::write(&path, b"tar").unwrap();
+            b.with(|c| {
+                c.execute(
+                    "INSERT INTO builds (id, publisher_id, repo_url, commit_sha, state,
+                        image_digest, archive, archive_sha256, archive_size, created_at, updated_at)
+                     VALUES (?1, 'pub_a', 'x', 'y', 'succeeded', ?2, ?3, 'z', 3, ?4, ?4)",
+                    params![
+                        id,
+                        format!("sha256:{}", digest.repeat(64)),
+                        path.display().to_string(),
+                        old
+                    ],
+                )
+            })
+            .unwrap();
+        }
+        b.with(|c| {
+            c.execute(
+                "INSERT INTO rescanned_images (image_digest, first_at) VALUES (?1, ?2)",
+                params![format!("sha256:{}", "2".repeat(64)), old],
+            )
+        })
+        .unwrap();
+        b.prune().unwrap();
+        assert!(dir.path().join("a.tar").exists(), "never re-scanned: kept");
+        assert!(
+            !dir.path().join("b.tar").exists(),
+            "re-scanned and no longer retained: pruned"
+        );
     }
 
     /// The postbox's scans: result files get ClamAV and YARA, a release re-scan keeps its image

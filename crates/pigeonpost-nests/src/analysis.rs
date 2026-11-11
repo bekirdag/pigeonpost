@@ -647,28 +647,7 @@ impl Honeytokens {
     /// Each token as it might leave: raw, base64 (standard and URL-safe, from any alignment),
     /// hex in both cases, and reversed.
     pub fn needles(&self) -> Vec<String> {
-        let mut out = Vec::new();
-        for t in &self.tokens {
-            out.push(t.clone());
-            out.push(t.chars().rev().collect());
-            let hex = crate::util::hex(t.as_bytes());
-            out.push(hex.to_uppercase());
-            out.push(hex);
-            for skip in 0..3 {
-                // The middle of an encoding is stable whatever precedes the token.
-                let mut padded = vec![b'x'; skip];
-                padded.extend_from_slice(t.as_bytes());
-                for url in [false, true] {
-                    let enc = base64(&padded, url);
-                    let start = (skip * 4).div_ceil(3) + 2;
-                    let end = enc.len().saturating_sub(4);
-                    if end > start + 16 {
-                        out.push(enc[start..end].to_string());
-                    }
-                }
-            }
-        }
-        out
+        self.tokens.iter().flat_map(|t| encodings(t)).collect()
     }
 
     /// Findings for every channel that carries any needle.
@@ -676,8 +655,7 @@ impl Honeytokens {
         let needles = self.needles();
         let mut out = Vec::new();
         for (channel, bytes) in channels {
-            let text = String::from_utf8_lossy(bytes);
-            if needles.iter().any(|n| text.contains(n.as_str())) {
+            if carries(bytes, &needles) {
                 out.push(Finding::blocker(
                     "behaviour.exfiltration",
                     None,
@@ -687,6 +665,48 @@ impl Honeytokens {
         }
         out
     }
+}
+
+/// A secret as it might leave: raw, reversed, hex in both cases, URL-encoded (every byte, both
+/// cases), and base64 (standard and URL-safe, from any alignment: the middle of an encoding is
+/// stable whatever precedes the token).
+pub fn encodings(t: &str) -> Vec<String> {
+    let mut out = vec![t.to_string(), t.chars().rev().collect()];
+    let hex = crate::util::hex(t.as_bytes());
+    out.push(hex.to_uppercase());
+    out.push(hex);
+    let pct: String = t.bytes().map(|b| format!("%{b:02X}")).collect();
+    out.push(pct.to_lowercase());
+    out.push(pct);
+    for skip in 0..3 {
+        let mut padded = vec![b'x'; skip];
+        padded.extend_from_slice(t.as_bytes());
+        for url in [false, true] {
+            let enc = base64(&padded, url);
+            let start = (skip * 4).div_ceil(3) + 2;
+            let end = enc.len().saturating_sub(4);
+            if end > start + 16 {
+                out.push(enc[start..end].to_string());
+            }
+        }
+    }
+    out
+}
+
+/// Whether `bytes` carry any needle: as they are, and with all whitespace (and escaped line
+/// breaks) removed, so an encoding wrapped or split across lines is still found.
+pub fn carries(bytes: &[u8], needles: &[String]) -> bool {
+    let text = String::from_utf8_lossy(bytes);
+    if needles.iter().any(|n| text.contains(n.as_str())) {
+        return true;
+    }
+    let joined: String = text
+        .replace("\\r\\n", "")
+        .replace("\\n", "")
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    needles.iter().any(|n| joined.contains(n.as_str()))
 }
 
 /// The behaviour stage: the release ran `jobs` operations, every channel out of it was captured,
@@ -882,7 +902,7 @@ pub struct Budget {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Usage {
     pub peak_memory_bytes: u64,
-    /// CPU time from the start until the last job was answered (or the end).
+    /// CPU time from the start of the run to its end.
     pub cpu_usec: u64,
     pub active_ms: u64,
     /// The longest time between one answer and the next (the first from the start).
@@ -950,9 +970,18 @@ pub fn resource_findings(b: &Budget, u: &Usage) -> Vec<Finding> {
 
 // ---- buyer data (behaviour test) ------------------------------------------------------------------
 
-/// A per-job marker planted in each test job's input, standing in for one buyer's data.
+/// A per-job marker planted in each test job's input, standing in for one buyer's data: random
+/// and high-entropy, with no fixed prefix a release could look for.
 pub fn canary() -> String {
-    format!("ppbuyer_{}", crate::util::random_hex(12))
+    const A: &[u8; 62] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    let hex = crate::util::random_hex(24);
+    hex.as_bytes()
+        .chunks(2)
+        .map(|c| {
+            let v = u8::from_str_radix(std::str::from_utf8(c).unwrap_or("00"), 16).unwrap_or(0);
+            A[(v as usize) % A.len()] as char
+        })
+        .collect()
 }
 
 /// Buyer data must stay with its own job: a job's canary in another job's result, or any canary
@@ -964,10 +993,10 @@ pub fn canary_findings(
     logs: &[u8],
 ) -> Vec<Finding> {
     let mut out = Vec::new();
-    let logs = String::from_utf8_lossy(logs);
     for (job, canary) in jobs {
         let Some(c) = canary else { continue };
-        if logs.contains(c.as_str()) {
+        let needles = encodings(c);
+        if carries(logs, &needles) {
             out.push(Finding::blocker(
                 "data.in_logs",
                 None,
@@ -975,7 +1004,7 @@ pub fn canary_findings(
             ));
         }
         for (other, bytes) in results {
-            if other != job && String::from_utf8_lossy(bytes).contains(c.as_str()) {
+            if other != job && carries(bytes, &needles) {
                 out.push(Finding::blocker(
                     "data.cross_job",
                     None,
@@ -1460,6 +1489,28 @@ mod tests {
         let rules: Vec<&str> = f.iter().map(|x| x.rule.as_str()).collect();
         assert_eq!(rules, vec!["data.cross_job", "data.in_logs"], "{f:#?}");
         assert!(f.iter().all(|x| x.blocking));
+    }
+
+    #[test]
+    fn markers_are_found_hex_url_and_base64_encoded_and_split_across_lines() {
+        let c = canary();
+        let needles = encodings(&c);
+        let b64 = base64(format!("input={c}&x=1").as_bytes(), false);
+        let split: String = b64
+            .as_bytes()
+            .chunks(10)
+            .map(|ch| format!("{}\n", String::from_utf8_lossy(ch)))
+            .collect();
+        let pct: String = c.bytes().map(|b| format!("%{b:02x}")).collect();
+        for hay in [
+            format!("x {} y", crate::util::hex(c.as_bytes())),
+            format!("q={pct}"),
+            split,
+            format!("\"{}\"\\n\"{}\"", &c[..10], &c[10..]).replace("\"\\n\"", "\\n"),
+        ] {
+            assert!(carries(hay.as_bytes(), &needles), "{hay}");
+        }
+        assert!(!carries(b"nothing to see", &needles));
     }
 
     #[test]
