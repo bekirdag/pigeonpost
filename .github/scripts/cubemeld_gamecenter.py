@@ -13,6 +13,7 @@ import json
 import os
 import re
 import sys
+import time
 from pathlib import Path
 
 import urllib.error
@@ -396,9 +397,29 @@ def by_vendor(items):
     return result
 
 
+class RefreshingClient(Client):
+    """App Store Connect tokens last 20 minutes; a full apply takes longer. Mint a new one
+    every 15 minutes and retry once on a 401."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.minted = time.monotonic()
+
+    def call(self, method, path, body=None, params=None, allow_404=False):
+        if time.monotonic() - self.minted > 15 * 60:
+            self.token, self.minted = cubemeld_iap.mint_token(), time.monotonic()
+        try:
+            return super().call(method, path, body, params, allow_404)
+        except ApiError as error:
+            if error.status != 401:
+                raise
+            self.token, self.minted = cubemeld_iap.mint_token(), time.monotonic()
+            return super().call(method, path, body, params, allow_404)
+
+
 def main() -> None:
     achievements, leaderboards = load_manifest()
-    client = Client()
+    client = RefreshingClient()
     apps = client.list_all("/v1/apps", {"filter[bundleId]": EXPECTED_BUNDLE_ID, "limit": 10})
     if len(apps) != 1:
         raise RuntimeError(f"Expected one {EXPECTED_BUNDLE_ID} app, found {len(apps)}")
