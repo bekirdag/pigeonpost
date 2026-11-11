@@ -222,13 +222,14 @@
     if (l.category && MP.categoryLabel(l.category)) fact(el("span", { class: "mp-card-category", "data-category": l.category, text: MP.categoryLabel(l.category) }));
     // A sample is a placeholder: where it would run is not decided yet.
     if (l.sample) fact(el("span", { class: "mp-card-sample", text: "Sample" }));
-    else fact(el("span", { class: `mp-card-hosting${l.hosting === "publisher" ? " mp-card-hosting-publisher" : ""}`, "data-hosting": l.hosting || "pigeonpost", text: MP.hostingText(l) }));
+    else if (!o.hideHosting) fact(el("span", { class: `mp-card-hosting${l.hosting === "publisher" ? " mp-card-hosting-publisher" : ""}`, "data-hosting": l.hosting || "pigeonpost", text: MP.hostingText(l) }));
     if (!l.coming_soon && o.installed) fact(el("span", { class: "mp-card-installed", text: "Installed" }));
     return el(o.tag || "li", { class: `mp-card${l.coming_soon ? " mp-card-coming" : ""}${o.featured ? " mp-card-featured" : ""}`, "data-listing": l.id },
       l.coming_soon ? el("span", { class: "mp-ribbon", "aria-hidden": "true", text: "Coming soon" }) : null,
       MP.logo(l, { size: o.featured ? 72 : 64 }),
       el(o.heading || "h5", { class: "mp-card-title" },
-        o.href
+        !o.href && !o.open ? l.title
+        : o.href
           ? el("a", { class: "mp-card-link", href: o.href, "aria-label": `${l.title}${l.coming_soon ? " (coming soon)" : ""}` }, l.title)
           : el("button", { type: "button", class: "mp-card-link", "aria-label": `Details for ${l.title}${l.coming_soon ? " (coming soon)" : ""}`, onclick: () => o.open && o.open(l) }, l.title)),
       el("p", { class: "mp-card-summary", text: l.summary || "" }),

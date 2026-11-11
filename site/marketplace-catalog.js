@@ -356,7 +356,21 @@
           if (st.next) box.append(el("button", { type: "button", class: "btn btn-small", id: "mp-cat-more", onclick: () => load(true) }, "Show more"));
         }
       }
-      if (st.filter === "all" && st.builtins) box.append(el("h4", { class: "mp-section-title", text: "From Pigeonpost" }), st.builtins);
+      if (st.filter === "all" && st.builtinData) {
+        // A live listing that already offers one of these (Wodo AI HR for "AI HR") replaces its
+        // teaser, so the same thing is not shown twice.
+        const live = (st.listings || []).filter((l) => !l.coming_soon).map((l) => ` ${String(l.title || "").toLowerCase()} `);
+        const shown = st.builtinData.filter((b) => !live.some((t) => t.includes(` ${b.title.toLowerCase()} `)));
+        if (shown.length) {
+          box.append(el("section", { class: "mp-builtins", id: "mp-builtins", "aria-labelledby": "mp-builtins-title" },
+            el("h4", { class: "mp-section-title", id: "mp-builtins-title", text: "Coming from Pigeonpost" }),
+            el("ul", { class: "mp-grid", "aria-labelledby": "mp-builtins-title" }, shown.map((b) => {
+              const card = MP.card({ ...b, coming_soon: true, hosting: "pigeonpost", publisher: { display_name: "Pigeonpost", first_party: true, verified: true } }, { hideHosting: true });
+              card.setAttribute("data-builtin", b.id);
+              return card;
+            }))));
+        }
+      } else if (st.filter === "all" && st.builtins) box.append(el("h4", { class: "mp-section-title", text: "From Pigeonpost" }), st.builtins);
       return box;
     }
 
@@ -666,8 +680,10 @@
     }
 
     return {
-      /// Render into `container`; `builtins` is the products page's own "Coming soon" list.
-      render(container, builtins) {
+      /// Render into `container`; `builtins` is the products page's own "Coming soon" list, and
+      /// `builtinData` the same assistants as `{id, title, summary, category}` to draw as cards.
+      render(container, builtins, builtinData) {
+        st.builtinData = Array.isArray(builtinData) ? builtinData : null;
         st.container = container;
         st.builtins = builtins || null;
         draw();

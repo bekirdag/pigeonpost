@@ -102,10 +102,21 @@ test("the Services tab lists marketplace listings with a publisher badge and a M
   assert.equal(p.$('[data-listing="lst_a"] .mp-verified'), null, "not certified, no badge");
   assert.equal(p.$('[data-listing="lst_p"] .mp-publisher-name').textContent, "Pigeonpost");
   assert.ok(p.$('[data-listing="lst_p"] .mp-verified'), "first-party listings carry the badge");
-  assert.equal(p.doc.querySelectorAll(".pp-service").length, 5, "All services keeps the built-in assistants");
-  assert.equal(p.doc.querySelectorAll("#pp-panel-services .pp-soon").length, 5);
+  const builtins = p.doc.querySelectorAll("#mp-builtins [data-builtin]");
+  assert.equal(builtins.length, 5, "All services keeps the built-in assistants, as cards");
+  assert.equal(p.$("#mp-builtins-title").textContent, "Coming from Pigeonpost");
+  const pa = p.$('[data-builtin="pp_personal_assistant"]');
+  assert.equal(pa.querySelector(".mp-ribbon").textContent, "Coming soon");
+  assert.equal(pa.querySelector(".mp-logo").dataset.logo, "default");
+  assert.equal(pa.querySelector(".mp-card-title").textContent, "Personal assistant");
+  assert.equal(pa.querySelector(".mp-publisher-name").textContent, "Pigeonpost");
+  assert.ok(pa.querySelector(".mp-verified"));
+  assert.equal(pa.querySelector(".mp-card-category").textContent, "Productivity");
+  assert.equal(pa.querySelector(".mp-card-hosting"), null);
+  assert.equal(pa.querySelector("button, a"), null, "a teaser opens nothing");
+  assert.equal(p.doc.querySelectorAll("#pp-panel-services .pp-soon").length, 0, "no separate Coming soon line");
   p.choose(p.$("#mp-filter-marketplace"));
-  assert.equal(p.doc.querySelectorAll(".pp-service").length, 0, "Marketplace shows listings only");
+  assert.equal(p.$("#mp-builtins"), null, "Marketplace shows listings only");
   assert.equal(p.doc.querySelectorAll("[data-listing]").length, 2);
   assert.ok(p.$("#mp-cat-status[role=status]"), "outcomes go to a status region");
 });
@@ -1278,4 +1289,12 @@ test("a publisher-hosted listing's notice is an informational callout, not a war
   assert.equal(note.getAttribute("role"), "note");
   assert.equal(note.querySelector("svg").getAttribute("aria-hidden"), "true");
   assert.equal(note.querySelector("strong").textContent, "Hosted by the publisher");
+});
+
+test("a live listing that offers a built-in assistant replaces its teaser", async (t) => {
+  const listings = [{ ...LISTING, id: "lst_w", title: "Wodo AI HR", category: "hr" }, { ...LISTING, id: "lst_s", title: "AI CRM preview", coming_soon: true }];
+  const p = catalogPage(t, { listings });
+  await openServices(p);
+  const ids = [...p.doc.querySelectorAll("#mp-builtins [data-builtin]")].map((n) => n.dataset.builtin);
+  assert.deepEqual(ids, ["pp_personal_assistant", "pp_ai_crm", "pp_shopping_assistant", "pp_marketing_assistant"], "AI HR hidden; a coming-soon listing replaces nothing");
 });
