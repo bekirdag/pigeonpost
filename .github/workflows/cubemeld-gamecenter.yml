@@ -33,7 +33,7 @@ jobs:
   gamecenter:
     name: audit or provision Game Center
     runs-on: ${{ vars.PIGEONPOST_SELF_HOSTED_CI == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-latest' }}
-    timeout-minutes: 15
+    timeout-minutes: 90
     environment: production-release
     steps:
       - name: Check out the release broker
@@ -85,4 +85,4 @@ jobs:
         working-directory: .github/scripts
         run: |
           # The manifest path is relative to the workspace root.
-          GAMECENTER_MANIFEST_PATH="$GITHUB_WORKSPACE/$GAMECENTER_MANIFEST_PATH" python3 cubemeld_gamecenter.py
+          GAMECENTER_MANIFEST_PATH="$GITHUB_WORKSPACE/$GAMECENTER_MANIFEST_PATH" python3 -u cubemeld_gamecenter.py
