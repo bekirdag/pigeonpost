@@ -15,12 +15,16 @@ import re
 import sys
 from pathlib import Path
 
+import urllib.error
+import urllib.parse
+import urllib.request
+
+import cubemeld_iap
 from cubemeld_iap import (
     EXPECTED_BUNDLE_ID,
     ApiError,
     Client,
     _git_tracked_bytes,
-    ordered_upload_operations,
 )
 
 APPLY = os.environ.get("APPLY", "false").lower() == "true"
@@ -120,6 +124,56 @@ def load_manifest(path: str = MANIFEST_PATH):
             if not text.get("name") or len(text["name"]) > MAX_NAME:
                 raise RuntimeError(f"{vendor} {locale}: name must be 1...{MAX_NAME} characters")
     return achievements, leaderboards
+
+
+# MARK: Asset uploads
+
+
+def _apple_upload_host(url: str) -> str:
+    """Game Center images upload to an Apple asset host other than the IAP blob store."""
+    parsed = urllib.parse.urlsplit(url if isinstance(url, str) else "")
+    host = (parsed.hostname or "").lower()
+    if (parsed.scheme != "https" or not (host == "apple.com" or host.endswith(".apple.com"))
+            or parsed.port not in (None, 443) or parsed.username is not None
+            or parsed.password is not None or parsed.fragment or not parsed.query):
+        raise RuntimeError(f"Apple returned an image upload URL outside apple.com (host {host or '?'})")
+    return host
+
+
+def _validated(operation, total_size: int):
+    """The IAP broker's checks (PUT, byte range, safe headers) with the host rule above."""
+    if not isinstance(operation, dict):
+        raise RuntimeError("Apple returned a malformed image upload operation")
+    _apple_upload_host(operation.get("url"))
+    stand_in = dict(operation, url="https://x.blobstore.apple.com/upload?checked=1")
+    method, _, headers, offset, length = cubemeld_iap.validate_upload_operation(stand_in, total_size)
+    return method, operation["url"], headers, offset, length
+
+
+def upload_image(operations, content: bytes) -> None:
+    if not isinstance(operations, list) or not operations:
+        raise RuntimeError("Apple returned no image upload operations")
+    checked = sorted((_validated(op, len(content)) for op in operations), key=lambda v: v[3])
+    cursor = 0
+    for _, _, _, offset, length in checked:
+        if offset != cursor:
+            raise RuntimeError("Apple image upload operations overlap or leave a gap")
+        cursor += length
+    if cursor != len(content):
+        raise RuntimeError("Apple image upload operations do not cover the file")
+    for method, url, headers, offset, length in checked:
+        request = urllib.request.Request(url, data=content[offset:offset + length], method=method)
+        for name, value in headers:
+            request.add_header(name, value)
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                response.read()
+        except urllib.error.HTTPError as exc:
+            parsed = urllib.parse.urlsplit(url)  # never print the signed query string
+            raise ApiError(method, f"https://{parsed.hostname}{parsed.path}", exc.code,
+                           exc.read().decode(errors="replace")[:600]) from None
+        except urllib.error.URLError:
+            raise RuntimeError("Apple image upload failed at the transport layer") from None
 
 
 # MARK: App Store Connect
@@ -232,10 +286,7 @@ def ensure_image(client: Client, localization, file_name: str, content: bytes, l
                   "relationships": {"localization": relation(
                       "gameCenterAchievementLocalizations", localization["id"])}}},
     )["data"]
-    for operation in ordered_upload_operations(
-        reservation["attributes"].get("uploadOperations"), len(content)
-    ):
-        client.upload(operation, content)
+    upload_image(reservation["attributes"].get("uploadOperations"), content)
     client.call(
         "PATCH",
         f"/v2/gameCenterAchievementImages/{reservation['id']}",
