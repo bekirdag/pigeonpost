@@ -1,7 +1,11 @@
 #!/bin/bash
-# /usr/local/sbin/nestbuild-allowlist — refresh the build plane's egress allowlist.
+# /usr/local/sbin/nestbuild-allowlist [LIST SET] — refresh the build plane's egress allowlist.
 #
-# Resolves every name in /etc/pigeonpost-buildd/allowlist.txt (one per line, # comments) to its
+# With no arguments: allowlist.txt into fetch_v4 (nestbuild-allowlist.service). With
+# `scandb-allowlist.txt scandb_v4`: the scanner updater's list (nestscan-allowlist.service). Only
+# those two sets can be named.
+#
+# Resolves every name in the list (default /etc/pigeonpost-buildd/allowlist.txt; one per line, # comments) to its
 # IPv4 addresses (a line may also be a public IPv4 CIDR, e.g. a git host's published range) and replaces the nftables set inet nestbuild fetch_v4 with exactly those, in one
 # nft transaction. Run by nestbuild-allowlist.timer every minute and resolves each name three times,
 # because git hosts and package registries sit behind CDNs whose addresses rotate.
@@ -9,7 +13,9 @@
 # Fail closed: if a name does not resolve, the old addresses for the other names stay (the set is
 # only replaced when at least one address resolved), and nothing outside the list is ever added.
 set -euo pipefail
-LIST=/etc/pigeonpost-buildd/allowlist.txt
+LIST=${1:-/etc/pigeonpost-buildd/allowlist.txt}
+SET=${2:-fetch_v4}
+case "$SET" in fetch_v4|scandb_v4) ;; *) echo "nestbuild-allowlist: unknown set $SET" >&2; exit 2 ;; esac
 [ -f "$LIST" ] || { echo "nestbuild-allowlist: no $LIST" >&2; exit 1; }
 
 addrs=()
@@ -39,7 +45,7 @@ if [ "${#addrs[@]}" -eq 0 ]; then
 fi
 elements=$(printf '%s\n' "${addrs[@]}" | sort -u | paste -sd, - | sed 's/,/, /g')
 nft -f - <<EOF
-flush set inet nestbuild fetch_v4
-add element inet nestbuild fetch_v4 { $elements }
+flush set inet nestbuild $SET
+add element inet nestbuild $SET { $elements }
 EOF
-echo "nestbuild-allowlist: ${#addrs[@]} address(es)"
+echo "nestbuild-allowlist: $SET: ${#addrs[@]} address(es)"

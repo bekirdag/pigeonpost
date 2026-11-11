@@ -1,0 +1,159 @@
+#!/bin/bash
+# /usr/local/sbin/nestscan-update — refresh the analysis plane's scanner databases.
+#
+# Runs as the unprivileged user `nestscan` (nestscan-update.service), never as nestbuild: its own
+# nftables chain (`meta skuid "nestscan"` in nestbuild.nft) lets it reach DNS and TCP 443 on the
+# addresses of scandb-allowlist.txt (set inet nestbuild scandb_v4) and nothing else. Builds read
+# what it writes, read-only; the scans themselves have no network at all.
+#
+# One run builds a new snapshot next to the current one, then swaps a symlink:
+#   /var/lib/pigeonpost-scandb/current -> snapshot-<unix time>/
+#     osv/osv-scanner/<ecosystem>/all.zip   OSV mirror (osv-vulnerabilities bucket), for osv-scanner
+#                                           --offline-vulnerabilities (OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY)
+#     grype/                                Grype's database (`grype db update`, scanner image)
+#     clamav/                               ClamAV signatures (freshclam, ClamAV image)
+#     yara/rules.yarc                       pigeonpost.yar + the YARA-Forge core feed, compiled by yarac
+#     manifest.json                         when each part was refreshed and what it holds
+# A part that fails keeps the previous snapshot's copy and its old `updated_at`, so the build plane
+# sees it age and fails scans once it is older than [scanners] max_db_age_hours. A snapshot is
+# only swapped in when every part it carries is usable. The previous snapshot is kept for rollback.
+set -euo pipefail
+umask 022
+
+CONF=${NESTSCAN_CONF:-/etc/pigeonpost-buildd/scandb.env}
+# shellcheck disable=SC1090
+. "$CONF"
+: "${SCANNER_IMAGE:?SCANNER_IMAGE (localhost/pigeonpost-scanners@sha256:...) in $CONF}"
+: "${CLAMAV_IMAGE:?CLAMAV_IMAGE (docker.io/clamav/clamav:<v>_base@sha256:...) in $CONF}"
+ROOT=${SCANDB_ROOT:-/var/lib/pigeonpost-scandb}
+NETWORK=${UPDATE_NETWORK:-nestscan-update}
+OSV_ECOSYSTEMS=${OSV_ECOSYSTEMS:-crates.io npm PyPI}
+YARA_FORGE_URL=${YARA_FORGE_URL:-https://github.com/YARAHQ/yara-forge/releases/latest/download/yara-forge-rules-core.zip}
+LOCAL_YARA=${LOCAL_YARA:-/etc/pigeonpost-buildd/pigeonpost.yar}
+FRESHCLAM_CONF=${FRESHCLAM_CONF:-/etc/pigeonpost-buildd/freshclam.conf}
+RUNTIME=${UPDATE_RUNTIME:-runsc}
+
+for img in "$SCANNER_IMAGE" "$CLAMAV_IMAGE"; do
+  [[ "$img" == *@sha256:* ]] || { echo "nestscan-update: $img is not pinned by digest" >&2; exit 1; }
+done
+
+now=$(date +%s)
+new="$ROOT/snapshot-$now"
+cur=$(readlink -f "$ROOT/current" 2>/dev/null || true)
+mkdir -p "$new"
+trap 'rm -rf "$new"' ERR
+if [ -n "$cur" ] && [ -d "$cur" ]; then
+  cp -a "$cur/." "$new/"
+fi
+mkdir -p "$new/osv/osv-scanner" "$new/grype" "$new/clamav" "$new/yara"
+manifest="$new/manifest.json"
+[ -f "$manifest" ] || echo '{}' > "$manifest"
+
+# Record one part's refresh: set_part <name> <json object>
+set_part() {
+  python3 -I - "$manifest" "$1" "$2" "$now" <<'PY'
+import json, sys
+path, part, facts, now = sys.argv[1], sys.argv[2], json.loads(sys.argv[3]), int(sys.argv[4])
+m = json.load(open(path))
+facts["updated_at"] = now
+m[part] = facts
+m["updated_at"] = now
+json.dump(m, open(path + ".tmp", "w"), indent=1, sort_keys=True)
+PY
+  mv "$manifest.tmp" "$manifest"
+}
+
+# A pinned image, no capabilities, a read-only root; the network only when the step downloads.
+run() {
+  local net=$1; shift
+  podman run --rm --pull=never --runtime="$RUNTIME" --network="$net" --cap-drop=ALL \
+    --security-opt=no-new-privileges --read-only --tmpfs=/tmp:rw,nosuid,nodev,size=512m \
+    --env=HOME=/tmp "$@"
+}
+
+ok=1
+
+# --- OSV: the ecosystem archives, verified as zips before they replace the old ones.
+osv_facts="{"
+for eco in $OSV_ECOSYSTEMS; do
+  dir="$new/osv/osv-scanner/$eco"
+  mkdir -p "$dir"
+  if curl -fsS --retry 3 --max-time 900 -o "$dir/all.zip.part" \
+       "https://osv-vulnerabilities.storage.googleapis.com/$eco/all.zip" \
+     && unzip -tqq "$dir/all.zip.part" >/dev/null; then
+    mv "$dir/all.zip.part" "$dir/all.zip"
+    osv_facts+="\"$eco\":\"sha256:$(sha256sum "$dir/all.zip" | cut -d' ' -f1)\","
+  else
+    rm -f "$dir/all.zip.part"; echo "nestscan-update: OSV $eco failed" >&2; ok=0
+  fi
+done
+osv_facts="${osv_facts%,}}"
+[ "$ok" = 1 ] && set_part osv "{\"ecosystems\": $osv_facts}"
+
+# --- Grype: `grype db update` in the pinned scanner image, then a status check offline.
+part_ok=1
+run "$NETWORK" --entrypoint=grype --volume="$new/grype:/db:rw" \
+  --env=GRYPE_DB_CACHE_DIR=/db --env=GRYPE_CHECK_FOR_APP_UPDATE=false \
+  "$SCANNER_IMAGE" db update --quiet || part_ok=0
+if [ "$part_ok" = 1 ] && status=$(run none --entrypoint=grype --volume="$new/grype:/db:ro" \
+     --env=GRYPE_DB_CACHE_DIR=/db --env=GRYPE_DB_AUTO_UPDATE=false \
+     --env=GRYPE_CHECK_FOR_APP_UPDATE=false "$SCANNER_IMAGE" db status -o json); then
+  set_part grype "$(printf '%s' "$status" | python3 -I -c 'import json,sys; s=json.load(sys.stdin); print(json.dumps({k: s.get(k) for k in ("schemaVersion","from","built","path","valid","error")}))')"
+else
+  echo "nestscan-update: grype failed" >&2; ok=0
+fi
+
+# --- ClamAV: freshclam in the pinned ClamAV image, then a signature count offline.
+part_ok=1
+run "$NETWORK" --entrypoint=freshclam --volume="$new/clamav:/db:rw" \
+  --volume="$FRESHCLAM_CONF:/etc/freshclam.conf:ro" \
+  "$CLAMAV_IMAGE" --config-file=/etc/freshclam.conf --datadir=/db --stdout || part_ok=0
+if [ "$part_ok" = 1 ] && version=$(run none --entrypoint=clamscan --volume="$new/clamav:/db:ro" \
+     "$CLAMAV_IMAGE" --database=/db --version); then
+  set_part clamav "{\"version\": $(printf '%s' "$version" | python3 -I -c 'import json,sys; print(json.dumps(sys.stdin.read().strip()))')}"
+else
+  echo "nestscan-update: clamav failed" >&2; ok=0
+fi
+
+# --- YARA: the vendored rules plus the YARA-Forge core feed, compiled offline. A feed that does
+# not compile is not taken; the vendored rules alone are better than none.
+part_ok=1
+work=$(mktemp -d)
+cp "$LOCAL_YARA" "$work/00-pigeonpost.yar"
+sources="pigeonpost.yar"
+if curl -fsSL --retry 3 --max-time 300 -o "$work/forge.zip" "$YARA_FORGE_URL" \
+   && unzip -qq -j "$work/forge.zip" '*.yar' -d "$work/forge"; then
+  cat "$work"/forge/*.yar > "$work/10-forge.yar"
+  sources="$sources yara-forge-core sha256:$(sha256sum "$work/forge.zip" | cut -d' ' -f1)"
+else
+  echo "nestscan-update: YARA-Forge feed unavailable; vendored rules only" >&2
+fi
+compile() {
+  run none --entrypoint=yarac --volume="$work:/in:ro" --volume="$new/yara:/out:rw" \
+    "$SCANNER_IMAGE" -w "$@" /out/rules.yarc.part
+}
+inputs=(/in/00-pigeonpost.yar)
+[ -f "$work/10-forge.yar" ] && inputs+=(/in/10-forge.yar)
+if ! compile "${inputs[@]}"; then
+  echo "nestscan-update: the feed does not compile; vendored rules only" >&2
+  sources="pigeonpost.yar"
+  compile /in/00-pigeonpost.yar || part_ok=0
+fi
+if [ "$part_ok" = 1 ] && [ -s "$new/yara/rules.yarc.part" ]; then
+  mv "$new/yara/rules.yarc.part" "$new/yara/rules.yarc"
+  set_part yara "{\"sources\": \"$sources\", \"sha256\": \"sha256:$(sha256sum "$new/yara/rules.yarc" | cut -d' ' -f1)\"}"
+else
+  echo "nestscan-update: yara failed" >&2; ok=0
+fi
+rm -rf "$work"
+
+# --- Swap in, keep the previous snapshot, drop older ones.
+chmod -R a+rX "$new"
+ln -sfn "$new" "$ROOT/current.next"
+mv -T "$ROOT/current.next" "$ROOT/current"
+trap - ERR
+for old in "$ROOT"/snapshot-*; do
+  [ "$old" = "$new" ] || [ "$old" = "$cur" ] || rm -rf "$old"
+done
+echo "nestscan-update: snapshot-$now ($( [ "$ok" = 1 ] && echo complete || echo 'partial: see above' ))"
+[ "$ok" = 1 ]

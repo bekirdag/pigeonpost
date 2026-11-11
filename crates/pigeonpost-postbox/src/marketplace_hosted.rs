@@ -17,9 +17,10 @@
 //! - **Integration**: a release row whose manifest is the integration descriptor
 //!   (`kind: publisher_hosted`, `service_address`, `operations`) and `build_isolation =
 //!   'publisher_hosted'`. It is immutable like any release, so a new service address or operation
-//!   is a new version and a new review. Its review case has `kind = 'integration'` and one stage,
-//!   the staff decision (`POST /v1/staff/reviews/{review}/decisions`, step-up), with no
-//!   attestation. The service mailbox must belong to the publisher's account (or, for an org
+//!   is a new version and a new review. Its review case has `kind = 'integration'` and two
+//!   stages: the hosted conformance run (`marketplace_conformance`, recorded as
+//!   `behavioral_test`), then the staff decision (`POST /v1/staff/reviews/{review}/decisions`,
+//!   step-up; an approval needs the conformance run passed), with no attestation. The service mailbox must belong to the publisher's account (or, for an org
 //!   publisher, the org's internal account) at submission, at publish and at every dispatch.
 //! - **Job**: the buyer runs an operation with input that matches its fields. The job goes from
 //!   the platform marketplace mailbox (`POSTBOX_MARKETPLACE_MAILBOX`, default
@@ -149,7 +150,11 @@ fn owner_account_in(c: &Connection, publisher: &str) -> rusqlite::Result<Option<
 }
 
 /// Whether `mailbox` (a `/k/` address) belongs to the publisher now.
-fn service_owned_in(c: &Connection, publisher: &str, mailbox: &str) -> rusqlite::Result<bool> {
+pub(crate) fn service_owned_in(
+    c: &Connection,
+    publisher: &str,
+    mailbox: &str,
+) -> rusqlite::Result<bool> {
     let Some(owner) = owner_account_in(c, publisher)? else {
         return Ok(false);
     };
@@ -426,7 +431,7 @@ async fn submit_integration(
                     tx,
                     &pid,
                     "nest.review.stage_changed",
-                    &json!({ "review_id": case, "release_id": release, "stage": "human_review",
+                    &json!({ "review_id": case, "release_id": release, "stage": "behavioral_test",
                              "status": "pending", "revision": 1 }),
                     now as u64,
                 )?;
@@ -517,6 +522,19 @@ pub(crate) fn decide_in(
         ));
     }
     if d.decision == "approved" {
+        // The hosted conformance run comes first (developer program plan §4).
+        let conformed: bool = tx.query_row(
+            "SELECT EXISTS (SELECT 1 FROM review_decisions WHERE case_id = ?1
+                AND stage = 'behavioral_test' AND decision = 'passed')",
+            [d.case],
+            |r| r.get(0),
+        )?;
+        if !conformed {
+            return Err(conflict_code(
+                "conformance_required",
+                "the hosted conformance run has not passed yet",
+            ));
+        }
         let rel = release_in(tx, d.release)?.ok_or_else(not_found)?;
         let mailbox = rel.manifest["service_mailbox"].as_str().unwrap_or("");
         if !service_owned_in(tx, &rel.publisher_id, mailbox)? {
@@ -574,7 +592,7 @@ pub(crate) fn decide_in(
 
 /// The mailbox jobs and results are sent from: `POSTBOX_MARKETPLACE_MAILBOX` (default
 /// `/pigeonpost/marketplace`). It must exist and belong to the platform owner's account.
-async fn platform_mailbox(state: &AppState) -> GResult<crate::store::StoredIdentity> {
+pub(crate) async fn platform_mailbox(state: &AppState) -> GResult<crate::store::StoredIdentity> {
     let unavailable = || {
         GErr::new(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -600,7 +618,7 @@ async fn platform_mailbox(state: &AppState) -> GResult<crate::store::StoredIdent
 }
 
 /// A `msg_ref` derived from the job and purpose, so a resend is recognised as the same message.
-fn msg_ref_for(job: &str, purpose: &str) -> String {
+pub(crate) fn msg_ref_for(job: &str, purpose: &str) -> String {
     const B32: &[u8; 32] = b"abcdefghijklmnopqrstuvwxyz234567";
     let d = digest_of(format!("pigeonpost-hosted-job\0{purpose}\0{job}").as_bytes());
     let hex = d.trim_start_matches("sha256:");
@@ -644,6 +662,29 @@ pub(crate) fn job_message(
         "deadline": iso(deadline_at),
     })
     .to_string()
+}
+
+/// A review job's message (the conformance run): the buyer job's fields, `review: true`, and no
+/// listing (a review comes before one). Never charged and never delivered to a buyer.
+pub(crate) fn review_job_message(
+    public_url: &str,
+    job: &str,
+    operation: &str,
+    input: &Value,
+    deadline_at: i64,
+) -> String {
+    let mut v: Value = serde_json::from_str(&job_message(
+        public_url,
+        job,
+        "",
+        operation,
+        input,
+        deadline_at,
+    ))
+    .unwrap_or_default();
+    v["listing_id"] = Value::Null;
+    v["review"] = json!(true);
+    v.to_string()
 }
 
 // ---- running a job ------------------------------------------------------------------------------
@@ -1224,7 +1265,7 @@ async fn download(
 
 // ---- dispatch -----------------------------------------------------------------------------------
 
-fn backoff(attempts: i64) -> i64 {
+pub(crate) fn backoff(attempts: i64) -> i64 {
     (60_i64 << attempts.clamp(0, 6)).min(3600)
 }
 
@@ -1406,7 +1447,7 @@ pub(crate) async fn expire_once(state: &AppState) -> usize {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct FileReq {
+pub(crate) struct FileReq {
     name: String,
     media_type: String,
     content_b64: String,
@@ -1414,12 +1455,94 @@ struct FileReq {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ResultReq {
+pub(crate) struct ResultReq {
     status: String,
     #[serde(default)]
     summary: Option<String>,
     #[serde(default)]
     files: Vec<FileReq>,
+}
+
+/// A result as the contract allows it: `(status, summary, files as (name, media type, bytes),
+/// result digest)`. The same checks for a buyer's job and a review job.
+#[allow(clippy::type_complexity)]
+pub(crate) fn checked_result(
+    req: ResultReq,
+) -> GResult<(
+    String,
+    Option<String>,
+    Vec<(String, String, Vec<u8>)>,
+    String,
+)> {
+    if !matches!(req.status.as_str(), "succeeded" | "failed") {
+        return Err(GErr::bad("invalid_request", "status: succeeded or failed"));
+    }
+    let summary = match &req.summary {
+        Some(s) if s.chars().count() > 4000 => {
+            return Err(GErr::bad(
+                "invalid_request",
+                "summary: at most 4000 characters",
+            ))
+        }
+        Some(s) => Some(
+            s.chars()
+                .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
+                .collect::<String>()
+                .trim()
+                .to_string(),
+        ),
+        None => None,
+    };
+    if req.files.len() > MAX_FILES {
+        return Err(GErr::bad("invalid_request", "files: at most 5"));
+    }
+    if req.status == "succeeded" && req.files.is_empty() {
+        return Err(GErr::bad(
+            "invalid_request",
+            "a succeeded job returns its file",
+        ));
+    }
+    let mut files = Vec::new();
+    for (i, f) in req.files.iter().enumerate() {
+        if !OUTPUT_MEDIA_TYPES.contains(&f.media_type.as_str()) {
+            return Err(GErr::new(
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                "unsupported_media_type",
+                format!("files[{i}].media_type: application/pdf"),
+            ));
+        }
+        let bytes = base64_decode(&f.content_b64)
+            .ok_or_else(|| GErr::bad("invalid_request", format!("files[{i}]: not base64")))?;
+        if bytes.is_empty() || bytes.len() > MAX_FILE_BYTES {
+            return Err(GErr::new(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "file_too_large",
+                format!("files[{i}]: 1 byte to 20 MB"),
+            ));
+        }
+        if !file_ok(&f.media_type, &bytes) {
+            return Err(GErr::new(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "file_unreadable",
+                format!("files[{i}]: not a PDF"),
+            ));
+        }
+        files.push((
+            crate::blobs::safe_filename(&f.name),
+            f.media_type.clone(),
+            bytes,
+        ));
+    }
+    let shas: Vec<String> = files.iter().map(|(_, _, b)| digest_of(b)).collect();
+    let digest = digest_of(
+        canonical_json(&json!({
+            "status": req.status, "summary": summary,
+            "files": files.iter().zip(&shas).map(|((n, m, _), s)| json!([n, m, s]))
+                .collect::<Vec<_>>(),
+        }))
+        .as_bytes(),
+    );
+    Ok((req.status, summary, files, digest))
 }
 
 /// Standard base64 (RFC 4648 §4), padding optional, whitespace ignored.
@@ -1502,7 +1625,9 @@ async fn post_result(
             })
             .await?;
         let Some((mailbox, st, recorded)) = row else {
-            return Err(not_found());
+            // Not a buyer's job: perhaps a review job of the conformance run, on the same route.
+            return crate::marketplace_conformance::post_result(&state, &headers, &job, &me, body)
+                .await;
         };
         // The service mailbox's own credential, never a connector (policy `NestOperate`).
         let principal = crate::principal_for_token(&state, crate::bearer(&headers)).await?;
@@ -1517,74 +1642,7 @@ async fn post_result(
         )
         .map_err(|d| deny(d, true))?;
         let req: ResultReq = parse(body)?;
-        if !matches!(req.status.as_str(), "succeeded" | "failed") {
-            return Err(GErr::bad("invalid_request", "status: succeeded or failed"));
-        }
-        let summary = match &req.summary {
-            Some(s) if s.chars().count() > 4000 => {
-                return Err(GErr::bad(
-                    "invalid_request",
-                    "summary: at most 4000 characters",
-                ))
-            }
-            Some(s) => Some(
-                s.chars()
-                    .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
-                    .collect::<String>()
-                    .trim()
-                    .to_string(),
-            ),
-            None => None,
-        };
-        if req.files.len() > MAX_FILES {
-            return Err(GErr::bad("invalid_request", "files: at most 5"));
-        }
-        if req.status == "succeeded" && req.files.is_empty() {
-            return Err(GErr::bad(
-                "invalid_request",
-                "a succeeded job returns its file",
-            ));
-        }
-        let mut files = Vec::new();
-        for (i, f) in req.files.iter().enumerate() {
-            if !OUTPUT_MEDIA_TYPES.contains(&f.media_type.as_str()) {
-                return Err(GErr::new(
-                    StatusCode::UNSUPPORTED_MEDIA_TYPE,
-                    "unsupported_media_type",
-                    format!("files[{i}].media_type: application/pdf"),
-                ));
-            }
-            let bytes = base64_decode(&f.content_b64)
-                .ok_or_else(|| GErr::bad("invalid_request", format!("files[{i}]: not base64")))?;
-            if bytes.is_empty() || bytes.len() > MAX_FILE_BYTES {
-                return Err(GErr::new(
-                    StatusCode::PAYLOAD_TOO_LARGE,
-                    "file_too_large",
-                    format!("files[{i}]: 1 byte to 20 MB"),
-                ));
-            }
-            if !file_ok(&f.media_type, &bytes) {
-                return Err(GErr::new(
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    "file_unreadable",
-                    format!("files[{i}]: not a PDF"),
-                ));
-            }
-            files.push((
-                crate::blobs::safe_filename(&f.name),
-                f.media_type.clone(),
-                bytes,
-            ));
-        }
-        let shas: Vec<String> = files.iter().map(|(_, _, b)| digest_of(b)).collect();
-        let digest = digest_of(
-            canonical_json(&json!({
-                "status": req.status, "summary": summary,
-                "files": files.iter().zip(&shas).map(|((n, m, _), s)| json!([n, m, s]))
-                    .collect::<Vec<_>>(),
-            }))
-            .as_bytes(),
-        );
+        let (status, summary, files, digest) = checked_result(req)?;
         let replay_or_conflict = |recorded: &str| -> GResult<()> {
             if recorded == digest {
                 Ok(())
@@ -1629,7 +1687,7 @@ async fn post_result(
             stored.push((name.clone(), media.clone(), bytes.len() as i64, sha));
         }
         let now = now_unix() as i64;
-        let (j, status) = (job.clone(), req.status.clone());
+        let j = job.clone();
         let (v, w) = state
             .store
             .group_tx(move |tx| -> GResult<(Value, Option<String>)> {
@@ -1841,7 +1899,8 @@ pub(crate) async fn deliver_once(state: &AppState) -> usize {
     n
 }
 
-/// Every 20 seconds: dispatch, expire, deliver, then settle credit holds. Not behind the
+/// Every 20 seconds: dispatch, expire, deliver, then settle credit holds; then the review jobs of
+/// the conformance run and the monthly re-scan. Not behind the
 /// marketplace flag: switching it off refuses new jobs (`caller` checks it), but jobs already
 /// admitted still reach their service, their results still reach their buyers, and every hold is
 /// still captured or released.
@@ -1854,6 +1913,8 @@ pub(crate) fn start_worker(state: AppState) {
             expire_once(&state).await;
             deliver_once(&state).await;
             crate::marketplace_credits::work_once(&state).await;
+            crate::marketplace_conformance::work_once(&state).await;
+            crate::marketplace_rescan::work_once(&state).await;
         }
     });
 }

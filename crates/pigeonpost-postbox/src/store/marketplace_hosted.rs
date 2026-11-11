@@ -124,6 +124,64 @@ CREATE TABLE IF NOT EXISTS nest_hosted_charges (
 );
 CREATE INDEX IF NOT EXISTS nest_hosted_charges_by_state ON nest_hosted_charges(state, next_attempt_at);
 CREATE INDEX IF NOT EXISTS nest_hosted_charges_by_account ON nest_hosted_charges(account_id);
+
+-- Review jobs of the hosted conformance run (developer program plan §4): one synthetic job per
+-- operation of an integration under review, sent to its service mailbox through the hosted-job
+-- path and marked `review: true`. No buyer, no listing, no charge. `scanning`: the result's files
+-- are with the build plane's ClamAV and YARA; `problems` holds the findings (JSON).
+CREATE TABLE IF NOT EXISTS nest_review_jobs (
+    id                TEXT PRIMARY KEY,
+    case_id           TEXT NOT NULL,
+    release_id        TEXT NOT NULL,
+    publisher_id      TEXT NOT NULL,
+    operation         TEXT NOT NULL,
+    operation_version TEXT NOT NULL,
+    input             TEXT NOT NULL,
+    service_mailbox   TEXT NOT NULL,
+    state             TEXT NOT NULL CHECK (state IN ('queued','running','scanning','passed','failed')),
+    attempts          INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at   INTEGER NOT NULL,
+    last_error        TEXT,
+    dispatch_message  TEXT,
+    result_status     TEXT,
+    result_digest     TEXT,
+    files             TEXT,
+    scan_id           TEXT,
+    problems          TEXT NOT NULL DEFAULT '[]',
+    deadline_at       INTEGER NOT NULL,
+    created_at        INTEGER NOT NULL,
+    updated_at        INTEGER NOT NULL,
+    finished_at       INTEGER
+);
+CREATE INDEX IF NOT EXISTS nest_review_jobs_by_case ON nest_review_jobs(case_id);
+CREATE INDEX IF NOT EXISTS nest_review_jobs_by_state ON nest_review_jobs(state, next_attempt_at);
+
+-- The monthly re-scan of published releases: one row per scan the build plane was asked for.
+CREATE TABLE IF NOT EXISTS marketplace_rescans (
+    scan_id      TEXT PRIMARY KEY,
+    release_id   TEXT NOT NULL,
+    image_digest TEXT NOT NULL,
+    state        TEXT NOT NULL CHECK (state IN ('submitted','done','failed')),
+    new_findings INTEGER NOT NULL DEFAULT 0,
+    error        TEXT,
+    submitted_at INTEGER NOT NULL,
+    finished_at  INTEGER
+);
+CREATE INDEX IF NOT EXISTS marketplace_rescans_by_state ON marketplace_rescans(state, submitted_at);
+
+-- A re-scan found something the release's review did not: flagged for staff, never acted on by
+-- itself (staff quarantine or revoke with the existing routes, then acknowledge the flag).
+CREATE TABLE IF NOT EXISTS release_rescan_flags (
+    id              TEXT PRIMARY KEY,
+    release_id      TEXT NOT NULL,
+    scan_id         TEXT NOT NULL,
+    findings        TEXT NOT NULL,
+    created_at      INTEGER NOT NULL,
+    acknowledged_at INTEGER,
+    acknowledged_by TEXT,
+    note            TEXT
+);
+CREATE INDEX IF NOT EXISTS release_rescan_flags_open ON release_rescan_flags(acknowledged_at, created_at);
 ";
 
 /// `(table, column, definition)` added to live tables.

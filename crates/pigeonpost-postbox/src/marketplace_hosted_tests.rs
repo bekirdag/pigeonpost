@@ -2,8 +2,8 @@
 //! ownership, the staff integration review (no attestation), publishing and the catalog's
 //! `hosting`, jobs dispatched to the service as one exact message that never names the buyer,
 //! result authentication and idempotency, delivery to the buyer with the PDF attached, and the
-//! refusal of a leftover card price (credits are in `marketplace_credits_tests`). Synthetic
-//! accounts and files only.
+//! refusal of a leftover card price (credits are in `marketplace_credits_tests`), and the hosted
+//! conformance run an integration passes before approval. Synthetic accounts and files only.
 
 use crate::marketplace_hosted::{deliver_once, dispatch_once, JOB_MESSAGE_TYPE};
 use crate::marketplace_m2_tests::{certified, code, events_of, publish, reviewer, template};
@@ -145,6 +145,8 @@ pub(crate) async fn live_listing(w: &World) -> (String, String) {
         v["data"]["review_id"].as_str().unwrap().to_string(),
         v["data"]["release_digest"].as_str().unwrap().to_string(),
     );
+    let (decision, _) = conform(w, &review, &pdf_result_of(CONFORMING_PDF), &[]).await;
+    assert_eq!(decision, "passed");
     let (s, v) = w
         .srv
         .post(
@@ -194,6 +196,65 @@ pub(crate) async fn inbox(srv: &Srv, cap: &str) -> Vec<Value> {
 pub(crate) async fn result(srv: &Srv, token: &str, job: &str, body: Value) -> (u16, Value) {
     srv.post(&format!("/v1/nest-jobs/{job}/result"), token, body)
         .await
+}
+
+/// A PDF a buyer can open: objects, a catalog as `/Root`, `startxref` and `%%EOF`.
+pub(crate) const CONFORMING_PDF: &[u8] =
+    b"%PDF-1.4\n1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n\
+2 0 obj << /Type /Pages /Kids [] /Count 0 >> endobj\nxref\n0 3\ntrailer << /Size 3 /Root 1 0 R >>\n\
+startxref\n9\n%%EOF\n";
+
+pub(crate) fn pdf_result_of(pdf: &[u8]) -> Value {
+    json!({ "status": "succeeded", "summary": "review answer",
+            "files": [{ "name": "report.pdf", "media_type": "application/pdf",
+                        "content_b64": b64(pdf) }] })
+}
+
+/// Run the conformance stage of `review`: the review job reaches the service mailbox, the service
+/// posts `answer`, the build plane's scan reports `scan_findings`. Returns the stage's decision
+/// and the review job's message.
+pub(crate) async fn conform(
+    w: &World,
+    review: &str,
+    answer: &Value,
+    scan_findings: &[Value],
+) -> (String, Value) {
+    crate::marketplace_conformance::work_once(&w.srv.state).await;
+    let got = inbox(&w.srv, &w.service.cap).await;
+    let msg = got
+        .iter()
+        .filter_map(|m| m["body"].as_str())
+        .filter_map(|b| serde_json::from_str::<Value>(b).ok())
+        .rfind(|b| b["review"] == true)
+        .unwrap_or_else(|| panic!("no review job: {got:?}"));
+    let job = msg["job_id"].as_str().unwrap().to_string();
+    let h = &w.srv.state.nests.marketplace;
+    h.buildd_answer(202, json!({ "state": "queued" }));
+    h.buildd_answer(
+        200,
+        json!({ "state": "succeeded", "result": { "findings": scan_findings,
+                "blocking": scan_findings.len() } }),
+    );
+    let (s, v) = result(&w.srv, &w.service.cap, &job, answer.clone()).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["data"]["review"], true, "{v}");
+    crate::marketplace_conformance::work_once(&w.srv.state).await;
+    let r = review.to_string();
+    let decision = w
+        .srv
+        .state
+        .store
+        .group_read(move |c| -> Result<String, crate::groups::GErr> {
+            Ok(c.query_row(
+                "SELECT decision FROM review_decisions WHERE case_id = ?1
+                   AND stage = 'behavioral_test'",
+                [&r],
+                |row| row.get(0),
+            )?)
+        })
+        .await
+        .unwrap();
+    (decision, msg)
 }
 
 pub(crate) fn pdf_result(summary: &str) -> Value {
@@ -266,7 +327,13 @@ async fn integrations_name_a_service_mailbox_the_publisher_owns() {
         .await;
     assert_eq!(s, 200, "{v}");
     assert_eq!(v["data"]["kind"], "integration");
-    assert_eq!(v["data"]["stages"].as_array().unwrap().len(), 1);
+    let names: Vec<&str> = v["data"]["stages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["behavioral_test", "human_review"]);
     // The analysis plane has no stage to record on it.
     let (s, _) = w
         .srv
@@ -478,4 +545,175 @@ async fn card_priced_listings_take_no_jobs_and_a_lost_service_mailbox_fails_the_
     .await;
     let (s, v) = run(&w, &listing, json!({ "role": "CFO" })).await;
     assert_eq!((s, code(&v)), (409, "not_on_sale"), "{v}");
+}
+
+/// The conformance run: one free review job per operation through the hosted-job path, marked
+/// `review: true`; staff cannot approve before it passes; a clean PDF that the build plane's
+/// scan clears passes, and the publisher sees the stage.
+#[tokio::test]
+async fn an_integration_passes_the_hosted_conformance_run_before_approval() {
+    let w = world("c").await;
+    let (s, v) = w
+        .srv
+        .post(
+            &format!("/v1/publishers/{}/integrations", w.publisher),
+            &w.ann.token,
+            integration(&w, &w.service.address, "1.0.0"),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let review = v["data"]["review_id"].as_str().unwrap().to_string();
+    let digest = v["data"]["release_digest"].as_str().unwrap().to_string();
+    // Staff cannot approve before the run.
+    let decide = |d: &'static str| {
+        let (srv, tok, review, digest) =
+            (&w.srv, w.rev.strong.clone(), review.clone(), digest.clone());
+        async move {
+            srv.post(
+                &format!("/v1/staff/reviews/{review}/decisions"),
+                &tok,
+                json!({ "decision": d, "reason": "checked", "release_digest": digest }),
+            )
+            .await
+        }
+    };
+    let (s, v) = decide("approved").await;
+    assert_eq!((s, code(&v)), (409, "conformance_required"), "{v}");
+
+    let (decision, msg) = conform(&w, &review, &pdf_result_of(CONFORMING_PDF), &[]).await;
+    assert_eq!(decision, "passed");
+    // The review job is the contract's message, marked as a review, with no listing or buyer.
+    assert_eq!(msg["type"], JOB_MESSAGE_TYPE);
+    assert_eq!(msg["review"], true);
+    assert_eq!(msg["listing_id"], Value::Null);
+    assert_eq!(msg["operation"], "hr.research");
+    assert!(msg["input"]["role"]
+        .as_str()
+        .unwrap()
+        .starts_with("Pigeonpost review job"));
+    // The result's files went to the build plane's malware scan.
+    let calls = w.srv.state.nests.marketplace.buildd_calls();
+    let scan = calls
+        .iter()
+        .find(|c| c.method == "POST" && c.path == "/v1/scans")
+        .unwrap();
+    let body = scan.body.as_ref().unwrap();
+    assert_eq!(body["kind"], "files");
+    assert_eq!(body["files"][0]["content_b64"], b64(CONFORMING_PDF));
+    assert!(calls
+        .iter()
+        .any(|c| c.method == "GET" && c.path.starts_with("/v1/scans/scn_")));
+    // Nothing was charged and nothing reached a buyer.
+    let jobs: i64 = w
+        .srv
+        .state
+        .store
+        .group_read(|c| -> Result<i64, crate::groups::GErr> {
+            Ok(c.query_row("SELECT COUNT(*) FROM nest_hosted_jobs", [], |r| r.get(0))?)
+        })
+        .await
+        .unwrap();
+    assert_eq!(jobs, 0);
+    let (s, v) = w
+        .srv
+        .get(
+            &format!("/v1/publishers/{}/reviews/{review}", w.publisher),
+            &w.ann.token,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["data"]["stages"][0]["name"], "behavioral_test");
+    assert_eq!(v["data"]["stages"][0]["status"], "passed");
+    let (s, v) = decide("approved").await;
+    assert_eq!(s, 201, "{v}");
+}
+
+/// A result that is not a PDF a buyer can open, a malware hit on the result, or a mailbox the
+/// publisher no longer owns fails the stage and blocks the review.
+#[tokio::test]
+async fn a_non_conformant_integration_fails_the_run_and_is_blocked() {
+    for (tag, case) in [("d", "pdf"), ("e", "malware")] {
+        let w = world(tag).await;
+        let (s, v) = w
+            .srv
+            .post(
+                &format!("/v1/publishers/{}/integrations", w.publisher),
+                &w.ann.token,
+                integration(&w, &w.service.address, "1.0.0"),
+            )
+            .await;
+        assert_eq!(s, 201, "{v}");
+        let review = v["data"]["review_id"].as_str().unwrap().to_string();
+        let (answer, hits) = match case {
+            // Passes the result route's own check, not the conformance one.
+            "pdf" => (pdf_result_of(PDF), vec![]),
+            _ => (
+                pdf_result_of(CONFORMING_PDF),
+                vec![
+                    json!({ "id": "clamav:Win.Test.EICAR_HDB-1:result/0.bin", "tool": "clamav",
+                             "rule": "malware.signature", "severity": "critical",
+                             "message": "matched", "blocking": true }),
+                ],
+            ),
+        };
+        if case == "pdf" {
+            // No scan is asked for: the job fails on its own findings.
+            crate::marketplace_conformance::work_once(&w.srv.state).await;
+            let got = inbox(&w.srv, &w.service.cap).await;
+            let job = got
+                .iter()
+                .filter_map(|m| serde_json::from_str::<Value>(m["body"].as_str()?).ok())
+                .find(|b| b["review"] == true)
+                .unwrap()["job_id"]
+                .as_str()
+                .unwrap()
+                .to_string();
+            let (s, v) = result(&w.srv, &w.service.cap, &job, answer).await;
+            assert_eq!(s, 200, "{v}");
+            assert_eq!(v["data"]["execution"], "failed");
+            crate::marketplace_conformance::work_once(&w.srv.state).await;
+        } else {
+            let (decision, _) = conform(&w, &review, &answer, &hits).await;
+            assert_eq!(decision, "failed");
+        }
+        let (s, v) = w
+            .srv
+            .get(
+                &format!("/v1/publishers/{}/reviews/{review}/findings", w.publisher),
+                &w.ann.token,
+            )
+            .await;
+        assert_eq!(s, 200, "{v}");
+        let stage = &v["data"]["stages"][0];
+        assert_eq!(stage["stage"], "behavioral_test", "{v}");
+        assert_eq!(stage["decision"], "failed", "{v}");
+        let rules: Vec<&str> = stage["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| f["rule"].as_str().unwrap())
+            .collect();
+        match case {
+            "pdf" => assert!(
+                rules.contains(&"pdf.xref") && rules.contains(&"pdf.root"),
+                "{rules:?}"
+            ),
+            _ => {
+                assert_eq!(rules, ["malware.match"], "{v}");
+                assert!(
+                    !v.to_string().contains("EICAR"),
+                    "the signature stays with staff"
+                );
+            }
+        }
+        let (s, v) = w
+            .srv
+            .get(
+                &format!("/v1/publishers/{}/reviews/{review}", w.publisher),
+                &w.ann.token,
+            )
+            .await;
+        assert_eq!(s, 200);
+        assert_eq!(v["data"]["status"], "changes_requested", "{v}");
+    }
 }

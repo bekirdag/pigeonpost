@@ -2,7 +2,8 @@
 //!
 //! ```text
 //! pigeonpost-nest-buildd serve --config /etc/pigeonpost-buildd/buildd.toml
-//! pigeonpost-nest-buildd check --config FILE     (validate the config and exit)
+//! pigeonpost-nest-buildd check --config FILE     (validate the config, the pinned Semgrep
+//!                                                 ruleset and the scanner databases' ages)
 //! pigeonpost-nest-buildd hash-token              (reads a token on stdin, prints its SHA-256)
 //! pigeonpost-nest-buildd public-key              (reads an attestation seed on stdin, prints
 //!                                                 the public key for nestd and its key id)
@@ -67,6 +68,9 @@ async fn serve(cfg: BuilddConfig) -> Result<(), String> {
                 .map_err(|e| e.to_string())?,
         },
     };
+    if cfg.scanners.is_none() {
+        tracing::warn!("no [scanners]: builds get the built-in rules only (not for production)");
+    }
     let bind = cfg.bind.clone();
     let b = Arc::new(
         Buildd::open(cfg, Arc::new(HostPodman), submit, artifact, review)?
@@ -85,6 +89,43 @@ async fn serve(cfg: BuilddConfig) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// `check`: the configuration, and what the security scan will find on this host.
+fn check(cfg: &BuilddConfig) -> Result<(), String> {
+    let Some(sc) = &cfg.scanners else {
+        println!("ok (no [scanners]: only the built-in rules run; not for production)");
+        return Ok(());
+    };
+    let rules = pigeonpost_nests::scanners::file_sha256(&sc.semgrep_rules)?;
+    if !rules.eq_ignore_ascii_case(&sc.semgrep_rules_sha256) {
+        return Err(format!(
+            "{}: sha256 {rules}, not the pinned {}",
+            sc.semgrep_rules.display(),
+            sc.semgrep_rules_sha256
+        ));
+    }
+    let manifest: Option<serde_json::Value> =
+        std::fs::read_to_string(sc.db_root.join("manifest.json"))
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok());
+    let problems = pigeonpost_nests::scanners::db_findings(
+        manifest.as_ref(),
+        sc.max_db_age_hours,
+        pigeonpost_nests::util::now(),
+    );
+    for p in &problems {
+        println!("{}: {}", p.rule, p.message);
+    }
+    if cfg.behaviour.is_none() {
+        println!("note: no [behaviour]: egress and resource use are not observed");
+    }
+    if problems.is_empty() {
+        println!("ok");
+        Ok(())
+    } else {
+        Err("every build would fail its scan until the databases are fresh".into())
+    }
+}
+
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt()
@@ -99,7 +140,7 @@ async fn main() {
             Ok(cfg) => serve(cfg).await,
             Err(e) => Err(e),
         },
-        Some("check") => config(&args).map(|_| println!("ok")),
+        Some("check") => config(&args).and_then(|cfg| check(&cfg)),
         Some("hash-token") => {
             let mut s = String::new();
             let _ = std::io::stdin().read_line(&mut s);

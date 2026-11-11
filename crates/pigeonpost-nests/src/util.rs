@@ -69,6 +69,38 @@ pub fn period_of(unix: i64) -> String {
     format!("{y:04}-{m:02}")
 }
 
+/// Standard base64 (RFC 4648 §4), padding optional, whitespace ignored. `None` for anything else.
+pub fn base64_decode(s: &str) -> Option<Vec<u8>> {
+    let mut out = Vec::with_capacity(s.len() / 4 * 3);
+    let (mut buf, mut bits) = (0u32, 0u32);
+    let mut ended = false;
+    for b in s.bytes() {
+        let v = match b {
+            b'A'..=b'Z' => b - b'A',
+            b'a'..=b'z' => b - b'a' + 26,
+            b'0'..=b'9' => b - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            b'=' => {
+                ended = true;
+                continue;
+            }
+            b' ' | b'\n' | b'\r' | b'\t' => continue,
+            _ => return None,
+        };
+        if ended {
+            return None;
+        }
+        buf = (buf << 6) | u32::from(v);
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((buf >> bits) as u8);
+        }
+    }
+    Some(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

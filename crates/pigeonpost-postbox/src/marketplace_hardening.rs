@@ -410,7 +410,7 @@ impl Hardening {
             .is_ok()
     }
 
-    async fn buildd_call(
+    pub(crate) async fn buildd_call(
         &self,
         method: reqwest::Method,
         path: &str,

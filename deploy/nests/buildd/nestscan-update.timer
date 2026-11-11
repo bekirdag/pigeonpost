@@ -1,0 +1,13 @@
+# /etc/systemd/system/nestscan-update.timer — every 6 hours (ClamAV publishes several times a
+# day; OSV and Grype daily). [scanners] max_db_age_hours (72) fails builds if this stops.
+[Unit]
+Description=Refresh the analysis plane's scanner databases every 6 hours
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=6h
+RandomizedDelaySec=20min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

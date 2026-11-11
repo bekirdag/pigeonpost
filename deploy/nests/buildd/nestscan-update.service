@@ -1,0 +1,25 @@
+# /etc/systemd/system/nestscan-update.service — refresh the scanner databases (OSV, Grype,
+# ClamAV, YARA) as user nestscan. Its egress is the nestscan chain of nestbuild.nft.
+[Unit]
+Description=Refresh the analysis plane's scanner databases (user nestscan)
+After=network-online.target nestbuild-nft.service
+Wants=network-online.target
+Requires=nestbuild-nft.service
+
+[Service]
+Type=oneshot
+User=nestscan
+Group=nestscan
+# XDG_RUNTIME_DIR is nestscan's (uid 2351 here); adjust to the uid you create.
+Environment=XDG_RUNTIME_DIR=/run/user/2351
+ExecStart=/usr/local/sbin/nestscan-update
+TimeoutStartSec=45min
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=false
+ProtectSystem=strict
+ReadWritePaths=/var/lib/pigeonpost-scandb /home/nestscan /run/user/2351
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+UMask=0022

@@ -1,0 +1,19 @@
+#!/bin/sh
+# /usr/local/bin/runsc-behaviour — gVisor for the behaviour run only (runtime "runsc-behaviour" in
+# ~nestbuild/.config/containers/containers.conf). The reviewed runsc-buildd profile, plus a trace
+# of the network syscalls the release attempts, for the egress diff:
+#   --strace --strace-syscalls=connect,sendto,sendmsg,sendmmsg   only these calls are logged
+#   --debug --debug-log=/var/lib/pigeonpost-buildd/netlog/%ID%/  one directory per container id
+# The run still has --network=none: nothing leaves; the trace says what the release tried.
+# pigeonpost-nest-buildd reads the directory named by the run's --cidfile, diffs it against the
+# manifest's egress, and deletes it. nestbuild-tmpfiles.conf removes any left over after a day.
+n=$#
+while [ "$n" -gt 0 ]; do
+  a=$1
+  shift
+  n=$((n - 1))
+  [ "$a" = "--no-new-keyring" ] || set -- "$@" "$a"
+done
+exec /usr/local/bin/runsc --ignore-cgroups --platform=systrap --network=sandbox --host-uds=none --host-fifo=none \
+  --debug --debug-log=/var/lib/pigeonpost-buildd/netlog/%ID%/ \
+  --strace --strace-syscalls=connect,sendto,sendmsg,sendmmsg --strace-log-size=64 "$@"

@@ -45,12 +45,13 @@
 //!
 //! One build runs at a time; the queue is bounded.
 
-use crate::analysis::{self, ReviewRouteConfig, StageReport};
+use crate::analysis::{self, Budget, Finding, ReviewRouteConfig, StageReport};
 use crate::artifacts::{
     digest_ok, oci_archive_manifest_digest, CHUNK_BYTES, SHA256_HEADER, SIZE_HEADER,
 };
 use crate::release::{build_tag, release_digest, BuildConfig, BuildRecord, Builder};
 use crate::sandbox::Podman;
+use crate::scanners::{self, ScannersConfig, Target};
 use crate::util::{ct_eq, now, sha256_hex};
 use axum::extract::{Path as UrlPath, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
@@ -103,6 +104,33 @@ pub struct BuilddConfig {
     /// Where deploy-key credentials come from (M2b sources). Unset: deploy-key builds are refused.
     #[serde(default)]
     pub postbox: Option<PostboxConfig>,
+    /// `[scanners]`: the security tools of the deterministic scan (OSV-Scanner, Grype, ClamAV,
+    /// YARA, Semgrep, gitleaks). Unset: only the built-in rules run, and the scan says so in an
+    /// advisory finding (development only; production sets it).
+    #[serde(default)]
+    pub scanners: Option<ScannersConfig>,
+    /// `[behaviour]`: how the behaviour run is observed (egress trace, resource use). Unset: the
+    /// run is not observed, and the stage says so in advisory findings.
+    #[serde(default)]
+    pub behaviour: Option<BehaviourConfig>,
+}
+
+/// `[behaviour]`: the observed behaviour run.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BehaviourConfig {
+    /// The OCI runtime name mapped to `runsc-behaviour` in containers.conf: gVisor with strace of
+    /// the network syscalls into a debug log per container.
+    pub runtime: String,
+    /// Where `runsc-behaviour` writes those logs (`<trace_root>/<container id>/`).
+    pub trace_root: PathBuf,
+    /// The cgroup v2 directory nestbuild's containers run under
+    /// (`/sys/fs/cgroup/user.slice/user-<uid>.slice/user@<uid>.service`). Unset: resource use is
+    /// not measured.
+    #[serde(default)]
+    pub cgroup: Option<PathBuf>,
+    /// The marketplace pool's per-Nest limits.
+    pub budget: Budget,
 }
 
 /// `[postbox]`: the postbox's source-credential route, over WireGuard.
@@ -144,7 +172,7 @@ fn default_behaviour_secs() -> u64 {
     60
 }
 
-fn pinned(image: &str) -> bool {
+pub fn pinned(image: &str) -> bool {
     image.split_once("@sha256:").is_some_and(|(name, d)| {
         !name.is_empty() && d.len() == 64 && d.bytes().all(|b| b.is_ascii_hexdigit())
     })
@@ -188,6 +216,23 @@ impl BuilddConfig {
         if let Some(p) = &self.postbox {
             if !crate::config::private_url_ok(&p.url) {
                 return Err("postbox.url: https, or http to a private address".into());
+            }
+        }
+        if let Some(sc) = &self.scanners {
+            sc.check()?;
+        }
+        if let Some(b) = &self.behaviour {
+            if b.runtime.is_empty() || !b.trace_root.is_absolute() {
+                return Err("behaviour: a runtime name and an absolute trace_root".into());
+            }
+            if b.cgroup
+                .as_ref()
+                .is_some_and(|c| !c.starts_with("/sys/fs/cgroup"))
+            {
+                return Err("behaviour.cgroup: a directory under /sys/fs/cgroup".into());
+            }
+            if b.budget.memory_mib == 0 || b.budget.cpu_millis == 0 || b.budget.job_seconds == 0 {
+                return Err("behaviour.budget: positive limits".into());
             }
         }
         if !(5..=600).contains(&self.behaviour_timeout_secs) {
@@ -583,6 +628,40 @@ pub fn build_from_source_with(
         "reproducible": cfg.reproducible,
     });
     let scan = analysis::deterministic_scan(&src)?;
+    let scan = match &cfg.scanners {
+        Some(sc) => {
+            let eco = crate::ecosystem::detect(&src)?;
+            let artefacts = work.join("first").join("context");
+            let outcome = scanners::security_scan(
+                podman,
+                sc,
+                &cfg.build.runtime,
+                &Target {
+                    src: Some(&src),
+                    artefacts: artefacts.is_dir().then_some(artefacts.as_path()),
+                    image_archive: Some(&archive),
+                    sbom: Some(&record.sbom),
+                    lockfile: Some(eco.lockfile()),
+                    files: None,
+                },
+                &work.join("scan"),
+                now(),
+            );
+            scan.extended(outcome.findings, "security_tools", outcome.evidence)
+        }
+        None => scan.extended(
+            vec![Finding::of(
+                "pigeonpost",
+                "scanner.not_configured",
+                analysis::Severity::Medium,
+                "scanners",
+                "this build plane runs no vulnerability, malware, SAST or gitleaks scan",
+                false,
+            )],
+            "security_tools",
+            json!({ "configured": false }),
+        ),
+    };
     let behaviour = if cfg.behaviour_test {
         Some(behaviour_test(
             podman,
@@ -611,8 +690,9 @@ pub fn build_from_source_with(
 }
 
 /// The jobs the behaviour test delivers: the release's own example jobs (`jobs/*.json`, as
-/// `pigeonpost nest run` reads them), or one per operation with every field filled.
-fn behaviour_jobs(manifest: &crate::release::Manifest, src: &Path) -> Vec<Value> {
+/// `pigeonpost nest run` reads them), or one per operation with every field filled. Each job's
+/// first text field that has room also carries that job's buyer-data canary.
+fn behaviour_jobs(manifest: &crate::release::Manifest, src: &Path) -> Vec<(Value, Option<String>)> {
     let mut jobs = Vec::new();
     if let Ok(dir) = std::fs::read_dir(src.join("jobs")) {
         let mut files: Vec<PathBuf> = dir
@@ -648,11 +728,72 @@ fn behaviour_jobs(manifest: &crate::release::Manifest, src: &Path) -> Vec<Value>
             }));
         }
     }
-    for (i, j) in jobs.iter_mut().enumerate() {
-        j["job_id"] = json!(format!("job_behaviour{i:02}"));
-        j["config"] = json!({});
+    jobs.into_iter()
+        .enumerate()
+        .map(|(i, mut j)| {
+            j["job_id"] = json!(format!("job_behaviour{i:02}"));
+            j["config"] = json!({});
+            let canary = plant_canary(&mut j, manifest);
+            (j, canary)
+        })
+        .collect()
+}
+
+/// Append a fresh canary to the job's first string field whose `max_chars` leaves room for it.
+fn plant_canary(job: &mut Value, manifest: &crate::release::Manifest) -> Option<String> {
+    let op = manifest
+        .operations
+        .iter()
+        .find(|o| job["operation"] == o.name.as_str())?;
+    let c = analysis::canary();
+    for f in &op.fields {
+        let Some(text) = job["payload"][&f.name].as_str() else {
+            continue;
+        };
+        let with = format!("{text} {c}");
+        if with.chars().count() <= f.max_chars {
+            job["payload"][&f.name] = json!(with);
+            return Some(c);
+        }
     }
-    jobs
+    None
+}
+
+/// Memory now (bytes) and CPU time so far (µs) of a cgroup v2 directory.
+pub fn cgroup_sample(dir: &Path) -> Option<(u64, u64)> {
+    let mem = std::fs::read_to_string(dir.join("memory.current"))
+        .ok()?
+        .trim()
+        .parse()
+        .ok()?;
+    let cpu = std::fs::read_to_string(dir.join("cpu.stat"))
+        .ok()?
+        .lines()
+        .find_map(|l| l.strip_prefix("usage_usec "))?
+        .trim()
+        .parse()
+        .ok()?;
+    Some((mem, cpu))
+}
+
+/// The gVisor strace logs of one behaviour container, read and removed.
+fn take_trace(trace_root: &Path, cid_file: &Path) -> Option<String> {
+    let id = std::fs::read_to_string(cid_file).ok()?;
+    let id = id.trim();
+    if id.len() < 12 || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    let dir = trace_root.join(id);
+    let mut text = String::new();
+    let mut any = false;
+    for e in std::fs::read_dir(&dir).ok()?.flatten() {
+        if let Ok(t) = std::fs::read_to_string(e.path()) {
+            any |= !t.is_empty();
+            text.push_str(&t);
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    any.then_some(text)
 }
 
 /// The behaviour test (R-63) on the build plane, after the scan: the image just built runs under
@@ -661,6 +802,11 @@ fn behaviour_jobs(manifest: &crate::release::Manifest, src: &Path) -> Vec<Value>
 /// output are searched for the tokens; a job left unanswered fails the stage too. There is no
 /// broker on the build plane, so a model call ends in the SDK's `no_broker` error: an answered
 /// job is any result, succeeded or failed.
+///
+/// With `[behaviour]` set the run is also observed: it runs under the `runsc-behaviour` runtime,
+/// whose strace of the network syscalls is diffed against the declared egress (an undeclared
+/// attempt blocks), the sandbox's cgroup is sampled for memory and CPU and the answers are timed
+/// against the pool's budget, and each job's buyer-data canary must stay in that job's result.
 pub fn behaviour_test(
     podman: &dyn Podman,
     cfg: &BuilddConfig,
@@ -676,7 +822,7 @@ pub fn behaviour_test(
     let tokens = analysis::Honeytokens::new(3);
     tokens.plant(volume)?;
     let jobs = behaviour_jobs(manifest, src);
-    for j in &jobs {
+    for (j, _) in &jobs {
         let id = j["job_id"].as_str().unwrap_or_default();
         std::fs::write(volume.join(format!("jobs/in/{id}.json")), j.to_string())
             .map_err(|e| e.to_string())?;
@@ -690,11 +836,15 @@ pub fn behaviour_test(
                 std::fs::set_permissions(volume.join(d), std::fs::Permissions::from_mode(0o777));
         }
     }
+    let observe = cfg.behaviour.as_ref();
+    let cid_file = volume.with_extension("cid");
+    let _ = std::fs::remove_file(&cid_file);
+    let runtime = observe.map_or(cfg.build.runtime.as_str(), |o| o.runtime.as_str());
     let mut args: Vec<String> = vec![
         "run".into(),
         "--rm".into(),
         "--pull=never".into(),
-        format!("--runtime={}", cfg.build.runtime),
+        format!("--runtime={runtime}"),
         "--network=none".into(),
         "--cap-drop=ALL".into(),
         "--security-opt=no-new-privileges".into(),
@@ -706,13 +856,56 @@ pub fn behaviour_test(
         format!("--volume={}:/nest:rw", volume.display()),
         format!("--timeout={}", cfg.behaviour_timeout_secs),
     ];
+    if observe.is_some() {
+        args.push(format!("--cidfile={}", cid_file.display()));
+    }
     args.extend(cfg.build.limit_args());
     args.push(tag.to_string());
-    // A worker serves forever; the timeout ends it. Its exit status says nothing here.
-    let output = run_args(podman, &args).unwrap_or_else(|e| e);
+
+    // A worker serves forever; the timeout ends it. Its exit status says nothing here. While it
+    // runs, the cgroup is sampled and each answer's arrival is timed.
+    let cgroup = observe.and_then(|o| o.cgroup.as_deref());
+    let started = std::time::Instant::now();
+    let base = cgroup.and_then(cgroup_sample);
+    let mut peak = 0u64;
+    let mut answered_at: std::collections::BTreeMap<String, u64> = Default::default();
+    let mut cpu_at_last_answer = None;
+    let out_dir = volume.join("jobs/out");
+    let mut poll = |peak: &mut u64, answered_at: &mut std::collections::BTreeMap<String, u64>| {
+        let sample = cgroup.and_then(cgroup_sample);
+        if let Some((mem, _)) = sample {
+            *peak = (*peak).max(mem);
+        }
+        let mut new = false;
+        if let Ok(dir) = std::fs::read_dir(&out_dir) {
+            for e in dir.flatten() {
+                let name = e.file_name().to_string_lossy().to_string();
+                if let std::collections::btree_map::Entry::Vacant(e) = answered_at.entry(name) {
+                    e.insert(started.elapsed().as_millis() as u64);
+                    new = true;
+                }
+            }
+        }
+        if new {
+            cpu_at_last_answer = sample.map(|(_, cpu)| cpu);
+        }
+    };
+    let output = std::thread::scope(|s| {
+        let run = s.spawn(|| run_args(podman, &args).unwrap_or_else(|e| e));
+        while !run.is_finished() {
+            poll(&mut peak, &mut answered_at);
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        }
+        run.join().unwrap_or_default()
+    });
+    poll(&mut peak, &mut answered_at);
+    let total_ms = started.elapsed().as_millis() as u64;
+    let end = cgroup.and_then(cgroup_sample);
+
     let mut results = Vec::new();
+    let mut per_job = Vec::new();
     let mut answered = 0;
-    if let Ok(dir) = std::fs::read_dir(volume.join("jobs/out")) {
+    if let Ok(dir) = std::fs::read_dir(&out_dir) {
         for entry in dir.flatten() {
             let bytes = std::fs::read(entry.path()).unwrap_or_default();
             if serde_json::from_slice::<Value>(&bytes)
@@ -721,9 +914,92 @@ pub fn behaviour_test(
             {
                 answered += 1;
             }
+            let job = entry
+                .file_name()
+                .to_string_lossy()
+                .trim_end_matches(".json")
+                .to_string();
             results.extend_from_slice(&bytes);
+            per_job.push((job, bytes));
         }
     }
+
+    // What the run did beyond its answers.
+    let mut seen = Vec::new();
+    let canaries: Vec<(String, Option<String>)> = jobs
+        .iter()
+        .map(|(j, c)| (j["job_id"].as_str().unwrap_or("").to_string(), c.clone()))
+        .collect();
+    seen.extend(analysis::canary_findings(
+        &canaries,
+        &per_job,
+        output.as_bytes(),
+    ));
+    let (egress_facts, attempts) = match observe {
+        Some(o) => match take_trace(&o.trace_root, &cid_file) {
+            Some(trace) => {
+                let attempts = analysis::parse_strace(&trace);
+                let found = analysis::egress_findings(&manifest.egress, &attempts);
+                let n = found.len();
+                seen.extend(found);
+                (
+                    json!({ "traced": true, "attempts": attempts.len(), "undeclared": n }),
+                    attempts,
+                )
+            }
+            None => {
+                seen.push(analysis::egress_unobserved(true));
+                (json!({ "traced": false }), Vec::new())
+            }
+        },
+        None => {
+            seen.push(analysis::egress_unobserved(false));
+            (json!({ "traced": false, "configured": false }), Vec::new())
+        }
+    };
+    let _ = std::fs::remove_file(&cid_file);
+    let resource_facts = match (observe, base, end) {
+        (Some(o), Some((mem0, cpu0)), Some((_, cpu1))) => {
+            let mut times: Vec<u64> = answered_at.values().copied().collect();
+            times.sort_unstable();
+            let slowest = times
+                .iter()
+                .scan(0u64, |prev, t| {
+                    let d = t.saturating_sub(*prev);
+                    *prev = *t;
+                    Some(d)
+                })
+                .max();
+            let active_ms = times.last().copied().unwrap_or(total_ms).max(1);
+            let usage = analysis::Usage {
+                // The cgroup's own baseline (the user's systemd and podman) is not the release's.
+                peak_memory_bytes: peak.max(mem0).saturating_sub(mem0),
+                cpu_usec: cpu_at_last_answer.unwrap_or(cpu1).saturating_sub(cpu0),
+                active_ms,
+                slowest_job_ms: slowest,
+            };
+            seen.extend(analysis::resource_findings(&o.budget, &usage));
+            json!({
+                "measured": true,
+                "peak_memory_mib": usage.peak_memory_bytes >> 20,
+                "cpu_millis": usage.cpu_usec / active_ms,
+                "slowest_job_ms": usage.slowest_job_ms,
+                "budget": { "memory_mib": o.budget.memory_mib, "cpu_millis": o.budget.cpu_millis,
+                            "job_seconds": o.budget.job_seconds },
+            })
+        }
+        _ => {
+            seen.push(Finding::of(
+                "pigeonpost",
+                "resources.unmeasured",
+                analysis::Severity::Low,
+                "resources",
+                "this build plane does not measure the behaviour run's resource use",
+                false,
+            ));
+            json!({ "measured": false })
+        }
+    };
     let report = analysis::behaviour_report(
         &tokens,
         &[
@@ -732,7 +1008,19 @@ pub fn behaviour_test(
         ],
         jobs.len(),
         answered,
-        &format!("{} on the build plane, network none", cfg.build.runtime),
+        &format!("{runtime} on the build plane, network none"),
+    )
+    .extended(
+        seen,
+        "observed",
+        json!({
+            "egress": egress_facts,
+            "attempts": attempts.iter().take(50).map(|a| json!({
+                "syscall": a.syscall, "family": a.family, "addr": a.addr, "port": a.port,
+            })).collect::<Vec<_>>(),
+            "resources": resource_facts,
+            "buyer_data_canaries": canaries.iter().filter(|(_, c)| c.is_some()).count(),
+        }),
     );
     let _ = std::fs::remove_dir_all(volume);
     Ok(report)
@@ -769,7 +1057,74 @@ CREATE TABLE IF NOT EXISTS builds (
 );
 CREATE INDEX IF NOT EXISTS builds_by_state ON builds(state, created_at);
 CREATE INDEX IF NOT EXISTS builds_by_image ON builds(image_digest);
+-- Scans the postbox asks for outside a build: a hosted service's result files (the conformance
+-- run) and a published release again (the monthly re-scan). The request is kept without file
+-- contents; the files wait in the work root until the scan runs.
+CREATE TABLE IF NOT EXISTS scans (
+    id         TEXT PRIMARY KEY,
+    kind       TEXT NOT NULL CHECK (kind IN ('files','release')),
+    state      TEXT NOT NULL CHECK (state IN ('queued','running','succeeded','failed')),
+    request    TEXT NOT NULL,
+    result     TEXT,
+    error      TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS scans_by_state ON scans(state, created_at);
+-- Images of published releases: kept past keep_days so the monthly re-scan can open them again.
+-- Refreshed by every re-scan request; dropped when the postbox stops naming them.
+CREATE TABLE IF NOT EXISTS retained_images (
+    image_digest TEXT PRIMARY KEY,
+    release_id   TEXT NOT NULL,
+    updated_at   INTEGER NOT NULL
+);
 ";
+
+/// Files one result scan may carry, and the largest (decoded).
+pub const SCAN_MAX_FILES: usize = 5;
+pub const SCAN_MAX_FILE_BYTES: usize = 20 * 1024 * 1024;
+/// The largest SBOM a re-scan may carry.
+pub const SCAN_MAX_SBOM_BYTES: usize = 8 * 1024 * 1024;
+/// A retained image is released this long after the last re-scan that named it.
+const RETAIN_SECS: i64 = 62 * 86_400;
+/// Finished scans (and their files) are kept this long for the postbox to read.
+const SCAN_KEEP_SECS: i64 = 30 * 86_400;
+
+/// A scan id as the postbox mints it: `scn_` and 26 lower-case base32 characters.
+pub fn valid_scan_id(id: &str) -> bool {
+    id.strip_prefix("scn_").is_some_and(|rest| {
+        rest.len() == 26
+            && rest
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || (b'2'..=b'7').contains(&b))
+    })
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScanFile {
+    pub name: String,
+    pub media_type: String,
+    pub content_b64: String,
+}
+
+/// `POST /v1/scans`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScanReq {
+    pub scan_id: String,
+    /// `files` (ClamAV and YARA on the files) or `release` (OSV and Grype on the SBOM, and
+    /// Grype, ClamAV and YARA on the image when this host still has it).
+    pub kind: String,
+    #[serde(default)]
+    pub files: Vec<ScanFile>,
+    #[serde(default)]
+    pub release_id: Option<String>,
+    #[serde(default)]
+    pub image_digest: Option<String>,
+    #[serde(default)]
+    pub sbom: Option<String>,
+}
 
 /// The service.
 pub struct Buildd {
@@ -1098,6 +1453,17 @@ impl Buildd {
         Ok(())
     }
 
+    fn has_queued_build(&self) -> bool {
+        self.with(|c| {
+            c.query_row(
+                "SELECT EXISTS (SELECT 1 FROM builds WHERE state = 'queued')",
+                [],
+                |r| r.get(0),
+            )
+        })
+        .unwrap_or(false)
+    }
+
     /// Run the oldest queued build to its end. `false` when there was none.
     pub async fn run_one(self: &Arc<Self>) -> bool {
         let Ok(Some((id, url, commit, credential))) = self.claim() else {
@@ -1167,12 +1533,236 @@ impl Buildd {
         true
     }
 
-    /// Delete saved images older than `keep_days`.
+    fn scan_dir(&self, id: &str) -> PathBuf {
+        self.cfg.work_root.join("scans").join(id)
+    }
+
+    /// Queue a scan. The same `scan_id` again is the same scan.
+    pub fn submit_scan(&self, req: &ScanReq) -> Result<Value, ApiErr> {
+        let bad = |m: &str| (StatusCode::BAD_REQUEST, "invalid", m.to_string());
+        if !valid_scan_id(&req.scan_id) {
+            return Err(bad("malformed scan_id"));
+        }
+        if let Some(v) = self.read_scan(&req.scan_id)? {
+            return Ok(v);
+        }
+        let stored = match req.kind.as_str() {
+            "files" => {
+                if req.files.is_empty() || req.files.len() > SCAN_MAX_FILES {
+                    return Err(bad("files: 1 to 5"));
+                }
+                let dir = self.scan_dir(&req.scan_id).join("files");
+                let _ = std::fs::remove_dir_all(&dir);
+                std::fs::create_dir_all(&dir)
+                    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, "internal", e.to_string()))?;
+                let mut names = Vec::new();
+                for (i, f) in req.files.iter().enumerate() {
+                    let bytes = crate::util::base64_decode(&f.content_b64)
+                        .filter(|b| !b.is_empty() && b.len() <= SCAN_MAX_FILE_BYTES)
+                        .ok_or_else(|| bad("files[].content_b64: base64, 1 byte to 20 MiB"))?;
+                    // Stored under an index: the publisher's file name never reaches a path.
+                    std::fs::write(dir.join(format!("{i}.bin")), &bytes).map_err(|e| {
+                        (StatusCode::INTERNAL_SERVER_ERROR, "internal", e.to_string())
+                    })?;
+                    names.push(json!({
+                        "index": i,
+                        "name": f.name.chars().take(200).collect::<String>(),
+                        "media_type": f.media_type.chars().take(100).collect::<String>(),
+                        "bytes": bytes.len(),
+                        "sha256": format!("sha256:{}", sha256_hex(&bytes)),
+                    }));
+                }
+                json!({ "kind": "files", "files": names })
+            }
+            "release" => {
+                let release = req
+                    .release_id
+                    .as_deref()
+                    .filter(|r| valid_ref(r))
+                    .ok_or_else(|| bad("release_id"))?;
+                let digest = req
+                    .image_digest
+                    .as_deref()
+                    .filter(|d| digest_ok(d))
+                    .ok_or_else(|| bad("image_digest: sha256:<64 hex>"))?;
+                let sbom = req
+                    .sbom
+                    .as_deref()
+                    .filter(|t| t.len() <= SCAN_MAX_SBOM_BYTES)
+                    .filter(|t| serde_json::from_str::<Value>(t).is_ok())
+                    .ok_or_else(|| bad("sbom: the release's CycloneDX JSON"))?;
+                self.with(|c| {
+                    c.execute(
+                        "INSERT INTO retained_images (image_digest, release_id, updated_at)
+                         VALUES (?1, ?2, ?3)
+                         ON CONFLICT (image_digest) DO UPDATE SET updated_at = excluded.updated_at",
+                        params![digest, release, now()],
+                    )
+                })?;
+                json!({ "kind": "release", "release_id": release, "image_digest": digest,
+                        "sbom": sbom })
+            }
+            _ => return Err(bad("kind: files or release")),
+        };
+        let t = now();
+        self.with(|c| {
+            c.execute(
+                "INSERT INTO scans (id, kind, state, request, created_at, updated_at)
+                 VALUES (?1, ?2, 'queued', ?3, ?4, ?4)",
+                params![req.scan_id, req.kind, stored.to_string(), t],
+            )
+        })?;
+        Ok(self.read_scan(&req.scan_id)?.unwrap_or(Value::Null))
+    }
+
+    /// A scan as the postbox sees it: its state and, when done, its findings.
+    pub fn read_scan(&self, id: &str) -> Result<Option<Value>, ApiErr> {
+        self.with(|c| {
+            c.query_row(
+                "SELECT id, kind, state, error, result FROM scans WHERE id = ?1",
+                params![id],
+                |r| {
+                    let result: Option<String> = r.get(4)?;
+                    Ok(json!({
+                        "scan_id": r.get::<_, String>(0)?,
+                        "kind": r.get::<_, String>(1)?,
+                        "state": r.get::<_, String>(2)?,
+                        "error": r.get::<_, Option<String>>(3)?,
+                        "result": result.and_then(|t| serde_json::from_str::<Value>(&t).ok()),
+                    }))
+                },
+            )
+            .optional()
+        })
+    }
+
+    /// Run the oldest queued scan. `false` when there was none.
+    pub async fn run_one_scan(self: &Arc<Self>) -> bool {
+        let claimed: Result<Option<(String, String)>, ApiErr> = self.with(|c| {
+            let row: Option<(String, String)> = c
+                .query_row(
+                    "SELECT id, request FROM scans WHERE state = 'queued'
+                      ORDER BY created_at, id LIMIT 1",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()?;
+            if let Some((id, _)) = &row {
+                c.execute(
+                    "UPDATE scans SET state = 'running', updated_at = ?2 WHERE id = ?1",
+                    params![id, now()],
+                )?;
+            }
+            Ok(row)
+        });
+        let Ok(Some((id, request))) = claimed else {
+            return false;
+        };
+        let me = self.clone();
+        let sid = id.clone();
+        let outcome = tokio::task::spawn_blocking(move || me.scan_now(&sid, &request))
+            .await
+            .map_err(|e| e.to_string())
+            .and_then(|r| r);
+        let t = now();
+        let _ = self.with(|c| match &outcome {
+            Ok(v) => c.execute(
+                "UPDATE scans SET state = 'succeeded', result = ?2, updated_at = ?3 WHERE id = ?1",
+                params![id, v.to_string(), t],
+            ),
+            Err(e) => c.execute(
+                "UPDATE scans SET state = 'failed', error = ?2, updated_at = ?3 WHERE id = ?1",
+                params![id, e.chars().take(500).collect::<String>(), t],
+            ),
+        });
+        let files = self.scan_dir(&id).join("files");
+        let _ = tokio::task::spawn_blocking(move || std::fs::remove_dir_all(files)).await;
+        true
+    }
+
+    /// One scan, blocking: the tools of [`scanners::security_scan`] for what the request names.
+    fn scan_now(&self, id: &str, request: &str) -> Result<Value, String> {
+        let sc = self
+            .cfg
+            .scanners
+            .as_ref()
+            .ok_or("this build plane has no scanners configured")?;
+        let req: Value = serde_json::from_str(request).map_err(|e| e.to_string())?;
+        let dir = self.scan_dir(id);
+        let files = dir.join("files");
+        let out = dir.join("out");
+        let outcome = match req["kind"].as_str() {
+            Some("files") => scanners::security_scan(
+                self.podman.as_ref(),
+                sc,
+                &self.cfg.build.runtime,
+                &Target {
+                    files: Some(&files),
+                    ..Target::default()
+                },
+                &out,
+                now(),
+            ),
+            Some("release") => {
+                let digest = req["image_digest"].as_str().unwrap_or_default().to_string();
+                let archive: Option<String> = self
+                    .with(|c| {
+                        c.query_row(
+                            "SELECT archive FROM builds WHERE image_digest = ?1
+                               AND state = 'succeeded' AND archive IS NOT NULL
+                             ORDER BY updated_at DESC LIMIT 1",
+                            params![digest],
+                            |r| r.get(0),
+                        )
+                        .optional()
+                    })
+                    .map_err(|e| e.2)?;
+                let archive = archive.map(PathBuf::from).filter(|p| p.is_file());
+                let mut o = scanners::security_scan(
+                    self.podman.as_ref(),
+                    sc,
+                    &self.cfg.build.runtime,
+                    &Target {
+                        image_archive: archive.as_deref(),
+                        sbom: req["sbom"].as_str(),
+                        ..Target::default()
+                    },
+                    &out,
+                    now(),
+                );
+                o.evidence["image_scanned"] = json!(archive.is_some());
+                o
+            }
+            _ => return Err("unknown scan kind".into()),
+        };
+        let _ = std::fs::remove_dir_all(&dir);
+        let blocking = outcome.findings.iter().filter(|f| f.blocking).count();
+        Ok(json!({
+            "findings": outcome.findings,
+            "blocking": blocking,
+            "evidence": outcome.evidence,
+        }))
+    }
+
+    /// Delete saved images older than `keep_days` (unless a published release still names them),
+    /// retained images no re-scan has named for two months, and finished scans after 30 days.
     pub fn prune(&self) -> Result<usize, ApiErr> {
-        let cutoff = now() - self.cfg.keep_days * 86_400;
+        let t = now();
+        self.with(|c| {
+            c.execute(
+                "DELETE FROM retained_images WHERE updated_at < ?1",
+                params![t - RETAIN_SECS],
+            )?;
+            c.execute(
+                "DELETE FROM scans WHERE state IN ('succeeded','failed') AND updated_at < ?1",
+                params![t - SCAN_KEEP_SECS],
+            )
+        })?;
+        let cutoff = t - self.cfg.keep_days * 86_400;
         let old: Vec<(String, String)> = self.with(|c| {
             let mut stmt = c.prepare(
-                "SELECT id, archive FROM builds WHERE archive IS NOT NULL AND updated_at < ?1",
+                "SELECT id, archive FROM builds WHERE archive IS NOT NULL AND updated_at < ?1
+                   AND image_digest NOT IN (SELECT image_digest FROM retained_images)",
             )?;
             let rows = stmt.query_map(params![cutoff], |r| Ok((r.get(0)?, r.get(1)?)))?;
             rows.collect()
@@ -1269,6 +1859,43 @@ async fn http_submit(
     }
 }
 
+async fn http_submit_scan(
+    State(b): State<Arc<Buildd>>,
+    headers: HeaderMap,
+    Json(req): Json<ScanReq>,
+) -> Response {
+    if !bearer_ok(&headers, &b.submit_sha256) {
+        return unauthorized();
+    }
+    let d = b.clone();
+    match tokio::task::spawn_blocking(move || d.submit_scan(&req)).await {
+        Ok(Ok(v)) => (StatusCode::ACCEPTED, Json(v)).into_response(),
+        Ok(Err(e)) => error(e),
+        Err(e) => error((StatusCode::INTERNAL_SERVER_ERROR, "internal", e.to_string())),
+    }
+}
+
+async fn http_read_scan(
+    State(b): State<Arc<Buildd>>,
+    headers: HeaderMap,
+    UrlPath(id): UrlPath<String>,
+) -> Response {
+    if !bearer_ok(&headers, &b.submit_sha256) {
+        return unauthorized();
+    }
+    let not_found = || error((StatusCode::NOT_FOUND, "not_found", "no such scan".into()));
+    if !valid_scan_id(&id) {
+        return not_found();
+    }
+    let d = b.clone();
+    match tokio::task::spawn_blocking(move || d.read_scan(&id)).await {
+        Ok(Ok(Some(v))) => (StatusCode::OK, Json(v)).into_response(),
+        Ok(Ok(None)) => not_found(),
+        Ok(Err(e)) => error(e),
+        Err(e) => error((StatusCode::INTERNAL_SERVER_ERROR, "internal", e.to_string())),
+    }
+}
+
 async fn http_read(
     State(b): State<Arc<Buildd>>,
     headers: HeaderMap,
@@ -1332,7 +1959,15 @@ pub fn router(b: Arc<Buildd>) -> Router {
         .route("/v1/builds", post(http_submit))
         .route("/v1/builds/{id}", get(http_read))
         .route("/v1/artifacts/{digest}", get(http_artifact))
+        .route("/v1/scans/{id}", get(http_read_scan))
         .layer(axum::extract::DefaultBodyLimit::max(16 * 1024))
+        // Five result files of 20 MiB in base64, or one SBOM.
+        .route(
+            "/v1/scans",
+            post(http_submit_scan).layer(axum::extract::DefaultBodyLimit::max(
+                SCAN_MAX_FILES * SCAN_MAX_FILE_BYTES * 4 / 3 + 1024 * 1024,
+            )),
+        )
         .with_state(b)
 }
 
@@ -1343,7 +1978,9 @@ pub fn start_worker(b: Arc<Buildd>) {
         let mut last_prune = 0i64;
         loop {
             tick.tick().await;
+            // Builds first; a scan runs when no build waits.
             while b.run_one().await {}
+            while !b.has_queued_build() && b.run_one_scan().await {}
             if now() - last_prune > 86_400 {
                 last_prune = now();
                 let p = b.clone();
@@ -1389,6 +2026,8 @@ pub(crate) fn test_config(dir: &Path) -> BuilddConfig {
         behaviour_test: true,
         behaviour_timeout_secs: 30,
         postbox: None,
+        scanners: None,
+        behaviour: None,
     }
 }
 
@@ -1491,6 +2130,10 @@ mod tests {
         silent: bool,
         /// What the deploy-key file held while git ran (the fetch's only reader).
         key_seen: Mutex<Option<String>>,
+        /// The scanners: ClamAV reports a hit.
+        malware: bool,
+        /// The observed behaviour run: the gVisor trace it leaves under this root.
+        trace: Option<(PathBuf, String)>,
     }
 
     /// What the fake `pip download` writes for `name==version`; tests pin its hash.
@@ -1536,9 +2179,43 @@ mod tests {
                     std::fs::write(out, tar).map_err(|e| e.to_string())?;
                     Ok(String::new())
                 }
+                // A security tool: an empty report, or a ClamAV hit.
+                Some("run") if volume(":/out:rw").is_some() => {
+                    let out = volume(":/out:rw").unwrap();
+                    let tool = argv
+                        .iter()
+                        .find_map(|a| a.strip_prefix("--entrypoint="))
+                        .unwrap_or_default();
+                    let report = match tool {
+                        "osv-scanner" => ("report.json", "{\"results\":[]}"),
+                        "grype" => ("report.json", "{\"matches\":[]}"),
+                        "semgrep" => ("report.json", "{\"results\":[],\"errors\":[]}"),
+                        "gitleaks" => ("report.json", "[]"),
+                        "clamscan" if self.malware => {
+                            std::fs::write(
+                                out.join("report.log"),
+                                "/scan/artefacts/target/release/hr-policy-qa: Unix.Trojan.Agent-1 FOUND\n",
+                            )
+                            .unwrap();
+                            return Err("clamscan: exit status 1".into());
+                        }
+                        "clamscan" => ("report.log", ""),
+                        _ => return Ok(String::new()),
+                    };
+                    std::fs::write(out.join(report.0), report.1).unwrap();
+                    Ok(String::new())
+                }
                 // The behaviour run: the release answers its jobs (or leaks, or stays silent).
                 Some("run") if volume(":/nest:rw").is_some() => {
                     let nest = volume(":/nest:rw").unwrap();
+                    if let Some(cid) = argv.iter().find_map(|a| a.strip_prefix("--cidfile=")) {
+                        let id = "0123456789abcdef0123456789abcdef";
+                        std::fs::write(cid, id).unwrap();
+                        if let Some((root, text)) = &self.trace {
+                            std::fs::create_dir_all(root.join(id)).unwrap();
+                            std::fs::write(root.join(id).join("runsc.log.boot.txt"), text).unwrap();
+                        }
+                    }
                     if self.silent {
                         return Err("timed out".into());
                     }
@@ -1714,7 +2391,7 @@ mod tests {
                     .scan
                     .findings
                     .iter()
-                    .filter(|f| f.blocker)
+                    .filter(|f| f.blocking)
                     .map(|f| f.rule.as_str())
                     .collect();
                 if built.record.manifest.external_writes {
@@ -1800,7 +2477,7 @@ mod tests {
         .unwrap();
         assert_eq!(built.reproducibility["equal"], true);
         assert!(
-            built.scan.findings.iter().all(|f| !f.blocker),
+            built.scan.findings.iter().all(|f| !f.blocking),
             "{:?}",
             built.scan.findings
         );
@@ -1839,7 +2516,7 @@ mod tests {
         assert!(scan
             .findings
             .iter()
-            .any(|f| f.rule == "licence.mismatch" && f.blocker));
+            .any(|f| f.rule == "licence.mismatch" && f.blocking));
         // A lockfile entry from outside the registry is refused at intake.
         let mut git = lock.clone();
         git["packages"]["node_modules/tiny-csv"]["resolved"] =
@@ -1890,7 +2567,7 @@ mod tests {
         .unwrap();
         assert_eq!(built.reproducibility["equal"], true);
         assert!(
-            built.scan.findings.iter().all(|f| !f.blocker),
+            built.scan.findings.iter().all(|f| !f.blocking),
             "{:?}",
             built.scan.findings
         );
@@ -1931,7 +2608,7 @@ mod tests {
         assert!(scan
             .findings
             .iter()
-            .any(|f| f.rule == "licence.undeclared" && f.blocker));
+            .any(|f| f.rule == "licence.undeclared" && f.blocking));
     }
 
     /// The behaviour test on the build plane fails a release that leaks a planted token or answers
@@ -2005,6 +2682,326 @@ mod tests {
             .collect();
         assert_eq!(stages, ["deterministic_scan", "behavioral_test"], "{v}");
         assert_eq!(v["stages"][1]["decision"], "passed");
+    }
+
+    fn scanners_config(dir: &Path) -> ScannersConfig {
+        let rules = dir.join("semgrep.yml");
+        std::fs::write(&rules, "rules: []\n").unwrap();
+        let db = dir.join("scandb");
+        std::fs::create_dir_all(&db).unwrap();
+        let t = now() - 60;
+        std::fs::write(
+            db.join("manifest.json"),
+            json!({ "osv": {"updated_at": t}, "grype": {"updated_at": t},
+                    "clamav": {"updated_at": t}, "yara": {"updated_at": t} })
+            .to_string(),
+        )
+        .unwrap();
+        ScannersConfig {
+            image: format!("localhost/pigeonpost-scanners@sha256:{}", "1".repeat(64)),
+            clamav_image: format!("docker.io/clamav/clamav@sha256:{}", "2".repeat(64)),
+            semgrep_image: format!("docker.io/semgrep/semgrep@sha256:{}", "3".repeat(64)),
+            semgrep_rules_sha256: scanners::file_sha256(&rules).unwrap(),
+            semgrep_rules: rules,
+            db_root: db,
+            max_db_age_hours: 72,
+            timeout_secs: 600,
+            memory_mib: 4096,
+        }
+    }
+
+    /// The security tools scan the source, the compiled artefacts and the saved image, each in
+    /// gVisor with no network, and their findings join the deterministic scan: a ClamAV hit on
+    /// the compiled binary fails it.
+    #[test]
+    fn the_security_tools_join_the_deterministic_scan() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = test_config(dir.path());
+        cfg.scanners = Some(scanners_config(dir.path()));
+        let clean = FakeBuildPodman::default();
+        let built = build_from_source(
+            &clean,
+            &cfg,
+            "https://git.example.org/acme/x.git",
+            COMMIT,
+            &dir.path().join("clean"),
+        )
+        .unwrap();
+        assert_eq!(built.scan.decision, "passed", "{:#?}", built.scan.findings);
+        let tools = &built.scan.evidence["security_tools"]["tools"];
+        for t in [
+            "osv-scanner",
+            "grype",
+            "clamav",
+            "yara",
+            "semgrep",
+            "gitleaks",
+            "heuristics",
+        ] {
+            assert_eq!(tools[t]["ran"], true, "{t}: {tools}");
+        }
+        let calls = clean.calls.lock().unwrap().clone();
+        let scans: Vec<&Vec<String>> = calls
+            .iter()
+            .filter(|c| c.iter().any(|a| a.ends_with(":/out:rw")))
+            .collect();
+        assert_eq!(scans.len(), 6, "{scans:#?}");
+        for c in &scans {
+            assert!(c.contains(&"--network=none".to_string()), "{c:?}");
+            assert!(c.contains(&"--runtime=runsc".to_string()), "{c:?}");
+        }
+        let clam = scans
+            .iter()
+            .find(|c| c.contains(&"--entrypoint=clamscan".to_string()))
+            .unwrap();
+        for mount in [
+            ":/scan/src:ro",
+            ":/scan/artefacts:ro",
+            ":/scan/image/image.tar:ro",
+            ":/db/clamav:ro",
+        ] {
+            assert!(clam.iter().any(|a| a.ends_with(mount)), "{mount}: {clam:?}");
+        }
+        let dirty = FakeBuildPodman {
+            malware: true,
+            ..Default::default()
+        };
+        let built = build_from_source(
+            &dirty,
+            &cfg,
+            "https://git.example.org/acme/x.git",
+            COMMIT,
+            &dir.path().join("dirty"),
+        )
+        .unwrap();
+        assert_eq!(built.scan.decision, "failed");
+        let hit = built
+            .scan
+            .findings
+            .iter()
+            .find(|f| f.tool == "clamav")
+            .unwrap();
+        assert!(hit.blocking);
+        assert_eq!(
+            hit.path.as_deref(),
+            Some("artefacts/target/release/hr-policy-qa")
+        );
+        // Without [scanners] the scan says it ran none of them (advisory).
+        let plain = build_from_source(
+            &FakeBuildPodman::default(),
+            &test_config(dir.path()),
+            "https://git.example.org/acme/x.git",
+            COMMIT,
+            &dir.path().join("plain"),
+        )
+        .unwrap();
+        assert!(plain
+            .scan
+            .findings
+            .iter()
+            .any(|f| f.rule == "scanner.not_configured" && !f.blocking));
+    }
+
+    /// The observed behaviour run: gVisor's network trace is diffed against the declared egress,
+    /// the cgroup is sampled, and a missing trace is not a clean run.
+    #[test]
+    fn the_behaviour_run_is_observed_for_egress_and_resources() {
+        let dir = tempfile::tempdir().unwrap();
+        let trace_root = dir.path().join("trace");
+        let cgroup = dir.path().join("cgroup");
+        std::fs::create_dir_all(&cgroup).unwrap();
+        std::fs::write(cgroup.join("memory.current"), "52428800\n").unwrap();
+        std::fs::write(cgroup.join("cpu.stat"), "usage_usec 1000\nuser_usec 800\n").unwrap();
+        let mut cfg = test_config(dir.path());
+        cfg.behaviour = Some(BehaviourConfig {
+            runtime: "runsc-behaviour".into(),
+            trace_root: trace_root.clone(),
+            cgroup: Some(cgroup),
+            budget: Budget {
+                memory_mib: 512,
+                cpu_millis: 1000,
+                job_seconds: 30,
+            },
+        });
+        let build = |podman: &FakeBuildPodman, name: &str| {
+            build_from_source(
+                podman,
+                &cfg,
+                "https://git.example.org/acme/x.git",
+                COMMIT,
+                &dir.path().join(name),
+            )
+            .unwrap()
+            .behaviour
+            .unwrap()
+        };
+        let leaky = FakeBuildPodman {
+            trace: Some((
+                trace_root.clone(),
+                include_str!("../tests/fixtures/scanners/strace.log").into(),
+            )),
+            ..Default::default()
+        };
+        let b = build(&leaky, "egress");
+        assert_eq!(b.decision, "failed", "{:#?}", b.findings);
+        assert!(b
+            .findings
+            .iter()
+            .any(|f| f.rule == "egress.undeclared" && f.blocking));
+        assert!(b
+            .findings
+            .iter()
+            .any(|f| f.rule == "egress.dns" && f.blocking));
+        assert_eq!(b.evidence["observed"]["egress"]["traced"], true);
+        assert_eq!(b.evidence["observed"]["resources"]["measured"], true);
+        assert!(
+            b.evidence["observed"]["buyer_data_canaries"]
+                .as_u64()
+                .unwrap()
+                >= 1
+        );
+        assert!(
+            !trace_root.join("0123456789abcdef0123456789abcdef").exists(),
+            "trace removed"
+        );
+        let run = leaky
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|c| c.iter().any(|a| a.ends_with(":/nest:rw")))
+            .cloned()
+            .unwrap();
+        assert!(
+            run.contains(&"--runtime=runsc-behaviour".to_string()),
+            "{run:?}"
+        );
+        assert!(run.contains(&"--network=none".to_string()));
+        assert!(run.iter().any(|a| a.starts_with("--cidfile=")));
+
+        let quiet = FakeBuildPodman {
+            trace: Some((trace_root.clone(), "I1111 strace.go:614] [ 1: 1] app E connect(0x3 socket:[1], 0x1 {Family: AF_INET, Addr: 127.0.0.1, Port: 9000}, 0x10)\n".into())),
+            ..Default::default()
+        };
+        let b = build(&quiet, "quiet");
+        assert_eq!(b.decision, "passed", "{:#?}", b.findings);
+        // No trace at all: the run proves nothing.
+        let b = build(&FakeBuildPodman::default(), "untraced");
+        assert_eq!(b.decision, "failed");
+        assert!(b
+            .findings
+            .iter()
+            .any(|f| f.rule == "egress.unobserved" && f.blocking));
+    }
+
+    /// The postbox's scans: result files get ClamAV and YARA, a release re-scan keeps its image
+    /// past `keep_days`, and malformed requests are refused.
+    #[tokio::test]
+    async fn result_and_release_scans_run_from_the_queue() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = test_config(dir.path());
+        cfg.scanners = Some(scanners_config(dir.path()));
+        let podman = Arc::new(FakeBuildPodman {
+            malware: true,
+            ..Default::default()
+        });
+        let b = Arc::new(
+            Buildd::open(
+                cfg,
+                podman.clone(),
+                sha256_hex(b"s"),
+                sha256_hex(b"a"),
+                None,
+            )
+            .unwrap(),
+        );
+        let id = "scn_aaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let bad = |r: ScanReq| b.submit_scan(&r).unwrap_err().0;
+        let files = |n: usize, body: &str| ScanReq {
+            scan_id: id.into(),
+            kind: "files".into(),
+            files: (0..n)
+                .map(|i| ScanFile {
+                    name: format!("../../etc/r{i}.pdf"),
+                    media_type: "application/pdf".into(),
+                    content_b64: body.into(),
+                })
+                .collect(),
+            release_id: None,
+            image_digest: None,
+            sbom: None,
+        };
+        assert_eq!(
+            bad(ScanReq {
+                scan_id: "scn_x".into(),
+                ..files(1, "JVBERi0=")
+            }),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(bad(files(6, "JVBERi0=")), StatusCode::BAD_REQUEST);
+        assert_eq!(bad(files(1, "not*base64")), StatusCode::BAD_REQUEST);
+        let v = b.submit_scan(&files(1, "JVBERi0xLjQKJSVFT0YK")).unwrap();
+        assert_eq!(v["state"], "queued");
+        assert_eq!(
+            b.submit_scan(&files(1, "JVBERi0=")).unwrap()["scan_id"],
+            id,
+            "same id, same scan"
+        );
+        assert!(b.run_one_scan().await);
+        let v = b.read_scan(id).unwrap().unwrap();
+        assert_eq!(v["state"], "succeeded", "{v}");
+        assert_eq!(v["result"]["blocking"], 1, "{v}");
+        let calls = podman.calls.lock().unwrap().clone();
+        let tools: Vec<&str> = calls
+            .iter()
+            .filter_map(|c| c.iter().find_map(|a| a.strip_prefix("--entrypoint=")))
+            .collect();
+        assert_eq!(tools, vec!["clamscan", "yara"]);
+        assert!(
+            !b.scan_dir(id).exists(),
+            "the files are gone after the scan"
+        );
+
+        // A release re-scan: the SBOM always, the image while this host has it; retained.
+        let digest = format!("sha256:{}", "9".repeat(64));
+        let archive = dir.path().join("old.tar");
+        std::fs::write(&archive, b"tar").unwrap();
+        b.with(|c| {
+            c.execute(
+                "INSERT INTO builds (id, publisher_id, repo_url, commit_sha, state, image_digest,
+                    archive, archive_sha256, archive_size, created_at, updated_at)
+                 VALUES ('sbd_old', 'pub_a', 'x', 'y', 'succeeded', ?1, ?2, 'z', 3, 0, 0)",
+                params![digest, archive.display().to_string()],
+            )
+        })
+        .unwrap();
+        let rid = "scn_bbbbbbbbbbbbbbbbbbbbbbbbbb";
+        let release = ScanReq {
+            scan_id: rid.into(),
+            kind: "release".into(),
+            files: vec![],
+            release_id: Some("rel_abc".into()),
+            image_digest: Some(digest.clone()),
+            sbom: Some("{\"bomFormat\":\"CycloneDX\",\"components\":[]}".into()),
+        };
+        assert_eq!(
+            bad(ScanReq {
+                sbom: Some("not json".into()),
+                ..release.clone()
+            }),
+            StatusCode::BAD_REQUEST
+        );
+        b.submit_scan(&release).unwrap();
+        assert!(b.run_one_scan().await);
+        let v = b.read_scan(rid).unwrap().unwrap();
+        assert_eq!(v["state"], "succeeded", "{v}");
+        assert_eq!(v["result"]["evidence"]["image_scanned"], true);
+        b.prune().unwrap();
+        assert!(archive.exists(), "a published release's image is kept");
+        b.with(|c| c.execute("DELETE FROM retained_images", []))
+            .unwrap();
+        b.prune().unwrap();
+        assert!(!archive.exists());
     }
 
     /// A deploy-key source (M2b): the key is fetched for the named build request only, must be for

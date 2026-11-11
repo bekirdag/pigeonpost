@@ -14,6 +14,13 @@
 #   - optionally, the postbox's source-credential route over the tunnel (@credential_v4 on
 #     @credential_ports; empty by default, so the build plane initiates nothing on wg-nestbuild),
 #   - the self-hosted model route for the advisory AI review (@model_v4, TCP @model_ports).
+# The scans themselves (OSV-Scanner, Grype, ClamAV, YARA, Semgrep, gitleaks) and the behaviour
+# run use --network=none and have no traffic at all.
+#
+# The scanner database updater runs as a second user, `nestscan` (nestscan-update), with a chain
+# of its own: DNS on the resolvers and TCP 443 to @scandb_v4 (filled from scandb-allowlist.txt by
+# nestbuild-allowlist), nothing else. Create the user before loading this file: nft refuses a
+# rule that names an unknown user.
 # Nothing else: not loopback (Keycloak, saas_be, mswarm and Docker publish ports there and on the
 # Docker bridges), not the Docker bridges or any other private range, not link-local/metadata,
 # not IPv6, not other hosts.
@@ -68,6 +75,14 @@ table inet nestbuild {
 		# elements = { <RESOLVER_ADDR> }
 	}
 
+	# The scanner databases' hosts (OSV mirror, Grype, ClamAV, YARA-Forge), for user nestscan only.
+	# Filled by nestbuild-allowlist from scandb-allowlist.txt; empty until it has run (safe).
+	set scandb_v4 {
+		type ipv4_addr
+		flags interval
+		auto-merge
+	}
+
 	# WireGuard peers allowed to call the build API.
 	set callers_v4 {
 		type ipv4_addr
@@ -80,6 +95,7 @@ table inet nestbuild {
 		# (WireGuard UDP, ICMP, RSTs, IPv6 neighbour discovery) have no socket; a negated test
 		# ("meta skuid != nestbuild return") lets them fall into the default deny below.
 		meta skuid "nestbuild" jump nestbuild_out
+		meta skuid "nestscan" jump nestscan_out
 	}
 
 	chain nestbuild_out {
@@ -91,6 +107,18 @@ table inet nestbuild {
 		ip daddr @fetch_v4 tcp dport 443 ct state new return
 		ip daddr @model_v4 tcp dport @model_ports ct state new return
 		counter drop comment "nestbuild egress default deny"
+	}
+
+	# The scanner database updater: DNS, then HTTPS to the database hosts. Never the tunnel, never
+	# loopback or a private range, never the build plane's own fetch allowlist.
+	chain nestscan_out {
+		meta nfproto ipv6 counter drop comment "nestscan: no IPv6"
+		ct state established,related return
+		oifname "wg-nestbuild" ct state new counter drop comment "nestscan never uses the tunnel"
+		ip daddr @resolver_v4 udp dport 53 return
+		ip daddr @resolver_v4 tcp dport 53 return
+		ip daddr @scandb_v4 tcp dport 443 ct state new return
+		counter drop comment "nestscan egress default deny"
 	}
 
 	chain input {

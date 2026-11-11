@@ -49,7 +49,7 @@ fn every_template_manifest_parses_and_only_declared_external_writes_are_blocked(
             assert!(m.licences.contains_key("my-app"), "{}", t.name);
             let blockers: Vec<String> = check_manifest(&m)
                 .into_iter()
-                .filter(|f| f.blocker)
+                .filter(|f| f.blocking)
                 .map(|f| f.rule)
                 .collect();
             if m.external_writes {

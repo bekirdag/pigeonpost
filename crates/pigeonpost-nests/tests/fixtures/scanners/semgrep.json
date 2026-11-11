@@ -1,0 +1,99 @@
+{
+ "version": "1.181.0",
+ "results": [
+  {
+   "check_id": "rules.pigeonpost.js.eval-dynamic",
+   "path": "/scan/src/src/index.mjs",
+   "start": {
+    "line": 12,
+    "col": 1,
+    "offset": 248
+   },
+   "end": {
+    "line": 12,
+    "col": 18,
+    "offset": 265
+   },
+   "extra": {
+    "message": "eval() of a value that is not a literal",
+    "metadata": {
+     "confidence": "HIGH",
+     "category": "security",
+     "cwe": [
+      "CWE-95"
+     ]
+    },
+    "severity": "ERROR",
+    "fingerprint": "requires login",
+    "lines": "requires login",
+    "is_ignored": false,
+    "engine_kind": "OSS"
+   }
+  },
+  {
+   "check_id": "rules.pigeonpost.py.pickle-load",
+   "path": "/scan/src/src/util.py",
+   "start": {
+    "line": 40,
+    "col": 5,
+    "offset": 812
+   },
+   "end": {
+    "line": 40,
+    "col": 22,
+    "offset": 829
+   },
+   "extra": {
+    "message": "pickle.loads on untrusted data",
+    "metadata": {
+     "confidence": "MEDIUM",
+     "category": "security",
+     "cwe": [
+      "CWE-502"
+     ]
+    },
+    "severity": "ERROR",
+    "fingerprint": "requires login",
+    "lines": "requires login",
+    "is_ignored": false,
+    "engine_kind": "OSS"
+   }
+  },
+  {
+   "check_id": "rules.pigeonpost.js.ssrf-fetch",
+   "path": "/scan/src/src/index.mjs",
+   "start": {
+    "line": 30,
+    "col": 11,
+    "offset": 650
+   },
+   "end": {
+    "line": 30,
+    "col": 15,
+    "offset": 654
+   },
+   "extra": {
+    "message": "fetch() of a URL built from input",
+    "metadata": {
+     "confidence": "HIGH",
+     "category": "security",
+     "cwe": [
+      "CWE-918"
+     ]
+    },
+    "severity": "WARNING",
+    "fingerprint": "requires login",
+    "lines": "requires login",
+    "is_ignored": false,
+    "engine_kind": "OSS"
+   }
+  }
+ ],
+ "errors": [],
+ "paths": {
+  "scanned": [
+   "/scan/src/src/index.mjs",
+   "/scan/src/src/util.py"
+  ]
+ }
+}

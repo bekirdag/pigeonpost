@@ -265,8 +265,176 @@ nft list table inet nestbuild
 
 The live test builds the reference release (fetch, compile in gVisor, assembly) as nestbuild: NESTS_LIVE_BUILD=1 NESTS_LIVE_FETCH_IMAGE=<RUST_IMAGE>@sha256:<DIGEST> NESTS_LIVE_FETCH_NETWORK=nestbuild-fetch cargo test -p pigeonpost-nests --test marketplace_m1 -- --ignored live_build (see that test's docs; set NESTS_LIVE_TOOLCHAIN_IMAGE when the reference's toolchain is not the fetch image). Run it twice: the two `image_digest` values must be equal.
 
+## Automated security checks (developer program plan §4)
+
+The deterministic scan and the behaviour test carry the review's security tools. Every tool runs
+here, as nestbuild, in a gVisor container with `--network=none`, `--cap-drop=ALL`, a read-only
+root and read-only mounts (only its own `/out` is writable). The databases are fetched by a second
+user, `nestscan`, with its own nftables allowlist, and are only ever read by a scan.
+
+| Check | Tool (pinned) | Scans | Blocks |
+|---|---|---|---|
+| Dependency CVEs | OSV-Scanner 2.7.0 (`--offline-vulnerabilities`) | lockfile and SBOM | critical/high with a fix |
+| Image CVEs | Grype 0.121.0 | the saved OCI archive | critical/high with a fix |
+| Malware | ClamAV 1.4.6 LTS + YARA 4.5.2 | source, compiled context, image archive | any hit |
+| SAST | Semgrep 1.181.0, vendored `scanners/semgrep-rules.yml` | source | `ERROR` + `confidence: HIGH` |
+| Secrets | gitleaks 8.30.1 (`--redact`) on top of the built-in rules | source | any hit |
+| Obfuscation | in-process heuristics (entropy, packed JS, base64 blobs, binaries) | source | never |
+| Egress | gVisor strace (`runsc-behaviour`) | the behaviour run | any attempt but the broker, DNS included |
+| Buyer data | per-job canaries | the behaviour run's results and output | a canary outside its job |
+| Resources | the user manager's cgroup | the behaviour run | more than 2x the pool budget |
+
+A tool that cannot run, a ruleset whose digest is not the pinned one, or a database missing or
+older than `max_db_age_hours` is a blocking `scanner.*` finding (fail closed). Each finding is
+`{id, severity, tool, rule, path, package, message, blocking}`; staff see all of it, the publisher
+sees the postbox's redaction (malware signature and rule names, trace destinations and canaries
+stay with staff).
+
+Why Grype and not Trivy: Grype's database is one archive from one host (`grype.anchore.io`), with
+its checksum in the listing it fetches, imported offline into a directory we mount read-only; it
+reports `fix.state` per match, which is exactly the blocking rule; and the same binary scans an
+OCI archive or a CycloneDX SBOM (the monthly re-scan). Trivy's database is an OCI artifact on
+ghcr.io, which would put GitHub's container registry and its CDN on the updater's allowlist, and
+it bundles secret and misconfiguration scanners this plane already runs separately.
+
+The same queue scans for the postbox: `POST /v1/scans` (submit token) with `kind: files` (a
+publisher-hosted service's result files: ClamAV and YARA) or `kind: release` (the monthly
+re-scan: OSV and Grype on the SBOM, and Grype, ClamAV and YARA on the image while it is here),
+then `GET /v1/scans/{scan_id}`. Builds run first. An image named by a re-scan is kept past
+`keep_days` until no re-scan has named it for 62 days.
+
+### Deploy on raijin (operator steps; nothing here is automatic)
+
+Packages and users (as root):
+
+```sh
+apt install -y unzip python3 curl          # the updater's own needs; podman/runsc are already there
+useradd --system --create-home --uid 2351 --shell /usr/sbin/nologin nestscan
+usermod --add-subuids 300000-365535 --add-subgids 300000-365535 nestscan
+loginctl enable-linger nestscan
+install -m 0755 deploy/nests/buildd/runsc-behaviour /usr/local/bin/runsc-behaviour
+install -m 0755 deploy/nests/buildd/nestscan-update /usr/local/sbin/nestscan-update
+install -m 0755 deploy/nests/buildd/nestbuild-allowlist /usr/local/sbin/nestbuild-allowlist
+install -m 0644 deploy/nests/buildd/nestbuild-tmpfiles.conf /etc/tmpfiles.d/nestbuild.conf
+systemd-tmpfiles --create /etc/tmpfiles.d/nestbuild.conf
+install -o root -g nestbuild -m 0640 deploy/nests/buildd/scanners/semgrep-rules.yml /etc/pigeonpost-buildd/semgrep-rules.yml
+install -o root -g nestscan -m 0640 deploy/nests/buildd/scanners/pigeonpost.yar /etc/pigeonpost-buildd/pigeonpost.yar
+install -o root -g nestscan -m 0640 deploy/nests/buildd/scanners/freshclam.conf /etc/pigeonpost-buildd/freshclam.conf
+install -o root -g nestscan -m 0640 deploy/nests/buildd/scandb.env.example /etc/pigeonpost-buildd/scandb.env
+install -m 0644 deploy/nests/buildd/scandb-allowlist.txt.example /etc/pigeonpost-buildd/scandb-allowlist.txt
+# the same containers.conf (runsc and runsc-behaviour) for both users
+install -o nestbuild -g nestbuild -m 0644 -D deploy/nests/buildd/containers.conf ~nestbuild/.config/containers/containers.conf
+install -o nestscan -g nestscan -m 0644 -D deploy/nests/buildd/containers.conf ~nestscan/.config/containers/containers.conf
+sha256sum /etc/pigeonpost-buildd/semgrep-rules.yml   # must be the semgrep_rules_sha256 in buildd.toml
+```
+
+Images (build once with the network, then load into both users' storage; never pulled at scan
+time):
+
+```sh
+podman build --pull=always -t localhost/pigeonpost-scanners:2026.11 \
+  -f deploy/nests/buildd/scanners/Containerfile deploy/nests/buildd/scanners
+podman pull docker.io/clamav/clamav:1.4.6_base@sha256:109477fb9dedf7b4542d0fc7be7f8ef73a55d9d731e9568821347825219407aa
+podman pull docker.io/semgrep/semgrep:1.181.0@sha256:81474464c1f07483ba0682a44787fd93c91397419762a04abe2bafaae396304b
+podman save -o /tmp/scanners.tar localhost/pigeonpost-scanners:2026.11
+podman save -o /tmp/clamav.tar docker.io/clamav/clamav:1.4.6_base
+podman save -o /tmp/semgrep.tar docker.io/semgrep/semgrep:1.181.0
+for u in nestbuild:2350 nestscan:2351; do
+  user=${u%%:*}; uid=${u##*:}
+  for t in scanners clamav $( [ "$user" = nestbuild ] && echo semgrep ); do
+    sudo -u "$user" XDG_RUNTIME_DIR=/run/user/$uid podman load -i /tmp/$t.tar
+  done
+done
+sudo -u nestbuild XDG_RUNTIME_DIR=/run/user/2350 podman image inspect --format '{{.Digest}}' localhost/pigeonpost-scanners:2026.11
+# put that digest in buildd.toml [scanners] image and in scandb.env SCANNER_IMAGE (both
+# "localhost/pigeonpost-scanners:2026.11@sha256:<digest>"); rm /tmp/{scanners,clamav,semgrep}.tar
+```
+
+nftables (the new `scandb_v4` set and `nestscan_out` chain; the user must exist first, or nft
+refuses the file):
+
+```sh
+cp deploy/nests/buildd/nestbuild.nft /etc/nftables.d/nestbuild.nft   # re-fill the resolver, model, caller sets and <BUILD_WG_ADDR> as before
+nft -c -f /etc/nftables.d/nestbuild.nft && nft -f /etc/nftables.d/nestbuild.nft
+sudo -u nestscan XDG_RUNTIME_DIR=/run/user/2351 podman network create nestscan-update
+```
+
+Timers (the updater every 6 hours, its allowlist every minute):
+
+```sh
+install -m 0644 deploy/nests/buildd/nestscan-update.service deploy/nests/buildd/nestscan-update.timer \
+  deploy/nests/buildd/nestscan-allowlist.service deploy/nests/buildd/nestscan-allowlist.timer /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now nestscan-allowlist.timer
+systemctl start nestscan-allowlist.service && nft list set inet nestbuild scandb_v4
+systemctl start nestscan-update.service      # the first run takes ~10 minutes
+journalctl -u nestscan-update -n 50
+cat /var/lib/pigeonpost-scandb/current/manifest.json
+systemctl enable --now nestscan-update.timer
+```
+
+buildd.toml: add `[scanners]`, `[behaviour]` and `[behaviour.budget]` from buildd.toml.example
+(the budget is the marketplace pool's per-Nest limits from nestd.toml), add
+`/var/lib/pigeonpost-scandb` read-only to the service (`ReadOnlyPaths=` is implied by
+`ProtectSystem=strict`; nothing else to change), then:
+
+```sh
+sudo -u nestbuild pigeonpost-nest-buildd check --config /etc/pigeonpost-buildd/buildd.toml  # "ok"; lists any stale database
+systemctl restart pigeonpost-nest-buildd
+```
+
+On the postbox: `POSTBOX_MARKETPLACE_RESCAN_DAYS=30` (the default; `0` switches the monthly
+re-scan off). The conformance run needs no setting beyond the build plane already configured.
+
+### Check it works
+
+```sh
+U="sudo -u nestbuild XDG_RUNTIME_DIR=/run/user/2350"
+# A scan has no network (must fail):
+$U podman run --rm --pull=never --runtime=runsc --network=none --entrypoint=grype <SCANNER_IMAGE> db check
+# The updater cannot leave its allowlist (must fail), and nestbuild cannot reach the database hosts:
+sudo -u nestscan curl -m 5 https://example.com ; $U curl -m 5 https://grype.anchore.io
+# ClamAV and YARA see the EICAR test file (both must report a hit):
+d=$($U mktemp -d) && printf '%s' 'X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*' | $U tee $d/eicar >/dev/null
+$U podman run --rm --pull=never --runtime=runsc --network=none --read-only --volume=$d:/scan:ro \
+  --volume=/var/lib/pigeonpost-scandb/current/clamav:/db:ro --entrypoint=clamscan <CLAMAV_IMAGE> --database=/db --infected /scan
+$U podman run --rm --pull=never --runtime=runsc --network=none --read-only --volume=$d:/scan:ro \
+  --volume=/var/lib/pigeonpost-scandb/current/yara:/db:ro --entrypoint=yara <SCANNER_IMAGE> -C -r /db/rules.yarc /scan
+# The egress trace: a connect from inside appears in the trace directory, then is parsed:
+$U podman run --rm --pull=never --runtime=runsc-behaviour --network=none --cidfile=$d/cid \
+  '--entrypoint=["sh"]' <GIT_IMAGE>@sha256:<DIGEST> -c 'wget -T2 http://93.184.216.34/ || true'
+grep -h 'connect(' /var/lib/pigeonpost-buildd/netlog/$(cat $d/cid)/* | head   # Family: AF_INET, Addr: 93.184.216.34, Port: 80
+$U rm -rf $d /var/lib/pigeonpost-buildd/netlog/*
+```
+
+If the trace has no `connect(` line, the strace format or flags differ in this runsc release:
+do not enable `[behaviour]` until the egress unit tests' fixture
+(`crates/pigeonpost-nests/tests/fixtures/scanners/strace.log`) matches what this host prints.
+
+### Disk, CPU and network
+
+| What | Where | Size |
+|---|---|---|
+| OSV archives (crates.io, npm, PyPI) | `/var/lib/pigeonpost-scandb` | ~0.4 GB |
+| Grype database (v6) | same | ~1.5–2 GB |
+| ClamAV signatures (main, daily, bytecode) | same | ~0.35 GB |
+| YARA rules, compiled | same | < 0.1 GB |
+| one snapshot | | ~3 GB |
+| peak (current + previous + the one being built) | | ~9 GB: keep 12 GB free |
+| images: scanners ~0.3 GB, ClamAV ~0.2 GB, Semgrep ~0.8 GB | nestbuild's storage (scanners + ClamAV also in nestscan's) | ~1.8 GB |
+| retained images of published releases | `/var/lib/pigeonpost-buildd/artifacts` | one archive per published release (0.1–0.5 GB each) |
+| behaviour traces | `/var/lib/pigeonpost-buildd/netlog` | a few MB per run, deleted after it (tmpfiles: 1 day) |
+
+Per build, the tools add roughly 2–4 minutes of CPU inside the existing slice (ClamAV loading its
+signatures is the largest part, ~30 s; Grype on the image 10–30 s; Semgrep 10–60 s) and ClamAV
+peaks at ~1.5–2 GiB of memory (the per-tool limit is 4 GiB, under the slice's 8 GiB). The
+updater downloads ~0.5 GB per run for OSV and the Grype database (ClamAV fetches diffs), about
+2 GB a day at four runs; it runs at `Nice=10` with idle I/O. The monthly re-scan costs about one
+minute per published release.
+
 ## Limits and what is not done yet
 
-- The behaviour test (honeytokens in a running sandbox) does not run on the build plane yet; it is recorded through POST /internal/v1/marketplace/reviews/{review}/stages by the existing tooling.
+- Integration conformance runs and re-scans need this build plane: without it a review job's result is answered `503` (the service retries) and fails at its deadline, and no re-scan runs.
+- YARA reads image layers as they are in the archive (`podman save` stores them uncompressed); a compressed layer is covered by ClamAV, which unpacks archives, not by YARA.
 - The hosted test environment and the staging postbox on this host are not set up by these files.
 - Whether the archive's manifest digest survives podman load unchanged on nests-1 must be confirmed on the real hosts (nestd refuses the image if it does not).
