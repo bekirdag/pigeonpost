@@ -159,7 +159,7 @@ export function createCredits(dir) {
     const name = String(profile.legal_name || "").trim().replace(/\s+/g, " ");
     const at = name.lastIndexOf(" ");
     const a = profile.address || {};
-    const buyer = { user_id: userId, name: at > 0 ? name.slice(0, at) : name, surname: at > 0 ? name.slice(at + 1) : name,
+    const buyer = { user_id: userId, billing_profile_id: profile.id, name: at > 0 ? name.slice(0, at) : name, surname: at > 0 ? name.slice(at + 1) : name,
       email: profile.billing_email, ip, country: a.country, city: a.city,
       address: [a.line1, a.line2, a.postal_code].filter((x) => typeof x === "string" && x.trim()).join(", ") };
     if (typeof profile.identity_number === "string" && profile.identity_number.trim()) buyer.identity_number = profile.identity_number.trim();

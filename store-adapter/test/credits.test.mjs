@@ -171,7 +171,7 @@ test("a checkout uses the account's own quote and billing details and replays by
   assert.deepEqual(sent.owner, { owner_kind: "account", owner_id: ACCOUNT });
   assert.equal(sent.return_url, `https://pigeonpost.dev/account?credits=${INTENT}#credits`);
   assert.equal(sent.idempotency_key, `pp-credits-${INTENT}`);
-  assert.deepEqual(sent.buyer, { user_id: uuid(800), name: "Ada Lovelace", surname: "Buyer", email: "ada@example.test",
+  assert.deepEqual(sent.buyer, { user_id: uuid(800), billing_profile_id: "00000000-0000-4000-8000-000000000042", name: "Ada Lovelace", surname: "Buyer", email: "ada@example.test",
     ip: "203.0.113.9", country: "TR", city: "Istanbul", address: "1 Main St, 34000", identity_number: "11111111111" });
 
   // A replay returns the same page without a second checkout; other details are a conflict.
