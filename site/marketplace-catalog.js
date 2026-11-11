@@ -24,6 +24,12 @@
 //                                                    {listing_id, operation, input}
 //   GET    /v1/marketplace/hosted-jobs                this account's hosted jobs
 //   POST   /v1/marketplace/hosted-jobs/{id}/cancel    stop a run before its result arrives
+//   (logo images) GET /v1/marketplace/listings/{listing}/logo/{hash}/{size}.webp, public and immutable
+//
+// The look (developer-program plan §1): cards from MP.card (marketplace-core.js) with logo or the
+// default initials tile, a featured row, category filter and sort (client-side over the loaded
+// page), and a listing page with a publisher card. A `coming_soon` listing shows a disabled
+// "Coming soon" button and nothing to buy, install or run (the postbox refuses with 409 too).
 //
 // A publisher-hosted listing (`hosting: "publisher"`) is run by its publisher: it is never
 // installed, its page says so before anything is sent, and each operation has a Run form built
@@ -55,7 +61,7 @@
 
   MP.catalog = function (deps) {
     const st = {
-      filter: "all", query: "", listings: null, next: null, installs: [], error: null,
+      filter: "all", query: "", category: "", sort: "featured", listings: null, next: null, installs: [], error: null,
       open: null, detail: null, gen: 0, container: null, builtins: null,
       orgs: null, purchase: null, licences: {},
     };
@@ -116,13 +122,10 @@
       st.container?.querySelector("#mp-cat-search-q")?.focus();
     }
 
+    /// The publisher line and hosting badge, as the cards show them.
     function badge(l) {
-      const p = l.publisher || {};
-      const who = p.first_party
-        ? el("span", { class: "mp-badge mp-badge-first", text: "By Pigeonpost" })
-        : el("span", { class: "mp-badge", text: `Publisher: ${p.display_name || "unknown"}` });
-      if (l.hosting !== "publisher") return who;
-      return el("span", {}, who, " ", el("span", { class: "mp-badge mp-badge-hosted", "data-hosting": "publisher", text: "Hosted by the publisher" }));
+      return el("span", { class: "mp-byline" }, MP.publisherLine(l), " ",
+        l.sample ? null : el("span", { class: `mp-chip mp-chip-hosting${l.hosting === "publisher" ? " mp-chip-publisher" : ""}`, "data-hosting": l.hosting || "pigeonpost", text: MP.hostingText(l) }));
     }
 
     const HOSTED_NOTICE = "Hosted by the publisher — Pigeonpost reviewed the publisher and this integration, not the code; your inputs are sent to the publisher.";
@@ -253,44 +256,95 @@
     }
 
     function searchForm() {
-      const input = el("input", { type: "search", id: "mp-cat-search-q", maxlength: "100", value: st.query || null, autocomplete: "off" });
-      return el("form", { class: "ac-form mp-search", role: "search", id: "mp-cat-search", onsubmit: (e) => { e.preventDefault(); st.query = input.value.trim(); st.listings = null; draw(); load(); } },
-        el("label", { for: "mp-cat-search-q" }, "Search the marketplace"), input,
+      const input = el("input", { type: "search", id: "mp-cat-search-q", maxlength: "100", value: st.query || null, autocomplete: "off", placeholder: "Search services" });
+      return el("form", { class: "mp-search", role: "search", id: "mp-cat-search", onsubmit: (e) => { e.preventDefault(); st.query = input.value.trim(); st.listings = null; draw(); load(); } },
+        el("label", { class: "mp-sr", for: "mp-cat-search-q" }, "Search the marketplace"),
+        el("span", { class: "mp-search-icon", "aria-hidden": "true" }), input,
         el("button", { type: "submit", class: "btn btn-small" }, "Search"));
     }
 
+    const SORTS = [["featured", "Featured"], ["newest", "Newest"], ["price", "Price: low to high"]];
+
+    /// The minor-unit price a sort compares; coming-soon listings sort last.
+    const sortPrice = (l) => (l.coming_soon ? Infinity
+      : l.price_from && Number(l.price_from.amount_cents) > 0 ? Number(l.price_from.amount_cents)
+        : Number((l.price && l.price.amount_minor) || 0));
+    const published = (l) => Date.parse(l.published_at || "") || 0;
+
+    function sorted(rows) {
+      const out = rows.slice();
+      if (st.sort === "newest") out.sort((a, b) => published(b) - published(a));
+      else if (st.sort === "price") out.sort((a, b) => sortPrice(a) - sortPrice(b) || published(b) - published(a));
+      else {
+        // Featured: what can be used now before what is coming, each in the featured row's order
+        // and then newest first.
+        const rank = (l) => (l.featured ? Number(l.featured_rank ?? 1e6) : 1e9);
+        out.sort((a, b) => Number(Boolean(a.coming_soon)) - Number(Boolean(b.coming_soon)) || rank(a) - rank(b) || published(b) - published(a));
+      }
+      return out;
+    }
+
+    function toolbar(rows) {
+      const present = new Set(rows.map((l) => l.category).filter(Boolean));
+      const cats = MP.CATEGORIES.filter(([c]) => present.has(c) || c === st.category);
+      const category = el("select", { id: "mp-cat-category", onchange: (e) => { st.category = e.target.value; draw(); st.container?.querySelector("#mp-cat-category")?.focus(); } },
+        el("option", { value: "", text: "All categories", selected: !st.category }),
+        cats.map(([c, label]) => el("option", { value: c, text: label, selected: st.category === c })));
+      const sort = el("select", { id: "mp-cat-sort", onchange: (e) => { st.sort = e.target.value; draw(); st.container?.querySelector("#mp-cat-sort")?.focus(); } },
+        SORTS.map(([v, label]) => el("option", { value: v, text: label, selected: st.sort === v })));
+      return el("div", { class: "mp-toolbar" },
+        el("label", { class: "mp-select" }, el("span", { text: "Category" }), category),
+        el("label", { class: "mp-select" }, el("span", { text: "Sort by" }), sort));
+    }
+
     function listView() {
-      const box = el("div", { class: "mp-catalog", id: "mp-catalog" }, filterControls(), searchForm(), status);
+      const box = el("div", { class: "mp-catalog", id: "mp-catalog" },
+        el("div", { class: "mp-hero" },
+          el("div", { class: "mp-hero-text" },
+            el("h4", { class: "mp-hero-title", text: "Marketplace" }),
+            el("p", { class: "mp-hero-sub", text: "Apps and services from verified publishers. Every release is built from source and reviewed by Pigeonpost before it is listed." })),
+          searchForm()),
+        filterControls(), status);
       if (st.error) {
         box.append(el("p", { class: "muted", text: MP.errorText(st.error) }));
       } else if (!st.listings) {
-        box.append(el("p", { class: "muted", text: "Loading the marketplace…" }));
+        box.append(el("div", { class: "mp-grid mp-grid-loading", "aria-hidden": "true" }, [0, 1, 2].map(() => el("div", { class: "mp-card mp-card-skeleton" }))),
+          el("p", { class: "mp-sr", role: "status", text: "Loading the marketplace…" }));
       } else {
         const rows = st.listings;
         const mine = st.installs.filter((i) => i.status === "active");
         if (mine.length) {
-          box.append(el("h4", { text: "Installed" }), el("ul", { class: "mp-list", "aria-label": "Installed services" }, mine.map((i) => {
+          box.append(el("h4", { class: "mp-section-title", text: "Installed" }), el("ul", { class: "mp-list mp-installed", "aria-label": "Installed services" }, mine.map((i) => {
             const l = rows.find((x) => x.id === i.listing_id);
             const name = l ? l.title : i.address || i.listing_id;
             return el("li", { class: "mp-row", "data-installation": i.id },
+              MP.logo(l || { id: i.listing_id, title: name }, { size: 40 }),
               el("strong", { text: name }), el("span", { class: "muted", text: `Version ${i.version || "?"}` }),
-              i.update_available ? el("span", { class: "mp-badge", text: "Update available" }) : null,
+              i.update_available ? el("span", { class: "mp-chip mp-chip-update", text: "Update available" }) : null,
               el("button", { type: "button", class: "btn btn-small", "aria-label": `Manage ${name}`, onclick: () => openListing(i.listing_id) }, "Manage"));
           })));
         }
-        box.append(el("h4", { text: "Marketplace" }));
-        if (!rows.length) {
-          box.append(el("p", { class: "muted", id: "mp-cat-empty", text: st.query ? "Nothing matches that search." : "Nothing is listed yet." }));
+        const browsing = !st.query && !st.category;
+        const featured = browsing ? sorted(rows.filter((l) => l.featured)).slice(0, 3) : [];
+        if (featured.length) {
+          box.append(el("section", { class: "mp-featured", id: "mp-featured", "aria-labelledby": "mp-featured-title" },
+            el("h4", { class: "mp-section-title", id: "mp-featured-title", text: "Featured" }),
+            el("ul", { class: "mp-grid mp-grid-featured", "aria-label": "Featured listings" },
+              featured.map((l) => MP.card(l, { featured: true, open: () => openListing(l.id), installed: Boolean(installFor(l.id)) })))));
+        }
+        const shown = sorted(st.category ? rows.filter((l) => l.category === st.category) : rows);
+        box.append(el("div", { class: "mp-list-head" },
+          el("h4", { class: "mp-section-title", id: "mp-all-title", text: st.query ? `Results for “${st.query}”` : "All services" }),
+          rows.length ? toolbar(rows) : null));
+        if (!shown.length) {
+          box.append(el("p", { class: "mp-empty", id: "mp-cat-empty", text: st.query ? "Nothing matches that search." : st.category ? "Nothing in this category yet." : "Nothing is listed yet." }));
         } else {
-          box.append(el("ul", { class: "pp-cards mp-cards", "aria-label": "Marketplace listings" }, rows.map((l) => el("li", { class: "pp-card mp-card", "data-listing": l.id },
-            el("h5", { text: l.title }), badge(l),
-            el("p", { text: l.summary }),
-            installFor(l.id) ? el("p", { class: "mp-badge", text: "Installed" }) : null,
-            el("button", { type: "button", class: "btn btn-small", "aria-label": `Details for ${l.title}`, onclick: () => openListing(l.id) }, "Details")))));
+          box.append(el("ul", { class: "mp-grid mp-cards", id: "mp-grid", "aria-labelledby": "mp-all-title" },
+            shown.map((l) => MP.card(l, { open: () => openListing(l.id), installed: Boolean(installFor(l.id)) }))));
           if (st.next) box.append(el("button", { type: "button", class: "btn btn-small", id: "mp-cat-more", onclick: () => load(true) }, "Show more"));
         }
       }
-      if (st.filter === "all" && st.builtins) box.append(el("h4", { text: "From Pigeonpost" }), st.builtins);
+      if (st.filter === "all" && st.builtins) box.append(el("h4", { class: "mp-section-title", text: "From Pigeonpost" }), st.builtins);
       return box;
     }
 
@@ -505,32 +559,90 @@
       return box;
     }
 
+    function link(href, text, id) {
+      return /^https:\/\//.test(href || "") ? el("a", { href, id, rel: "noopener noreferrer", target: "_blank", text }) : null;
+    }
+
+    /// The publisher card beside the description.
+    function publisherCard(d) {
+      const p = d.publisher || {};
+      return el("div", { class: "mp-side-card", id: "mp-publisher-card", role: "group", "aria-labelledby": "mp-publisher-title" },
+        el("h5", { id: "mp-publisher-title", text: "Publisher" }),
+        el("p", { class: "mp-side-pub" }, MP.publisherLine(d)),
+        el("p", { class: "muted", text: p.first_party
+          ? "Made by Pigeonpost."
+          : p.verified ? "A verified publisher: Pigeonpost checked who they are before they could list anything." : "" }),
+        el("ul", { class: "mp-links" },
+          el("li", {}, link(d.support_url, "Support", "mp-support-link") || el("a", { href: "/app-support.html", id: "mp-support-link", text: "Support" })),
+          el("li", {}, link(d.privacy_url, "Privacy policy", "mp-privacy-link") || el("a", { href: "/privacy", id: "mp-privacy-link", text: "Privacy policy" })),
+          el("li", {}, el("a", { href: "/app-support.html", text: "Report a problem" }))));
+    }
+
+    function factsCard(d) {
+      const row = (k, v) => (v ? [el("dt", { text: k }), el("dd", { text: v })] : []);
+      return el("div", { class: "mp-side-card", role: "group", "aria-labelledby": "mp-facts-title" },
+        el("h5", { id: "mp-facts-title", text: "Details" }),
+        el("dl", { class: "mp-facts" },
+          row("Price", MP.cardPrice(d)),
+          row("Category", MP.categoryLabel(d.category)),
+          row("Runs", d.sample ? null : MP.hostingText(d)),
+          row("Version", d.coming_soon ? null : d.version),
+          row("Listed", d.coming_soon ? null : MP.when(d.published_at))));
+    }
+
+    function screenshots(d) {
+      const shots = (Array.isArray(d.screenshots) ? d.screenshots : []).filter((x) => x && /^https:\/\//.test(x.url || ""));
+      if (!shots.length) return null;
+      return el("section", { class: "mp-shots", "aria-label": "Screenshots" },
+        el("ul", { class: "mp-shot-list" }, shots.slice(0, 8).map((x, i) => el("li", {},
+          el("img", { src: x.url, alt: x.alt || `Screenshot ${i + 1} of ${d.title}`, loading: "lazy", decoding: "async" })))));
+    }
+
+    /// The primary action: what this listing can do for you now.
+    function comingSoonAction() {
+      return el("div", { class: "mp-cta", id: "mp-cta" },
+        el("button", { type: "button", class: "btn btn-primary", id: "mp-coming-soon", disabled: true, "aria-describedby": "mp-coming-note" }, "Coming soon"),
+        el("p", { class: "ac-note", id: "mp-coming-note", text: "This is a preview of a service on its way. It can't be bought, installed or run yet." }));
+    }
+
     function detailView() {
       const d = st.detail;
       const box = el("div", { class: "mp-detail", id: "mp-detail" },
-        el("button", { type: "button", class: "btn btn-small", id: "mp-back", onclick: back }, "Back to services"), status);
+        el("button", { type: "button", class: "btn btn-small mp-back", id: "mp-back", onclick: back }, "← Back to services"), status);
       if (!d) { box.append(el("p", { class: "muted", text: "Loading…" })); return box; }
       if (d.error) { box.append(el("p", { text: MP.errorText(d.error) })); return box; }
-      box.append(
-        el("h4", { id: "mp-detail-title", tabindex: "-1", text: d.title }), badge(d),
-        el("p", { class: "muted", text: `Version ${d.version}${d.published_at ? ` · listed ${MP.when(d.published_at)}` : ""}` }),
-        el("p", { text: d.summary }),
+      const hero = el("header", { class: `mp-detail-hero${d.coming_soon ? " mp-detail-coming" : ""}` },
+        MP.logo(d, { size: 96, alt: `${d.title} logo` }),
+        el("div", { class: "mp-detail-titles" },
+          el("h4", { id: "mp-detail-title", tabindex: "-1", text: d.title }), badge(d),
+          el("div", { class: "mp-card-tags" },
+            d.category && MP.categoryLabel(d.category) ? el("span", { class: "mp-chip", text: MP.categoryLabel(d.category) }) : null,
+            d.coming_soon ? el("span", { class: "mp-chip mp-chip-soon", text: "Coming soon" }) : null,
+            d.sample ? el("span", { class: "mp-chip mp-chip-sample", text: "Sample listing" }) : null),
+          d.coming_soon ? null : el("p", { class: "muted mp-detail-meta", text: `Version ${d.version}${d.published_at ? ` · listed ${MP.when(d.published_at)}` : ""}` })));
+      const main = el("div", { class: "mp-detail-main" },
+        el("p", { class: "mp-detail-summary", text: d.summary }),
+        screenshots(d),
         d.description ? el("p", { class: "mp-description", text: d.description }) : null,
-        d.hosting === "publisher" ? hostedNotice() : null,
-        el("h5", { text: "What it does" }), operationsBlock(d.operations || []),
-        d.hosting === "publisher" ? null : priceBlock(d));
-      if (d.hosting === "publisher") {
-        box.append(hostedBlock(d));
-        box.append(el("p", { class: "ac-note" }, "Something wrong with this service? ", el("a", { href: "/app-support.html", text: "Tell Pigeonpost support" }), " and include its name."));
+        d.hosting === "publisher" && !d.coming_soon ? hostedNotice() : null);
+      const side = el("aside", { class: "mp-detail-side", "aria-label": "About this listing" }, factsCard(d), publisherCard(d));
+      box.append(hero, el("div", { class: "mp-detail-body" }, main, side));
+      if (d.coming_soon) {
+        main.prepend(comingSoonAction());
         return box;
       }
+      main.append(el("h5", { text: "What it does" }), operationsBlock(d.operations || []));
+      if (d.hosting === "publisher") {
+        main.append(hostedBlock(d));
+        return box;
+      }
+      main.append(priceBlock(d));
       const inst = installFor(d.id);
       const paid = st.purchase && st.purchase.listing_id === d.id && st.purchase.status === "paid" ? st.purchase : null;
-      if (inst) box.append(installationBlock(d, inst));
-      else if (paid) box.append(finishForm(d, paid));
-      else if (d.price && Number(d.price.amount_minor) === 0) box.append(installForm(d));
-      else box.append(buyForm(d));
-      box.append(el("p", { class: "ac-note" }, "Something wrong with this service? ", el("a", { href: "/app-support.html", text: "Tell Pigeonpost support" }), " and include its name."));
+      if (inst) main.append(installationBlock(d, inst));
+      else if (paid) main.append(finishForm(d, paid));
+      else if (d.price && Number(d.price.amount_minor) === 0) main.append(installForm(d));
+      else main.append(buyForm(d));
       return box;
     }
 

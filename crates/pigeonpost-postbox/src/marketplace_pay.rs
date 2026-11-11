@@ -861,6 +861,8 @@ async fn purchase(
         )
         .map_err(|d| deny(d, false))?;
         let req: PurchaseReq = parse(body)?;
+        // Not available yet: shown in the catalog, never sold, installed or run.
+        crate::marketplace_listings::refuse_coming_soon(&state, &req.listing_id).await?;
         if req.intent_id.len() != 32
             || !req
                 .intent_id

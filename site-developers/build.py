@@ -57,6 +57,7 @@ NAV = [
         ("nest-runtime", "Runtime API"),
         ("nest-review", "Security and review"),
         ("nest-publish", "Publish and price"),
+        ("nest-listing", "Listing logo and look"),
         ("nest-hosted", "Publisher-hosted apps"),
     ]),
     ("Enterprise API", [
@@ -2527,6 +2528,57 @@ Check these items before submitting your release.
 4. `capabilities = []`, `syscalls = []`, egress only what you use.
 5. A job delivered twice does nothing twice (`pigeonpost nest run --redeliver`).
 6. The app answers every operation it declares, with and without a model (`--no-model`).
+""")
+
+page("nest-listing", "Listing logo and look",
+     "Your listing's logo, category and links, and how the catalog shows them.",
+     """
+# Listing logo and look
+
+Every listing in the marketplace catalog is a card: logo, title, your publisher name with the verified badge, the one-line summary, a category, the price and where it runs ("Runs in your Nest" or "Hosted by the publisher"). This page covers the parts you set besides the title, summary and description.
+
+## Logo
+
+Upload a logo in the publisher console (**Edit** on a listing, then **Logo**), or send the image itself as the body:
+
+```bash
+curl -X PUT https://postbox.pigeonpost.dev/v1/publishers/$PUBLISHER/listings/$LISTING/logo \\
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: image/png" --data-binary @logo.png
+```
+
+- **Formats:** PNG, JPEG or WebP. SVG is refused (`415 logo_unsupported`) because an SVG can carry script.
+- **Size:** at most 1 MB (`413 logo_too_large`).
+- **Shape:** square (`422 logo_not_square`), at least 256 x 256 (`422 logo_too_small`). 512 x 512 looks best.
+- **What is kept:** Pigeonpost decodes the image in an isolated worker and re-encodes it as WebP at 512, 128 and 64 px. Nothing from your file's container survives: EXIF, colour profiles, XMP and text chunks are dropped.
+- **Who may:** an admin of a certified publisher. 30 uploads an hour per publisher.
+
+The answer carries `logo.urls` with the three sizes. Each URL contains a hash of the picture, so it is cached for a year; a new upload is a new URL and the old one stops answering. Logo URLs are public: the console shows a draft listing's logo before anyone else can see the listing.
+
+`DELETE …/logo` goes back to the default.
+
+### The default logo
+
+A listing without a logo shows its initials (the first letters of its first two words, or the first two letters of a single word; text in brackets is skipped) on one of twelve colours picked from the listing id. Every Pigeonpost client draws the same tile for the same listing.
+
+## Category and links
+
+```bash
+curl -X PUT https://postbox.pigeonpost.dev/v1/publishers/$PUBLISHER/listings/$LISTING/storefront \\
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \\
+  -d '{"category": "finance", "support_url": "https://example.com/help", "privacy_url": "https://example.com/privacy"}'
+```
+
+- `category` is one of `productivity`, `legal`, `finance`, `support`, `marketing`, `sales`, `language`, `research`, `developer`, `hr`, `recruiting`, `other`. The catalog filters by it.
+- `support_url` and `privacy_url` are `https://` links of at most 300 characters, shown on the listing's page. Without them the page links to Pigeonpost support and privacy.
+- A field you leave out is unchanged; `null` clears it.
+
+## What buyers see
+
+- **The catalog** has search, a category filter, sorting (featured, newest, price) and a featured row that Pigeonpost chooses.
+- **The listing's page** shows the logo, the description, the publisher card with your links, the operations and the price, and the Install, Buy or Run button.
+- **Coming soon:** a listing marked `coming_soon` is shown with a "Coming soon" ribbon and a disabled button. It cannot be bought, installed or run; those routes answer `409 coming_soon`. Pigeonpost uses it for its own sample listings, which say they are samples.
+
+Listing reads (`GET /v1/marketplace/listings`, `GET /v1/marketplace/listings/{listing}` and your console's list) include `logo`, `category`, `featured`, `coming_soon`, `sample`, `support_url`, `privacy_url`, `price_from` and `publisher.verified`. The full shapes are in the [marketplace contract](https://github.com/bekirdag/pigeonpost/blob/main/docs/nests/contracts/pigeonpost-nests.v1.yaml).
 """)
 
 page("nest-publish", "Publish, update and price",

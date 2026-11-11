@@ -3240,6 +3240,219 @@ paths:
           $ref: "#/components/responses/NotFound"
         '409':
           $ref: "#/components/responses/Conflict"
+  "/v1/publishers/{publisher}/listings/{listing}/logo":
+    put:
+      tags:
+        - "Marketplace console"
+      operationId: "uploadListingLogo"
+      summary: "Upload a listing logo"
+      description: "A certified publisher's admins. The body is the image itself: PNG, JPEG or WebP (SVG is refused because it can carry script), at most 1 MB, square, at least 256 px (512×512 looks best). The postbox decodes it in its isolated picture worker and keeps 512, 128 and 64 px WebPs; no byte of the original container (EXIF, ICC, XMP, text chunks) is kept. Each URL carries a content hash, so a new logo is a new URL and the old one stops answering. 30 uploads an hour per publisher."
+      x-pigeonpost-status: "implemented"
+      x-pigeonpost-action: "PublisherManage"
+      security:
+        - memberToken: []
+      parameters:
+        - $ref: "#/components/parameters/Publisher"
+        - $ref: "#/components/parameters/Listing"
+      requestBody:
+        required: true
+        content:
+          "image/png":
+            schema:
+              type: "string"
+              contentMediaType: "image/png"
+          "image/jpeg":
+            schema:
+              type: "string"
+              contentMediaType: "image/jpeg"
+          "image/webp":
+            schema:
+              type: "string"
+              contentMediaType: "image/webp"
+      responses:
+        '200':
+          description: "Stored. `data` is `{listing_id, logo}`."
+          content:
+            "application/json":
+              schema:
+                type: "object"
+                required:
+                  - "data"
+                properties:
+                  data:
+                    type: "object"
+                    required:
+                      - "listing_id"
+                      - "logo"
+                    properties:
+                      listing_id:
+                        type: "string"
+                      logo:
+                        $ref: "#/components/schemas/ListingLogo"
+        '400':
+          $ref: "#/components/responses/BadRequest"
+        '401':
+          $ref: "#/components/responses/Unauthorized"
+        '403':
+          $ref: "#/components/responses/Forbidden"
+        '404':
+          $ref: "#/components/responses/NotFound"
+        '413':
+          description: "Over 1 MB (`logo_too_large`)."
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/Error"
+        '415':
+          description: "Not a PNG, JPEG or WebP, or an SVG (`logo_unsupported`)."
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/Error"
+        '422':
+          description: "Not square (`logo_not_square`), under 256 px (`logo_too_small`), or not a readable image (`logo_unreadable`)."
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/Error"
+        '429':
+          description: "Too many uploads (`rate_limited`)."
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/Error"
+        '503':
+          description: "This postbox has no logo store (`logos_unavailable`)."
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      tags:
+        - "Marketplace console"
+      operationId: "removeListingLogo"
+      summary: "Remove a listing logo"
+      description: "A publisher admin. The listing is drawn with the default logo again (its initials on a colour derived from its id); the old URLs stop answering."
+      x-pigeonpost-status: "implemented"
+      x-pigeonpost-action: "PublisherManage"
+      security:
+        - memberToken: []
+      parameters:
+        - $ref: "#/components/parameters/Publisher"
+        - $ref: "#/components/parameters/Listing"
+      responses:
+        '200':
+          description: "Removed. `data` is `{listing_id, logo: null}`."
+          content:
+            "application/json":
+              schema:
+                type: "object"
+                required:
+                  - "data"
+                properties:
+                  data:
+                    type: "object"
+        '401':
+          $ref: "#/components/responses/Unauthorized"
+        '403':
+          $ref: "#/components/responses/Forbidden"
+        '404':
+          $ref: "#/components/responses/NotFound"
+  "/v1/publishers/{publisher}/listings/{listing}/storefront":
+    put:
+      tags:
+        - "Marketplace console"
+      operationId: "setListingStorefront"
+      summary: "Set a listing's category and links"
+      description: "A certified publisher's admins. A field left out is unchanged; `null` clears it. Links are `https://` and at most 300 characters. Answers the listing as the publisher reads it."
+      x-pigeonpost-status: "implemented"
+      x-pigeonpost-action: "PublisherManage"
+      security:
+        - memberToken: []
+      parameters:
+        - $ref: "#/components/parameters/Publisher"
+        - $ref: "#/components/parameters/Listing"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "object"
+              additionalProperties: false
+              properties:
+                category:
+                  oneOf:
+                    - $ref: "#/components/schemas/ListingCategory"
+                    - type: "null"
+                support_url:
+                  type:
+                    - "string"
+                    - "null"
+                  maxLength: 300
+                  pattern: "^https://"
+                privacy_url:
+                  type:
+                    - "string"
+                    - "null"
+                  maxLength: 300
+                  pattern: "^https://"
+      responses:
+        '200':
+          description: "OK."
+          content:
+            "application/json":
+              schema:
+                type: "object"
+                required:
+                  - "data"
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Listing"
+        '400':
+          $ref: "#/components/responses/BadRequest"
+        '401':
+          $ref: "#/components/responses/Unauthorized"
+        '403':
+          $ref: "#/components/responses/Forbidden"
+        '404':
+          $ref: "#/components/responses/NotFound"
+  "/v1/marketplace/listings/{listing}/logo/{hash}/{file}":
+    get:
+      tags:
+        - "Marketplace catalog"
+      operationId: "listingLogo"
+      summary: "A listing logo"
+      description: "Public: no credential, and none is needed before the listing is published (the publisher console shows it). The URL is the one a listing read gives in `logo.urls`; `hash` is the first 16 hex digits of the 512 px WebP's sha256. Served `Cache-Control: public, max-age=31536000, immutable`, `X-Content-Type-Options: nosniff`, a sandboxing CSP and `Cross-Origin-Resource-Policy: cross-origin`."
+      x-pigeonpost-status: "implemented"
+      x-pigeonpost-action: "NestDiscover"
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/Listing"
+        - name: "hash"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+            pattern: "^[0-9a-f]{16}$"
+        - name: "file"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+            enum:
+              - "512.webp"
+              - "128.webp"
+              - "64.webp"
+      responses:
+        '200':
+          description: "The WebP."
+          content:
+            "image/webp":
+              schema:
+                type: "string"
+                contentMediaType: "image/webp"
+        '404':
+          $ref: "#/components/responses/NotFound"
   "/v1/staff/listing-reports":
     get:
       tags:
@@ -4032,7 +4245,7 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     Conflict:
-      description: State or binding conflict (`role_already_held`, `application_exists`, `idempotency_conflict`, `quote_expired`, `authorization_expired`, `authorization_reused`, `authorization_intent_mismatch`, `environment_mismatch`, `currency_mismatch`, `review_required`, `release_revoked`, `security_quarantined`, `access_expired`, `recovery_window_closed`, `review_closed`, `stages_incomplete`, `release_digest_mismatch`, `invalid_request` for a security action that does not apply, `template_exists`, `version_exists`, `listing_address_taken`, `listing_address_changed`, `listing_suspended`, `listing_not_suspended`, `configuration_invalid_for_release`, `already_installed`, `installation_removed`, `installation_changed`, `installation_required`, `not_newer`, `up_to_date`, `no_previous_release`, `application_decided`, `not_on_sale`, `intent_conflict`, `intent_mismatch`, `authorization_used`, `owner_not_supported`, `currency_unavailable`).
+      description: State or binding conflict (`role_already_held`, `application_exists`, `idempotency_conflict`, `quote_expired`, `authorization_expired`, `authorization_reused`, `authorization_intent_mismatch`, `environment_mismatch`, `currency_mismatch`, `review_required`, `release_revoked`, `security_quarantined`, `access_expired`, `recovery_window_closed`, `review_closed`, `stages_incomplete`, `release_digest_mismatch`, `invalid_request` for a security action that does not apply, `template_exists`, `version_exists`, `listing_address_taken`, `listing_address_changed`, `listing_suspended`, `listing_not_suspended`, `configuration_invalid_for_release`, `already_installed`, `installation_removed`, `installation_changed`, `installation_required`, `not_newer`, `up_to_date`, `no_previous_release`, `application_decided`, `not_on_sale`, `intent_conflict`, `intent_mismatch`, `authorization_used`, `owner_not_supported`, `currency_unavailable`, `coming_soon` for a listing that is not available yet).
       content:
         application/json:
           schema:
@@ -5502,6 +5715,9 @@ components:
               type: string
             first_party:
               type: boolean
+            verified:
+              type: boolean
+              description: The publisher is certified (shown as the verified badge).
         operations:
           type: array
           items:
@@ -5522,6 +5738,91 @@ components:
           - string
           - 'null'
           format: date-time
+        hosting:
+          type: string
+          enum:
+          - pigeonpost
+          - publisher
+        service_address:
+          type:
+          - string
+          - 'null'
+        logo:
+          oneOf:
+          - $ref: '#/components/schemas/ListingLogo'
+          - type: 'null'
+          description: '`null`: draw the default, the listing''s initials on a colour derived from its id (the same on every client).'
+        category:
+          oneOf:
+          - $ref: '#/components/schemas/ListingCategory'
+          - type: 'null'
+        featured:
+          type: boolean
+          description: In the catalog's featured row (staff choose it).
+        featured_rank:
+          type:
+          - integer
+          - 'null'
+          description: Lower first in the featured row.
+        coming_soon:
+          type: boolean
+          description: Shown, never sold, installed or run; those routes answer `409 coming_soon`.
+        sample:
+          type: boolean
+          description: A first-party placeholder from Pigeonpost, shown to fill the catalog; always `coming_soon`.
+        support_url:
+          type:
+          - string
+          - 'null'
+        privacy_url:
+          type:
+          - string
+          - 'null'
+        price_from:
+          type:
+          - object
+          - 'null'
+          description: 'A publisher-hosted listing''s cheapest per-run price: `{amount_cents, currency: USD, unit: run}`.'
+    ListingLogo:
+      type: object
+      additionalProperties: false
+      required:
+      - hash
+      - urls
+      properties:
+        hash:
+          type: string
+          pattern: ^[0-9a-f]{16}$
+        urls:
+          type: object
+          additionalProperties: false
+          required:
+          - '64'
+          - '128'
+          - '512'
+          description: Paths on the postbox, public and immutable.
+          properties:
+            '64':
+              type: string
+            '128':
+              type: string
+            '512':
+              type: string
+    ListingCategory:
+      type: string
+      enum:
+      - productivity
+      - legal
+      - finance
+      - support
+      - marketing
+      - sales
+      - language
+      - research
+      - developer
+      - hr
+      - recruiting
+      - other
     Publisher:
       type: object
       additionalProperties: false

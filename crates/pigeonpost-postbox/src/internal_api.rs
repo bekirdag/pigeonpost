@@ -271,6 +271,7 @@ pub(crate) fn router(state: AppState) -> Router {
         .merge(crate::nests::internal_router())
         .merge(crate::marketplace_m1::internal_router())
         .merge(crate::marketplace_m2::internal_router())
+        .merge(crate::marketplace_listings::internal_router())
         .merge(crate::marketplace_sources::internal_router())
         .merge(crate::marketplace_pay::internal_router())
         .route(

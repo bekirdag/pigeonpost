@@ -1022,7 +1022,8 @@
       method: o.method || "GET",
       headers: Object.assign(
         { authorization: `Bearer ${getToken()}`, accept: "application/json" },
-        o.body ? { "content-type": "application/json" } : {},
+        // A listing logo goes up as the image itself (`contentType`); everything else is JSON.
+        o.body ? { "content-type": o.contentType || "application/json" } : {},
       ),
       body: o.body,
     });

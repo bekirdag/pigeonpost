@@ -13,6 +13,7 @@
 //   GET  /v1/publishers/{p}/reviews[/{r}[/findings]]      NestReviewStatus and redacted findings
 //   POST /v1/publishers/{p}/reviews/{r}/withdraw
 //   GET|POST /v1/publishers/{p}/listings, PATCH …/{l}, POST …/{l}/publish (step-up), POST …/{l}/withdraw
+//   PUT|DELETE /v1/publishers/{p}/listings/{l}/logo   the listing's logo (the image as the body)
 //   PUT|DELETE /v1/publishers/{p}/listings/{l}/price (step-up) {amount_minor, currency, term}: a
 //     price the financial authority cannot invoice is refused with 422 price_not_invoiceable and
 //     the nearest prices it can (details.nearest), which the form offers
@@ -321,6 +322,7 @@
     function listingRow(l, admin) {
       const lpath = `${base()}/listings/${encodeURIComponent(l.id)}`;
       const li = el("li", { class: "mp-row mp-listing", "data-listing": l.id },
+        MP.logo ? MP.logo(l, { size: 40 }) : null,
         el("strong", { text: l.title }),
         el("span", { text: `${LISTING_STATUS[l.status] || l.status} · ${l.visibility} · version ${l.version}` }),
         l.moderation_reason ? el("span", { class: "pp-warn", text: `Pigeonpost: ${l.moderation_reason}` }) : null);
@@ -439,7 +441,28 @@
         el("label", { for: `${p}-description` }, "Description"), description,
         visibilityField(p, l.visibility),
         el("button", { type: "submit", class: "btn btn-small" }, "Save")));
-      return form;
+      return el("div", {}, form, logoForm(l, lpath));
+    }
+
+    /// The listing's logo (PUT/DELETE …/logo): a square PNG, JPEG or WebP up to 1 MB. Without one,
+    /// the listing shows its initials on a colour of its own.
+    function logoForm(l, lpath) {
+      const p = `mp-logo-${l.id}`;
+      const file = el("input", { type: "file", id: `${p}-file`, accept: "image/png,image/jpeg,image/webp", "aria-describedby": `${p}-hint` });
+      return el("form", { class: "ac-form mp-logo-form", id: p, onsubmit: (e) => {
+        e.preventDefault();
+        const f = file.files && file.files[0];
+        if (!f) { status.say("Choose an image first."); return; }
+        if (!["image/png", "image/jpeg", "image/webp"].includes(f.type)) { status.say("A logo is a PNG, JPEG or WebP image. SVG isn't accepted."); return; }
+        if (f.size > 1024 * 1024) { status.say("A logo is at most 1 MB."); return; }
+        act(() => deps.pb(`${lpath}/logo`, { method: "PUT", body: f, contentType: f.type }), "Logo saved.", loadPublisher);
+      } }, el("fieldset", {}, el("legend", { text: "Logo" }),
+        el("div", { class: "mp-logo-preview" }, MP.logo(l, { size: 64, alt: `${l.title} logo` })),
+        el("label", { for: `${p}-file` }, "Upload a logo"), file,
+        el("span", { class: "mp-hint", id: `${p}-hint`, text: "Square PNG, JPEG or WebP, at least 256 × 256 (512 × 512 looks best), up to 1 MB." }),
+        el("span", { class: "mp-actions" },
+          el("button", { type: "submit", class: "btn btn-small" }, "Upload"),
+          l.logo ? el("button", { type: "button", class: "btn btn-small", id: `${p}-remove`, onclick: () => act(() => deps.pb(`${lpath}/logo`, { method: "DELETE" }), "Logo removed.", loadPublisher) }, "Use the default") : null)));
     }
 
     function createListingForm(d, approved) {
