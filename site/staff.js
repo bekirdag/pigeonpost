@@ -872,7 +872,9 @@
   }
 
   function adjustForm() {
-    const key = "adj-" + randomString(10);
+    // One key per adjustment: kept across a retry of a failed submit (so a retry adjusts at most
+    // once), replaced after a success together with the form, so the next one is a new adjustment.
+    let key = "adj-" + randomString(10);
     const kind = select("st-adj-kind", [["account", "Account"], ["org", "Organization"]], "account");
     const id = textInput("st-adj-id", { required: true, placeholder: "acct_…" });
     const amount = el("input", { id: "st-adj-amount", type: "number", step: "0.01", min: "-10000", max: "10000", required: true, placeholder: "e.g. 5.00 or -5.00" });
@@ -885,11 +887,14 @@
         el("div", { class: "st-form-row" }, field("st-adj-amount", "Amount in USD", amount, "Positive adds credit, negative removes it. At most $10,000 either way."), field("st-adj-reason", "Reason", reason)),
         el("label", { class: "mp-check st-check", for: "st-adj-confirm" }, confirm, " I checked the owner and the amount. This is recorded under my name."),
       ],
-      submit: async () => {
+      submit: async (form) => {
         const cents = Math.round(Number(amount.value) * 100);
         if (!Number.isFinite(cents) || cents === 0 || Math.abs(cents) > 1000000) throw Object.assign(new Error("Enter a non-zero amount up to $10,000."), { code: null });
-        await post("/v1/staff/credits/adjustments", { owner_kind: kind.value, owner_id: id.value.trim(), amount_cents: cents, reason: reason.value.trim(), idempotency_key: key });
-        return `Adjusted ${usd(cents)}.`;
+        const who = id.value.trim();
+        await post("/v1/staff/credits/adjustments", { owner_kind: kind.value, owner_id: who, amount_cents: cents, reason: reason.value.trim(), idempotency_key: key });
+        key = "adj-" + randomString(10);
+        form.reset();
+        return `Adjusted ${who} by ${usd(cents)}.`;
       },
     });
   }
@@ -1090,6 +1095,14 @@
     return b;
   }
 
+  /// One CSV cell, quoted. A cell a spreadsheet would read as a formula (`=`, `+`, `-`, `@`, tab,
+  /// carriage return) gets a leading `'`, so an audit export can never run anything.
+  function csvCell(x) {
+    let v = String(x == null ? "" : x);
+    if (/^[=+\-@\t\r]/.test(v)) v = "'" + v;
+    return `"${v.replace(/"/g, '""')}"`;
+  }
+
   function auditTable(rows, empty) {
     return table([
       { key: "at", label: "When", render: (r) => fmtDate(r.at) },
@@ -1131,7 +1144,7 @@
     const exportCsv = async () => {
       try {
         const v = await pb(`/v1/staff/audit?${params({ export: "1", limit: "500" })}`);
-        const esc = (x) => `"${String(x == null ? "" : x).replace(/"/g, '""')}"`;
+        const esc = (x) => csvCell(x);
         const lines = [["id", "at", "actor_account", "actor_kind", "action", "target", "org_id", "details"].join(",")]
           .concat((v.data || []).map((r) => [r.id, r.at, r.actor_account, r.actor_kind, r.action, r.target, r.org_id, JSON.stringify(maskDeep(r.details))].map(esc).join(",")));
         const url = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv" }));
@@ -1294,7 +1307,7 @@
     await show();
   }
 
-  window.PPStaff = { mask, shown, maskDeep, parseHash, hashFor, ROUTES, start, _setMe: (m) => { me = m; }, canSee: (id) => canSee(ROUTES.find((r) => r.id === id)) };
+  window.PPStaff = { mask, shown, maskDeep, csvCell, parseHash, hashFor, ROUTES, start, _setMe: (m) => { me = m; }, canSee: (id) => canSee(ROUTES.find((r) => r.id === id)) };
   if (!scfg.manualStart) {
     if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start); else start();
   }

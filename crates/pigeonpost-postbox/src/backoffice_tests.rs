@@ -22,6 +22,7 @@ type Seen = Arc<Mutex<Vec<(String, String, String, Value)>>>;
 const FINANCE_TOKEN: &str = "fin_0123456789abcdef0123456789abcdef";
 const PURCHASE: &str = "0f8fad5b-d9cb-469f-a165-70867728950e";
 const REFUND: &str = "7c9e6679-7425-40de-944b-e07fc1f90ae7";
+const SLOW_PURCHASE: &str = "11111111-2222-4333-8444-555555555555";
 
 /// A stand-in for saas_be marketplace finance on loopback.
 async fn fake_saas() -> (String, Seen) {
@@ -55,6 +56,9 @@ async fn fake_saas() -> (String, Seen) {
                 (200, json!({ "items": [{ "refund_id": REFUND, "status": "uncertain" }] }))
             } else if p.ends_with("/payout-profile") {
                 (200, json!({ "publisher_id": "pub_x", "iban_last4": "1234", "bank_name": "Bank", "country": "TR", "currency": "TRY", "status": "verified", "iban": "TR000000000000000000001234" }))
+            } else if p.ends_with(&format!("/purchases/{SLOW_PURCHASE}/refund")) {
+                tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+                (200, json!({ "refund_id": REFUND, "status": "pending" }))
             } else if p.ends_with(&format!("/purchases/{PURCHASE}/refund")) {
                 (200, json!({ "refund_id": REFUND, "status": "pending" }))
             } else if p.ends_with("/resolve") {
@@ -788,7 +792,7 @@ async fn finance_calls_saas_be_with_the_server_token_and_records_both_ends() {
     assert_eq!(
         seen[6].3,
         json!({ "owner": { "owner_kind": "account", "owner_id": "acct_bo_buyer" }, "amount_cents": -500,
-                "reason": "goodwill reversal", "actor": actor, "idempotency_key": "bo:form-1" })
+                "reason": "goodwill reversal", "actor": actor, "idempotency_key": crate::backoffice_finance::adjustment_key(&actor, "account", "acct_bo_buyer", -500, "form-1") })
     );
 
     // Each write: `requested`, then its outcome, both naming the target.
@@ -1080,4 +1084,263 @@ fn the_routes_the_contract_and_the_role_matrix_match() {
         stale.is_empty(),
         "contract operations with no route: {stale:?}"
     );
+}
+
+// ---- review fixes (security review of #291) ------------------------------------------------------
+
+async fn finance_person(bo: &Bo, name: &str) -> Person {
+    let p = bo.srv.person(name).await;
+    grant(bo, &p.account, "finance").await;
+    p
+}
+
+/// `i64::MIN` has no absolute value; it must be refused like any other out-of-range amount, and
+/// never reach saas_be.
+#[tokio::test]
+async fn an_adjustment_of_i64_min_is_refused() {
+    let bo = setup().await;
+    let fin = finance_person(&bo, "bo_min").await;
+    for cents in [i64::MIN, i64::MAX, -1_000_001, 1_000_001] {
+        let (s, v) = bo
+            .srv
+            .post(
+                "/v1/staff/credits/adjustments",
+                &fin.strong,
+                json!({ "owner_kind": "account", "owner_id": "acct_bo_buyer", "amount_cents": cents,
+                        "reason": "x", "idempotency_key": "k1" }),
+            )
+            .await;
+        assert_eq!((s, code(&v)), (400, "invalid_request"), "{cents}: {v}");
+    }
+    let (s, _) = bo
+        .srv
+        .post(
+            "/v1/staff/credits/adjustments",
+            &fin.strong,
+            json!({ "owner_kind": "account", "owner_id": "acct_bo_buyer", "amount_cents": -1_000_000,
+                    "reason": "x", "idempotency_key": "k1" }),
+        )
+        .await;
+    assert_eq!(s, 201, "the limit itself is allowed");
+    assert_eq!(
+        bo.seen.lock().unwrap().len(),
+        1,
+        "only the valid one reached saas_be"
+    );
+}
+
+/// The key saas_be sees binds the staff member, the owner, the amount and the form's key: a
+/// reused form key with another payload is a new adjustment there, never a replay.
+#[tokio::test]
+async fn a_reused_form_key_never_replays_another_adjustment() {
+    let bo = setup().await;
+    let a = finance_person(&bo, "bo_keya").await;
+    let b = finance_person(&bo, "bo_keyb").await;
+    let adjust = |who: &Person, cents: i64, owner: &str| {
+        let body = json!({ "owner_kind": "account", "owner_id": owner, "amount_cents": cents,
+                           "reason": "x", "idempotency_key": "form-1" });
+        let (srv, t) = (&bo.srv, who.strong.clone());
+        async move { srv.post("/v1/staff/credits/adjustments", &t, body).await }
+    };
+    for (who, cents, owner) in [
+        (&a, 500, "acct_bo_buyer"),
+        (&a, 500, "acct_bo_buyer"),
+        (&a, 700, "acct_bo_buyer"),
+        (&a, 500, "acct_bo_other"),
+        (&b, 500, "acct_bo_buyer"),
+    ] {
+        let (s, v) = adjust(who, cents, owner).await;
+        assert_eq!(s, 201, "{v}");
+    }
+    let keys: Vec<String> = bo
+        .seen
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(_, _, _, b)| b["idempotency_key"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(keys.len(), 5);
+    assert_eq!(
+        keys[0], keys[1],
+        "the same adjustment resubmitted is one adjustment"
+    );
+    let distinct: std::collections::BTreeSet<_> = keys.iter().collect();
+    assert_eq!(distinct.len(), 4, "{keys:?}");
+    for k in &keys {
+        assert!(k.starts_with("bo:") && !k.contains("form-1"), "{k}");
+    }
+}
+
+/// Account detail and handle history show records about that account or namespace only, and
+/// other staff members' `staff.*` records only to `owner` (who reads the audit log anyway).
+#[tokio::test]
+async fn detail_audit_trails_hide_staff_records_from_non_owners() {
+    let bo = setup().await;
+    seed(&bo.srv).await;
+    let sup = bo.srv.person("bo_trail_sup").await;
+    grant(&bo, &sup.account, "support").await;
+    let own = bo.srv.person("bo_trail_own").await;
+    grant(&bo, &own.account, "owner").await;
+    for (actor, action, target) in [
+        (
+            "acct_other_staff",
+            "staff.credits.adjust",
+            "account:acct_bo_buyer",
+        ),
+        ("acct_bo_buyer", "phone.verified", "account:acct_bo_buyer"),
+        ("acct_bo_buyer", "nest.create", "nest:nst_1"),
+        (
+            "acct_other_staff",
+            "staff.handles.read",
+            "namespace:shopkeep",
+        ),
+        ("acct_ops", "namespace.grant", "namespace:shopkeep"),
+    ] {
+        bo.srv
+            .state
+            .store
+            .append_audit(bo.srv.state.auditor.row(
+                audit::ActorKind::Human,
+                Some(actor.into()),
+                action,
+                Some(target.into()),
+                json!({}),
+                None,
+                None,
+                now_unix(),
+            ))
+            .await
+            .unwrap();
+    }
+    let actions = |v: &Value, key: &str| -> Vec<String> {
+        v["data"][key]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["action"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let (_, v) = bo
+        .srv
+        .get("/v1/staff/accounts/acct_bo_buyer", &sup.strong)
+        .await;
+    assert_eq!(actions(&v, "recent_audit"), vec!["phone.verified"], "{v}");
+    let (_, v) = bo.srv.get("/v1/staff/handles/shopkeep", &sup.strong).await;
+    assert_eq!(actions(&v, "history"), vec!["namespace.grant"]);
+    let (_, v) = bo
+        .srv
+        .get("/v1/staff/accounts/acct_bo_buyer", &own.strong)
+        .await;
+    let got = actions(&v, "recent_audit");
+    assert!(got.contains(&"staff.credits.adjust".to_string()), "{got:?}");
+    assert!(
+        !got.contains(&"nest.create".to_string()),
+        "only records about this account"
+    );
+    let (_, v) = bo.srv.get("/v1/staff/handles/shopkeep", &own.strong).await;
+    assert!(actions(&v, "history").contains(&"staff.handles.read".to_string()));
+}
+
+/// `%` and `_` in a namespace are literal: `/shop_keep` does not see `/shopxkeep`'s mailboxes.
+#[tokio::test]
+async fn handle_detail_matches_its_own_namespace_only() {
+    let bo = setup().await;
+    let sup = bo.srv.person("bo_ns_sup").await;
+    grant(&bo, &sup.account, "support").await;
+    let now = now_unix();
+    sql(
+        &bo.srv,
+        format!(
+            "INSERT INTO namespaces (namespace, account_id, source, verified_at) VALUES ('shop_keep', 'acct_x', 'grant', {now}),
+                                                                                  ('shopxkeep', 'acct_y', 'grant', {now});
+             INSERT INTO identities (address, ed25519_pub, x25519_pub, wrapped_nonce, wrapped_ct, cap_hash, created_at, account_id, handle)
+                 VALUES ('/k/ns1', x'00', x'00', x'00', x'00', x'00', {now}, 'acct_x', '/shop_keep/a'),
+                        ('/k/ns2', x'00', x'00', x'00', x'00', x'00', {now}, 'acct_y', '/shopxkeep/b'),
+                        ('/k/ns3', x'00', x'00', x'00', x'00', x'00', {now}, 'acct_y', '/shop_keeper');"
+        ),
+    )
+    .await;
+    let (s, v) = bo.srv.get("/v1/staff/handles/shop_keep", &sup.strong).await;
+    assert_eq!(s, 200, "{v}");
+    let handles: Vec<_> = v["data"]["mailboxes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["handle"].clone())
+        .collect();
+    assert_eq!(handles, vec![json!("/shop_keep/a")]);
+    let (_, v) = bo.srv.get("/v1/staff/handles?q=shop", &sup.strong).await;
+    for row in v["data"].as_array().unwrap() {
+        assert_eq!(row["mailboxes"], 1, "{row}");
+    }
+}
+
+/// A client that hangs up after the `requested` row does not lose the outcome row.
+#[tokio::test]
+async fn a_finance_write_records_its_outcome_after_the_client_left() {
+    let bo = setup().await;
+    let fin = finance_person(&bo, "bo_gone").await;
+    let impatient = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_millis(150))
+        .build()
+        .unwrap();
+    let r = impatient
+        .post(format!(
+            "{}/v1/staff/credits/purchases/{SLOW_PURCHASE}/refund",
+            bo.srv.public
+        ))
+        .bearer_auth(&fin.strong)
+        .json(&json!({ "reason": "late" }))
+        .send()
+        .await;
+    assert!(r.is_err(), "the client gave up first");
+    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+    let rows = bo
+        .srv
+        .state
+        .store
+        .audit_for_actor(Some(fin.account.clone()), 2)
+        .await
+        .unwrap();
+    let phases: Vec<String> = rows
+        .iter()
+        .rev()
+        .map(|r| {
+            serde_json::from_str::<Value>(&r.details).unwrap()["phase"]
+                .as_str()
+                .unwrap_or("")
+                .to_string()
+        })
+        .collect();
+    assert_eq!(phases, vec!["requested", "completed"]);
+}
+
+/// The rebuild takes the write lock before it looks again: while another connection holds it,
+/// it waits (here: fails busy) instead of rebuilding under that writer; afterwards it runs once.
+#[test]
+fn the_staff_roles_rebuild_takes_the_write_lock_first() {
+    let dir = std::env::temp_dir().join(format!("pp-bo-lock-{}", rand_hex(6)));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("db.sqlite");
+    let a = rusqlite::Connection::open(&path).unwrap();
+    a.execute_batch(store::marketplace::SCHEMA).unwrap();
+    a.execute_batch("INSERT INTO staff_roles (id, account_id, role, granted_by, granted_at) VALUES ('s1', 'a', 'reviewer', 'o', 1);").unwrap();
+    let b = rusqlite::Connection::open(&path).unwrap();
+    b.pragma_update(None, "busy_timeout", 0).unwrap();
+    a.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let busy = store::marketplace::migrate_staff_roles(&b);
+    assert!(
+        busy.is_err(),
+        "no rebuild while another writer holds the lock"
+    );
+    a.execute_batch("COMMIT").unwrap();
+    store::marketplace::migrate_staff_roles(&b).unwrap();
+    store::marketplace::migrate_staff_roles(&a).unwrap();
+    let n: i64 = a
+        .query_row("SELECT COUNT(*) FROM staff_roles", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(n, 1);
+    a.execute("INSERT INTO staff_roles (id, account_id, role, granted_by, granted_at) VALUES ('s2', 'a', 'ops', 'o', 1)", []).unwrap();
+    drop((a, b));
+    let _ = std::fs::remove_dir_all(&dir);
 }

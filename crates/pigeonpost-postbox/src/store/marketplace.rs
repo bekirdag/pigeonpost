@@ -607,25 +607,33 @@ CREATE TABLE staff_roles_wide (
 /// Widen `staff_roles.role` to the five back office roles (2026-11-11), preserving every row.
 ///
 /// Guarded by the table's own definition in `sqlite_master` (a CHECK is not visible through
-/// `PRAGMA table_info`): a table that already admits `'ops'` is left alone, so this runs once per
+/// `PRAGMA table_info`), checked again under `BEGIN IMMEDIATE`: a table that already admits `'ops'` is left alone, so this runs once per
 /// database and is a no-op afterwards. The rebuild is SQLite's documented procedure for a
 /// constraint change: create the new table, copy, drop the old one, rename, recreate the index;
 /// all in one transaction, which commits only if the copy holds exactly the old row count. No
 /// other table, trigger or view refers to `staff_roles`. An older binary reading the rebuilt table
 /// ignores the roles it cannot parse (`live_staff_roles_in`), so a rollback grants nothing new.
 pub(crate) fn migrate_staff_roles(c: &Connection) -> rusqlite::Result<()> {
-    let sql: Option<String> = c
-        .query_row(
-            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'staff_roles'",
-            [],
-            |r| r.get(0),
-        )
-        .optional()?;
-    let Some(sql) = sql else { return Ok(()) };
-    if sql.contains("'ops'") {
+    // `None`: no table yet. `Some(true)`: already wide.
+    fn widened(c: &Connection) -> rusqlite::Result<Option<bool>> {
+        let sql: Option<String> = c
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'staff_roles'",
+                [],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(sql.map(|s| s.contains("'ops'")))
+    }
+    if widened(c)? != Some(false) {
         return Ok(());
     }
-    let tx = c.unchecked_transaction()?;
+    // The write lock first, then the check again: another process opening the same file (the
+    // reaper) may have rebuilt the table between the look above and here.
+    let tx = rusqlite::Transaction::new_unchecked(c, rusqlite::TransactionBehavior::Immediate)?;
+    if widened(&tx)? != Some(false) {
+        return Ok(());
+    }
     let before: i64 = tx.query_row("SELECT COUNT(*) FROM staff_roles", [], |r| r.get(0))?;
     tx.execute_batch("DROP TABLE IF EXISTS staff_roles_wide;")?;
     tx.execute_batch(STAFF_ROLES_WIDE)?;

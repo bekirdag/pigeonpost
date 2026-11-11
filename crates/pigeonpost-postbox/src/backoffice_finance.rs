@@ -31,7 +31,7 @@
 
 use crate::backoffice::{audit_row, page_of, require_staff, MAX_LIMIT};
 use crate::groups::{GErr, GResult};
-use crate::marketplace::{into_response, parse};
+use crate::marketplace::{into_response, ip_of, parse};
 use crate::policy::Action;
 use crate::{AppState, ClientIp};
 use axum::extract::rejection::JsonRejection;
@@ -554,37 +554,57 @@ async fn proxy_write(
         headers,
     );
     state.store.append_audit(row).await?;
-    let outcome = state
-        .staff_finance
-        .call(
-            reqwest::Method::POST,
-            &path,
-            &[],
-            Some(body(&actor(&who.account))),
-        )
-        .await;
-    let mut done = details;
-    let answer = match outcome {
-        Ok((status, v)) if (200..300).contains(&status) => {
-            done["phase"] = json!("completed");
-            Ok(v)
+    // From here the call and its outcome record run on their own task: a client that disconnects
+    // drops this handler, never the record of what saas_be did after the `requested` row.
+    let payload = body(&actor(&who.account));
+    let task_state = state.clone();
+    let actor_kind = crate::audit::ActorKind::of(&who.principal);
+    let account = who.account.clone();
+    let ip = ip_of(client_ip);
+    let ua = headers
+        .get(axum::http::header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
+    let verb = verb.to_string();
+    let task = tokio::spawn(async move {
+        let state = task_state;
+        let outcome = state
+            .staff_finance
+            .call(reqwest::Method::POST, &path, &[], Some(payload))
+            .await;
+        let mut done = details;
+        let answer = match outcome {
+            Ok((status, v)) if (200..300).contains(&status) => {
+                done["phase"] = json!("completed");
+                Ok(v)
+            }
+            Ok((status, v)) => {
+                done["phase"] = json!("refused");
+                done["status"] = json!(status);
+                Err(refusal(status, &v))
+            }
+            Err(e) => {
+                done["phase"] = json!("unavailable");
+                Err(e)
+            }
+        };
+        let row = state.auditor.row(
+            actor_kind,
+            Some(account),
+            &verb,
+            Some(target),
+            done,
+            ip,
+            ua.as_deref(),
+            crate::now_unix(),
+        );
+        if let Err(e) = state.store.append_audit(row).await {
+            // The money moved (or did not) either way; the `requested` row is already there.
+            tracing::error!(error = %e, verb, "back office: could not record a finance outcome");
         }
-        Ok((status, v)) => {
-            done["phase"] = json!("refused");
-            done["status"] = json!(status);
-            Err(refusal(status, &v))
-        }
-        Err(e) => {
-            done["phase"] = json!("unavailable");
-            Err(e)
-        }
-    };
-    let row = audit_row(state, &who, verb, Some(target), done, client_ip, headers);
-    if let Err(e) = state.store.append_audit(row).await {
-        // The money moved (or did not) either way; the `requested` row is already there.
-        tracing::error!(error = %e, verb, "back office: could not record a finance outcome");
-    }
-    answer
+        answer
+    });
+    task.await.map_err(|_| unavailable())?
 }
 
 #[derive(Deserialize)]
@@ -712,7 +732,9 @@ async fn adjust(
     let result = async {
         let req: AdjustReq = parse(body)?;
         owner(&req.owner_kind, &req.owner_id)?;
-        if req.amount_cents == 0 || req.amount_cents.abs() > MAX_ADJUST_CENTS {
+        if req.amount_cents == 0
+            || !(-MAX_ADJUST_CENTS..=MAX_ADJUST_CENTS).contains(&req.amount_cents)
+        {
             return Err(GErr::bad(
                 "invalid_request",
                 format!("amount_cents: not zero, at most {MAX_ADJUST_CENTS} either way"),
@@ -725,7 +747,7 @@ async fn adjust(
             ));
         }
         let why = reason(&req.reason)?;
-        let key = format!("bo:{}", req.idempotency_key);
+        let client_key = req.idempotency_key.clone();
         let (kind, id, cents) = (
             req.owner_kind.clone(),
             req.owner_id.clone(),
@@ -737,9 +759,10 @@ async fn adjust(
             &client_ip,
             "staff.credits.adjust",
             format!("{kind}:{id}"),
-            json!({ "amount_cents": cents, "reason": why, "idempotency": key }),
+            json!({ "amount_cents": cents, "reason": why, "idempotency": client_key }),
             "/credits/adjustments".into(),
             |actor| {
+                let key = adjustment_key(actor, &kind, &id, cents, &client_key);
                 json!({
                     "owner": { "owner_kind": kind, "owner_id": id },
                     "amount_cents": cents,
@@ -756,9 +779,45 @@ async fn adjust(
     into_response(result)
 }
 
+/// The idempotency key saas_be sees for an adjustment: a digest of who asks, for whom, how much
+/// and the form's own key. A reused form key with any other payload (or from another staff
+/// member) is a different key there, so it can never replay an earlier adjustment.
+pub(crate) fn adjustment_key(
+    actor: &str,
+    owner_kind: &str,
+    owner_id: &str,
+    cents: i64,
+    client_key: &str,
+) -> String {
+    let digest = crate::sha256(
+        format!("pigeonpost-bo-adjust\0{actor}\0{owner_kind}\0{owner_id}\0{cents}\0{client_key}")
+            .as_bytes(),
+    );
+    format!("bo:{}", &crate::hex_str(&digest)[..48])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn adjustment_keys_bind_the_whole_payload() {
+        let k = adjustment_key("staff:a", "account", "acct_1", 500, "form-1");
+        assert!(k.starts_with("bo:") && k.len() == 51, "{k}");
+        assert_eq!(
+            k,
+            adjustment_key("staff:a", "account", "acct_1", 500, "form-1")
+        );
+        for other in [
+            adjustment_key("staff:b", "account", "acct_1", 500, "form-1"),
+            adjustment_key("staff:a", "org", "acct_1", 500, "form-1"),
+            adjustment_key("staff:a", "account", "acct_2", 500, "form-1"),
+            adjustment_key("staff:a", "account", "acct_1", -500, "form-1"),
+            adjustment_key("staff:a", "account", "acct_1", 500, "form-2"),
+        ] {
+            assert_ne!(k, other);
+        }
+    }
 
     #[test]
     fn ids_follow_saas_be_patterns() {

@@ -86,6 +86,18 @@ test("masking hides secrets, IBANs and tax ids, keeps what the server already ma
     { a: { client_secret: "••••cdef" }, list: [{ iban: "••••1326" }], n: "3" });
 });
 
+test("audit CSV cells can never be read as formulas", (t) => {
+  const dom = new JSDOM("", { url: "https://pigeonpost.dev/staff", runScripts: "outside-only" });
+  t.after(() => dom.window.close());
+  dom.window.PIGEONPOST_STAFF = { manualStart: true };
+  dom.window.eval(staffJs);
+  const cell = dom.window.PPStaff.csvCell;
+  for (const [input, out] of [["=HYPERLINK(1)", `"'=HYPERLINK(1)"`], ["+1", `"'+1"`], ["-2", `"'-2"`], ["@sum", `"'@sum"`],
+    ["\tx", `"'\tx"`], ["\rx", `"'\rx"`], ['say "hi"', '"say ""hi"""'], ["staff.accounts.read", '"staff.accounts.read"'], [null, '""'], [42, '"42"']]) {
+    assert.equal(cell(input), out, JSON.stringify(input));
+  }
+});
+
 test("hash routes parse and round-trip", (t) => {
   const dom = new JSDOM("", { url: "https://pigeonpost.dev/staff", runScripts: "outside-only" });
   t.after(() => dom.window.close());
@@ -261,7 +273,8 @@ test("the theme switch cycles system, light and dark and remembers the choice", 
   assert.match(p.$("#st-theme").getAttribute("aria-label"), /Theme: dark/);
 });
 
-test("the credits screen sends refunds and adjustments with a reason, the owner and one idempotency key", async (t) => {
+test("the credits screen sends refunds and adjustments with a reason, the owner and one key per adjustment", async (t) => {
+  let failNext = false;
   const p = await page(t, {
     hash: "#credits/account/acct_1",
     routes: (m, path, body) => {
@@ -270,6 +283,7 @@ test("the credits screen sends refunds and adjustments with a reason, the owner 
       if (path.startsWith("/v1/staff/credits/owners/account/acct_1/history")) return { data: [{ type: "purchase", id: "0f8fad5b-d9cb-469f-a165-70867728950e", at: "2026-11-01T00:00:00Z", amount_cents: 2500, status: "succeeded", charge: { currency: "TRY", amount_minor: 99000 } }], next_cursor: null };
       if (path.startsWith("/v1/staff/credits/refunds")) return { data: [], next_cursor: null };
       if (path.startsWith("/v1/staff/credits/sales")) return { data: [], next_cursor: null };
+      if (path === "/v1/staff/credits/adjustments" && failNext) { failNext = false; return fail(503, "finance_unavailable"); }
       if (m === "POST") return { data: { status: "pending", body } };
       return undefined;
     },
@@ -283,17 +297,26 @@ test("the credits screen sends refunds and adjustments with a reason, the owner 
   await tick();
   const sent = p.calls.find((c) => c.method === "POST" && /\/refund$/.test(c.path));
   assert.deepEqual(sent.body, { reason: "charged twice" });
-  // Adjustments: dollars to cents, a confirmation, the same key on a resubmit.
-  p.$("#st-adj-id").value = "acct_1";
-  p.$("#st-adj-amount").value = "-5.25";
-  p.$("#st-adj-reason").value = "goodwill";
-  p.$("#st-adj-confirm").checked = true;
-  for (let i = 0; i < 2; i++) { p.$("#st-adj").dispatchEvent(new p.window.Event("submit", { cancelable: true })); await tick(); }
+  // Adjustments: dollars to cents and a confirmation. A failed submit keeps its key (a retry
+  // adjusts at most once); a success resets the form and the next adjustment gets a new key.
+  failNext = true;
+  const fill = (cents) => { p.$("#st-adj-id").value = "acct_1"; p.$("#st-adj-amount").value = cents; p.$("#st-adj-reason").value = "goodwill"; p.$("#st-adj-confirm").checked = true; };
+  const submit = async () => { p.$("#st-adj").dispatchEvent(new p.window.Event("submit", { cancelable: true })); await tick(); };
+  fill("-5.25"); await submit();
+  assert.ok(p.$("#st-adj .st-state.st-error"), "the failure is shown");
+  assert.equal(p.$("#st-adj-amount").value, "-5.25", "a failed submit keeps the form");
+  await submit();
+  assert.equal(p.$("#st-adj-amount").value, "", "a success resets the form");
+  assert.equal(p.$("#st-adj-confirm").checked, false);
+  assert.match(p.$("#st-adj .st-form-status").textContent, /Adjusted acct_1 by -\$5\.25/);
+  fill("3"); await submit();
   const adj = p.calls.filter((c) => c.path === "/v1/staff/credits/adjustments");
-  assert.equal(adj.length, 2);
+  assert.equal(adj.length, 3);
   assert.equal(adj[0].body.amount_cents, -525);
   assert.equal(adj[0].body.owner_id, "acct_1");
-  assert.equal(adj[0].body.idempotency_key, adj[1].body.idempotency_key);
+  assert.equal(adj[0].body.idempotency_key, adj[1].body.idempotency_key, "the retry reuses the failed attempt's key");
+  assert.notEqual(adj[2].body.idempotency_key, adj[1].body.idempotency_key, "the next adjustment has its own key");
+  assert.equal(adj[2].body.amount_cents, 300);
 });
 
 // ---- the page itself ---------------------------------------------------------------------------

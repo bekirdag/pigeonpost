@@ -481,7 +481,8 @@ async fn read_account(
             &client_ip,
             &headers,
         );
-        let out = audited(&state, row, move |c| account_detail(c, &account))
+        let owner = who.roles.contains(&StaffRole::Owner);
+        let out = audited(&state, row, move |c| account_detail(c, &account, owner))
             .await?
             .ok_or_else(not_found)?;
         Ok(Json(json!({ "data": out })))
@@ -490,7 +491,9 @@ async fn read_account(
     into_response(result)
 }
 
-pub(crate) fn account_detail(c: &Connection, id: &str) -> GResult<Option<Value>> {
+/// `with_staff`: include other staff members' `staff.*` records about this account. Those are
+/// the audit log's, which only `owner` reads (`StaffAuditRead`).
+pub(crate) fn account_detail(c: &Connection, id: &str, with_staff: bool) -> GResult<Option<Value>> {
     let base: Option<(String, i64, Option<String>)> = c
         .query_row(
             "SELECT id, created_at, oidc_sub FROM accounts WHERE id = ?1",
@@ -658,10 +661,10 @@ pub(crate) fn account_detail(c: &Connection, id: &str) -> GResult<Option<Value>>
         c,
         &format!(
             "SELECT {AUDIT_COLS} FROM audit_log
-              WHERE actor_account = ?1 OR target = 'account:' || ?1
+              WHERE target = 'account:' || ?1 AND (?2 OR action NOT LIKE 'staff.%')
               ORDER BY id DESC LIMIT 20"
         ),
-        &a,
+        &[Sql::Text(id.clone()), Sql::Integer(with_staff as i64)],
         audit_json,
     )?;
     Ok(Some(json!({
@@ -735,7 +738,8 @@ async fn search_handles(
                 c,
                 "SELECT n.namespace, n.source, n.verified_at, n.expires_at, n.release_at, n.account_id,
                         (SELECT COUNT(*) FROM identities i
-                          WHERE i.handle = '/' || n.namespace OR i.handle LIKE '/' || n.namespace || '/%')
+                          WHERE i.handle = '/' || n.namespace
+                             OR substr(i.handle, 1, length(n.namespace) + 2) = '/' || n.namespace || '/')
                    FROM namespaces n
                   WHERE (?1 IS NULL OR lower(n.namespace) LIKE ?2 ESCAPE '\\' OR lower(n.account_id) = ?1)
                     AND (?3 IS NULL OR n.source = ?3)
@@ -773,6 +777,7 @@ async fn read_handle(
     let result = async {
         let who = require_staff(&state, &headers, Action::StaffPeopleRead, "handles").await?;
         let ns = namespace.trim_start_matches('/').to_lowercase();
+        let owner = who.roles.contains(&StaffRole::Owner);
         let row = audit_row(
             &state,
             &who,
@@ -799,7 +804,8 @@ async fn read_handle(
             let mailboxes = rows(
                 c,
                 "SELECT address, handle, label, account_id, created_at FROM identities
-                  WHERE handle = '/' || ?1 OR handle LIKE '/' || ?1 || '/%' ORDER BY handle LIMIT 200",
+                  WHERE handle = '/' || ?1 OR substr(handle, 1, length(?1) + 2) = '/' || ?1 || '/'
+                  ORDER BY handle LIMIT 200",
                 &n,
                 |r| {
                     Ok(json!({
@@ -826,7 +832,7 @@ async fn read_handle(
             let holds = rows(
                 c,
                 "SELECT h.org_id, h.handle, h.reason, h.created_at FROM org_handle_holds h
-                  WHERE h.handle = '/' || ?1 OR h.handle LIKE '/' || ?1 || '/%'
+                  WHERE h.handle = '/' || ?1 OR substr(h.handle, 1, length(?1) + 2) = '/' || ?1 || '/'
                      OR h.org_id IN (SELECT id FROM orgs WHERE namespace = ?1)
                   ORDER BY h.created_at DESC LIMIT 200",
                 &n,
@@ -855,9 +861,10 @@ async fn read_handle(
                 c,
                 &format!(
                     "SELECT {AUDIT_COLS} FROM audit_log WHERE target = 'namespace:' || ?1
+                        AND (?2 OR action NOT LIKE 'staff.%')
                       ORDER BY id DESC LIMIT 50"
                 ),
-                &n,
+                &[Sql::Text(ns.clone()), Sql::Integer(owner as i64)],
                 audit_json,
             )?;
             if holder.is_none() && mailboxes.is_empty() && orgs.is_empty() && history.is_empty() {
