@@ -105,7 +105,9 @@ fi
 
 # --- ClamAV: freshclam in the pinned ClamAV image, then a signature count offline.
 part_ok=1
-run "$NETWORK" --entrypoint=freshclam --volume="$new/clamav:/db:rw" \
+# freshclam runs as (container) root and switches to DatabaseOwner (root) with initgroups(), which
+# needs SETUID/SETGID; they act only inside the rootless user namespace and the gVisor sandbox.
+run "$NETWORK" --cap-add=SETUID,SETGID --entrypoint=freshclam --volume="$new/clamav:/db:rw" \
   --volume="$FRESHCLAM_CONF:/etc/freshclam.conf:ro" \
   "$CLAMAV_IMAGE" --config-file=/etc/freshclam.conf --datadir=/db --stdout || part_ok=0
 if [ "$part_ok" = 1 ] && version=$(run none --entrypoint=clamscan --volume="$new/clamav:/db:ro" \
@@ -118,7 +120,8 @@ fi
 # --- YARA: the vendored rules plus the YARA-Forge core feed, compiled offline. A feed that does
 # not compile is not taken; the vendored rules alone are better than none.
 part_ok=1
-work=$(mktemp -d)
+# Not /tmp: the unit has PrivateTmp, and rootless podman's long-lived namespace cannot see it.
+work=$(mktemp -d "$ROOT/.yara-work.XXXXXX")
 cp "$LOCAL_YARA" "$work/00-pigeonpost.yar"
 sources="pigeonpost.yar"
 if curl -fsSL --retry 3 --max-time 300 -o "$work/forge.zip" "$YARA_FORGE_URL" \

@@ -340,7 +340,7 @@ rate out of publisher-facing text beyond the policy line that such checks exist.
 Packages and users (as root):
 
 ```sh
-apt install -y unzip python3 curl          # the updater's own needs; podman/runsc are already there
+apt install -y unzip python3 curl acl          # the updater's own needs; podman/runsc are already there
 useradd --system --create-home --uid 2351 --shell /usr/sbin/nologin nestscan
 usermod --add-subuids 300000-365535 --add-subgids 300000-365535 nestscan
 loginctl enable-linger nestscan
@@ -360,6 +360,9 @@ install -m 0644 deploy/nests/buildd/scandb-allowlist.txt.example /etc/pigeonpost
 # the same containers.conf (runsc and runsc-behaviour) for both users
 install -o nestbuild -g nestbuild -m 0644 -D deploy/nests/buildd/containers.conf ~nestbuild/.config/containers/containers.conf
 install -o nestscan -g nestscan -m 0644 -D deploy/nests/buildd/containers.conf ~nestscan/.config/containers/containers.conf
+chown -R nestscan:nestscan ~nestscan/.config   # install -D leaves the parents root-owned; podman refuses that
+# /etc/pigeonpost-buildd is root:nestbuild 0750: let nestscan reach its own files in it
+setfacl -m u:nestscan:--x /etc/pigeonpost-buildd
 sha256sum /etc/pigeonpost-buildd/semgrep-rules.yml   # must be the semgrep_rules_sha256 in buildd.toml
 ```
 
@@ -367,7 +370,7 @@ Images (build once with the network, then load into both users' storage; never p
 time):
 
 ```sh
-podman build --pull=always -t localhost/pigeonpost-scanners:2026.11 \
+podman build --network=host --pull=always -t localhost/pigeonpost-scanners:2026.11 \
   -f deploy/nests/buildd/scanners/Containerfile deploy/nests/buildd/scanners
 podman pull docker.io/clamav/clamav:1.4.6_base@sha256:109477fb9dedf7b4542d0fc7be7f8ef73a55d9d731e9568821347825219407aa
 podman pull docker.io/semgrep/semgrep:1.181.0@sha256:81474464c1f07483ba0682a44787fd93c91397419762a04abe2bafaae396304b
@@ -380,9 +383,13 @@ for u in nestbuild:2350 nestscan:2351; do
     sudo -u "$user" XDG_RUNTIME_DIR=/run/user/$uid podman load -i /tmp/$t.tar
   done
 done
-sudo -u nestbuild XDG_RUNTIME_DIR=/run/user/2350 podman image inspect --format '{{.Digest}}' localhost/pigeonpost-scanners:2026.11
-# put that digest in buildd.toml [scanners] image and in scandb.env SCANNER_IMAGE (both
-# "localhost/pigeonpost-scanners:2026.11@sha256:<digest>"); rm /tmp/{scanners,clamav,semgrep}.tar
+# save/load re-encodes the images, so the registry digests above no longer resolve locally. Pin
+# the digests the loaded images have (the same in both users' storage):
+for i in localhost/pigeonpost-scanners:2026.11 docker.io/clamav/clamav:1.4.6_base docker.io/semgrep/semgrep:1.181.0; do
+  sudo -u nestbuild XDG_RUNTIME_DIR=/run/user/2350 podman image inspect --format "$i@{{.Digest}}" "$i"
+done
+# put them in buildd.toml [scanners] (image, clamav_image, semgrep_image) and in scandb.env
+# (SCANNER_IMAGE, CLAMAV_IMAGE); rm /tmp/{scanners,clamav,semgrep}.tar
 ```
 
 nftables (the new `scandb_v4` set and `nestscan_out` chain; the user must exist first, or nft
