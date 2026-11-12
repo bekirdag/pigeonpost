@@ -324,8 +324,20 @@ test("a full plan points to a plan change instead of a second subscription", asy
 // ---- sections survive the sign-in round trip ----------------------------------------------------
 
 test("signing in from a section comes back to it: the OIDC redirect carries no fragment", async (t) => {
-  const dom = new JSDOM('<main id="account-root"></main>', { url: "https://pigeonpost.dev/account#credits", runScripts: "outside-only", virtualConsole: new VirtualConsole() });
-  t.after(async () => { for (let i = 0; i < 20; i++) await tick(); dom.window.close(); });
+  // The sign-in hashes its PKCE verifier (crypto.subtle, asynchronous) before it navigates. On a
+  // loaded CI runner that can outlast a fixed number of ticks, and navigating a closed window
+  // throws after the test has ended. Close only once jsdom has reported the navigation attempt.
+  const virtualConsole = new VirtualConsole();
+  let navigated;
+  const navigation = new Promise((resolve) => { navigated = resolve; });
+  virtualConsole.on("jsdomError", (e) => { if (/navigation/i.test(String(e && e.message))) navigated(); });
+  const dom = new JSDOM('<main id="account-root"></main>', { url: "https://pigeonpost.dev/account#credits", runScripts: "outside-only", virtualConsole });
+  t.after(async () => {
+    let timer;
+    await Promise.race([navigation, new Promise((r) => { timer = setTimeout(r, 10000); })]);
+    clearTimeout(timer);
+    dom.window.close();
+  });
   const { window } = dom;
   if (!window.crypto.subtle) Object.defineProperty(window.crypto, "subtle", { value: globalThis.crypto.subtle });
   window.eval(config);
