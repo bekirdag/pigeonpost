@@ -1,0 +1,269 @@
+/* Pigeonpost marketplace — catalog cards, the listing page and logos (marketplace-core.js draws
+   them; the account page's Services tab and the public marketplace page both load this file).
+
+   Colours come from the account page's `--ac-*` tokens, falling back to the site's own tokens on
+   the public page, so both follow light and dark (and the appearance switch's `data-theme`). The
+   only new colours are the twelve default-logo tones, chosen for white text at 4.5:1 or better
+   on either stop, and the coming-soon ribbon. */
+
+:root {
+  --mp-surface: var(--ac-panel, var(--ground, #fff));
+  --mp-raised: var(--ac-raised, var(--wash, #f6f7f9));
+  --mp-hair: var(--ac-hair, var(--rule, rgba(15, 23, 42, .08)));
+  --mp-hair-strong: var(--ac-hair-strong, var(--edge, rgba(15, 23, 42, .15)));
+  --mp-ink: var(--ac-ink, var(--ink, #111827));
+  --mp-text: var(--ac-text, var(--body, #3b4351));
+  --mp-muted: var(--ac-muted, var(--muted, #5d6674));
+  --mp-accent: var(--ac-accent, #2456d6);
+  --mp-accent-text: var(--ac-accent-text, #1d4ec4);
+  --mp-accent-soft: var(--ac-accent-soft, rgba(36, 86, 214, .09));
+  --mp-ring: var(--ac-ring, 0 0 0 3px rgba(36, 86, 214, .25));
+  --mp-shadow: var(--ac-shadow, 0 1px 2px rgba(15, 23, 42, .05), 0 6px 20px -8px rgba(15, 23, 42, .10));
+  --mp-shadow-hover: var(--ac-shadow-hover, 0 2px 4px rgba(15, 23, 42, .06), 0 14px 30px -12px rgba(15, 23, 42, .22));
+  --mp-ok: var(--ac-ok, #15803d);
+  --mp-ok-soft: rgba(21, 128, 61, .10);
+  --mp-soon: #b45309;
+  --mp-soon-soft: rgba(180, 83, 9, .10);
+  --mp-ribbon: linear-gradient(135deg, #c2410c, #9a3412);
+  --mp-verified: #2456d6;
+  --mp-skeleton: rgba(15, 23, 42, .06);
+  --mp-radius: 16px;
+  --mp-logo-shadow: 0 6px 14px -6px rgba(15, 23, 42, .35);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --mp-logo-shadow: 0 6px 16px -6px rgba(0, 0, 0, .7);
+    --mp-ok-soft: rgba(74, 222, 128, .12);
+    --mp-soon: #fbbf24;
+    --mp-soon-soft: rgba(251, 191, 36, .12);
+    --mp-verified: #7aa2ff;
+    --mp-skeleton: rgba(255, 255, 255, .06);
+  }
+}
+/* The appearance switch saying Dark: the same values; keep the two blocks identical. */
+:root[data-theme="dark"] {
+    --mp-logo-shadow: 0 6px 16px -6px rgba(0, 0, 0, .7);
+  --mp-ok-soft: rgba(74, 222, 128, .12);
+  --mp-soon: #fbbf24;
+  --mp-soon-soft: rgba(251, 191, 36, .12);
+  --mp-verified: #7aa2ff;
+  --mp-skeleton: rgba(255, 255, 255, .06);
+}
+
+.mp-sr { position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+/* ---- logos ------------------------------------------------------------------------------------ */
+.mp-logo { flex-shrink: 0; display: inline-grid; place-items: center; width: 64px; height: 64px; border-radius: 16px; overflow: hidden; }
+.mp-logo[data-size="40"] { width: 40px; height: 40px; border-radius: 11px; }
+.mp-logo[data-size="48"] { width: 48px; height: 48px; border-radius: 13px; }
+.mp-logo[data-size="64"] { width: 64px; height: 64px; border-radius: 17px; }
+.mp-logo[data-size="72"] { width: 72px; height: 72px; border-radius: 19px; }
+.mp-logo[data-size="96"] { width: 96px; height: 96px; border-radius: 25px; }
+.mp-logo-image { object-fit: cover; background: var(--mp-raised); box-shadow: 0 0 0 1px var(--mp-hair) inset, var(--mp-logo-shadow); }
+/* The default: the listing's initials on a gradient from its own hue (marketplace-core.js sets
+   --mp-hue from the listing id) to a deeper, shifted one, with a soft top light. */
+.mp-logo-default {
+  --mp-hue: 220;
+  position: relative; color: #fff; font-weight: 750; letter-spacing: -.02em; line-height: 1;
+  font-feature-settings: "ss01", "cv11";
+  background:
+    radial-gradient(120% 90% at 18% 0%, rgba(255, 255, 255, .30), transparent 58%),
+    linear-gradient(145deg, hsl(var(--mp-hue) 72% 54%), hsl(calc(var(--mp-hue) + 24) 70% 34%));
+  box-shadow: 0 1px 0 rgba(255, 255, 255, .25) inset, 0 -1px 0 rgba(0, 0, 0, .14) inset, var(--mp-logo-shadow);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, .22);
+}
+.mp-logo-letters { position: relative; font-size: 24px; }
+.mp-logo[data-size="40"] .mp-logo-letters { font-size: 15px; }
+.mp-logo[data-size="48"] .mp-logo-letters { font-size: 18px; }
+.mp-logo[data-size="72"] .mp-logo-letters { font-size: 27px; }
+.mp-logo[data-size="96"] .mp-logo-letters { font-size: 35px; }
+
+/* ---- the catalog's header and controls --------------------------------------------------------- */
+.mp-catalog { display: grid; gap: 18px; }
+.mp-hero {
+  display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 16px 24px;
+  padding: 22px 22px 20px; border-radius: var(--mp-radius); border: 1px solid var(--mp-hair);
+  background:
+    radial-gradient(120% 140% at 100% 0%, var(--mp-accent-soft), transparent 60%),
+    linear-gradient(180deg, var(--mp-surface), var(--mp-raised));
+}
+.mp-hero-text { flex: 1 1 280px; min-width: 0; }
+.mp-hero .mp-hero-title { margin: 0 0 6px; font-size: 24px; line-height: 1.2; letter-spacing: -.015em; color: var(--mp-ink); }
+.mp-hero-sub { margin: 0; max-width: 56ch; color: var(--mp-muted); font-size: 14px; line-height: 1.5; }
+.mp-search { flex: 1 1 300px; max-width: 420px; display: flex; align-items: center; gap: 8px; position: relative; margin: 0; }
+.mp-search input[type="search"] {
+  flex: 1; min-width: 0; height: 40px; padding: 0 12px 0 36px; border-radius: 10px;
+  border: 1px solid var(--mp-hair-strong); background: var(--ac-input, var(--ground, #fff)); color: var(--mp-ink); font: inherit; font-size: 14px;
+}
+.mp-search input[type="search"]:focus { outline: none; border-color: var(--mp-accent); box-shadow: var(--mp-ring); }
+.mp-search-icon { position: absolute; left: 12px; top: 50%; width: 14px; height: 14px; margin-top: -8px; border: 2px solid var(--mp-muted); border-radius: 50%; pointer-events: none; }
+.mp-search-icon::after { content: ""; position: absolute; width: 6px; height: 2px; background: var(--mp-muted); right: -6px; bottom: -3px; transform: rotate(45deg); border-radius: 1px; }
+.mp-search .btn { height: 40px; }
+@media (max-width: 600px) { .mp-search input[type="search"] { font-size: 16px; } }
+.account .mp-search input + .btn, .ac-app .mp-search input + .btn-small { margin-left: 0; }
+/* "Show": all services or the marketplace only, as a compact segmented switch. */
+.mp-catalog > .mp-filter { margin: 0; padding: 4px; display: inline-flex; gap: 4px; justify-self: start; border-radius: 12px; border: 1px solid var(--mp-hair); background: var(--mp-raised); }
+.mp-catalog > .mp-filter legend { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.mp-catalog > .mp-filter label.mp-check { position: relative; display: inline-flex; align-items: center; padding: 6px 14px; border-radius: 9px; font-size: 13px; font-weight: 600; color: var(--mp-muted); cursor: pointer; }
+.mp-catalog > .mp-filter label.mp-check input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.mp-catalog > .mp-filter label.mp-check:has(input:checked) { background: var(--mp-surface); color: var(--mp-ink); box-shadow: var(--mp-shadow); }
+.mp-catalog > .mp-filter label.mp-check:has(input:focus-visible) { box-shadow: var(--mp-ring); }
+.mp-section-title { margin: 6px 0 0; font-size: 16px; font-weight: 700; color: var(--mp-ink); letter-spacing: -.005em; }
+.mp-list-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; }
+.mp-toolbar { display: flex; flex-wrap: wrap; gap: 10px; }
+.mp-select { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--mp-muted); font-weight: 600; }
+.mp-select select {
+  height: 34px; padding: 0 30px 0 10px; border-radius: 9px; border: 1px solid var(--mp-hair-strong);
+  background: var(--ac-input, var(--ground, #fff)); color: var(--mp-ink); font: inherit; font-weight: 500; font-size: 13px;
+}
+.mp-select select:focus-visible { outline: none; border-color: var(--mp-accent); box-shadow: var(--mp-ring); }
+.mp-empty { padding: 28px 16px; text-align: center; color: var(--mp-muted); border: 1px dashed var(--mp-hair-strong); border-radius: var(--mp-radius); }
+
+/* ---- the grid and its cards -------------------------------------------------------------------- */
+/* A content box per listing: logo, title and description lead; the rest is a quiet footer. 1, 2,
+   3 or 4 equal-height columns by the width the grid has, not the window's. */
+.mp-grid { list-style: none; margin: 0; padding: 4px 0 0; display: grid; gap: 18px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 244px), 1fr)); align-items: stretch; }
+.mp-grid > li { margin: 0; }
+.mp-grid-featured { grid-template-columns: repeat(auto-fit, minmax(min(100%, 290px), 1fr)); }
+
+.mp-card {
+  position: relative; display: flex; flex-direction: column; align-items: flex-start; min-width: 0; height: 100%;
+  padding: 22px 22px 18px; border-radius: 18px; border: 1px solid var(--mp-hair);
+  background: var(--mp-surface); box-shadow: var(--mp-shadow);
+  transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+}
+.mp-card:hover { transform: translateY(-3px); box-shadow: var(--mp-shadow-hover); border-color: var(--mp-hair-strong); }
+.mp-card:focus-within { border-color: var(--mp-accent); box-shadow: var(--mp-ring), var(--mp-shadow-hover); }
+@media (prefers-reduced-motion: reduce) { .mp-card, .mp-card:hover { transition: none; transform: none; } }
+.mp-card > .mp-logo { margin-bottom: 16px; }
+.mp-card-title { margin: 0 0 6px; font-size: 16.5px; line-height: 1.3; font-weight: 750; letter-spacing: -.01em; color: var(--mp-ink); }
+.mp-card-link {
+  all: unset; cursor: pointer; color: inherit; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+/* The title's button or link covers the whole box, so every pixel of it opens the listing. */
+.mp-card-link::after { content: ""; position: absolute; inset: 0; border-radius: inherit; z-index: 1; }
+.mp-card-link:focus-visible { outline: none; }
+.mp-card-summary {
+  margin: 0 0 18px; color: var(--mp-text); font-size: 14.5px; line-height: 1.55;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.mp-card-foot {
+  margin-top: auto; align-self: stretch; padding-top: 14px; border-top: 1px solid var(--mp-hair);
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px 10px;
+}
+.mp-card-foot .mp-publisher { font-size: 12.5px; }
+.mp-card-foot .mp-card-price { grid-column: 2; grid-row: 1; }
+.mp-card-facts { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; font-size: 12px; color: var(--mp-muted); min-width: 0; }
+.mp-card-facts > span { white-space: nowrap; }
+.mp-dot { opacity: .6; }
+.mp-card-category { color: var(--mp-accent-text); font-weight: 600; }
+.mp-card-hosting-publisher { color: var(--mp-soon); }
+.mp-card-installed { color: var(--mp-ok); font-weight: 650; }
+.mp-card-price {
+  flex-shrink: 0; padding: 4px 11px; border-radius: 999px; font-size: 12.5px; font-weight: 700; white-space: nowrap;
+  color: var(--mp-ink); background: var(--mp-raised); border: 1px solid var(--mp-hair);
+}
+.mp-card-price-soon { color: var(--mp-soon); background: var(--mp-soon-soft); border-color: transparent; }
+
+.mp-card-featured { padding: 26px 26px 20px; background:
+  radial-gradient(140% 110% at 100% 0%, var(--mp-accent-soft), transparent 55%), var(--mp-surface); }
+.mp-card-featured .mp-card-title { font-size: 18px; }
+.mp-card-featured .mp-card-summary { font-size: 15px; }
+
+/* A small corner ribbon, clear of the title (the logo sits under it on the left). */
+.mp-ribbon {
+  position: absolute; top: 16px; right: 16px; z-index: 2; pointer-events: none; white-space: nowrap;
+  padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 700; letter-spacing: .02em;
+  color: #fff; background: var(--mp-ribbon); box-shadow: 0 2px 6px -2px rgba(154, 52, 18, .5);
+}
+
+.mp-card-skeleton { min-height: 230px; background: linear-gradient(90deg, var(--mp-skeleton), transparent 40%, var(--mp-skeleton)) var(--mp-surface); background-size: 200% 100%; animation: mp-shimmer 1.4s linear infinite; box-shadow: none; }
+@keyframes mp-shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+@media (prefers-reduced-motion: reduce) { .mp-card-skeleton { animation: none; } }
+
+/* ---- chips, publisher line, verified badge ------------------------------------------------------ */
+.mp-card-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.mp-chip {
+  white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; padding: 2px 9px; border-radius: 999px;
+  font-size: 12px; font-weight: 600; line-height: 1.6; color: var(--mp-muted); background: var(--mp-raised);
+  border: 1px solid var(--mp-hair);
+}
+.mp-chip[data-category] { color: var(--mp-accent-text); background: var(--mp-accent-soft); border-color: transparent; }
+.mp-chip-hosting::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--mp-ok); }
+.mp-chip-publisher::before { background: var(--mp-soon); }
+.mp-chip-sample { border-style: dashed; }
+.mp-chip-soon { color: var(--mp-soon); background: var(--mp-soon-soft); border-color: transparent; }
+.mp-chip-update { color: var(--mp-accent-text); background: var(--mp-accent-soft); border-color: transparent; }
+.mp-publisher { display: inline-flex; align-items: center; gap: 5px; min-width: 0; font-size: 13px; color: var(--mp-muted); }
+.mp-publisher-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mp-verified { display: inline-grid; place-items: center; flex-shrink: 0; width: 15px; height: 15px; border-radius: 50%; background: var(--mp-verified); color: #fff; }
+.mp-verified-mark { font-size: 9px; font-weight: 900; line-height: 1; }
+.mp-byline { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+
+/* ---- installed list --------------------------------------------------------------------------- */
+.mp-installed .mp-row { align-items: center; }
+
+/* ---- the listing page ------------------------------------------------------------------------- */
+.mp-detail { display: grid; gap: 18px; }
+.mp-back { justify-self: start; }
+.mp-detail-hero {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 18px 22px; padding: 22px; border-radius: var(--mp-radius);
+  border: 1px solid var(--mp-hair);
+  background: radial-gradient(120% 140% at 100% 0%, var(--mp-accent-soft), transparent 60%), var(--mp-surface);
+  box-shadow: var(--mp-shadow);
+}
+.mp-detail-hero.mp-detail-coming { background: radial-gradient(120% 140% at 100% 0%, var(--mp-soon-soft), transparent 60%), var(--mp-surface); }
+.mp-detail-titles { flex: 1 1 260px; min-width: 0; display: grid; gap: 8px; }
+.mp-detail-titles h4 { margin: 0; font-size: 24px; line-height: 1.2; letter-spacing: -.015em; color: var(--mp-ink); }
+.mp-detail-titles h4:focus { outline: none; }
+.mp-detail-meta { margin: 0; font-size: 13px; }
+.mp-detail-body { display: grid; gap: 18px; grid-template-columns: minmax(0, 1fr); align-items: start; }
+@media (min-width: 900px) { .mp-detail-body { grid-template-columns: minmax(0, 1fr) 300px; } }
+.mp-detail-main { display: grid; gap: 12px; min-width: 0; }
+.mp-detail-main > h5 { margin: 8px 0 0; font-size: 15px; color: var(--mp-ink); }
+.mp-detail-summary { margin: 0; font-size: 16px; line-height: 1.55; color: var(--mp-ink); }
+.mp-description { margin: 0; white-space: pre-line; line-height: 1.6; color: var(--mp-text); }
+.mp-detail-side { display: grid; gap: 14px; }
+.mp-side-card, .ac-app .mp-side-card { padding: 16px; border-radius: var(--mp-radius); border: 1px solid var(--mp-hair); background: var(--mp-surface); box-shadow: var(--mp-shadow); }
+.mp-side-card h5 { margin: 0 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--mp-muted); }
+.mp-side-card p { margin: 0 0 8px; font-size: 13.5px; }
+.mp-side-pub .mp-publisher { font-size: 15px; color: var(--mp-ink); font-weight: 650; }
+.mp-facts { display: grid; grid-template-columns: max-content 1fr; gap: 8px 14px; margin: 0; font-size: 13.5px; }
+.mp-facts dt { color: var(--mp-muted); }
+.mp-facts dd { margin: 0; color: var(--mp-ink); font-weight: 600; text-align: right; }
+.mp-links { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 6px; font-size: 13.5px; }
+.mp-links a { color: var(--mp-accent-text); font-weight: 600; text-decoration: none; }
+.mp-links a:hover { text-decoration: underline; }
+.mp-links a:focus-visible { outline: none; box-shadow: var(--mp-ring); border-radius: 4px; }
+.mp-cta { display: grid; gap: 6px; justify-items: start; padding: 14px 16px; border-radius: 12px; background: var(--mp-soon-soft); }
+.mp-cta .btn:disabled { opacity: 1; cursor: not-allowed; background: var(--mp-raised); color: var(--mp-muted); border: 1px solid var(--mp-hair-strong); box-shadow: none; }
+.mp-cta .ac-note { margin: 0; }
+.mp-shots { overflow-x: auto; }
+.mp-shot-list { list-style: none; margin: 0; padding: 0 0 4px; display: flex; gap: 10px; }
+.mp-shot-list img { display: block; height: 220px; width: auto; border-radius: 12px; border: 1px solid var(--mp-hair); }
+
+/* ---- the public marketplace page ------------------------------------------------------------- */
+.mp-public { margin: 28px 0 8px; }
+.mp-public[hidden] { display: none; }
+.mp-public .mp-grid { margin: 8px 0 0; padding: 12px 0 0; }
+.mp-public .mp-section-title { font-size: 20px; margin: 0; }
+.mp-public-note { margin: 6px 0 0; color: var(--mp-muted); font-size: 14px; }
+.mp-public .mp-card-link { color: inherit; text-decoration: none; }
+.mp-public .mp-card-title { font-size: 16.5px; }
+
+@media (max-width: 600px) {
+  .mp-detail-hero { padding: 18px; gap: 14px 16px; }
+  .mp-detail-hero .mp-logo[data-size="96"] { width: 72px; height: 72px; border-radius: 18px; }
+  .mp-detail-hero .mp-logo[data-size="96"] .mp-logo-letters { font-size: 26px; }
+  .mp-detail-titles h4 { font-size: 21px; }
+}
+
+/* ---- informational callout (a publisher-hosted listing's notice) -------------------------------
+   The billing gate's tokens: amber fill and edge, ink text. Information, never an error. */
+.mp-callout {
+  display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; border-radius: 12px;
+  border: 1px solid var(--warn-edge, #fde68a); background: var(--warn-fill, #fffbeb); color: var(--mp-ink);
+}
+.mp-callout p { margin: 0; font-size: 14px; line-height: 1.5; color: var(--mp-text); }
+.mp-callout strong { color: var(--mp-ink); }
+.mp-callout-icon { flex-shrink: 0; width: 20px; height: 20px; margin-top: 1px; fill: none; stroke: var(--warn-text, #92400e); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }

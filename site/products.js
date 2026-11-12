@@ -15,12 +15,13 @@
 (function () {
   "use strict";
 
+  // Pigeonpost's own assistants, not open yet: `[name, what, marketplace category]`.
   const SERVICES = [
-    ["Personal assistant", "Tasks, reminders and scheduling help from your own agent."],
-    ["AI CRM", "Leads, pipeline and follow-ups, run by an agent your team can talk to."],
-    ["AI HR", "Job posts, candidate intake and interview briefs."],
-    ["Shopping assistant", "Compare products and prepare purchases you approve."],
-    ["Marketing assistant", "Campaign plans and drafts, reviewed before anything is sent."],
+    ["Personal assistant", "Tasks, reminders and scheduling help from your own agent.", "productivity"],
+    ["AI CRM", "Leads, pipeline and follow-ups, run by an agent your team can talk to.", "sales"],
+    ["AI HR", "Job posts, candidate intake and interview briefs.", "hr"],
+    ["Shopping assistant", "Compare products and prepare purchases you approve.", "other"],
+    ["Marketing assistant", "Campaign plans and drafts, reviewed before anything is sent.", "marketing"],
   ];
   const CURRENCY_NAMES = { USD: "US dollar", EUR: "Euro", TRY: "Turkish lira" };
   const STATUS_TEXT = {
@@ -123,7 +124,10 @@
       // here, with a publisher badge and a Marketplace filter) and shows these under "All services".
       if (catalog) {
         const box = el("div", { id: "pp-marketplace" });
-        catalog.render(box, builtins);
+        // The catalog draws these as its own cards; the plain list stays for the feature-off case.
+        catalog.render(box, builtins, SERVICES.map(([title, summary, category]) => ({
+          id: `pp_${title.toLowerCase().replace(/[^a-z0-9]+/g, "_")}`, title, summary, category,
+        })));
         return panel("services", box);
       }
       return panel("services",

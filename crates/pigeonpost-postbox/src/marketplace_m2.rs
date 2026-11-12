@@ -1984,7 +1984,10 @@ pub(crate) fn listing_in(
         listing_json,
     )
     .optional()?
-    .map(|v| crate::marketplace_pay::with_price_in(c, v))
+    .map(|v| {
+        crate::marketplace_pay::with_price_in(c, v)
+            .and_then(|v| crate::marketplace_listings::with_look_in(c, v))
+    })
     .transpose()
 }
 
@@ -2020,7 +2023,10 @@ async fn list_listings(
                     .query_map([&id], listing_json)?
                     .collect::<rusqlite::Result<Vec<_>>>()?;
                 rows.into_iter()
-                    .map(|v| Ok(crate::marketplace_pay::with_price_in(c, v)?))
+                    .map(|v| {
+                        let v = crate::marketplace_pay::with_price_in(c, v)?;
+                        Ok(crate::marketplace_listings::with_look_in(c, v)?)
+                    })
                     .collect()
             })
             .await?;
@@ -2477,7 +2483,10 @@ async fn catalog(
                     )?
                     .collect::<rusqlite::Result<Vec<_>>>()?;
                 rows.into_iter()
-                    .map(|v| Ok(crate::marketplace_pay::with_price_in(c, v)?))
+                    .map(|v| {
+                        let v = crate::marketplace_pay::with_price_in(c, v)?;
+                        Ok(crate::marketplace_listings::with_look_in(c, v)?)
+                    })
                     .collect()
             })
             .await?;
@@ -2909,6 +2918,8 @@ async fn install(
         )
         .map_err(|d| deny(d, false))?;
         let req: InstallReq = parse(body)?;
+        // Not available yet: shown in the catalog, never sold, installed or run.
+        crate::marketplace_listings::refuse_coming_soon(&state, &req.listing_id).await?;
         let lid = req.listing_id.clone();
         type Found = (String, String, String, String, Option<Rel>);
         let found = state

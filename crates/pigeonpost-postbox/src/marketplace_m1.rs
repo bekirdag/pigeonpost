@@ -2694,7 +2694,7 @@ fn register_build_in(
 }
 
 /// The platform publisher, made on first use. It is approved by construction: it is Pigeonpost.
-fn platform_publisher_in(tx: &Transaction<'_>, now: i64) -> rusqlite::Result<String> {
+pub(crate) fn platform_publisher_in(tx: &Transaction<'_>, now: i64) -> rusqlite::Result<String> {
     if let Some(id) = tx
         .query_row(
             "SELECT id FROM publisher_profiles WHERE owner_kind = 'platform' AND owner_id = ?1

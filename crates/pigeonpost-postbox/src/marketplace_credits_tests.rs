@@ -581,10 +581,40 @@ async fn every_other_ending_releases_the_hold() {
     let (s, v) = run(&w, &listing, json!({ "role": "CFO" })).await;
     assert_eq!(s, 201, "{v}");
     let lost = v["data"]["job_id"].as_str().unwrap().to_string();
+    // Running a job also starts a dispatch in the background. Let it finish first, so it cannot
+    // race the move below (on a slow runner it used to deliver the job before the mailbox left,
+    // windows-2022 in run 43068883279); then put the job back in the queue as if it had not been
+    // picked up yet, which is the case under test.
+    for _ in 0..200 {
+        let id = lost.clone();
+        let queued = w
+            .srv
+            .state
+            .store
+            .group_read(move |c| -> Result<bool, crate::groups::GErr> {
+                Ok(c.query_row(
+                    "SELECT state = 'queued' FROM nest_hosted_jobs WHERE id = ?1",
+                    [&id],
+                    |r| r.get(0),
+                )?)
+            })
+            .await
+            .unwrap();
+        if !queued {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
     sql(
         &w.srv,
         "UPDATE identities SET account_id = ?2 WHERE address = ?1",
         vec![w.service.address.clone(), w.bob.account.clone()],
+    )
+    .await;
+    sql(
+        &w.srv,
+        "UPDATE nest_hosted_jobs SET state = 'queued', next_attempt_at = 0 WHERE id = ?1",
+        vec![lost.clone()],
     )
     .await;
     dispatch_once(&w.srv.state).await;

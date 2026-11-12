@@ -32,6 +32,7 @@ mod limits;
 mod listing;
 pub(crate) mod marketplace;
 pub(crate) mod marketplace_hosted;
+pub(crate) mod marketplace_look;
 pub(crate) mod marketplace_pay;
 pub(crate) mod meetings;
 mod msgactions;
@@ -1027,6 +1028,8 @@ impl Store {
         // Publisher-hosted listings and pay-per-job: guarded column adds, the per_job term, two
         // new job tables (`store::marketplace_hosted`).
         marketplace_hosted::migrate(&conn)?;
+        // Marketplace look: logos, categories, featured, links and `coming_soon` (guarded adds).
+        marketplace_look::migrate(&conn)?;
         for stmt in MIGRATIONS
             .iter()
             .chain(filtering::MIGRATIONS)

@@ -265,12 +265,15 @@
     mailboxes:    { view: "mailboxes",  label: "AI agents",        group: "Handles & inboxes" },
     keys:         { view: "keys",       label: "Connector keys",   group: "Handles & inboxes" },
     plan:         { view: "plan",       label: "Cloud plan",       group: "Plans & products" },
-    inbox:        { view: "products",   label: "Buy an Inbox",     group: "Plans & products", tab: "inbox" },
-    nests:        { view: "products",   label: "Nests",            group: "Plans & products", tab: "nests", primary: true },
+    inbox:        { view: "products",   label: "Buy an Inbox",     group: "Plans & products", tab: "inbox",
+                    lede: "A Pigeonpost name you own, with its mail storage." },
+    nests:        { view: "products",   label: "Nests",            group: "Plans & products", tab: "nests", primary: true,
+                    lede: "Private workspaces where your agents and installed services run." },
     credits:      { view: "credits",    label: "Credits",          group: "Billing" },
     billing:      { view: "billing",    label: "Billing details",  group: "Billing" },
     invoices:     { view: "invoices",   label: "Invoices",         group: "Billing" },
-    services:     { view: "products",   label: "Services",         group: "Marketplace", tab: "services" },
+    services:     { view: "products",   label: "Services",         group: "Marketplace", tab: "services",
+                    lede: "Apps and services from verified publishers, reviewed by Pigeonpost." },
     publish:      { view: "publish",    label: "Publish",          group: "Marketplace", needs: "#ac-publisher" },
     security:     { view: "security",   label: "Two-factor",       group: "Security & privacy" },
     privacy:      { view: "privacy",    label: "Account deletion", group: "Security & privacy" },
@@ -332,6 +335,9 @@
     syncBillingGate();
     const head = $(`#ac-h-${spec.view}`);
     if (head && spec.tab) head.textContent = spec.label;
+    // The products view is shared by three sidebar items: its subtitle follows the item too.
+    const lede = $(`#ac-l-${spec.view}`);
+    if (lede && spec.tab) { lede.textContent = spec.lede || ""; lede.hidden = !spec.lede; }
     document.title = `${spec.label} · Your Pigeonpost account`;
     if (spec.tab) selectProductTab(spec.tab);
     closeDrawer();
@@ -437,7 +443,7 @@
   // One section's heading. `solo` sections hold a single card whose own heading repeats this one;
   // the stylesheet keeps that card heading for screen readers and hides it from view.
   function viewHead(view, title, lede) {
-    return `<div class="ac-view-head"><h1 id="ac-h-${view}" tabindex="-1">${esc(title)}</h1>${lede ? `<p>${lede}</p>` : ""}</div>`;
+    return `<div class="ac-view-head"><h1 id="ac-h-${view}" tabindex="-1">${esc(title)}</h1>${lede ? `<p id="ac-l-${view}">${lede}</p>` : `<p id="ac-l-${view}" hidden></p>`}</div>`;
   }
 
   // ---- render -------------------------------------------------------------------------------
@@ -1022,7 +1028,8 @@
       method: o.method || "GET",
       headers: Object.assign(
         { authorization: `Bearer ${getToken()}`, accept: "application/json" },
-        o.body ? { "content-type": "application/json" } : {},
+        // A listing logo goes up as the image itself (`contentType`); everything else is JSON.
+        o.body ? { "content-type": o.contentType || "application/json" } : {},
       ),
       body: o.body,
     });

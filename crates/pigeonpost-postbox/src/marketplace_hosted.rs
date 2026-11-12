@@ -857,6 +857,8 @@ async fn run_job(
         )
         .map_err(|d| deny(d, false))?;
         let req: RunReq = parse(body)?;
+        // Not available yet: shown in the catalog, never sold, installed or run.
+        crate::marketplace_listings::refuse_coming_soon(&state, &req.listing_id).await?;
         let input = Value::Object(req.input.clone());
         if input.to_string().len() > MAX_INPUT_BYTES {
             return Err(GErr::bad("invalid_operation_payload", "input: at most 64 KiB"));
