@@ -445,7 +445,7 @@ $U rm -rf $d /var/lib/pigeonpost-buildd/netlog/*
 
 If the trace has no `connect(` line, the strace format or flags differ in this runsc release:
 do not enable `[behaviour]` until the egress unit tests' fixture
-(`crates/pigeonpost-nests/tests/fixtures/scanners/strace.log`) matches what this host prints.
+(`crates/pigeonpost-nests/tests/fixtures/scanners/strace.txt`) matches what this host prints.
 
 ### Disk, CPU and network
 

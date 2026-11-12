@@ -1376,7 +1376,7 @@ mod tests {
 
     #[test]
     fn the_strace_parser_finds_each_network_attempt_once() {
-        let attempts = parse_strace(include_str!("../tests/fixtures/scanners/strace.log"));
+        let attempts = parse_strace(include_str!("../tests/fixtures/scanners/strace.txt"));
         let shown: Vec<String> = attempts
             .iter()
             .map(|a| format!("{} {} {} {:?}", a.syscall, a.family, a.addr, a.port))
@@ -1390,7 +1390,7 @@ mod tests {
 
     #[test]
     fn undeclared_egress_and_dns_block_while_in_sandbox_traffic_does_not() {
-        let attempts = parse_strace(include_str!("../tests/fixtures/scanners/strace.log"));
+        let attempts = parse_strace(include_str!("../tests/fixtures/scanners/strace.txt"));
         let f = egress_findings(&["broker".into()], &attempts);
         let mut ids: Vec<&str> = f.iter().map(|x| x.id.as_str()).collect();
         ids.sort_unstable();

@@ -1384,7 +1384,7 @@ mod tests {
     const GRYPE: &str = include_str!("../tests/fixtures/scanners/grype.json");
     const SEMGREP: &str = include_str!("../tests/fixtures/scanners/semgrep.json");
     const GITLEAKS: &str = include_str!("../tests/fixtures/scanners/gitleaks.json");
-    const CLAMAV: &str = include_str!("../tests/fixtures/scanners/clamav.log");
+    const CLAMAV: &str = include_str!("../tests/fixtures/scanners/clamav.txt");
     const YARA: &str = include_str!("../tests/fixtures/scanners/yara.txt");
 
     fn by_id<'a>(f: &'a [Finding], id: &str) -> &'a Finding {

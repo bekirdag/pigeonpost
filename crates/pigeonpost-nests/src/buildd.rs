@@ -3015,7 +3015,7 @@ mod tests {
         let leaky = FakeBuildPodman {
             trace: Some((
                 trace_root.clone(),
-                include_str!("../tests/fixtures/scanners/strace.log").into(),
+                include_str!("../tests/fixtures/scanners/strace.txt").into(),
             )),
             ..Default::default()
         };
