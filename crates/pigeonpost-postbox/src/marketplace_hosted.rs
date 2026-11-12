@@ -1036,10 +1036,14 @@ async fn run_job(
         if let Some(a) = wake_to {
             state.event_hub.wake(&a);
         }
-        let s = state.clone();
-        tokio::spawn(async move {
-            dispatch_once(&s).await;
-        });
+        // Hand it over now rather than on the next tick. Tests drive dispatch themselves: an eager
+        // background dispatch races the state they set up between creating and dispatching a job.
+        if !cfg!(test) {
+            let s = state.clone();
+            tokio::spawn(async move {
+                dispatch_once(&s).await;
+            });
+        }
         Ok((StatusCode::CREATED, Json(json!({ "data": v }))))
     }
     .await;
