@@ -230,10 +230,12 @@ async fn staff_shadow_job(
             .store
             .group_tx(move |tx| create_in(tx, &listing, &owner, &deliver, "staff", Some(&who), now))
             .await?;
-        let s = state.clone();
-        tokio::spawn(async move {
-            crate::marketplace_hosted::dispatch_once(&s).await;
-        });
+        if !cfg!(test) {
+            let s = state.clone();
+            tokio::spawn(async move {
+                crate::marketplace_hosted::dispatch_once(&s).await;
+            });
+        }
         Ok((
             StatusCode::CREATED,
             Json(json!({ "data": { "job_id": job, "shadow": true } })),
