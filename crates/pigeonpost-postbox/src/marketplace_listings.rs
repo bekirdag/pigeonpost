@@ -4,8 +4,8 @@
 //! |---|---|---|
 //! | `GET /v1/publishers/{publisher}/listing-stats` | `PublisherManage` | the publisher's team: installation counts per listing, never who installed |
 //! | `POST /v1/marketplace/listings/{listing}/reports` | `NestInstall` | a person who can see the listing; 10 a day |
-//! | `GET /v1/staff/listing-reports`, `POST /v1/staff/listing-reports/{report}/close` | `NestReview` | a reviewer with step-up |
-//! | `GET /v1/staff/listings?status=&publisher=&cursor=` | `NestReview` | a reviewer with step-up |
+//! | `GET /v1/staff/listing-reports`, `POST /v1/staff/listing-reports/{report}/close` | `MarketplaceOps` | a reviewer or ops, with step-up |
+//! | `GET /v1/staff/listings?status=&publisher=&cursor=` | `MarketplaceOps` | a reviewer or ops, with step-up |
 //!
 //! Price terms live on the listing (`price.amount_minor`, `price.currency`, `price.term`): the
 //! launch terms are `one_off` and `monthly`, currencies TRY, USD and EUR, and the amount stays 0
@@ -320,7 +320,7 @@ async fn staff_reports(
     Query(q): Query<HashMap<String, String>>,
 ) -> Response {
     let result = async {
-        staff_gate(&state, &headers, Action::NestReview, "listing-reports", None).await?;
+        staff_gate(&state, &headers, Action::MarketplaceOps, "listing-reports", None).await?;
         let status = q.get("status").cloned().unwrap_or_else(|| "open".into());
         if !matches!(status.as_str(), "open" | "closed") {
             return Err(GErr::bad("invalid_request", "status: open or closed"));
@@ -385,7 +385,7 @@ async fn close_report(
 ) -> Response {
     let result = async {
         let (_, account) =
-            staff_gate(&state, &headers, Action::NestReview, "listing-reports", None).await?;
+            staff_gate(&state, &headers, Action::MarketplaceOps, "listing-reports", None).await?;
         let req: CloseReq = parse(body)?;
         let resolution = text(&req.resolution, "resolution", 1, 500)?;
         let now = now_unix() as i64;
@@ -418,7 +418,7 @@ async fn staff_listings(
     Query(q): Query<HashMap<String, String>>,
 ) -> Response {
     let result = async {
-        staff_gate(&state, &headers, Action::NestReview, "listings", None).await?;
+        staff_gate(&state, &headers, Action::MarketplaceOps, "listings", None).await?;
         let status = q.get("status").cloned().unwrap_or_default();
         if !status.is_empty()
             && !matches!(

@@ -503,7 +503,7 @@
         ],
         "operationId": "listStaffRoles",
         "summary": "List staff roles",
-        "description": "Retrieve a paginated list of all assigned staff roles.",
+        "description": "Retrieve a paginated list of all assigned staff roles. The configured platform owner only; not behind the `marketplace` flag, since the roles cover the whole back office (`docs/backoffice/contracts/pigeonpost-staff.v1.yaml`).",
         "x-pigeonpost-status": "implemented",
         "x-pigeonpost-action": "StaffRolesManage",
         "security": [
@@ -3284,7 +3284,7 @@
         "summary": "Suspend or reinstate a listing",
         "description": "A person with a live `reviewer` staff role and a recent strong sign-in (`403 staff_required`, `step_up_required`). The reviewer must have no stake in the publisher (`403 staff_conflict`). A suspended listing takes no jobs and its publisher cannot change its status. Reinstating returns it to `published` only if its release is still attested and live, its publisher certified and it was published before; otherwise to `draft`.",
         "x-pigeonpost-status": "implemented",
-        "x-pigeonpost-action": "NestQuarantine",
+        "x-pigeonpost-action": "MarketplaceOps",
         "security": [
           {
             "memberToken": []
@@ -5089,9 +5089,9 @@
         ],
         "operationId": "staffListListingReports",
         "summary": "The listing report queue",
-        "description": "A reviewer with step-up. `status=open` (default) or `closed`, oldest first, paged with `cursor`. Reporters are not named.",
+        "description": "A reviewer or ops staff member with step-up. `status=open` (default) or `closed`, oldest first, paged with `cursor`. Reporters are not named.",
         "x-pigeonpost-status": "implemented",
-        "x-pigeonpost-action": "NestReview",
+        "x-pigeonpost-action": "MarketplaceOps",
         "security": [
           {
             "memberToken": []
@@ -5164,9 +5164,9 @@
         ],
         "operationId": "staffCloseListingReport",
         "summary": "Close a report",
-        "description": "A reviewer with step-up, with a `resolution`. Moderation itself is `POST /v1/staff/listings/{listing}/moderation`.",
+        "description": "A reviewer or ops staff member with step-up, with a `resolution`. Moderation itself is `POST /v1/staff/listings/{listing}/moderation`.",
         "x-pigeonpost-status": "implemented",
-        "x-pigeonpost-action": "NestReview",
+        "x-pigeonpost-action": "MarketplaceOps",
         "security": [
           {
             "memberToken": []
@@ -5242,9 +5242,9 @@
         ],
         "operationId": "staffListListings",
         "summary": "Every listing, for moderation",
-        "description": "A reviewer with step-up. Filter by `status` and `publisher`; newest first; paged with `cursor`; each with its open report count.",
+        "description": "A reviewer or ops staff member with step-up. Filter by `status` and `publisher`; newest first; paged with `cursor`; each with its open report count.",
         "x-pigeonpost-status": "implemented",
-        "x-pigeonpost-action": "NestReview",
+        "x-pigeonpost-action": "MarketplaceOps",
         "security": [
           {
             "memberToken": []
@@ -6005,9 +6005,9 @@
         ],
         "operationId": "staffListHostedJobs",
         "summary": "Publisher-hosted jobs, for support",
-        "description": "A reviewer with step-up. Ids, states, delivery and error codes, newest first, at most 100; never the input or the result.",
+        "description": "A reviewer or ops staff member with step-up. Ids, states, delivery and error codes, newest first, at most 100; never the input or the result.",
         "x-pigeonpost-status": "implemented",
-        "x-pigeonpost-action": "NestReview",
+        "x-pigeonpost-action": "MarketplaceOps",
         "security": [
           {
             "memberToken": []
@@ -8321,8 +8321,11 @@
           "role": {
             "type": "string",
             "enum": [
+              "owner",
+              "support",
+              "finance",
               "reviewer",
-              "finance"
+              "ops"
             ]
           },
           "granted_by": {
@@ -8350,8 +8353,11 @@
           "role": {
             "type": "string",
             "enum": [
+              "owner",
+              "support",
+              "finance",
               "reviewer",
-              "finance"
+              "ops"
             ]
           }
         }

@@ -10,7 +10,7 @@
 
 use rusqlite::{params, Connection, OptionalExtension};
 
-pub(super) const SCHEMA: &str = "
+pub(crate) const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS staff_roles (
     id         TEXT PRIMARY KEY,
     account_id TEXT NOT NULL,
@@ -587,6 +587,73 @@ pub(crate) fn review_conflict_in(
         conflicted: release_conflict_in(c, staff, release)?,
         first_party: false,
     })
+}
+
+/// The roles `staff_roles.role` admits after [`migrate_staff_roles`]. The original table (above,
+/// kept as written so an older binary's schema text is unchanged) admits only `reviewer` and
+/// `finance`; SQLite cannot widen a CHECK in place, so the table is rebuilt once.
+const STAFF_ROLES_WIDE: &str = "
+CREATE TABLE staff_roles_wide (
+    id         TEXT PRIMARY KEY,
+    account_id TEXT NOT NULL,
+    role       TEXT NOT NULL CHECK (role IN ('owner','support','finance','reviewer','ops')),
+    granted_by TEXT NOT NULL,
+    granted_at INTEGER NOT NULL,
+    revoked_by TEXT,
+    revoked_at INTEGER
+);
+";
+
+/// Widen `staff_roles.role` to the five back office roles (2026-11-11), preserving every row.
+///
+/// Guarded by the table's own definition in `sqlite_master` (a CHECK is not visible through
+/// `PRAGMA table_info`), checked again under `BEGIN IMMEDIATE`: a table that already admits `'ops'` is left alone, so this runs once per
+/// database and is a no-op afterwards. The rebuild is SQLite's documented procedure for a
+/// constraint change: create the new table, copy, drop the old one, rename, recreate the index;
+/// all in one transaction, which commits only if the copy holds exactly the old row count. No
+/// other table, trigger or view refers to `staff_roles`. An older binary reading the rebuilt table
+/// ignores the roles it cannot parse (`live_staff_roles_in`), so a rollback grants nothing new.
+pub(crate) fn migrate_staff_roles(c: &Connection) -> rusqlite::Result<()> {
+    // `None`: no table yet. `Some(true)`: already wide.
+    fn widened(c: &Connection) -> rusqlite::Result<Option<bool>> {
+        let sql: Option<String> = c
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'staff_roles'",
+                [],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(sql.map(|s| s.contains("'ops'")))
+    }
+    if widened(c)? != Some(false) {
+        return Ok(());
+    }
+    // The write lock first, then the check again: another process opening the same file (the
+    // reaper) may have rebuilt the table between the look above and here.
+    let tx = rusqlite::Transaction::new_unchecked(c, rusqlite::TransactionBehavior::Immediate)?;
+    if widened(&tx)? != Some(false) {
+        return Ok(());
+    }
+    let before: i64 = tx.query_row("SELECT COUNT(*) FROM staff_roles", [], |r| r.get(0))?;
+    tx.execute_batch("DROP TABLE IF EXISTS staff_roles_wide;")?;
+    tx.execute_batch(STAFF_ROLES_WIDE)?;
+    tx.execute_batch(
+        "INSERT INTO staff_roles_wide (id, account_id, role, granted_by, granted_at, revoked_by, revoked_at)
+             SELECT id, account_id, role, granted_by, granted_at, revoked_by, revoked_at FROM staff_roles;
+         DROP TABLE staff_roles;
+         ALTER TABLE staff_roles_wide RENAME TO staff_roles;
+         CREATE UNIQUE INDEX IF NOT EXISTS staff_roles_live ON staff_roles(account_id, role)
+             WHERE revoked_at IS NULL;",
+    )?;
+    let after: i64 = tx.query_row("SELECT COUNT(*) FROM staff_roles", [], |r| r.get(0))?;
+    if after != before {
+        // Dropping `tx` rolls the whole rebuild back.
+        return Err(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ABORT),
+            Some("staff_roles rebuild did not copy every row".into()),
+        ));
+    }
+    tx.commit()
 }
 
 /// `account`'s live staff roles, as stored. Text that no longer parses is ignored, so a role this

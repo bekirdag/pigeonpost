@@ -1008,7 +1008,7 @@ jobs:
           "$RUNNER_TEMP/openapi-venv/bin/pip" install --quiet --require-hashes --no-deps \
             --only-binary :all: -r .github/scripts/openapi/requirements.txt
       - name: Parse and validate the OpenAPI specs and the Nests marketplace contract
-        run: '"$RUNNER_TEMP/openapi-venv/bin/python" .github/scripts/openapi/check_openapi.py openapi/pigeonpost.v1.yaml openapi/pigeonpost-org.v1.yaml docs/nests/contracts/pigeonpost-nests.v1.yaml'
+        run: '"$RUNNER_TEMP/openapi-venv/bin/python" .github/scripts/openapi/check_openapi.py openapi/pigeonpost.v1.yaml openapi/pigeonpost-org.v1.yaml docs/nests/contracts/pigeonpost-nests.v1.yaml docs/backoffice/contracts/pigeonpost-staff.v1.yaml'
 
   acceptance:
     # Exercise the built product as two isolated agents, including an offline loft/outbox retry,

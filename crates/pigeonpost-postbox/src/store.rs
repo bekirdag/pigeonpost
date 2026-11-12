@@ -1015,6 +1015,8 @@ impl Store {
         conn.execute_batch(crate::nest_approvals::SCHEMA)?;
         // Marketplace foundations (M0): staff roles, publishers and the catalog.
         conn.execute_batch(marketplace::SCHEMA)?;
+        // Back office (2026-11-11): five staff roles. A guarded, one-time table rebuild.
+        marketplace::migrate_staff_roles(&conn)?;
         // Marketplace hardening (W1): signatures, quotas, kills, source builds, worker tombstones.
         conn.execute_batch(crate::marketplace_hardening::SCHEMA)?;
         // Progress and effects marketplace workers report through the broker.

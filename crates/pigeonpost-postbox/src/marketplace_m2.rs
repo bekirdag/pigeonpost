@@ -21,7 +21,7 @@
 //! | `GET /v1/staff/publisher-applications`, `GET /v1/staff/reviews` | `NestReview` | a reviewer with step-up |
 //! | `POST /v1/staff/publisher-applications/{application}/decisions` | `NestReview` | a reviewer with step-up and no stake |
 //! | `POST /v1/staff/publishers/{publisher}/revocation` | `NestQuarantine` | same |
-//! | `POST /v1/staff/listings/{listing}/moderation` | `NestQuarantine` | same |
+//! | `POST /v1/staff/listings/{listing}/moderation` | `MarketplaceOps` | a reviewer or ops with step-up and no stake |
 //! | `GET /internal/v1/marketplace/build-requests`, `POST …/{build}/failure` | ops service | the build plane |
 //!
 //! The review pipeline is M1's (`marketplace_m1`): a publisher's build request is answered by the
@@ -3779,7 +3779,7 @@ async fn staff_moderate(
         let (principal, account) = staff_gate(
             &state,
             &headers,
-            Action::NestQuarantine,
+            Action::MarketplaceOps,
             &listing,
             publisher.clone(),
         )

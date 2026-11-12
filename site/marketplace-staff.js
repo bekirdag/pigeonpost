@@ -37,7 +37,12 @@
     behavioral_test: "Behaviour test", human_review: "Staff review", attestation: "Attestation",
   };
 
-  MP.staff = function (root, deps) {
+  // `opts` (the back office, site/staff.js): `only` picks the sections to draw ("reviews",
+  // "applications", "moderation"; default all three), and `embedded` keeps the card visible with a
+  // sentence when access is refused, since the back office screen has its own heading.
+  MP.staff = function (root, deps, opts) {
+    const o = opts || {};
+    const only = new Set(o.only || ["reviews", "applications", "moderation"]);
     const st = {
       access: "checking", reviewFilter: "open", appFilter: "applied", reviews: [], apps: [], reviewers: null,
       review: null, listings: [], revoking: null, gen: 0,
@@ -48,11 +53,14 @@
     async function load() {
       const gen = ++st.gen;
       try {
-        const reviews = await deps.pb(`/v1/staff/reviews?status=${st.reviewFilter}`);
+        // The first section drawn is the access probe; the others fall back to empty.
+        const appsPath = `/v1/staff/publisher-applications?status=${st.appFilter}`;
+        const reviews = only.has("reviews") ? await deps.pb(`/v1/staff/reviews?status=${st.reviewFilter}`) : { data: [] };
+        const apps0 = !only.has("reviews") && only.has("applications") ? await deps.pb(appsPath) : null;
         const [apps, roles, listings] = await Promise.all([
-          deps.pb(`/v1/staff/publisher-applications?status=${st.appFilter}`).catch(() => ({ data: [] })),
+          apps0 || (only.has("applications") ? deps.pb(appsPath).catch(() => ({ data: [] })) : { data: [] }),
           deps.pb("/v1/staff/roles").catch(() => null),
-          deps.pb("/v1/marketplace/listings").catch(() => ({ data: [] })),
+          only.has("moderation") ? deps.pb("/v1/marketplace/listings").catch(() => ({ data: [] })) : { data: [] },
         ]);
         if (gen !== st.gen) return;
         st.reviews = reviews.data || [];
@@ -274,9 +282,12 @@
 
     function draw() {
       root.textContent = "";
+      if (o.embedded && st.access === "checking") { root.append(el("p", { class: "muted", role: "status", text: "Loading…" })); return; }
+      if (o.embedded && st.access === "none") { root.append(el("p", { class: "muted", text: MP.errorText(st.stepUpError) })); return; }
       if (st.access === "checking" || st.access === "none") { root.hidden = true; return; }
       root.hidden = false;
-      root.append(el("h3", { id: "mp-staff-title", text: "Staff: marketplace review" }), status);
+      if (!o.embedded) root.append(el("h3", { id: "mp-staff-title", text: "Staff: marketplace review" }));
+      root.append(status);
       if (st.access === "step_up") {
         root.append(el("p", { text: "Staff tools need a recent two-step sign-in." }));
         MP.report(deps, status, st.stepUpError, "staff");
@@ -284,7 +295,9 @@
       }
       if (single()) root.append(el("p", { class: "pp-warn", id: "mp-staff-single", text: "You are the only reviewer. Every decision here is a single-person approval and is logged as one." }));
       if (st.review) root.append(reviewDetail());
-      root.append(reviewsSection(), applicationsSection(), moderationSection());
+      if (only.has("reviews")) root.append(reviewsSection());
+      if (only.has("applications")) root.append(applicationsSection());
+      if (only.has("moderation")) root.append(moderationSection());
     }
 
     draw();

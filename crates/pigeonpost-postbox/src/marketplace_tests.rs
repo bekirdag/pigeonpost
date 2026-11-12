@@ -72,18 +72,23 @@ async fn apply(srv: &Srv, who: &Person, name: &str) -> String {
 }
 
 /// Every route of the milestone answers 404 feature_disabled while the flag is off, for the
-/// platform owner included.
+/// platform owner included, except staff role management: the roles now cover the whole back
+/// office (`backoffice.rs`), so they work without the marketplace.
 #[tokio::test]
 async fn nothing_works_while_the_flag_is_off() {
     let (srv, owner) = setup().await;
+    let (s, v) = srv.get("/v1/staff/roles", &owner.strong).await;
+    assert_eq!(s, 200, "staff roles are not behind the flag: {v}");
+    let (s, v) = srv
+        .call(
+            Method::DELETE,
+            "/v1/staff/roles/stf_x",
+            Some(&owner.strong),
+            None,
+        )
+        .await;
+    assert_eq!((s, code(&v)), (404, "not_found"), "{v}");
     for (method, path, body) in [
-        (Method::GET, "/v1/staff/roles", None),
-        (
-            Method::POST,
-            "/v1/staff/roles",
-            Some(json!({"account_id": OWNER_ACCOUNT, "role": "reviewer"})),
-        ),
-        (Method::DELETE, "/v1/staff/roles/stf_x", None),
         (
             Method::POST,
             "/v1/publisher-applications",
@@ -109,9 +114,17 @@ async fn nothing_works_while_the_flag_is_off() {
     // A flag turned on for one account does not reach another.
     let other = srv.person("mpother").await;
     account_flag(&srv, &owner.account).await;
-    let (s, _) = srv.get("/v1/staff/roles", &owner.strong).await;
-    assert_eq!(s, 200);
-    let (s, v) = srv.get("/v1/staff/roles", &other.strong).await;
+    let (s, v) = srv
+        .get("/v1/staff/publisher-applications/pub_x", &owner.strong)
+        .await;
+    assert_ne!(
+        (s, code(&v)),
+        (404, "feature_disabled"),
+        "the flagged account gets past the flag: {v}"
+    );
+    let (s, v) = srv
+        .get("/v1/staff/publisher-applications/pub_x", &other.strong)
+        .await;
     assert_eq!((s, code(&v)), (404, "feature_disabled"), "{v}");
 }
 
@@ -155,7 +168,7 @@ async fn only_the_owner_with_step_up_assigns_and_lists_staff_roles() {
     assert_eq!((s, code(&v)), (409, "role_already_held"), "{v}");
     let (s, v) = assign(&srv, &owner, "acct_nobody", "reviewer").await;
     assert_eq!((s, code(&v)), (404, "account_not_found"), "{v}");
-    let (s, v) = assign(&srv, &owner, &reviewer.account, "owner").await;
+    let (s, v) = assign(&srv, &owner, &reviewer.account, "superuser").await;
     assert_eq!((s, code(&v)), (400, "invalid_role"), "{v}");
     let (s, v) = srv
         .post(
