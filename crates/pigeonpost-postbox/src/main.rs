@@ -110,6 +110,8 @@ mod marketplace_hosted;
 #[cfg(test)]
 mod marketplace_hosted_tests;
 mod marketplace_listings;
+#[cfg(test)]
+mod marketplace_look_tests;
 mod marketplace_m1;
 #[cfg(test)]
 mod marketplace_m1_tests;
@@ -269,6 +271,8 @@ struct AppState {
     event_hub: Arc<account_events::EventHub>,
     /// Where profile pictures' bytes live: `<blob dir>/avatars`, outside the attachment quota.
     avatar_blobs: Option<Arc<blobs::Blobs>>,
+    /// Marketplace listing logos: `<blob dir>/logos`, re-encoded like pictures, public by design.
+    logo_blobs: Option<Arc<blobs::Blobs>>,
     /// Decodes and re-encodes uploaded pictures, isolated and with bounded concurrency.
     avatar_processor: Arc<avatars::Processor>,
     /// Ring attempts per caller→callee pair, for call admission.
@@ -687,6 +691,14 @@ fn build_state(cfg: &Config, master_key: [u8; 32]) -> Result<AppState, store::St
             env_num::<u64>("PIGEONPOST_AVATAR_TOTAL_MB", 2048) * 1024 * 1024,
         )
     });
+    // Listing logos: three small WebPs per listing, re-encoded by the picture worker.
+    let logo_blobs = blobs.as_ref().and_then(|b| {
+        b.sub_store(
+            "logos",
+            avatars::VARIANT_MAX,
+            env_num::<u64>("PIGEONPOST_LOGO_TOTAL_MB", 512) * 1024 * 1024,
+        )
+    });
     Ok(AppState {
         pow: Arc::new(pow::Pow::new(
             secret,
@@ -734,6 +746,7 @@ fn build_state(cfg: &Config, master_key: [u8; 32]) -> Result<AppState, store::St
         service_tokens: Arc::new(internal_api::ServiceTokens::from_env()),
         event_hub: Arc::new(account_events::EventHub::from_env()),
         avatar_blobs: avatar_blobs.map(Arc::new),
+        logo_blobs: logo_blobs.map(Arc::new),
         avatar_processor: Arc::new(avatars::Processor::from_env()),
         call_pairs: Arc::new(filtering::PairLimiter::new()),
         calendar: Arc::new(calendar::Runtime::from_env(&cfg.public_url)),
@@ -7454,6 +7467,7 @@ mod tests {
             service_tokens: Arc::new(internal_api::ServiceTokens::default()),
             event_hub: Arc::new(account_events::EventHub::default()),
             avatar_blobs: None,
+            logo_blobs: None,
             avatar_processor: Arc::new(avatars::Processor::new(avatars::Isolation::Inline)),
             call_pairs: Arc::new(filtering::PairLimiter::new()),
             calendar: Arc::new(calendar::Runtime::for_test()),
@@ -10289,6 +10303,7 @@ mod tests {
             service_tokens: Arc::new(internal_api::ServiceTokens::default()),
             event_hub: Arc::new(account_events::EventHub::default()),
             avatar_blobs: None,
+            logo_blobs: None,
             avatar_processor: Arc::new(avatars::Processor::new(avatars::Isolation::Inline)),
             call_pairs: Arc::new(filtering::PairLimiter::new()),
             calendar: Arc::new(calendar::Runtime::for_test()),

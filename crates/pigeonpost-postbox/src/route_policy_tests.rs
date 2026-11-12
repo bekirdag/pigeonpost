@@ -69,6 +69,7 @@ const ROUTERS: &[(&str, &str)] = &[
     ("marketplace_m2.rs", "pub(crate) fn internal_router("),
     ("marketplace_grants.rs", "pub(crate) fn router("),
     ("marketplace_listings.rs", "pub(crate) fn router("),
+    ("marketplace_listings.rs", "pub(crate) fn internal_router("),
     ("marketplace_org.rs", "pub(crate) fn router("),
     ("marketplace_sources.rs", "pub(crate) fn router("),
     ("marketplace_sources.rs", "pub(crate) fn internal_router("),

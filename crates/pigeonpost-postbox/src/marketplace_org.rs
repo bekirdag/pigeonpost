@@ -205,6 +205,8 @@ async fn install(
         ctx.require_writable()?;
         flag(&state, &ctx.account).await?;
         let req: InstallReq = parse(body)?;
+        // Not available yet: shown in the catalog, never sold, installed or run.
+        crate::marketplace_listings::refuse_coming_soon(&state, &req.listing_id).await?;
         if req.operators.len() > 50 {
             return Err(GErr::bad("too_many_operators", "at most 50 operators"));
         }

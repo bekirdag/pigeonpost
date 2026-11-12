@@ -32,6 +32,7 @@ mod limits;
 mod listing;
 pub(crate) mod marketplace;
 pub(crate) mod marketplace_hosted;
+pub(crate) mod marketplace_look;
 pub(crate) mod marketplace_pay;
 pub(crate) mod meetings;
 mod msgactions;
@@ -1031,6 +1032,8 @@ impl Store {
         // Verified publisher registration (developer program plan §2–§3): applications, documents,
         // KYC checks and the outboxes; existing publishers get a `legacy` application.
         publisher_registration::migrate(&conn)?;
+        // Marketplace look: logos, categories, featured, links and `coming_soon` (guarded adds).
+        marketplace_look::migrate(&conn)?;
         for stmt in MIGRATIONS
             .iter()
             .chain(filtering::MIGRATIONS)

@@ -45,8 +45,9 @@ function page(t, routes) {
   const calls = [], stepUps = [];
   const pb = async (path, init = {}) => {
     const method = init.method || "GET";
-    const body = init.body ? JSON.parse(init.body) : undefined;
-    calls.push({ path, method, body });
+    // A logo goes up as the file itself (`contentType`); everything else is JSON.
+    const body = typeof init.body === "string" ? JSON.parse(init.body) : init.body;
+    calls.push({ path, method, body, contentType: init.contentType });
     const out = await routes(method, path, body);
     if (out === undefined) throw fail(404, "not_found");
     return out;
@@ -98,12 +99,25 @@ test("the Services tab lists marketplace listings with a publisher badge and a M
   await openServices(p);
   const legend = p.$("#mp-catalog fieldset.mp-filter legend");
   assert.equal(legend.textContent, "Show");
-  assert.equal(p.$('[data-listing="lst_a"] .mp-badge').textContent, "Publisher: Acme");
-  assert.equal(p.$('[data-listing="lst_p"] .mp-badge-first').textContent, "By Pigeonpost");
-  assert.equal(p.doc.querySelectorAll(".pp-service").length, 5, "All services keeps the built-in assistants");
-  assert.equal(p.doc.querySelectorAll("#pp-panel-services .pp-soon").length, 5);
+  assert.equal(p.$('[data-listing="lst_a"] .mp-publisher-name').textContent, "Acme");
+  assert.equal(p.$('[data-listing="lst_a"] .mp-verified'), null, "not certified, no badge");
+  assert.equal(p.$('[data-listing="lst_p"] .mp-publisher-name').textContent, "Pigeonpost");
+  assert.ok(p.$('[data-listing="lst_p"] .mp-verified'), "first-party listings carry the badge");
+  const builtins = p.doc.querySelectorAll("#mp-builtins [data-builtin]");
+  assert.equal(builtins.length, 5, "All services keeps the built-in assistants, as cards");
+  assert.equal(p.$("#mp-builtins-title").textContent, "Coming from Pigeonpost");
+  const pa = p.$('[data-builtin="pp_personal_assistant"]');
+  assert.equal(pa.querySelector(".mp-ribbon").textContent, "Coming soon");
+  assert.equal(pa.querySelector(".mp-logo").dataset.logo, "default");
+  assert.equal(pa.querySelector(".mp-card-title").textContent, "Personal assistant");
+  assert.equal(pa.querySelector(".mp-publisher-name").textContent, "Pigeonpost");
+  assert.ok(pa.querySelector(".mp-verified"));
+  assert.equal(pa.querySelector(".mp-card-category").textContent, "Productivity");
+  assert.equal(pa.querySelector(".mp-card-hosting"), null);
+  assert.equal(pa.querySelector("button, a"), null, "a teaser opens nothing");
+  assert.equal(p.doc.querySelectorAll("#pp-panel-services .pp-soon").length, 0, "no separate Coming soon line");
   p.choose(p.$("#mp-filter-marketplace"));
-  assert.equal(p.doc.querySelectorAll(".pp-service").length, 0, "Marketplace shows listings only");
+  assert.equal(p.$("#mp-builtins"), null, "Marketplace shows listings only");
   assert.equal(p.doc.querySelectorAll("[data-listing]").length, 2);
   assert.ok(p.$("#mp-cat-status[role=status]"), "outcomes go to a status region");
 });
@@ -1074,4 +1088,223 @@ test("a result that could not reach the inbox says it is available on the job pa
   const row = p.$('#mp-jobs [data-job="job_9"]').textContent;
   assert.match(row, /available on the job page/);
   assert.doesNotMatch(row, /in your inbox$/);
+});
+
+// ---- the marketplace look: logos, cards, catalog controls, coming soon ------------------------
+
+const LOGO = (id) => ({ hash: "0123456789abcdef", urls: Object.fromEntries(["64", "128", "512"].map((n) => [n, `/v1/marketplace/listings/${id}/logo/0123456789abcdef/${n}.webp`])) });
+const SAMPLE = (id, title, category, extra = {}) => ({
+  ...LISTING, id, title, category, summary: `${title} summary`, coming_soon: true, sample: true, logo: null,
+  publisher: { display_name: "Pigeonpost", first_party: true, verified: true }, ...extra,
+});
+
+test("default logos are the title's initials on a tone derived from the id, the same every time", async (t) => {
+  const p = catalogPage(t);
+  const MP = p.window.PPMarketplace;
+  assert.equal(MP.initials("Contract reviewer"), "CR");
+  assert.equal(MP.initials("Translator (TR/EN/DE)"), "Tr");
+  assert.equal(MP.initials("  meeting   minutes writer "), "MM");
+  assert.equal(MP.initials("Çeviri"), "Çe");
+  assert.equal(MP.initials(""), "?");
+  const tone = MP.logoTone("lst_sample_translator");
+  assert.ok(Number.isInteger(tone) && tone >= 0 && tone < MP.TONES);
+  assert.equal(MP.logoTone("lst_sample_translator"), tone, "deterministic");
+  const tones = new Set(["lst_a", "lst_b", "lst_c", "lst_d", "lst_e", "lst_f", "lst_g", "lst_h"].map((id) => MP.logoTone(id)));
+  assert.ok(tones.size >= 4, "ids spread over the tones");
+  const tile = MP.logo({ id: "lst_sample_translator", title: "Translator (TR/EN/DE)" }, { size: 48 });
+  assert.equal(tile.dataset.logo, "default");
+  assert.ok(tile.classList.contains(`mp-tone-${tone}`));
+  assert.equal(tile.style.getPropertyValue("--mp-hue"), String(MP.TONE_HUES[tone]), "the gradient starts from the id's hue");
+  assert.equal(tile.textContent, "Tr");
+  assert.equal(tile.getAttribute("aria-hidden"), "true", "decorative next to its title");
+  const named = MP.logo({ id: "lst_x", title: "X ray" }, { size: 96, alt: "X ray logo" });
+  assert.equal(named.getAttribute("role"), "img");
+  assert.equal(named.getAttribute("aria-label"), "X ray logo");
+  // An uploaded logo is an image from the postbox; anything else falls back to the default.
+  const img = MP.logo({ id: "lst_i", title: "Invoice reader", logo: LOGO("lst_i") }, { size: 48 });
+  assert.equal(img.tagName, "IMG");
+  assert.equal(img.getAttribute("src"), "https://postbox.pigeonpost.dev/v1/marketplace/listings/lst_i/logo/0123456789abcdef/128.webp");
+  assert.equal(img.getAttribute("alt"), "");
+  const big = MP.logo({ id: "lst_i", title: "Invoice reader", logo: LOGO("lst_i") }, { size: 96, alt: "Invoice reader logo" });
+  assert.match(big.getAttribute("src"), /\/512\.webp$/);
+  assert.equal(big.getAttribute("alt"), "Invoice reader logo");
+  const hostile = MP.logo({ id: "lst_h", title: "Hostile", logo: { urls: { 128: "javascript:alert(1)", 512: "//evil.example/x.webp" } } }, { size: 48 });
+  assert.equal(hostile.dataset.logo, "default");
+});
+
+test("cards show the logo, the publisher with its verified badge, the category, hosting and price", async (t) => {
+  const listings = [
+    { ...LISTING, category: "legal", publisher: { display_name: "Acme", first_party: false, verified: true }, price: { amount_minor: 0 } },
+    { ...LISTING, id: "lst_i", title: "Invoice reader", category: "finance", logo: LOGO("lst_i"), hosting: "publisher", price_from: { amount_cents: 25, currency: "USD", unit: "run" }, publisher: { display_name: "Ledger Co", first_party: false, verified: false } },
+    { ...LISTING, id: "lst_m", title: "Monthly digest", price: { amount_minor: 1000, currency: "USD", term: "monthly", on_sale: true } },
+  ];
+  const p = catalogPage(t, { listings });
+  await openServices(p);
+  const a = p.$('[data-listing="lst_a"]');
+  assert.equal(a.querySelector(".mp-logo").dataset.logo, "default");
+  assert.equal(a.querySelector(".mp-logo-letters").textContent, "HH");
+  assert.equal(a.querySelector(".mp-publisher-name").textContent, "Acme");
+  assert.ok(a.querySelector(".mp-verified"), "a certified publisher has the verified badge");
+  assert.equal(a.querySelector(".mp-card-category").textContent, "Legal");
+  assert.equal(a.querySelector(".mp-card-hosting").textContent, "Runs in your Nest");
+  assert.equal(a.querySelector(".mp-card-price").textContent, "Free");
+  assert.equal(a.querySelector(".mp-card-summary").textContent, "Answers HR questions");
+  assert.equal(a.querySelector(".mp-ribbon"), null);
+  const i = p.$('[data-listing="lst_i"]');
+  assert.equal(i.querySelector("img.mp-logo").getAttribute("src"), "https://postbox.pigeonpost.dev/v1/marketplace/listings/lst_i/logo/0123456789abcdef/128.webp");
+  assert.equal(i.querySelector(".mp-verified"), null);
+  assert.equal(i.querySelector(".mp-card-hosting").textContent, "Hosted by the publisher");
+  assert.equal(i.querySelector(".mp-card-price").textContent, "$0.25 per run");
+  assert.equal(p.$('[data-listing="lst_m"] .mp-card-price').textContent, "$10.00/month");
+  // The whole card opens the listing through its title, which names it for screen readers.
+  const open = i.querySelector(".mp-card-link");
+  assert.equal(open.tagName, "BUTTON");
+  assert.equal(open.getAttribute("aria-label"), "Details for Invoice reader");
+});
+
+test("coming-soon samples wear a ribbon, fill the featured row, and filter and sort by category and price", async (t) => {
+  const listings = [
+    { ...LISTING, category: "productivity", published_at: "2026-11-01T00:00:00Z", price: { amount_minor: 2500, currency: "USD", term: "one_off", on_sale: true } },
+    { ...LISTING, id: "lst_f", title: "Free notes", category: "productivity", published_at: "2026-11-05T00:00:00Z", price: { amount_minor: 0 } },
+    SAMPLE("lst_sample_contract_reviewer", "Contract reviewer", "legal", { featured: true, featured_rank: 1 }),
+    SAMPLE("lst_sample_translator", "Translator (TR/EN/DE)", "language", { featured: true, featured_rank: 3 }),
+    SAMPLE("lst_sample_meeting_minutes", "Meeting minutes writer", "productivity", { featured: true, featured_rank: 2 }),
+    SAMPLE("lst_sample_code_review", "Code review assistant", "developer"),
+  ];
+  const p = catalogPage(t, { listings });
+  await openServices(p);
+  const soon = p.$('#mp-grid [data-listing="lst_sample_contract_reviewer"]');
+  assert.ok(soon.classList.contains("mp-card-coming"));
+  assert.equal(soon.querySelector(".mp-ribbon").textContent, "Coming soon");
+  assert.equal(soon.querySelector(".mp-card-price"), null, "the ribbon says it; no second label");
+  assert.equal(soon.querySelector(".mp-card-sample").textContent, "Sample");
+  assert.equal(soon.querySelector(".mp-publisher-name").textContent, "Pigeonpost");
+  const featured = [...p.doc.querySelectorAll("#mp-featured [data-listing]")].map((n) => n.dataset.listing);
+  assert.deepEqual(featured, ["lst_sample_contract_reviewer", "lst_sample_meeting_minutes", "lst_sample_translator"], "featured rank order");
+  // Featured order in the grid: what is available now first (newest first), then what is coming,
+  // featured ones leading.
+  const grid = () => [...p.doc.querySelectorAll("#mp-grid [data-listing]")].map((n) => n.dataset.listing);
+  assert.deepEqual(grid(), ["lst_f", "lst_a", "lst_sample_contract_reviewer", "lst_sample_meeting_minutes", "lst_sample_translator", "lst_sample_code_review"]);
+  // Categories offered are the ones present; choosing one narrows the grid and hides the featured row.
+  const cat = p.$("#mp-cat-category");
+  assert.deepEqual([...cat.options].map((o) => o.value), ["", "productivity", "legal", "language", "developer"]);
+  cat.value = "productivity";
+  cat.dispatchEvent(new p.window.Event("change", { bubbles: true }));
+  assert.equal(p.$("#mp-featured"), null);
+  assert.deepEqual(grid(), ["lst_f", "lst_a", "lst_sample_meeting_minutes"]);
+  const sort = p.$("#mp-cat-sort");
+  sort.value = "price";
+  sort.dispatchEvent(new p.window.Event("change", { bubbles: true }));
+  assert.deepEqual(grid(), ["lst_f", "lst_a", "lst_sample_meeting_minutes"], "cheapest first, coming soon last");
+  const sort2 = p.$("#mp-cat-sort");
+  sort2.value = "newest";
+  sort2.dispatchEvent(new p.window.Event("change", { bubbles: true }));
+  assert.equal(grid()[0], "lst_f");
+  const cat2 = p.$("#mp-cat-category");
+  cat2.value = "legal";
+  cat2.dispatchEvent(new p.window.Event("change", { bubbles: true }));
+  assert.deepEqual(grid(), ["lst_sample_contract_reviewer"]);
+});
+
+test("a coming-soon listing's page offers a disabled Coming soon button and nothing to install", async (t) => {
+  const detail = { ...DETAIL, ...SAMPLE("lst_a", "HR helper", "recruiting"), description: "Screens applications.\n\nThis is a sample listing from Pigeonpost.", operations: [], config_schema: SCHEMA };
+  const p = catalogPage(t, { detail });
+  await openDetail(p);
+  const go = p.$("#mp-coming-soon");
+  assert.ok(go, "the primary button");
+  assert.equal(go.textContent, "Coming soon");
+  assert.equal(go.disabled, true);
+  assert.equal(go.getAttribute("aria-describedby"), "mp-coming-note");
+  assert.equal(p.$("#mp-install"), null);
+  assert.equal(p.$("#mp-buy"), null);
+  assert.equal(p.$(".mp-detail-hero .mp-logo").getAttribute("aria-label"), "HR helper logo");
+  assert.ok(p.$(".mp-detail-hero .mp-chip-soon"));
+  assert.equal(p.$("#mp-publisher-card .mp-publisher-name").textContent, "Pigeonpost");
+  assert.equal(p.$("#mp-support-link").getAttribute("href"), "/app-support.html");
+  assert.equal(p.$("#mp-privacy-link").getAttribute("href"), "/privacy");
+  assert.equal(p.calls.some((c) => c.method !== "GET"), false, "nothing was sent");
+});
+
+test("a listing's page shows its links, facts and screenshots, and installs as before", async (t) => {
+  const detail = { ...DETAIL, logo: LOGO("lst_a"), category: "hr", support_url: "https://acme.example/help", privacy_url: "https://acme.example/privacy",
+    screenshots: [{ url: "https://acme.example/s1.png", alt: "The question form" }, { url: "javascript:alert(1)" }],
+    publisher: { display_name: "Acme", first_party: false, verified: true } };
+  const p = catalogPage(t, { detail });
+  await openDetail(p);
+  assert.match(p.$(".mp-detail-hero img.mp-logo").getAttribute("src"), /\/512\.webp$/);
+  assert.equal(p.$(".mp-detail-hero img.mp-logo").getAttribute("alt"), "HR helper logo");
+  assert.equal(p.$("#mp-support-link").getAttribute("href"), "https://acme.example/help");
+  assert.equal(p.$("#mp-support-link").getAttribute("rel"), "noopener noreferrer");
+  assert.equal(p.$("#mp-privacy-link").getAttribute("href"), "https://acme.example/privacy");
+  const shots = [...p.doc.querySelectorAll(".mp-shots img")];
+  assert.equal(shots.length, 1, "only https screenshots");
+  assert.equal(shots[0].getAttribute("alt"), "The question form");
+  assert.ok(p.$("#mp-publisher-card .mp-verified"));
+  assert.match(p.$(".mp-facts").textContent, /HR/);
+  assert.ok(p.$("#mp-install"), "a free listing still installs");
+  assert.equal(p.$("#mp-coming-soon"), null);
+});
+
+test("the publisher console uploads a listing logo as the image itself, and can go back to the default", async (t) => {
+  const listings = [{ id: "lst_1", title: "HR helper", summary: "s", description: "", status: "draft", visibility: "public", version: "1.0.0", logo: LOGO("lst_1") }];
+  const p = publisherPage(t, { listings, extra: (m, path) => (path.endsWith("/logo") ? { data: { listing_id: "lst_1", logo: null } } : undefined) });
+  await tick();
+  assert.equal(p.$('[data-listing="lst_1"] img.mp-logo').getAttribute("src").endsWith("/128.webp"), true);
+  p.$('button[aria-label="Edit HR helper"]').click();
+  await tick();
+  const form = p.$("#mp-logo-lst_1");
+  assert.ok(form);
+  const input = p.$("#mp-logo-lst_1-file");
+  assert.equal(input.getAttribute("accept"), "image/png,image/jpeg,image/webp");
+  const svg = new p.window.File(["<svg/>"], "logo.svg", { type: "image/svg+xml" });
+  Object.defineProperty(input, "files", { value: [svg], configurable: true });
+  p.submit(form);
+  await tick();
+  assert.match(p.$("#mp-pub-status").textContent, /SVG isn't accepted/);
+  assert.equal(p.calls.some((c) => c.path.endsWith("/logo")), false);
+  const png = new p.window.File([new Uint8Array([137, 80, 78, 71])], "logo.png", { type: "image/png" });
+  Object.defineProperty(input, "files", { value: [png], configurable: true });
+  p.submit(form);
+  await tick();
+  const put = p.calls.find((c) => c.method === "PUT" && c.path === "/v1/publishers/pub_1/listings/lst_1/logo");
+  assert.ok(put, "PUT …/logo");
+  assert.equal(put.contentType, "image/png");
+  assert.equal(put.body, png, "the file, not JSON");
+  if (!p.$("#mp-logo-lst_1-remove")) { p.$('button[aria-label="Edit HR helper"]').click(); await tick(); }
+  p.$("#mp-logo-lst_1-remove").click();
+  await tick();
+  assert.ok(p.calls.find((c) => c.method === "DELETE" && c.path === "/v1/publishers/pub_1/listings/lst_1/logo"));
+});
+
+test("the shared products view takes its heading and subtitle from the sidebar item", async (t) => {
+  const p = await accountPage(t, { features: ["nests", "marketplace"], url: "https://pigeonpost.dev/account#services" });
+  const head = () => p.doc.querySelector("#ac-h-products").textContent;
+  const lede = () => p.doc.querySelector("#ac-l-products");
+  assert.equal(head(), "Services");
+  assert.match(lede().textContent, /verified publishers/);
+  assert.equal(lede().hidden, false);
+  p.window.location.hash = "#nests";
+  p.window.dispatchEvent(new p.window.HashChangeEvent("hashchange"));
+  for (let i = 0; i < 10; i++) await tick(1);
+  assert.equal(head(), "Nests");
+  assert.match(lede().textContent, /workspaces/);
+});
+
+test("a publisher-hosted listing's notice is an informational callout, not a warning", async (t) => {
+  const p = catalogPage(t, { detail: { ...DETAIL, hosting: "publisher", operations: [] } });
+  await openDetail(p);
+  const note = p.$("#mp-hosted-notice");
+  assert.ok(note.classList.contains("mp-callout"));
+  assert.equal(note.classList.contains("pp-warn"), false);
+  assert.equal(note.getAttribute("role"), "note");
+  assert.equal(note.querySelector("svg").getAttribute("aria-hidden"), "true");
+  assert.equal(note.querySelector("strong").textContent, "Hosted by the publisher");
+});
+
+test("a live listing that offers a built-in assistant replaces its teaser", async (t) => {
+  const listings = [{ ...LISTING, id: "lst_w", title: "Wodo AI HR", category: "hr" }, { ...LISTING, id: "lst_s", title: "AI CRM preview", coming_soon: true }];
+  const p = catalogPage(t, { listings });
+  await openServices(p);
+  const ids = [...p.doc.querySelectorAll("#mp-builtins [data-builtin]")].map((n) => n.dataset.builtin);
+  assert.deepEqual(ids, ["pp_personal_assistant", "pp_ai_crm", "pp_shopping_assistant", "pp_marketing_assistant"], "AI HR hidden; a coming-soon listing replaces nothing");
 });
