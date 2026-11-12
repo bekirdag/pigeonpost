@@ -258,6 +258,28 @@ pub(crate) const TABLES: &[(&str, Rule)] = &[
         Keep("Catalog record of a publisher's listing; the publisher profile blocks the purge"),
     ),
     ("nest_hosted_charges", Block(A, "account_id = ?1")),
+    // Developer program §4: review jobs and re-scans are review evidence for a publisher's
+    // release (no buyer, no account), like `review_cases`.
+    (
+        "nest_review_jobs",
+        Keep("Conformance-run evidence for a release under review; no buyer data"),
+    ),
+    (
+        "marketplace_rescans",
+        Keep("Re-scan record of a published release; no account data"),
+    ),
+    (
+        "release_security_flags",
+        Keep("Staff security flag on a release (re-scan, shadow job, result sample)"),
+    ),
+    (
+        "nest_shadow_jobs",
+        Keep("Marks a platform-owned hosted job as a staff check; the job row decides"),
+    ),
+    (
+        "nest_result_scans",
+        Keep("Malware-scan record of a hosted result; no file content"),
+    ),
     (
         "nest_installation_licences",
         Keep("Licence state of an installation; the installation row blocks the purge"),

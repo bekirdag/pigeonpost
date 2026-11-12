@@ -40,6 +40,7 @@ pub mod mock_upstream;
 pub mod parse;
 pub mod release;
 pub mod sandbox;
+pub mod scanners;
 pub mod storage;
 pub mod util;
 pub mod worker_api;

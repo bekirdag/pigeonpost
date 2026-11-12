@@ -2476,10 +2476,32 @@ Review processes your release in this order.
 | Stage | What it checks | Blocks a release? |
 |---|---|---|
 | Intake and build | The manifest, the build files (`Containerfile`, `nest-build.toml`), the tree's limits, the build itself | Yes |
-| Deterministic scan | Committed credentials, capabilities, syscalls, egress, external writes, licences | Yes |
+| Deterministic scan | Committed credentials, capabilities, syscalls, egress, external writes, licences, and the automated security checks below | Yes |
 | AI analysis | An advisory review of the source by a self-hosted model | No, its findings are evidence for the reviewer |
-| Behaviour test | The release runs its operations with honeytokens planted; nothing may leak | Yes |
+| Behaviour test | The release runs its operations with honeytokens and buyer-data markers planted; nothing may leak, and it may reach nothing but the broker | Yes |
 | Staff decision | A named Pigeonpost staff member approves or rejects | Yes |
+
+### Automated security checks
+
+Every tool runs on Pigeonpost's build plane inside gVisor, with no network. Its vulnerability and malware databases are refreshed separately, every 6 hours.
+
+| Check | Tool | Blocks your release when |
+|---|---|---|
+| Dependency vulnerabilities | OSV-Scanner on your lockfile and SBOM | A critical or high vulnerability has a fixed version (the others are shown, not blocking) |
+| Image vulnerabilities | Grype on the built image | The same rule |
+| Malware | ClamAV and YARA on your source, the build output and the image | Anything matches |
+| Static analysis | Semgrep with Pigeonpost's pinned ruleset (eval and exec, command and SQL injection, unsafe deserialisation, path traversal, SSRF) | A high-confidence error rule matches (the others are shown, not blocking) |
+| Committed secrets | gitleaks, on top of the rules below | Anything matches |
+| Obfuscation | Entropy, packed or minified JavaScript, large base64 blobs, committed binaries | Never; the reviewer looks at them |
+| Network egress | gVisor records every connection your release attempts during the behaviour test | It tries to reach anything but the broker, a DNS lookup included |
+| Buyer data | A marker in each test job's input | The marker shows up in your output or in another job's result |
+| Resource use | Memory, CPU and time during the behaviour test, against the per-Nest limits | It uses more than twice a limit (over a limit is shown, not blocking) |
+
+A scanner that cannot run, or a database older than three days, fails the scan rather than passing it. Your findings page lists each finding with its id, severity, tool, file or package, and message. A malware match shows only the file, never the signature.
+
+After publication, Pigeonpost scans published releases again every month against the newest databases. A new finding is flagged to Pigeonpost staff, who contact you. A scan never removes your listing by itself.
+
+Publisher-hosted services are also checked without notice after publication. Some jobs are sent by Pigeonpost, and some results are scanned with ClamAV and YARA. A failure is flagged to staff. A malware match also stops the listing until staff review it.
 
 ### Deterministic scan rules
 
@@ -2686,7 +2708,7 @@ Content-Type: application/json
 - `service_address` is a mailbox of your publisher's own account, or of its organization (an org agent mailbox), and never under `/pigeonpost/`. It is checked when you submit, when staff approve, when you publish and before every job is sent.
 - Fields: `name` is `[a-z][a-z0-9_]*`, `max_chars` 1 to 16000, `required` true or false, optional `label` (80 characters) and `multiline`. 1 to 32 fields, 1 to 20 operations.
 - The one output today is a PDF file. `deadline_hours` is 1 to 336, 72 by default.
-- The answer names the release and its review. A Pigeonpost staff member reviews the integration; there is no build, no automated stage and no attestation.
+- The answer names the release and its review. First comes the conformance run: Pigeonpost sends your service one free review job per operation (see [Review jobs](#review-jobs)). It fails if the result is missing or late, is not a PDF a buyer can open, matches a malware signature in ClamAV or YARA, or comes after your service mailbox stopped being yours. Then a Pigeonpost staff member reviews the integration. There is no build and no attestation.
 - An integration is immutable: a new service address or operation is a new version and a new review.
 
 When it is approved, create a listing for the release and publish it (publishing needs a recent, strong sign-in). The listing is never installed; buyers run its operations.
@@ -2712,6 +2734,10 @@ A job is one message in your service mailbox. Its body is exactly this JSON, wit
 - `input` is what the buyer typed into the operation's fields, strings only.
 - A resend of the same job is the same message. Use `job_id` as your idempotency key.
 - Ignore messages from `/pigeonpost/marketplace` whose `type` you do not know.
+
+### Review jobs
+
+While an integration is in review, your service gets one review job per operation. It is the same message with one more key, `"review": true`, and `listing_id` is `null`. Its input is synthetic, it is never charged, and its result goes to the review, not to a buyer. Answer it as you would answer any job, before the operation's deadline. A refused result can be sent again until the deadline. If the result route answers `503 scan_unavailable`, send the same result again later.
 
 ## Posting the result
 

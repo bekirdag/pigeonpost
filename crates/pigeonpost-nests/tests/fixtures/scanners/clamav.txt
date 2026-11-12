@@ -1,0 +1,6 @@
+--------------------------------------
+/scan/src/assets/eicar.com: Win.Test.EICAR_HDB-1 FOUND
+/scan/image/image.tar: Unix.Trojan.Mirai-9960218-0 FOUND
+/scan/layers/2/usr/share/blob.bin: Heuristics.Limits.Exceeded.MaxFileSize FOUND
+/scan/src/assets/secret.zip: Heuristics.Encrypted.Zip FOUND
+/scan/artefacts/bin/tool: Heuristics.Broken.Executable FOUND

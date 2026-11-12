@@ -98,6 +98,7 @@ mod internal_api;
 mod limits;
 mod mail_layout;
 mod marketplace;
+mod marketplace_conformance;
 mod marketplace_credits;
 #[cfg(test)]
 mod marketplace_credits_tests;
@@ -124,6 +125,8 @@ mod marketplace_org;
 mod marketplace_pay;
 #[cfg(test)]
 mod marketplace_pay_tests;
+mod marketplace_rescan;
+mod marketplace_shadow;
 mod marketplace_sources;
 mod marketplace_test_nests;
 #[cfg(test)]
@@ -1127,6 +1130,8 @@ fn build_router(state: AppState) -> Router {
         .merge(marketplace_pay::router())
         // Publisher-hosted listings: integrations, hosted jobs and their results.
         .merge(marketplace_hosted::router())
+        .merge(marketplace_rescan::router())
+        .merge(marketplace_shadow::router())
         // The Piyote back office (staff only, not behind the marketplace flag).
         .merge(backoffice::router())
         .merge(backoffice_finance::router())

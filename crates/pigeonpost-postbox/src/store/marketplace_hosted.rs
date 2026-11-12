@@ -124,6 +124,102 @@ CREATE TABLE IF NOT EXISTS nest_hosted_charges (
 );
 CREATE INDEX IF NOT EXISTS nest_hosted_charges_by_state ON nest_hosted_charges(state, next_attempt_at);
 CREATE INDEX IF NOT EXISTS nest_hosted_charges_by_account ON nest_hosted_charges(account_id);
+
+-- Review jobs of the hosted conformance run (developer program plan §4): one synthetic job per
+-- operation of an integration under review, sent to its service mailbox through the hosted-job
+-- path and marked `review: true`. No buyer, no listing, no charge. `scanning`: the result's files
+-- are with the build plane's ClamAV and YARA; `problems` holds the findings (JSON).
+-- `platform_error`: the job was lost on Pigeonpost's side (never sent, the scan lost or never
+-- run); it is not the publisher's failure and a fresh job replaces it.
+CREATE TABLE IF NOT EXISTS nest_review_jobs (
+    id                TEXT PRIMARY KEY,
+    case_id           TEXT NOT NULL,
+    release_id        TEXT NOT NULL,
+    publisher_id      TEXT NOT NULL,
+    operation         TEXT NOT NULL,
+    operation_version TEXT NOT NULL,
+    input             TEXT NOT NULL,
+    service_mailbox   TEXT NOT NULL,
+    state             TEXT NOT NULL CHECK (state IN ('queued','running','scanning','passed','failed',
+                          'platform_error')),
+    attempts          INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at   INTEGER NOT NULL,
+    last_error        TEXT,
+    dispatch_message  TEXT,
+    result_status     TEXT,
+    result_digest     TEXT,
+    files             TEXT,
+    scan_id           TEXT,
+    problems          TEXT NOT NULL DEFAULT '[]',
+    deadline_at       INTEGER NOT NULL,
+    created_at        INTEGER NOT NULL,
+    updated_at        INTEGER NOT NULL,
+    finished_at       INTEGER
+);
+CREATE INDEX IF NOT EXISTS nest_review_jobs_by_case ON nest_review_jobs(case_id);
+CREATE INDEX IF NOT EXISTS nest_review_jobs_by_state ON nest_review_jobs(state, next_attempt_at);
+
+-- The monthly re-scan of published releases: one row per scan the build plane was asked for.
+CREATE TABLE IF NOT EXISTS marketplace_rescans (
+    scan_id      TEXT PRIMARY KEY,
+    release_id   TEXT NOT NULL,
+    image_digest TEXT NOT NULL,
+    state        TEXT NOT NULL CHECK (state IN ('submitted','done','failed')),
+    new_findings INTEGER NOT NULL DEFAULT 0,
+    error        TEXT,
+    submitted_at INTEGER NOT NULL,
+    finished_at  INTEGER
+);
+CREATE INDEX IF NOT EXISTS marketplace_rescans_by_state ON marketplace_rescans(state, submitted_at);
+
+-- Something staff must look at on a release: a re-scan found a new blocking finding (`rescan`),
+-- an unannounced shadow job failed (`shadow_job`), or a sampled buyer result matched malware
+-- (`result_sample`). A re-scan never acts by itself (`action = 'none'`); a malware hit on a
+-- publisher-hosted result stops the listing (`quarantined`) until staff restore it.
+CREATE TABLE IF NOT EXISTS release_security_flags (
+    id              TEXT PRIMARY KEY,
+    release_id      TEXT NOT NULL,
+    listing_id      TEXT,
+    source          TEXT NOT NULL CHECK (source IN ('rescan','shadow_job','result_sample')),
+    ref_id          TEXT NOT NULL,
+    findings        TEXT NOT NULL,
+    action          TEXT NOT NULL DEFAULT 'none' CHECK (action IN ('none','quarantined')),
+    created_at      INTEGER NOT NULL,
+    acknowledged_at INTEGER,
+    acknowledged_by TEXT,
+    note            TEXT
+);
+CREATE INDEX IF NOT EXISTS release_security_flags_open ON release_security_flags(acknowledged_at, created_at);
+
+-- Unannounced shadow jobs (developer program plan §4, conformance detectability): ordinary hosted
+-- jobs (`nest_hosted_jobs`, a real listing, a normal job id, varied input) run by the platform
+-- owner's account with no charge. Only this table says they are checks; the publisher never sees it.
+CREATE TABLE IF NOT EXISTS nest_shadow_jobs (
+    job_id       TEXT PRIMARY KEY,
+    listing_id   TEXT NOT NULL,
+    release_id   TEXT NOT NULL,
+    origin       TEXT NOT NULL CHECK (origin IN ('staff','schedule')),
+    requested_by TEXT,
+    verdict      TEXT CHECK (verdict IS NULL OR verdict IN ('passed','failed')),
+    findings     TEXT,
+    created_at   INTEGER NOT NULL,
+    decided_at   INTEGER
+);
+CREATE INDEX IF NOT EXISTS nest_shadow_jobs_by_listing ON nest_shadow_jobs(listing_id, created_at);
+
+-- ClamAV/YARA scans of hosted results on the build plane: every shadow job's result, and a sample
+-- of real buyers' results. The files go to the analysis plane only for the scan.
+CREATE TABLE IF NOT EXISTS nest_result_scans (
+    scan_id      TEXT PRIMARY KEY,
+    job_id       TEXT NOT NULL,
+    listing_id   TEXT NOT NULL,
+    release_id   TEXT NOT NULL,
+    kind         TEXT NOT NULL CHECK (kind IN ('shadow','sample')),
+    state        TEXT NOT NULL CHECK (state IN ('submitted','done','failed')),
+    submitted_at INTEGER NOT NULL,
+    finished_at  INTEGER
+);
+CREATE INDEX IF NOT EXISTS nest_result_scans_by_state ON nest_result_scans(state, submitted_at);
 ";
 
 /// `(table, column, definition)` added to live tables.

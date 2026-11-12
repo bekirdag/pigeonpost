@@ -1,0 +1,179 @@
+{
+ "matches": [
+  {
+   "vulnerability": {
+    "id": "CVE-2024-45337",
+    "dataSource": "https://github.com/advisories/GHSA-vh95-rmgr-6w4m",
+    "namespace": "github:language:go",
+    "severity": "Critical",
+    "urls": [],
+    "description": "golang.org/x/crypto/ssh: SSH connection truncation allows for bypassing authentication checks.",
+    "fix": {
+     "versions": [
+      "0.31.0"
+     ],
+     "state": "fixed"
+    }
+   },
+   "relatedVulnerabilities": [],
+   "matchDetails": [],
+   "artifact": {
+    "id": "b6f9e8d4a7c2",
+    "name": "golang.org/x/crypto",
+    "version": "0.27.0",
+    "type": "go-module",
+    "locations": [
+     {
+      "path": "/app/go.mod",
+      "layerID": "sha256:abc123def456"
+     }
+    ],
+    "language": "go",
+    "purl": "pkg:golang/golang.org/x/crypto@0.27.0"
+   }
+  },
+  {
+   "vulnerability": {
+    "id": "CVE-2025-0001",
+    "dataSource": "https://security-tracker.debian.org/tracker/CVE-2025-0001",
+    "namespace": "debian:distro:debian:12",
+    "severity": "High",
+    "urls": [],
+    "description": "OpenSSL vulnerability allowing potential denial of service via crafted certificate.",
+    "fix": {
+     "versions": [],
+     "state": "not-fixed"
+    }
+   },
+   "relatedVulnerabilities": [],
+   "matchDetails": [],
+   "artifact": {
+    "id": "d4c3b2a1f9e8",
+    "name": "openssl",
+    "version": "3.0.15-1~deb12u1",
+    "type": "deb",
+    "locations": [
+     {
+      "path": "/usr/bin/openssl",
+      "layerID": "sha256:789xyz012abc"
+     }
+    ],
+    "language": "",
+    "purl": "pkg:deb/debian/openssl@3.0.15-1~deb12u1?arch=amd64"
+   }
+  },
+  {
+   "vulnerability": {
+    "id": "GHSA-9wx4-h78v-vm56",
+    "dataSource": "https://github.com/advisories/GHSA-9wx4-h78v-vm56",
+    "namespace": "github:language:python",
+    "severity": "Medium",
+    "urls": [],
+    "description": "Requests library vulnerable to HTTP request smuggling.",
+    "fix": {
+     "versions": [
+      "2.32.0"
+     ],
+     "state": "fixed"
+    }
+   },
+   "relatedVulnerabilities": [],
+   "matchDetails": [],
+   "artifact": {
+    "id": "a1b2c3d4e5f6",
+    "name": "requests",
+    "version": "2.31.0",
+    "type": "python",
+    "locations": [
+     {
+      "path": "/app/requirements.txt",
+      "layerID": "sha256:456ghi789jkl"
+     }
+    ],
+    "language": "python",
+    "purl": "pkg:pypi/requests@2.31.0"
+   }
+  },
+  {
+   "vulnerability": {
+    "id": "CVE-2023-99999",
+    "dataSource": "https://security-tracker.debian.org/tracker/CVE-2023-99999",
+    "namespace": "debian:distro:debian:12",
+    "severity": "Negligible",
+    "urls": [],
+    "description": "Minor issue in zlib compression library.",
+    "fix": {
+     "versions": [],
+     "state": "wont-fix"
+    }
+   },
+   "relatedVulnerabilities": [],
+   "matchDetails": [],
+   "artifact": {
+    "id": "f6e5d4c3b2a1",
+    "name": "zlib1g",
+    "version": "1:1.2.13.dfsg-1",
+    "type": "deb",
+    "locations": [
+     {
+      "path": "/usr/lib/x86_64-linux-gnu/libz.so.1.2.13",
+      "layerID": "sha256:789xyz012abc"
+     }
+    ],
+    "language": "",
+    "purl": "pkg:deb/debian/zlib1g@1%3A1.2.13.dfsg-1?arch=amd64"
+   }
+  },
+  {
+   "vulnerability": {
+    "id": "CVE-2026-55555",
+    "dataSource": "https://github.com/advisories/GHSA-vh95-rmgr-6w4m",
+    "namespace": "github:language:go",
+    "severity": "Unknown",
+    "urls": [],
+    "description": "golang.org/x/crypto/ssh: SSH connection truncation allows for bypassing authentication checks.",
+    "fix": {
+     "versions": [
+      "1.2.4"
+     ],
+     "state": "fixed"
+    }
+   },
+   "relatedVulnerabilities": [],
+   "matchDetails": [],
+   "artifact": {
+    "id": "b6f9e8d4a7c2",
+    "name": "libexample",
+    "version": "1.2.3",
+    "type": "deb",
+    "locations": [
+     {
+      "path": "/app/go.mod",
+      "layerID": "sha256:abc123def456"
+     }
+    ],
+    "language": "go",
+    "purl": "pkg:golang/golang.org/x/crypto@0.27.0"
+   }
+  }
+ ],
+ "source": {
+  "type": "oci-archive",
+  "target": "image.tar"
+ },
+ "distro": {
+  "name": "debian",
+  "version": "12",
+  "idLike": []
+ },
+ "descriptor": {
+  "name": "grype",
+  "version": "0.121.0",
+  "db": {
+   "status": {
+    "schemaVersion": "v6.0.2",
+    "built": "2026-11-10T04:12:33Z"
+   }
+  }
+ }
+}

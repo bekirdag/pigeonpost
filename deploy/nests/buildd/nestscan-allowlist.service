@@ -1,0 +1,11 @@
+# /etc/systemd/system/nestscan-allowlist.service — resolve scandb-allowlist.txt into the nftables
+# set inet nestbuild scandb_v4 (the updater's only destinations), with the same script and the
+# same fail-closed rules as the build plane's own allowlist.
+[Unit]
+Description=Refresh the scanner updater's egress allowlist (nftables set inet nestbuild scandb_v4)
+After=network-online.target nestbuild-nft.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/nestbuild-allowlist /etc/pigeonpost-buildd/scandb-allowlist.txt scandb_v4

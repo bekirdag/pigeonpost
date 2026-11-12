@@ -1,0 +1,15 @@
+# /etc/pigeonpost-buildd/scandb-allowlist.txt — the only names the scanner updater (user nestscan)
+# may reach on TCP 443. Nothing here is reachable by nestbuild, by a build, or by a scan.
+#
+# OSV mirror (osv-scanner's offline databases). Google front ends: the set follows the resolved
+# addresses every minute, and those addresses also serve other Google storage, which is why only
+# the updater (no publisher code) has this list.
+osv-vulnerabilities.storage.googleapis.com
+# Grype's database listing and archives.
+grype.anchore.io
+# ClamAV signatures (freshclam).
+database.clamav.net
+# The YARA-Forge release (github.com redirects the download to the release-assets host).
+github.com
+objects.githubusercontent.com
+release-assets.githubusercontent.com

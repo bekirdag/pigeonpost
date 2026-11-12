@@ -9808,6 +9808,28 @@
                           "boolean",
                           "null"
                         ]
+                      },
+                      "id": {
+                        "type": "string",
+                        "description": "Stable across runs for the same issue (`tool:key`). Absent on findings recorded before review policy v2."
+                      },
+                      "severity": {
+                        "type": "string",
+                        "enum": [
+                          "info",
+                          "low",
+                          "medium",
+                          "high",
+                          "critical"
+                        ]
+                      },
+                      "tool": {
+                        "type": "string",
+                        "description": "Which check found it (`pigeonpost`, `osv-scanner`, `grype`, `semgrep`, `gitleaks`, `heuristics`, `conformance`, or `malware` for a redacted malware match)."
+                      },
+                      "package": {
+                        "type": "string",
+                        "description": "`name@version` of the dependency or image package, for a vulnerability."
                       }
                     }
                   }

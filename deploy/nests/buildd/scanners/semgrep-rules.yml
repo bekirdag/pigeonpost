@@ -1,0 +1,281 @@
+# deploy/nests/buildd/scanners/semgrep-rules.yml -> /etc/pigeonpost-buildd/semgrep-rules.yml
+#
+# The analysis plane's vendored Semgrep ruleset (developer program plan §4, SAST): injection,
+# unsafe deserialisation, eval/exec, path traversal and SSRF, for the languages a Nest is built
+# from (JavaScript/TypeScript, Python, Rust). Written for Pigeonpost and pinned by its SHA-256 in
+# buildd.toml ([scanners] semgrep_rules_sha256); a file with another digest is refused, and
+# Semgrep runs with --metrics=off and no network.
+#
+# Policy: a result blocks when its rule is `severity: ERROR` with `metadata.confidence: HIGH`.
+# Everything else is advisory evidence for the staff reviewer. Keep HIGH for patterns that are
+# wrong in a Nest whatever the surrounding code does.
+#
+# Change this file deliberately: edit, `sha256sum` it, update buildd.toml, and say so in the PR.
+
+rules:
+  # ---- eval / exec ------------------------------------------------------------------------------
+  - id: pigeonpost.js.eval-dynamic
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: eval() of a value that is not a literal runs code chosen at run time
+    metadata: { confidence: HIGH, category: security, cwe: ["CWE-95"] }
+    patterns:
+      - pattern: eval($X)
+      - pattern-not: eval("...")
+
+  - id: pigeonpost.js.function-constructor
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: new Function(...) compiles code chosen at run time
+    metadata: { confidence: HIGH, category: security, cwe: ["CWE-95"] }
+    patterns:
+      - pattern-either:
+          - pattern: new Function(..., $BODY)
+          - pattern: Function(..., $BODY)
+      - pattern-not: new Function(..., "...")
+      - pattern-not: Function(..., "...")
+
+  - id: pigeonpost.js.vm-dynamic
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: the vm module runs code chosen at run time (vm is not a security boundary)
+    metadata: { confidence: MEDIUM, category: security, cwe: ["CWE-95"] }
+    patterns:
+      - pattern-either:
+          - pattern: $VM.runInNewContext($CODE, ...)
+          - pattern: $VM.runInThisContext($CODE, ...)
+          - pattern: $VM.runInContext($CODE, ...)
+          - pattern: new $VM.Script($CODE, ...)
+      - pattern-not: $VM.runInNewContext("...", ...)
+      - pattern-not: $VM.runInThisContext("...", ...)
+
+  - id: pigeonpost.py.eval-exec-dynamic
+    languages: [python]
+    severity: ERROR
+    message: eval()/exec() of a value that is not a literal runs code chosen at run time
+    metadata: { confidence: HIGH, category: security, cwe: ["CWE-95"] }
+    patterns:
+      - pattern-either:
+          - pattern: eval($X, ...)
+          - pattern: exec($X, ...)
+      - pattern-not: eval("...", ...)
+      - pattern-not: exec("...", ...)
+
+  # ---- command injection ------------------------------------------------------------------------
+  - id: pigeonpost.js.child-process-shell
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: a shell command built at run time (child_process exec/execSync)
+    metadata: { confidence: MEDIUM, category: security, cwe: ["CWE-78"] }
+    patterns:
+      - pattern-either:
+          - pattern: require('child_process').exec($CMD, ...)
+          - pattern: require('child_process').execSync($CMD, ...)
+          - pattern: |
+              import { exec } from 'child_process';
+              ...
+              exec($CMD, ...);
+          - pattern: |
+              import { execSync } from 'child_process';
+              ...
+              execSync($CMD, ...);
+          - pattern: |
+              $CP = require('child_process');
+              ...
+              $CP.exec($CMD, ...);
+          - pattern: |
+              $CP = require('child_process');
+              ...
+              $CP.execSync($CMD, ...);
+      - pattern-not: require('child_process').exec("...", ...)
+      - pattern-not: require('child_process').execSync("...", ...)
+
+  - id: pigeonpost.js.spawn-shell-true
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: spawn with shell:true and a non-literal command
+    metadata: { confidence: HIGH, category: security, cwe: ["CWE-78"] }
+    patterns:
+      - pattern: |
+          $CP.spawn($CMD, ..., {..., shell: true, ...})
+      - pattern-not: $CP.spawn("...", ...)
+
+  - id: pigeonpost.py.subprocess-shell
+    languages: [python]
+    severity: ERROR
+    message: a shell command built at run time (shell=True with a non-literal command)
+    metadata: { confidence: HIGH, category: security, cwe: ["CWE-78"] }
+    patterns:
+      - pattern-either:
+          - pattern: subprocess.$F($CMD, ..., shell=True, ...)
+      - pattern-not: subprocess.$F("...", ..., shell=True, ...)
+      - metavariable-regex:
+          metavariable: $F
+          regex: ^(run|call|check_call|check_output|Popen|getoutput|getstatusoutput)$
+
+  - id: pigeonpost.py.os-system
+    languages: [python]
+    severity: ERROR
+    message: os.system/os.popen with a command built at run time
+    metadata: { confidence: HIGH, category: security, cwe: ["CWE-78"] }
+    patterns:
+      - pattern-either:
+          - pattern: os.system($CMD)
+          - pattern: os.popen($CMD, ...)
+      - pattern-not: os.system("...")
+      - pattern-not: os.popen("...", ...)
+
+  - id: pigeonpost.rust.shell-command
+    languages: [rust]
+    severity: WARNING
+    message: a shell is run with -c; check where its command comes from
+    metadata: { confidence: MEDIUM, category: security, cwe: ["CWE-78"] }
+    pattern-either:
+      - pattern: Command::new("sh").arg("-c")
+      - pattern: Command::new("bash").arg("-c")
+      - pattern: Command::new("/bin/sh").arg("-c")
+
+  # ---- unsafe deserialisation -------------------------------------------------------------------
+  - id: pigeonpost.js.node-serialize
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: node-serialize unserialize() executes functions embedded in its input
+    metadata: { confidence: HIGH, category: security, cwe: ["CWE-502"] }
+    pattern-either:
+      - pattern: require('node-serialize').unserialize(...)
+      - pattern: |
+          $S = require('node-serialize');
+          ...
+          $S.unserialize(...);
+
+  - id: pigeonpost.py.pickle-load
+    languages: [python]
+    severity: ERROR
+    message: pickle/dill/marshal loading runs code embedded in its input
+    metadata: { confidence: MEDIUM, category: security, cwe: ["CWE-502"] }
+    pattern-either:
+      - pattern: pickle.loads(...)
+      - pattern: pickle.load(...)
+      - pattern: cPickle.loads(...)
+      - pattern: dill.loads(...)
+      - pattern: dill.load(...)
+      - pattern: marshal.loads(...)
+      - pattern: shelve.open(...)
+
+  - id: pigeonpost.py.yaml-unsafe-load
+    languages: [python]
+    severity: ERROR
+    message: yaml.load without SafeLoader (or yaml.unsafe_load) can build arbitrary objects
+    metadata: { confidence: HIGH, category: security, cwe: ["CWE-502"] }
+    pattern-either:
+      - pattern: yaml.unsafe_load(...)
+      - pattern: yaml.load(..., Loader=yaml.Loader, ...)
+      - pattern: yaml.load(..., Loader=yaml.UnsafeLoader, ...)
+      - pattern: yaml.load(..., Loader=yaml.FullLoader, ...)
+      - patterns:
+          - pattern: yaml.load($X)
+          - pattern-not: yaml.load($X, Loader=yaml.SafeLoader)
+
+  # ---- SQL injection ----------------------------------------------------------------------------
+  - id: pigeonpost.js.sql-concat
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: a SQL statement built by concatenation or interpolation; use parameters
+    metadata: { confidence: MEDIUM, category: security, cwe: ["CWE-89"] }
+    patterns:
+      - pattern-either:
+          - pattern: $DB.query("..." + $X, ...)
+          - pattern: $DB.query(`...${$X}...`, ...)
+          - pattern: $DB.execute("..." + $X, ...)
+          - pattern: $DB.execute(`...${$X}...`, ...)
+          - pattern: $DB.prepare("..." + $X, ...)
+          - pattern: $DB.prepare(`...${$X}...`, ...)
+
+  - id: pigeonpost.py.sql-format
+    languages: [python]
+    severity: ERROR
+    message: a SQL statement built with %, format() or an f-string; use parameters
+    metadata: { confidence: MEDIUM, category: security, cwe: ["CWE-89"] }
+    pattern-either:
+      - pattern: $C.execute("..." % $X, ...)
+      - pattern: $C.execute("...".format(...), ...)
+      - pattern: $C.execute(f"...", ...)
+      - pattern: $C.executemany("..." % $X, ...)
+
+  # ---- path traversal (job input reaching the filesystem) ---------------------------------------
+  - id: pigeonpost.js.path-from-input
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: a file path built from job input; a buyer's input could read or write outside the job
+    metadata: { confidence: MEDIUM, category: security, cwe: ["CWE-22"] }
+    mode: taint
+    pattern-sources:
+      - pattern: $JOB.payload
+      - pattern: $JOB.input
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $FS.readFile($P, ...)
+              - pattern: $FS.readFileSync($P, ...)
+              - pattern: $FS.writeFile($P, ...)
+              - pattern: $FS.writeFileSync($P, ...)
+              - pattern: $FS.createReadStream($P, ...)
+              - pattern: $FS.createWriteStream($P, ...)
+              - pattern: $FS.unlink($P, ...)
+              - pattern: $FS.rm($P, ...)
+          - focus-metavariable: $P
+
+  - id: pigeonpost.py.path-from-input
+    languages: [python]
+    severity: ERROR
+    message: a file path built from job input; a buyer's input could read or write outside the job
+    metadata: { confidence: MEDIUM, category: security, cwe: ["CWE-22"] }
+    mode: taint
+    pattern-sources:
+      - pattern: $JOB["payload"]
+      - pattern: $JOB.payload
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: open($P, ...)
+              - pattern: os.remove($P)
+              - pattern: shutil.rmtree($P, ...)
+              - pattern: pathlib.Path($P, ...)
+          - focus-metavariable: $P
+
+  # ---- SSRF (only the broker is reachable, so these are evidence, not blockers) -----------------
+  - id: pigeonpost.js.request-from-input
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: a network request to a URL built from job input
+    metadata: { confidence: MEDIUM, category: security, cwe: ["CWE-918"] }
+    mode: taint
+    pattern-sources:
+      - pattern: $JOB.payload
+      - pattern: $JOB.input
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: fetch($URL, ...)
+              - pattern: $HTTP.get($URL, ...)
+              - pattern: $HTTP.request($URL, ...)
+              - pattern: axios($URL, ...)
+              - pattern: axios.$M($URL, ...)
+          - focus-metavariable: $URL
+
+  - id: pigeonpost.py.request-from-input
+    languages: [python]
+    severity: WARNING
+    message: a network request to a URL built from job input
+    metadata: { confidence: MEDIUM, category: security, cwe: ["CWE-918"] }
+    mode: taint
+    pattern-sources:
+      - pattern: $JOB["payload"]
+      - pattern: $JOB.payload
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: requests.$M($URL, ...)
+              - pattern: urllib.request.urlopen($URL, ...)
+              - pattern: httpx.$M($URL, ...)
+          - focus-metavariable: $URL

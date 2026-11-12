@@ -21,13 +21,17 @@ reproducible = true
 max_queued = 20
 # Saved release images are deleted after this many days (nests-1 keeps its pulled copy).
 keep_days = 14
+# An image no re-scan has named yet is kept this long (at least keep_days and 45), so the first
+# re-scan of a published release always finds it.
+keep_unscanned_days = 120
 
 # The advisory AI review on the self-hosted model (mswarm's self-hosted LB). Optional; when unset
 # the postbox records the AI stage some other way or the review waits for it.
 # ai_review_route = "/etc/pigeonpost-buildd/review.toml"
 
 # The behaviour test after the scan: the built image runs under gVisor with no network,
-# honeytokens on its volume and its example jobs in the inbox (on by default).
+# honeytokens on its volume, buyer-data canaries in its example jobs, and every job's answer
+# checked (on by default). [behaviour] below adds the egress trace and the resource budget.
 behaviour_test = true
 behaviour_timeout_secs = 60
 
@@ -79,3 +83,38 @@ compile_timeout_secs = 1800
 memory_mib = 4096
 cpu_millis = 2000
 pids = 1024
+
+# The security tools of the deterministic scan (developer program plan §4). Every tool runs in
+# gVisor with --network=none and read-only mounts; the databases come from nestscan-update.
+# Production sets this table: without it only the built-in rules run (an advisory finding says so).
+[scanners]
+# osv-scanner, grype, gitleaks and yara, built from deploy/nests/buildd/scanners/Containerfile and
+# loaded into nestbuild's podman storage; its digest after the build.
+image = "localhost/pigeonpost-scanners:2026.11@sha256:<DIGEST>"
+# ClamAV 1.4 LTS without bundled signatures (freshclam fills the database).
+clamav_image = "docker.io/clamav/clamav:1.4.6_base@sha256:109477fb9dedf7b4542d0fc7be7f8ef73a55d9d731e9568821347825219407aa"
+semgrep_image = "docker.io/semgrep/semgrep:1.181.0@sha256:81474464c1f07483ba0682a44787fd93c91397419762a04abe2bafaae396304b"
+# The vendored ruleset (deploy/nests/buildd/scanners/semgrep-rules.yml) and its sha256sum.
+semgrep_rules = "/etc/pigeonpost-buildd/semgrep-rules.yml"
+semgrep_rules_sha256 = "f4c7be3fb24404303451c32009c9f4a3adcff4e29c3eecac7851898206af5ecd"
+# The updater's current snapshot (a symlink it swaps).
+db_root = "/var/lib/pigeonpost-scandb/current"
+# Older databases fail the scan (the updater runs every 6 hours).
+max_db_age_hours = 72
+timeout_secs = 900
+memory_mib = 4096
+
+# The observed behaviour run: the egress trace and the resource budget.
+[behaviour]
+# Mapped to /usr/local/bin/runsc-behaviour in containers.conf.
+runtime = "runsc-behaviour"
+trace_root = "/var/lib/pigeonpost-buildd/netlog"
+# nestbuild's user manager cgroup (2350 = its uid): every rootless container runs under it.
+cgroup = "/sys/fs/cgroup/user.slice/user-2350.slice/user@2350.service"
+
+# The marketplace pool's per-Nest limits (nestd.toml [marketplace_pool]): over is advisory,
+# more than twice over blocks.
+[behaviour.budget]
+memory_mib = 1024
+cpu_millis = 1000
+job_seconds = 60

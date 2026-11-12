@@ -131,7 +131,7 @@ fn an_exfiltrating_release_fails_the_behaviour_test() {
     assert!(report
         .findings
         .iter()
-        .any(|f| f.rule == "behaviour.exfiltration" && f.detail.contains("broker")));
+        .any(|f| f.rule == "behaviour.exfiltration" && f.message.contains("broker")));
 
     // Inside a job result.
     let (channels, answered) = run_release(&tokens, &mut |p, j, b| {
@@ -144,7 +144,7 @@ fn an_exfiltrating_release_fails_the_behaviour_test() {
     assert!(report
         .findings
         .iter()
-        .any(|f| f.detail.contains("job results")));
+        .any(|f| f.message.contains("job results")));
 }
 
 #[cfg(unix)]

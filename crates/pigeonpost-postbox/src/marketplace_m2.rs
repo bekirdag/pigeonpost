@@ -65,15 +65,36 @@ pub(crate) const STAGES: [&str; 6] = [
     "attestation",
 ];
 
+/// A publisher-hosted integration's stages: the hosted conformance run (recorded as
+/// `behavioral_test`, the stage name the review tables allow), then the staff decision.
+pub(crate) const INTEGRATION_STAGES: [&str; 2] = ["behavioral_test", "human_review"];
+
 /// What every review is held to. Its digest is the contract's `policy_digest`; a change to the
-/// pipeline changes this text and so the digest every publisher sees.
-const REVIEW_POLICY: &str = "pigeonpost-nest-review-policy-v1\n\
+/// pipeline changes this text and so the digest every publisher sees. v2 (developer program plan
+/// §4): the automated security checks.
+pub(crate) const REVIEW_POLICY: &str = "pigeonpost-nest-review-policy-v2\n\
+     scanners: every tool runs on the analysis plane in gVisor with no network; its databases are \
+     fetched separately; a tool that cannot run, or a missing or stale database, fails\n\
      intake: built by Pigeonpost from the pinned source, SBOM and release digest\n\
-     deterministic_scan: secrets, manifest limits, licences; a blocking finding fails\n\
+     deterministic_scan: secrets (built-in rules and gitleaks), manifest limits, licences; \
+     OSV-Scanner on the lockfile and SBOM and Grype on the image: critical or high with a fix \
+     available fails, the rest is advisory; ClamAV and YARA on source, artefacts and image: any \
+     hit fails; Semgrep with a pinned ruleset: high-confidence errors fail, the rest is advisory; \
+     obfuscation heuristics are advisory\n\
      ai_analysis: advisory only, self-hosted model qwen-latest-flash-next\n\
-     behavioral_test: honeytokens; any leak or unanswered job fails\n\
+     behavioral_test: honeytokens and buyer-data canaries, any leak fails; a network attempt \
+     beyond the declared egress fails; resource use over the pool's limits is advisory, more \
+     than twice over fails; an unanswered job fails\n\
+     behavioral_test (publisher-hosted integration): a free review job through the hosted-job \
+     path; result shape, PDF validity, ClamAV and YARA on the result, the deadline and service \
+     mailbox ownership; any failure fails\n\
      human_review: named staff, step-up, no stake in the publisher or the release\n\
-     attestation: over the release digest\n";
+     attestation: over the release digest\n\
+     after publication: a monthly re-scan against updated vulnerability and malware data; a new \
+     blocking finding flags the release for staff and never removes it by itself\n\
+     after publication (publisher-hosted): unannounced jobs and a sample of results get the \
+     conformance checks and ClamAV and YARA; a failure flags the release for staff, a malware \
+     hit also stops the listing until staff review it\n";
 
 /// Vault label for sealed configuration secrets.
 const SECRET_LABEL: &str = "marketplace-config-secret-v1";
@@ -1619,9 +1640,10 @@ fn review_status_in(
     };
     let rows = decisions_in(c, case)?;
     let mut stages = Vec::new();
-    // A publisher-hosted integration has one stage: the staff review of publisher and integration.
+    // A publisher-hosted integration: the hosted conformance run, then the staff review of
+    // publisher and integration.
     let names: &[&str] = if kind == "integration" {
-        &["human_review"]
+        &INTEGRATION_STAGES
     } else {
         &STAGES
     };
@@ -1790,21 +1812,95 @@ async fn read_review(
     into_response(result)
 }
 
-/// The publisher's view of one stage's evidence. Their own scan findings are theirs to see in
-/// full; the behaviour test shows only which rules fired (the honeytokens and capture setup stay
-/// with Pigeonpost); the AI review is advisory evidence for staff and shows only a count.
-fn redact(stage: &str, evidence: &Value) -> Value {
+/// The publisher's view of one stage's evidence, in the contract's finding shape
+/// (`ReviewFindings`: `rule`, `path`, `detail`, `blocker`, and the optional `id`, `severity`,
+/// `tool`, `package`). Their own scan findings are theirs to see; a malware signature or YARA
+/// match shows only that a file matched and where (never the signature or rule name). The
+/// behaviour test shows only which rules fired and how bad (the honeytokens, canaries, trace and
+/// capture setup stay with Pigeonpost), except the hosted conformance run, which checks the
+/// publisher's own output and so shows its details. The AI review is advisory evidence for staff
+/// and shows only a count. Findings recorded before v2 (`detail`, `blocker`) read the same way.
+pub(crate) fn redact(stage: &str, evidence: &Value) -> Value {
     let findings = evidence["findings"].as_array().cloned().unwrap_or_default();
+    // v2 findings say `message`/`blocking`; v1 findings and the contract say `detail`/`blocker`.
+    let blocker = |f: &Value| -> Value {
+        if f["blocking"].is_boolean() {
+            f["blocking"].clone()
+        } else {
+            f["blocker"].clone()
+        }
+    };
+    let detail = |f: &Value| -> Value {
+        if f["message"].is_string() {
+            f["message"].clone()
+        } else {
+            f["detail"].clone()
+        }
+    };
+    let hidden_match = |f: &Value| {
+        matches!(
+            f["rule"].as_str(),
+            Some("malware.signature" | "malware.yara")
+        )
+    };
+    let with_optional = |mut v: Value, f: &Value, keys: &[&str]| {
+        for k in keys {
+            if !f[*k].is_null() {
+                v[*k] = f[*k].clone();
+            }
+        }
+        v
+    };
+    let conformance = evidence["evidence"]["kind"] == "hosted_conformance";
     match stage {
         "deterministic_scan" => json!(findings
             .iter()
-            .map(|f| json!({
-                "rule": f["rule"], "path": f["path"], "detail": f["detail"], "blocker": f["blocker"],
-            }))
+            .map(|f| {
+                if hidden_match(f) {
+                    return with_optional(
+                        json!({
+                            "rule": "malware.match", "path": f["path"],
+                            "detail": "this file matched a malware signature",
+                            "blocker": blocker(f), "tool": "malware",
+                        }),
+                        f,
+                        &["severity"],
+                    );
+                }
+                with_optional(
+                    json!({ "rule": f["rule"], "path": f["path"], "detail": detail(f),
+                            "blocker": blocker(f) }),
+                    f,
+                    &["id", "severity", "tool", "package"],
+                )
+            })
+            .collect::<Vec<_>>()),
+        "behavioral_test" if conformance => json!(findings
+            .iter()
+            .map(|f| {
+                if hidden_match(f) {
+                    return with_optional(
+                        json!({ "rule": "malware.match",
+                                "detail": "a result file matched a malware signature",
+                                "blocker": blocker(f) }),
+                        f,
+                        &["severity"],
+                    );
+                }
+                with_optional(
+                    json!({ "rule": f["rule"], "detail": detail(f), "blocker": blocker(f) }),
+                    f,
+                    &["severity"],
+                )
+            })
             .collect::<Vec<_>>()),
         "behavioral_test" => json!(findings
             .iter()
-            .map(|f| json!({ "rule": f["rule"], "blocker": f["blocker"] }))
+            .map(|f| with_optional(
+                json!({ "rule": f["rule"], "blocker": blocker(f) }),
+                f,
+                &["severity"]
+            ))
             .collect::<Vec<_>>()),
         _ => json!([]),
     }
@@ -3883,6 +3979,9 @@ async fn staff_moderate(
 mod tests {
     use super::*;
 
+    const POLICY_V2_DIGEST: &str =
+        "sha256:796a2a4db85e9afbe074fa9bc9353c5cbeca257f138e385998676a2c4b40b6a0";
+
     #[test]
     fn stages_follow_the_contract_order() {
         assert_eq!(stage_before("intake"), None);
@@ -3919,10 +4018,117 @@ mod tests {
         ]});
         let b = redact("behavioral_test", &ev);
         assert_eq!(b[0]["rule"], "behaviour.exfiltration");
-        assert!(b[0].get("detail").is_none());
+        assert_eq!(b[0]["blocker"], true);
+        assert!(b[0].get("detail").is_none() && b[0].get("message").is_none());
         assert_eq!(redact("ai_analysis", &ev), json!([]));
+        // A v1 finding keeps the contract's shape.
         let s = redact("deterministic_scan", &ev);
         assert_eq!(s[0]["detail"], "a planted honeytoken left through stdout");
+        assert_eq!(s[0]["blocker"], true);
+    }
+
+    /// v2 findings: the structured fields reach the publisher, except a malware match's
+    /// signature; behaviour findings keep only the rule and severity (no destination).
+    #[test]
+    fn v2_findings_are_redacted_and_malware_signatures_stay_with_staff() {
+        let ev = json!({ "findings": [
+            { "id": "osv-scanner:GHSA-1:serde@1.0.0", "severity": "high", "tool": "osv-scanner",
+              "rule": "vulnerability.dependency", "path": "Cargo.lock", "package": "serde@1.0.0",
+              "message": "GHSA-1: bad (fixed in 1.0.1)", "blocking": true },
+            { "id": "clamav:Unix.Trojan.Mirai-1:src/x", "severity": "critical", "tool": "clamav",
+              "rule": "malware.signature", "path": "src/x",
+              "message": "matched the malware signature Unix.Trojan.Mirai-1", "blocking": true },
+            { "id": "yara:MAL_Miner:src/m.js", "severity": "critical", "tool": "yara",
+              "rule": "malware.yara", "path": "src/m.js",
+              "message": "matched the YARA rule MAL_Miner", "blocking": true },
+        ]});
+        let s = redact("deterministic_scan", &ev);
+        assert_eq!(s[0]["id"], "osv-scanner:GHSA-1:serde@1.0.0");
+        assert_eq!(s[0]["package"], "serde@1.0.0");
+        assert_eq!(s[0]["severity"], "high");
+        assert_eq!(s[0]["detail"], "GHSA-1: bad (fixed in 1.0.1)");
+        assert_eq!(s[0]["blocker"], true);
+        for m in [&s[1], &s[2]] {
+            assert_eq!(m["tool"], "malware");
+            assert_eq!(m["blocker"], true);
+            assert!(m.get("id").is_none());
+        }
+        let text = s.to_string();
+        assert!(
+            !text.contains("Mirai") && !text.contains("MAL_Miner"),
+            "{text}"
+        );
+        // Every finding has exactly the contract's keys (additionalProperties: false).
+        let allowed = [
+            "rule", "path", "detail", "blocker", "id", "severity", "tool", "package",
+        ];
+        for f in s.as_array().unwrap() {
+            assert!(
+                f.as_object()
+                    .unwrap()
+                    .keys()
+                    .all(|k| allowed.contains(&k.as_str())),
+                "{f}"
+            );
+            assert!(f.get("rule").is_some() && f.get("blocker").is_some(), "{f}");
+        }
+        let ev = json!({ "findings": [
+            { "id": "gvisor:93.184.216.34:443", "severity": "high", "tool": "gvisor",
+              "rule": "egress.undeclared", "message": "connect to 93.184.216.34:443",
+              "blocking": true },
+        ]});
+        let b = redact("behavioral_test", &ev);
+        assert_eq!(
+            b,
+            json!([{ "rule": "egress.undeclared", "blocker": true, "severity": "high" }])
+        );
+        // An unscannable file is not a signature: its rule and reason are the publisher's.
+        let ev = json!({ "findings": [
+            { "id": "clamav:x", "severity": "critical", "tool": "clamav",
+              "rule": "malware.encrypted", "path": "a.zip",
+              "message": "encrypted content that cannot be scanned (Heuristics.Encrypted.Zip)",
+              "blocking": true },
+        ]});
+        assert_eq!(
+            redact("deterministic_scan", &ev)[0]["rule"],
+            "malware.encrypted"
+        );
+    }
+
+    /// The policy every publisher sees is v2, names each check, and has its own digest.
+    #[test]
+    fn the_review_policy_is_v2_and_names_the_automated_checks() {
+        assert!(REVIEW_POLICY.starts_with("pigeonpost-nest-review-policy-v2\n"));
+        for tool in [
+            "gVisor",
+            "OSV-Scanner",
+            "Grype",
+            "ClamAV",
+            "YARA",
+            "Semgrep",
+            "gitleaks",
+            "obfuscation",
+            "declared egress",
+            "resource use",
+            "review job",
+            "re-scan",
+            "qwen-latest-flash-next",
+        ] {
+            assert!(REVIEW_POLICY.contains(tool), "{tool}");
+        }
+        let v1 = "pigeonpost-nest-review-policy-v1\n\
+             intake: built by Pigeonpost from the pinned source, SBOM and release digest\n\
+             deterministic_scan: secrets, manifest limits, licences; a blocking finding fails\n\
+             ai_analysis: advisory only, self-hosted model qwen-latest-flash-next\n\
+             behavioral_test: honeytokens; any leak or unanswered job fails\n\
+             human_review: named staff, step-up, no stake in the publisher or the release\n\
+             attestation: over the release digest\n";
+        assert_ne!(
+            digest_of(REVIEW_POLICY.as_bytes()),
+            digest_of(v1.as_bytes())
+        );
+        // Pinned, so a change to the text is deliberate (and versioned).
+        assert_eq!(digest_of(REVIEW_POLICY.as_bytes()), POLICY_V2_DIGEST);
     }
 
     #[test]

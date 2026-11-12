@@ -1,0 +1,10 @@
+I1111 10:00:00.100000       1 main.go:220] ***************************
+I1111 10:00:00.100100       1 main.go:221] Args: [runsc --root=/run/user/2350/runsc --debug --debug-log=/var/lib/pigeonpost-buildd/netlog/%ID%/ --strace --strace-syscalls=connect,sendto,sendmsg,sendmmsg boot]
+I1111 10:00:01.200000       1 strace.go:614] [   3:   3] node E connect(0x15 socket:[7], 0x7ee1c2a0 {Family: AF_UNIX, Addr: "/tmp/app.sock"}, 0x10)
+I1111 10:00:01.200200       1 strace.go:649] [   3:   3] node X connect(0x15 socket:[7], 0x7ee1c2a0 {Family: AF_UNIX, Addr: "/tmp/app.sock"}, 0x10) = 0 (0x0) (25.3µs)
+I1111 10:00:01.300000       1 strace.go:614] [   3:   3] node E connect(0x16 socket:[8], 0x7ee1c2b0 {Family: AF_INET, Addr: 127.0.0.1, Port: 8080}, 0x10)
+I1111 10:00:01.400000       1 strace.go:614] [   3:   4] node E sendto(0x17 socket:[9], 0x7ee1d000 "\x8e\x01\x01\x00", 0x23, 0x0, 0x7ee1c2c0 {Family: AF_INET, Addr: 127.0.0.53, Port: 53}, 0x10)
+I1111 10:00:01.500000       1 strace.go:614] [   3:   4] node E connect(0x18 socket:[10], 0x7ee1c2d0 {Family: AF_INET, Addr: 93.184.216.34, Port: 443}, 0x10)
+I1111 10:00:01.500300       1 strace.go:649] [   3:   4] node X connect(0x18 socket:[10], 0x7ee1c2d0 {Family: AF_INET, Addr: 93.184.216.34, Port: 443}, 0x10) = 0 (0x0) errno=101 (network is unreachable) (40.1µs)
+I1111 10:00:01.600000       1 strace.go:614] [   3:   5] node E connect(0x19 socket:[11], 0x7ee1c2e0 {Family: AF_INET6, Addr: 2001:db8::7, Port: 8443, FlowInfo: 0, ScopeID: 0}, 0x1c)
+I1111 10:00:01.700000       1 strace.go:614] [   3:   5] node E connect(0x1a socket:[12], 0x7ee1c2f0 {Family: AF_NETLINK, PortID: 0, Groups: 0}, 0xc)

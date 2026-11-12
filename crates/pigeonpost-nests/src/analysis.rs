@@ -23,7 +23,7 @@ use crate::ecosystem::{self, Ecosystem};
 use crate::release::{
     canonical_json, digest_of, read_tree, LockedPackage, Manifest, MANIFEST_FILE,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
@@ -84,30 +84,131 @@ pub const FORBIDDEN_SYSCALLS: &[&str] = &[
 /// The only egress a marketplace release may declare.
 pub const ALLOWED_EGRESS: &[&str] = &["broker"];
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct Finding {
-    pub rule: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub path: Option<String>,
-    pub detail: String,
-    pub blocker: bool,
+/// How bad a finding is. Tools that grade (OSV, Grype, Semgrep) map onto this scale; the
+/// platform's own rules are `high` when they block and `low` when they only inform.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Severity {
+    Info,
+    Low,
+    Medium,
+    High,
+    Critical,
 }
 
-impl Finding {
-    fn blocker(rule: &str, path: Option<&str>, detail: impl Into<String>) -> Finding {
-        Finding {
-            rule: rule.into(),
-            path: path.map(str::to_string),
-            detail: detail.into(),
-            blocker: true,
+impl Severity {
+    pub fn name(self) -> &'static str {
+        match self {
+            Severity::Info => "info",
+            Severity::Low => "low",
+            Severity::Medium => "medium",
+            Severity::High => "high",
+            Severity::Critical => "critical",
         }
     }
 
-    fn advisory(rule: &str, path: Option<&str>, detail: impl Into<String>) -> Finding {
-        Finding {
-            blocker: false,
-            ..Finding::blocker(rule, path, detail)
+    /// A CVSS base score (`"7.5"`) or a database's word (`HIGH`, `MODERATE`, …).
+    pub fn parse(text: &str) -> Option<Severity> {
+        let t = text.trim();
+        if let Ok(score) = t.parse::<f64>() {
+            return Some(match score {
+                s if s >= 9.0 => Severity::Critical,
+                s if s >= 7.0 => Severity::High,
+                s if s >= 4.0 => Severity::Medium,
+                s if s > 0.0 => Severity::Low,
+                _ => Severity::Info,
+            });
         }
+        match t.to_ascii_lowercase().as_str() {
+            "critical" => Some(Severity::Critical),
+            "high" | "error" => Some(Severity::High),
+            "medium" | "moderate" | "warning" => Some(Severity::Medium),
+            "low" => Some(Severity::Low),
+            "info" | "negligible" | "none" => Some(Severity::Info),
+            _ => None,
+        }
+    }
+}
+
+/// One finding, as the staff reviewer sees it (the publisher sees the postbox's redaction of it).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Finding {
+    /// Stable across runs for the same issue (`osv:GHSA-…:serde@1.0.0`), so a re-scan can tell a
+    /// new finding from a known one.
+    pub id: String,
+    pub severity: Severity,
+    /// `pigeonpost` (the built-in rules), `osv-scanner`, `grype`, `clamav`, `yara`, `semgrep`,
+    /// `gitleaks`, `heuristics`, `gvisor` (egress) or `cgroup` (resources).
+    pub tool: String,
+    pub rule: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    /// `name@version` for a dependency or image package.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package: Option<String>,
+    pub message: String,
+    pub blocking: bool,
+}
+
+/// Longest id or message a finding keeps.
+const FINDING_ID_MAX: usize = 300;
+const FINDING_MESSAGE_MAX: usize = 1000;
+
+fn clip(s: &str, max: usize) -> String {
+    s.chars().filter(|c| !c.is_control()).take(max).collect()
+}
+
+impl Finding {
+    /// A finding of `tool`. The id is `tool:key`, clipped.
+    pub fn of(
+        tool: &str,
+        rule: &str,
+        severity: Severity,
+        key: &str,
+        message: impl Into<String>,
+        blocking: bool,
+    ) -> Finding {
+        Finding {
+            id: clip(&format!("{tool}:{key}"), FINDING_ID_MAX),
+            severity,
+            tool: tool.into(),
+            rule: rule.into(),
+            path: None,
+            package: None,
+            message: clip(&message.into(), FINDING_MESSAGE_MAX),
+            blocking,
+        }
+    }
+
+    pub fn at(mut self, path: Option<&str>) -> Finding {
+        self.path = path.map(|p| clip(p, 500));
+        self
+    }
+
+    pub fn package(mut self, package: Option<String>) -> Finding {
+        self.package = package.map(|p| clip(&p, 200));
+        self
+    }
+
+    fn platform(rule: &str, path: Option<&str>, detail: String, blocking: bool) -> Finding {
+        let key = match path {
+            Some(p) => format!("{rule}:{p}"),
+            None => rule.to_string(),
+        };
+        let severity = if blocking {
+            Severity::High
+        } else {
+            Severity::Low
+        };
+        Finding::of("pigeonpost", rule, severity, &key, detail, blocking).at(path)
+    }
+
+    fn blocker(rule: &str, path: Option<&str>, detail: impl Into<String>) -> Finding {
+        Finding::platform(rule, path, detail.into(), true)
+    }
+
+    fn advisory(rule: &str, path: Option<&str>, detail: impl Into<String>) -> Finding {
+        Finding::platform(rule, path, detail.into(), false)
     }
 }
 
@@ -126,7 +227,7 @@ pub struct StageReport {
 
 impl StageReport {
     fn decided(stage: &'static str, findings: Vec<Finding>, evidence: Value) -> StageReport {
-        let blockers = findings.iter().filter(|f| f.blocker).count();
+        let blockers = findings.iter().filter(|f| f.blocking).count();
         let (decision, reason) = if blockers == 0 {
             ("passed", "no blocking findings".to_string())
         } else {
@@ -546,28 +647,7 @@ impl Honeytokens {
     /// Each token as it might leave: raw, base64 (standard and URL-safe, from any alignment),
     /// hex in both cases, and reversed.
     pub fn needles(&self) -> Vec<String> {
-        let mut out = Vec::new();
-        for t in &self.tokens {
-            out.push(t.clone());
-            out.push(t.chars().rev().collect());
-            let hex = crate::util::hex(t.as_bytes());
-            out.push(hex.to_uppercase());
-            out.push(hex);
-            for skip in 0..3 {
-                // The middle of an encoding is stable whatever precedes the token.
-                let mut padded = vec![b'x'; skip];
-                padded.extend_from_slice(t.as_bytes());
-                for url in [false, true] {
-                    let enc = base64(&padded, url);
-                    let start = (skip * 4).div_ceil(3) + 2;
-                    let end = enc.len().saturating_sub(4);
-                    if end > start + 16 {
-                        out.push(enc[start..end].to_string());
-                    }
-                }
-            }
-        }
-        out
+        self.tokens.iter().flat_map(|t| encodings(t)).collect()
     }
 
     /// Findings for every channel that carries any needle.
@@ -575,8 +655,7 @@ impl Honeytokens {
         let needles = self.needles();
         let mut out = Vec::new();
         for (channel, bytes) in channels {
-            let text = String::from_utf8_lossy(bytes);
-            if needles.iter().any(|n| text.contains(n.as_str())) {
+            if carries(bytes, &needles) {
                 out.push(Finding::blocker(
                     "behaviour.exfiltration",
                     None,
@@ -586,6 +665,48 @@ impl Honeytokens {
         }
         out
     }
+}
+
+/// A secret as it might leave: raw, reversed, hex in both cases, URL-encoded (every byte, both
+/// cases), and base64 (standard and URL-safe, from any alignment: the middle of an encoding is
+/// stable whatever precedes the token).
+pub fn encodings(t: &str) -> Vec<String> {
+    let mut out = vec![t.to_string(), t.chars().rev().collect()];
+    let hex = crate::util::hex(t.as_bytes());
+    out.push(hex.to_uppercase());
+    out.push(hex);
+    let pct: String = t.bytes().map(|b| format!("%{b:02X}")).collect();
+    out.push(pct.to_lowercase());
+    out.push(pct);
+    for skip in 0..3 {
+        let mut padded = vec![b'x'; skip];
+        padded.extend_from_slice(t.as_bytes());
+        for url in [false, true] {
+            let enc = base64(&padded, url);
+            let start = (skip * 4).div_ceil(3) + 2;
+            let end = enc.len().saturating_sub(4);
+            if end > start + 16 {
+                out.push(enc[start..end].to_string());
+            }
+        }
+    }
+    out
+}
+
+/// Whether `bytes` carry any needle: as they are, and with all whitespace (and escaped line
+/// breaks) removed, so an encoding wrapped or split across lines is still found.
+pub fn carries(bytes: &[u8], needles: &[String]) -> bool {
+    let text = String::from_utf8_lossy(bytes);
+    if needles.iter().any(|n| text.contains(n.as_str())) {
+        return true;
+    }
+    let joined: String = text
+        .replace("\\r\\n", "")
+        .replace("\\n", "")
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    needles.iter().any(|n| joined.contains(n.as_str()))
 }
 
 /// The behaviour stage: the release ran `jobs` operations, every channel out of it was captured,
@@ -617,6 +738,282 @@ pub fn behaviour_report(
             "answered": answered,
         }),
     )
+}
+
+impl StageReport {
+    /// This stage with more findings and one more fact under `key`, decided again. The AI stage
+    /// stays advisory whatever is added.
+    pub fn extended(mut self, more: Vec<Finding>, key: &str, facts: Value) -> StageReport {
+        self.findings.extend(more);
+        if let Some(obj) = self.evidence.as_object_mut() {
+            obj.insert(key.to_string(), facts);
+        }
+        if self.decision == "advisory" {
+            return self;
+        }
+        StageReport::decided(self.stage, self.findings, self.evidence)
+    }
+}
+
+// ---- egress diff (behaviour test) -----------------------------------------------------------------
+
+/// One network attempt the sandbox saw: the syscall, the address family and the destination.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Attempt {
+    pub syscall: String,
+    pub family: String,
+    pub addr: String,
+    pub port: Option<u16>,
+}
+
+/// The syscalls the behaviour run's gVisor strace records (`runsc-behaviour`).
+pub const TRACED_SYSCALLS: [&str; 4] = ["connect", "sendto", "sendmsg", "sendmmsg"];
+
+fn field_after<'a>(line: &'a str, key: &str) -> Option<&'a str> {
+    let i = line.find(key)? + key.len();
+    let rest = &line[i..];
+    let end = rest.find([',', '}']).unwrap_or(rest.len());
+    Some(rest[..end].trim().trim_matches('"'))
+}
+
+/// Network attempts in gVisor's strace output (the sentry's debug log): every traced syscall
+/// that names a socket address, e.g.
+/// `… python3 E connect(0x3 socket:[1], 0x7f… {Family: AF_INET, Addr: 93.184.216.34, Port: 443}, 0x10)`.
+/// Entry and exit lines of one call are the same attempt.
+pub fn parse_strace(text: &str) -> Vec<Attempt> {
+    let mut out = std::collections::BTreeSet::new();
+    for line in text.lines() {
+        let Some(syscall) = TRACED_SYSCALLS
+            .iter()
+            .find(|s| line.contains(&format!(" {s}(")))
+        else {
+            continue;
+        };
+        let Some(family) = field_after(line, "Family: ") else {
+            continue;
+        };
+        let addr = field_after(line, "Addr: ").unwrap_or("").to_string();
+        let port = field_after(line, "Port: ").and_then(|p| p.parse::<u16>().ok());
+        out.insert(Attempt {
+            syscall: syscall.to_string(),
+            family: family.to_string(),
+            addr,
+            port,
+        });
+    }
+    out.into_iter().collect()
+}
+
+fn loopback(addr: &str) -> bool {
+    addr.starts_with("127.")
+        || addr == "::1"
+        || addr == "0.0.0.0"
+        || addr == "::"
+        || addr.starts_with("::ffff:127.")
+}
+
+/// Most egress findings one run reports; the evidence keeps the count.
+const MAX_EGRESS_FINDINGS: usize = 20;
+
+/// Declared egress against what the run attempted. Unix and netlink sockets stay inside the
+/// sandbox (`--host-uds=none`) and so do loopback connections, except DNS: a name lookup is a
+/// way out. The build plane has no broker, so any other address is undeclared, whatever the
+/// manifest declares (only `broker` is ever allowed). Every undeclared attempt blocks.
+pub fn egress_findings(declared: &[String], attempts: &[Attempt]) -> Vec<Finding> {
+    let mut out = Vec::new();
+    for a in attempts {
+        if !matches!(a.family.as_str(), "AF_INET" | "AF_INET6") {
+            continue;
+        }
+        let port = a.port.map(|p| p.to_string()).unwrap_or_else(|| "?".into());
+        let (rule, message) = if a.port == Some(53) {
+            (
+                "egress.dns",
+                format!("a DNS lookup ({}) to {}:53", a.syscall, a.addr),
+            )
+        } else if loopback(&a.addr) {
+            continue;
+        } else {
+            (
+                "egress.undeclared",
+                format!(
+                    "{} to {}:{port}; the release declares {}",
+                    a.syscall,
+                    a.addr,
+                    if declared.is_empty() {
+                        "no egress".to_string()
+                    } else {
+                        declared.join(", ")
+                    }
+                ),
+            )
+        };
+        let key = format!("{}:{port}", a.addr);
+        if out.iter().any(|f: &Finding| f.id.ends_with(&key)) {
+            continue;
+        }
+        out.push(Finding::of(
+            "gvisor",
+            rule,
+            Severity::High,
+            &key,
+            message,
+            true,
+        ));
+        if out.len() >= MAX_EGRESS_FINDINGS {
+            break;
+        }
+    }
+    out
+}
+
+/// The egress monitor saw nothing it could read. Blocking when it was configured (a missing log
+/// is not a clean run); advisory when this build plane has no monitor.
+pub fn egress_unobserved(configured: bool) -> Finding {
+    if configured {
+        Finding::blocker(
+            "egress.unobserved",
+            None,
+            "the sandbox's network trace is missing; the run proves nothing",
+        )
+    } else {
+        Finding::advisory(
+            "egress.unobserved",
+            None,
+            "this build plane does not trace network attempts",
+        )
+    }
+}
+
+// ---- resource use (behaviour test) ----------------------------------------------------------------
+
+/// What one Nest may use: the marketplace pool's per-Nest limits. A manifest declares no
+/// resources of its own today, so the pool's limits are what it is held to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Budget {
+    pub memory_mib: u64,
+    pub cpu_millis: u64,
+    /// The longest one job may take.
+    pub job_seconds: u64,
+}
+
+/// What the behaviour run used, measured on the sandbox's cgroup (sentry and gofer included).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Usage {
+    pub peak_memory_bytes: u64,
+    /// CPU time from the start of the run to its end.
+    pub cpu_usec: u64,
+    pub active_ms: u64,
+    /// The longest time between one answer and the next (the first from the start).
+    pub slowest_job_ms: Option<u64>,
+}
+
+/// Over the budget is advisory; this many times over blocks.
+pub const FAR_OVER: f64 = 2.0;
+
+/// Usage against the budget, per dimension.
+pub fn resource_findings(b: &Budget, u: &Usage) -> Vec<Finding> {
+    let mut out = Vec::new();
+    let millis = if u.active_ms == 0 {
+        0
+    } else {
+        u.cpu_usec / u.active_ms
+    };
+    let dims = [
+        (
+            "resources.memory",
+            (u.peak_memory_bytes >> 20) as f64,
+            b.memory_mib as f64,
+            format!("peak memory {} MiB", u.peak_memory_bytes >> 20),
+            format!("{} MiB", b.memory_mib),
+        ),
+        (
+            "resources.cpu",
+            millis as f64,
+            b.cpu_millis as f64,
+            format!("average CPU {millis} millicores while working"),
+            format!("{} millicores", b.cpu_millis),
+        ),
+        (
+            "resources.time",
+            u.slowest_job_ms.unwrap_or(0) as f64 / 1000.0,
+            b.job_seconds as f64,
+            format!(
+                "slowest job {:.1} s",
+                u.slowest_job_ms.unwrap_or(0) as f64 / 1000.0
+            ),
+            format!("{} s", b.job_seconds),
+        ),
+    ];
+    for (rule, used, limit, what, of) in dims {
+        if limit <= 0.0 || used <= limit {
+            continue;
+        }
+        let ratio = used / limit;
+        let far = ratio > FAR_OVER;
+        out.push(Finding::of(
+            "cgroup",
+            rule,
+            if far {
+                Severity::High
+            } else {
+                Severity::Medium
+            },
+            rule,
+            format!("{what}, {ratio:.1}x the limit of {of}"),
+            far,
+        ));
+    }
+    out
+}
+
+// ---- buyer data (behaviour test) ------------------------------------------------------------------
+
+/// A per-job marker planted in each test job's input, standing in for one buyer's data: random
+/// and high-entropy, with no fixed prefix a release could look for.
+pub fn canary() -> String {
+    const A: &[u8; 62] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    let hex = crate::util::random_hex(24);
+    hex.as_bytes()
+        .chunks(2)
+        .map(|c| {
+            let v = u8::from_str_radix(std::str::from_utf8(c).unwrap_or("00"), 16).unwrap_or(0);
+            A[(v as usize) % A.len()] as char
+        })
+        .collect()
+}
+
+/// Buyer data must stay with its own job: a job's canary in another job's result, or any canary
+/// in the release's own output (its logs), blocks. `jobs` is `(job id, canary)`; `results` is
+/// `(job id, result bytes)`.
+pub fn canary_findings(
+    jobs: &[(String, Option<String>)],
+    results: &[(String, Vec<u8>)],
+    logs: &[u8],
+) -> Vec<Finding> {
+    let mut out = Vec::new();
+    for (job, canary) in jobs {
+        let Some(c) = canary else { continue };
+        let needles = encodings(c);
+        if carries(logs, &needles) {
+            out.push(Finding::blocker(
+                "data.in_logs",
+                None,
+                format!("the input of {job} appears in the release's output"),
+            ));
+        }
+        for (other, bytes) in results {
+            if other != job && carries(bytes, &needles) {
+                out.push(Finding::blocker(
+                    "data.cross_job",
+                    None,
+                    format!("the input of {job} appears in the result of {other}"),
+                ));
+            }
+        }
+    }
+    out
 }
 
 // ---- AI review --------------------------------------------------------------------------------
@@ -763,33 +1160,34 @@ pub async fn ai_review<M: ReviewModel>(
         .unwrap_or_default()
         .iter()
         .take(50)
-        .map(|f| Finding {
-            rule: format!(
-                "ai.{}",
-                match f["severity"].as_str() {
-                    Some("high") => "high",
-                    Some("medium") => "medium",
-                    _ => "low",
-                }
-            ),
-            path: None,
-            detail: format!(
-                "{}: {}",
-                f["title"]
-                    .as_str()
-                    .unwrap_or("finding")
-                    .chars()
-                    .take(200)
-                    .collect::<String>(),
-                f["detail"]
-                    .as_str()
-                    .unwrap_or("")
-                    .chars()
-                    .take(1000)
-                    .collect::<String>()
-            ),
+        .enumerate()
+        .map(|(i, f)| {
+            let (level, severity) = match f["severity"].as_str() {
+                Some("high") => ("high", Severity::High),
+                Some("medium") => ("medium", Severity::Medium),
+                _ => ("low", Severity::Low),
+            };
+            let title: String = f["title"]
+                .as_str()
+                .unwrap_or("finding")
+                .chars()
+                .take(200)
+                .collect();
+            let detail: String = f["detail"]
+                .as_str()
+                .unwrap_or("")
+                .chars()
+                .take(700)
+                .collect();
             // Advisory: the staff reviewer weighs these; they block nothing by themselves.
-            blocker: false,
+            Finding::of(
+                "ai-review",
+                &format!("ai.{level}"),
+                severity,
+                &format!("{i}"),
+                format!("{title}: {detail}"),
+                false,
+            )
         })
         .collect();
     let high = findings.iter().filter(|f| f.rule == "ai.high").count();
@@ -851,7 +1249,7 @@ mod tests {
         for (text, rule) in cases {
             let found = secrets_in("src/x.rs", text.as_bytes());
             assert!(
-                found.iter().any(|f| f.rule == rule && f.blocker),
+                found.iter().any(|f| f.rule == rule && f.blocking),
                 "{text}: {found:?}"
             );
         }
@@ -976,6 +1374,201 @@ mod tests {
         assert_eq!(report.decision, "passed");
     }
 
+    #[test]
+    fn the_strace_parser_finds_each_network_attempt_once() {
+        let attempts = parse_strace(include_str!("../tests/fixtures/scanners/strace.txt"));
+        let shown: Vec<String> = attempts
+            .iter()
+            .map(|a| format!("{} {} {} {:?}", a.syscall, a.family, a.addr, a.port))
+            .collect();
+        assert_eq!(attempts.len(), 6, "{shown:#?}");
+        assert!(shown.contains(&"connect AF_INET 93.184.216.34 Some(443)".to_string()));
+        assert!(shown.contains(&"sendto AF_INET 127.0.0.53 Some(53)".to_string()));
+        assert!(shown.contains(&"connect AF_INET6 2001:db8::7 Some(8443)".to_string()));
+        assert!(shown.contains(&"connect AF_UNIX /tmp/app.sock None".to_string()));
+    }
+
+    #[test]
+    fn undeclared_egress_and_dns_block_while_in_sandbox_traffic_does_not() {
+        let attempts = parse_strace(include_str!("../tests/fixtures/scanners/strace.txt"));
+        let f = egress_findings(&["broker".into()], &attempts);
+        let mut ids: Vec<&str> = f.iter().map(|x| x.id.as_str()).collect();
+        ids.sort_unstable();
+        assert_eq!(
+            ids,
+            vec![
+                "gvisor:127.0.0.53:53",
+                "gvisor:2001:db8::7:8443",
+                "gvisor:93.184.216.34:443"
+            ],
+            "{f:#?}"
+        );
+        assert!(f.iter().all(|x| x.blocking && x.tool == "gvisor"));
+        let by = |id: &str| f.iter().find(|x| x.id == id).unwrap();
+        assert_eq!(by("gvisor:127.0.0.53:53").rule, "egress.dns");
+        let web = by("gvisor:93.184.216.34:443");
+        assert_eq!(web.rule, "egress.undeclared");
+        assert!(web.message.contains("declares broker"), "{}", web.message);
+        // Loopback, Unix and netlink only: nothing.
+        let quiet = [
+            Attempt {
+                syscall: "connect".into(),
+                family: "AF_INET".into(),
+                addr: "127.0.0.1".into(),
+                port: Some(8080),
+            },
+            Attempt {
+                syscall: "connect".into(),
+                family: "AF_UNIX".into(),
+                addr: "/tmp/x".into(),
+                port: None,
+            },
+        ];
+        assert!(egress_findings(&["broker".into()], &quiet).is_empty());
+        assert!(egress_unobserved(true).blocking);
+        assert!(!egress_unobserved(false).blocking);
+    }
+
+    #[test]
+    fn resource_use_over_the_budget_is_advisory_and_far_over_blocks() {
+        let b = Budget {
+            memory_mib: 512,
+            cpu_millis: 1000,
+            job_seconds: 30,
+        };
+        let within = Usage {
+            peak_memory_bytes: 400 << 20,
+            cpu_usec: 5_000_000,
+            active_ms: 10_000,
+            slowest_job_ms: Some(9_000),
+        };
+        assert!(resource_findings(&b, &within).is_empty());
+        let over = Usage {
+            peak_memory_bytes: 700 << 20,
+            cpu_usec: 15_000_000,
+            active_ms: 10_000,
+            slowest_job_ms: Some(40_000),
+        };
+        let f = resource_findings(&b, &over);
+        assert_eq!(f.len(), 3, "{f:#?}");
+        assert!(f
+            .iter()
+            .all(|x| !x.blocking && x.severity == Severity::Medium));
+        let far = Usage {
+            peak_memory_bytes: 1100 << 20,
+            cpu_usec: 25_000_000,
+            active_ms: 10_000,
+            slowest_job_ms: Some(61_000),
+        };
+        let f = resource_findings(&b, &far);
+        let rules: Vec<&str> = f
+            .iter()
+            .filter(|x| x.blocking)
+            .map(|x| x.rule.as_str())
+            .collect();
+        assert_eq!(
+            rules,
+            vec!["resources.memory", "resources.cpu", "resources.time"]
+        );
+    }
+
+    #[test]
+    fn buyer_data_must_stay_in_its_own_job() {
+        let (a, b) = (canary(), canary());
+        let jobs = vec![
+            ("job_a".to_string(), Some(a.clone())),
+            ("job_b".to_string(), Some(b.clone())),
+        ];
+        let own = vec![
+            ("job_a".to_string(), format!("answer for {a}").into_bytes()),
+            ("job_b".to_string(), b"answer".to_vec()),
+        ];
+        assert!(canary_findings(&jobs, &own, b"worker started").is_empty());
+        let crossed = vec![("job_b".to_string(), format!("leaked {a}").into_bytes())];
+        let f = canary_findings(&jobs, &crossed, format!("log: {b}").as_bytes());
+        let rules: Vec<&str> = f.iter().map(|x| x.rule.as_str()).collect();
+        assert_eq!(rules, vec!["data.cross_job", "data.in_logs"], "{f:#?}");
+        assert!(f.iter().all(|x| x.blocking));
+    }
+
+    #[test]
+    fn markers_are_found_hex_url_and_base64_encoded_and_split_across_lines() {
+        let c = canary();
+        let needles = encodings(&c);
+        let b64 = base64(format!("input={c}&x=1").as_bytes(), false);
+        let split: String = b64
+            .as_bytes()
+            .chunks(10)
+            .map(|ch| format!("{}\n", String::from_utf8_lossy(ch)))
+            .collect();
+        let pct: String = c.bytes().map(|b| format!("%{b:02x}")).collect();
+        for hay in [
+            format!("x {} y", crate::util::hex(c.as_bytes())),
+            format!("q={pct}"),
+            split,
+            format!("\"{}\"\\n\"{}\"", &c[..10], &c[10..]).replace("\"\\n\"", "\\n"),
+        ] {
+            assert!(carries(hay.as_bytes(), &needles), "{hay}");
+        }
+        assert!(!carries(b"nothing to see", &needles));
+    }
+
+    #[test]
+    fn an_extended_stage_is_decided_again_but_the_ai_stays_advisory() {
+        let r = deterministic_scan(&reference_source()).unwrap();
+        assert_eq!(r.decision, "passed");
+        let blocker = Finding::of(
+            "clamav",
+            "malware.signature",
+            Severity::Critical,
+            "x",
+            "m",
+            true,
+        );
+        let r = r.extended(
+            vec![blocker.clone()],
+            "security_tools",
+            json!({ "ran": true }),
+        );
+        assert_eq!(r.decision, "failed");
+        assert_eq!(r.evidence["security_tools"]["ran"], true);
+        let ai = StageReport {
+            stage: "ai_analysis",
+            decision: "advisory",
+            reason: String::new(),
+            findings: vec![],
+            evidence: json!({}),
+        };
+        assert_eq!(
+            ai.extended(vec![blocker], "x", json!(1)).decision,
+            "advisory"
+        );
+    }
+
+    #[test]
+    fn findings_serialize_with_the_structured_fields() {
+        let f = Finding::of(
+            "osv-scanner",
+            "vulnerability.dependency",
+            Severity::High,
+            "GHSA-1:x@1",
+            "m",
+            true,
+        )
+        .at(Some("Cargo.lock"))
+        .package(Some("x@1".into()));
+        let v = serde_json::to_value(&f).unwrap();
+        for k in [
+            "id", "severity", "tool", "rule", "path", "package", "message", "blocking",
+        ] {
+            assert!(v.get(k).is_some(), "{k}: {v}");
+        }
+        assert_eq!(v["severity"], "high");
+        assert_eq!(v["id"], "osv-scanner:GHSA-1:x@1");
+        let back: Finding = serde_json::from_value(v).unwrap();
+        assert_eq!(back, f);
+    }
+
     /// A route that records what it was asked.
     struct Recorder {
         asked: Mutex<Vec<String>>,
@@ -1018,7 +1611,7 @@ mod tests {
             "AI never passes or fails a release"
         );
         assert_eq!(report.findings.len(), 1);
-        assert!(report.findings.iter().all(|f| !f.blocker));
+        assert!(report.findings.iter().all(|f| !f.blocking));
         assert_eq!(report.evidence["model"], AI_REVIEW_MODEL);
         // Garbage from the model is still only advisory.
         let model = Recorder {

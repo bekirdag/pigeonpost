@@ -1,0 +1,4 @@
+PIGEONPOST_Cryptominer_Stratum /scan/src/src/miner.js
+PIGEONPOST_Cryptominer_Stratum /scan/src/src/miner.js
+MAL_Backdoor_ReverseShell_Generic /scan/artefacts/bin/helper
+error scanning /scan/image/image.tar: could not map file
