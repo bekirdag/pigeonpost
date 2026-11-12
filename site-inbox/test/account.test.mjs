@@ -134,12 +134,12 @@ const COMPLETE_PROFILE = { id: "11111111-1111-4111-8111-111111111111", legal_nam
   address: { line1: "1 Example Street", city: "Istanbul", postal_code: "34000", country: "TR" } };
 
 async function checkoutPage(t, { url = "https://pigeonpost.dev/account", plan = { capacity: 0, used: 0, names: [] }, profiles = [COMPLETE_PROFILE],
-  subscriptions = [], recovery = false, statuses = ["pending", "active"], openCurrencies } = {}) {
+  subscriptions = [], recovery = false, statuses = ["pending", "active"], openCurrencies, session = "member-token" } = {}) {
   const dom = new JSDOM('<main id="account-root"></main>', { url, runScripts: "outside-only", virtualConsole: new VirtualConsole() });
   t.after(() => dom.window.close());
   const { window } = dom;
   window.eval(config);
-  window.sessionStorage.setItem("pp_session", "member-token");
+  window.sessionStorage.setItem("pp_session", session);
   const originalTimeout = window.setTimeout.bind(window);
   window.setTimeout = (fn, delay, ...args) => originalTimeout(fn, delay >= 350 ? 0 : delay, ...args);
   const calls = [];
@@ -805,4 +805,15 @@ test("site stylesheets honour data-theme with the same dark values as the media 
     assert.ok(media && forced, name);
     assert.equal(norm(forced[1]), norm(media[1]), `${name}: the two dark blocks differ`);
   }
+});
+
+test("the security card says two-factor is on when this sign-in used the authenticator", async (t) => {
+  const on = await checkoutPage(t, { url: "https://pigeonpost.dev/account#security", session: "x.eyJuYW1lIjoiQWRhIiwiZW1haWwiOiJhZGFAZXhhbXBsZS50ZXN0IiwiYWNyIjoibWZhIn0.y" });
+  const card = on.window.document.querySelector("#ac-2fa").closest(".ac-card");
+  assert.match(card.textContent, /Two-factor is on/);
+  assert.match(on.window.document.querySelector("#ac-2fa").textContent, /Add another authenticator/);
+  const off = await checkoutPage(t, { url: "https://pigeonpost.dev/account#security", session: "x.eyJuYW1lIjoiQWRhIiwiZW1haWwiOiJhZGFAZXhhbXBsZS50ZXN0IiwiYWNyIjoiMSJ9.y" });
+  const offCard = off.window.document.querySelector("#ac-2fa").closest(".ac-card");
+  assert.doesNotMatch(offCard.textContent, /Two-factor is on/);
+  assert.match(offCard.textContent, /next time you sign in with your code/);
 });

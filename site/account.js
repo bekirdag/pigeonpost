@@ -390,9 +390,12 @@
       const part = String(getToken() || "").split(".")[1];
       const b64 = part.replace(/-/g, "+").replace(/_/g, "/");
       const claims = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))));
-      return { name: String(claims.name || claims.given_name || claims.preferred_username || ""), address: String(claims.email || "") };
+      // acr "mfa" (or a level of 2 or more) means this sign-in used the authenticator code.
+      const acr = String(claims.acr || "");
+      const twoStep = acr === "mfa" || Number(acr) >= 2;
+      return { name: String(claims.name || claims.given_name || claims.preferred_username || ""), address: String(claims.email || ""), twoStep };
     } catch (_) {
-      return { name: "", address: "" };
+      return { name: "", address: "", twoStep: false };
     }
   }
 
@@ -627,9 +630,13 @@
             ${viewHead("security", "Two-factor", "")}
             <div class="ac-card">
               <h3>Security</h3>
-              <p class="muted">Add two-factor authentication with an app like Google Authenticator, Authy, or 1Password.</p>
+              ${identity().twoStep
+                ? `<p><strong>Two-factor is on.</strong> You signed in with a code from your authenticator app.</p>
+              <button class="btn btn-secondary" id="ac-2fa">Add another authenticator</button>
+              <p class="ac-note ac-mt">Opens a single screen with a QR code to scan, then brings you back here.</p>`
+                : `<p class="muted">Add two-factor authentication with an app like Google Authenticator, Authy, or 1Password. If you already set it up, it shows as on the next time you sign in with your code.</p>
               <button class="btn btn-primary" id="ac-2fa">Set up two-factor authentication</button>
-              <p class="ac-note ac-mt">Opens a single screen with a QR code to scan, then brings you back here.</p>
+              <p class="ac-note ac-mt">Opens a single screen with a QR code to scan, then brings you back here.</p>`}
             </div>
           </section>
 
