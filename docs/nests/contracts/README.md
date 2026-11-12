@@ -278,7 +278,8 @@ M2 opens the review pipeline to third-party publishers and adds listings, a cata
 | POST …/kyc; POST …/kyc/{check}/simulate (sandbox only) | PublisherApply | same |
 | POST …/submit | PublisherSubmit (HumanStepUp) | same, with step-up |
 | GET /v1/staff/publisher-registrations[/{application}]; POST …/claim; POST …/decisions | NestReview | a reviewer with step-up and no stake (the detail read is audited) |
-| GET /v1/staff/publisher-registrations/{application}/documents/{document}; POST …/reveal | NestReview or PayoutPrepare | a reviewer or finance with step-up and no stake; audited |
+| GET /v1/staff/publisher-registrations/{application}/documents/{document} | NestReview or StaffFinanceRead | a reviewer or finance with step-up and no stake; audited |
+| POST /v1/staff/publisher-registrations/{application}/reveal | StaffFinanceRead | finance with step-up and no stake; audited |
 | GET /v1/staff/publisher-registration-alerts; POST …/publisher-registrations/{application}/alerts/{alert}/resolve | NestReview | a reviewer with step-up (resolving: no stake; audited, lifts a `kyc_reversed` payout hold) |
 | POST /v1/integrations/shufti/callback | provider | Shufti Pro, by its `Signature` header |
 

@@ -581,10 +581,25 @@ async fn every_other_ending_releases_the_hold() {
     let (s, v) = run(&w, &listing, json!({ "role": "CFO" })).await;
     assert_eq!(s, 201, "{v}");
     let lost = v["data"]["job_id"].as_str().unwrap().to_string();
+    // Running a job also kicks off a dispatch in the background, which races this test's
+    // mailbox move (Windows schedules it differently). Let that dispatch finish first, then
+    // queue the job again: the dispatch below is the one that meets the moved mailbox.
+    for _ in 0..150 {
+        if job(&w, &lost).await["execution"] != "queued" {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
     sql(
         &w.srv,
         "UPDATE identities SET account_id = ?2 WHERE address = ?1",
         vec![w.service.address.clone(), w.bob.account.clone()],
+    )
+    .await;
+    sql(
+        &w.srv,
+        "UPDATE nest_hosted_jobs SET state = 'queued', next_attempt_at = 0 WHERE id = ?1",
+        vec![lost.clone()],
     )
     .await;
     dispatch_once(&w.srv.state).await;

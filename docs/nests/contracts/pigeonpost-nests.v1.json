@@ -6828,7 +6828,7 @@
         ],
         "operationId": "staffReadPublisherRegistrationDocument",
         "summary": "Staff view a document",
-        "description": "Reviewer or finance (`NestReview`, else `PayoutPrepare`), step-up, no stake. Audited `staff.publisher_registration.document` before the bytes leave. `?inline=1` for in-browser viewing (sandboxed CSP).",
+        "description": "Reviewer or finance (`NestReview` or `StaffFinanceRead`), step-up, no stake. Audited `staff.publisher_registration.document` before the bytes leave. `?inline=1` for in-browser viewing (sandboxed CSP).",
         "x-pigeonpost-status": "implemented",
         "x-pigeonpost-action": "NestReview",
         "security": [
@@ -6893,9 +6893,9 @@
         ],
         "operationId": "staffRevealPublisherRegistration",
         "summary": "Reveal bank or tax details",
-        "description": "The only unmasked read. Reviewer or finance, step-up, no stake; the fields and the reason are audited (`staff.publisher_registration.reveal`) before anything is opened. `Cache-Control: no-store`.",
+        "description": "The only unmasked read. Finance (`StaffFinanceRead`), step-up, no stake; the fields and the reason are audited (`staff.publisher_registration.reveal`) before anything is opened. `Cache-Control: no-store`.",
         "x-pigeonpost-status": "implemented",
-        "x-pigeonpost-action": "NestReview",
+        "x-pigeonpost-action": "StaffFinanceRead",
         "security": [
           {
             "memberToken": []

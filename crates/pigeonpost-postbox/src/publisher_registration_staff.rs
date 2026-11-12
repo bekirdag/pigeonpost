@@ -6,8 +6,8 @@
 //! | `GET /v1/staff/publisher-registrations?state=&account_type=&q=` | `NestReview` | a reviewer with step-up | — |
 //! | `GET /v1/staff/publisher-registrations/{application}` | `NestReview` | a reviewer, step-up, no stake | `staff.publisher_registration.view` |
 //! | `POST /v1/staff/publisher-registrations/{application}/claim` | `NestReview` | same | `…claim` |
-//! | `GET /v1/staff/publisher-registrations/{application}/documents/{document}` | `NestReview` or `PayoutPrepare` | a reviewer or finance, step-up, no stake | `…document` |
-//! | `POST /v1/staff/publisher-registrations/{application}/reveal` | `NestReview` or `PayoutPrepare` | same | `…reveal` (fields and reason) |
+//! | `GET /v1/staff/publisher-registrations/{application}/documents/{document}` | `NestReview` or `StaffFinanceRead` | a reviewer or finance, step-up, no stake | `…document` |
+//! | `POST /v1/staff/publisher-registrations/{application}/reveal` | `StaffFinanceRead` | finance, step-up, no stake | `…reveal` (fields and reason) |
 //! | `POST /v1/staff/publisher-registrations/{application}/decisions` | `NestReview` | a reviewer, step-up, no stake | `…decision` |
 //! | `GET /v1/staff/publisher-registration-alerts` | `NestReview` | a reviewer with step-up | — |
 //! | `POST /v1/staff/publisher-registrations/{application}/alerts/{alert}/resolve` | `NestReview` | a reviewer, step-up, no stake | `…alert.resolve` |
@@ -16,11 +16,10 @@
 //! approval; the publisher's payouts are held) and `payee_push_failed` (finance never received the
 //! payee profile). Resolving the last open `kyc_reversed` alert lifts that payout hold.
 //!
-//! **Roles hook.** Reviews use the existing reviewer check (`NestReview`). Documents and the
-//! reveal of bank and tax details are for reviewers *and* finance (who verify payout details
-//! before the first payout), expressed today as "`NestReview`, else `PayoutPrepare`" in
-//! [`RECORD_ACTIONS`]. When the back office's wider staff roles land, replace that list with the
-//! one action that names both roles; nothing else here changes.
+//! **Roles** (the back office's staff roles). Reviews are the `reviewer` role's (`NestReview`).
+//! Documents are for reviewers and for `finance`, who verify payout details before the first
+//! payout ([`DOCUMENT_ACTIONS`]). The unmasked bank and tax details are finance's alone
+//! (`StaffFinanceRead`, [`REVEAL_ACTIONS`]): a reviewer judges the masked copy and the holder name.
 //!
 //! The conflict rule is the publisher one, applied to the application: a reviewer who filed it,
 //! owns it, or belongs to the owning org (or the linked publisher) is refused `staff_conflict`.
@@ -49,9 +48,10 @@ use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 
-/// Who may read registration records (documents, revealed bank and tax details): any one of these
-/// actions. See the module docs ("Roles hook").
-pub(crate) const RECORD_ACTIONS: [Action; 2] = [Action::NestReview, Action::PayoutPrepare];
+/// Who may view registration documents: a reviewer or finance (any one of these actions).
+pub(crate) const DOCUMENT_ACTIONS: [Action; 2] = [Action::NestReview, Action::StaffFinanceRead];
+/// Who may reveal the unmasked bank and tax details: finance.
+pub(crate) const REVEAL_ACTIONS: [Action; 1] = [Action::StaffFinanceRead];
 
 /// How long a rejected application's documents and sealed details are kept (days).
 pub(crate) fn rejected_retention_days() -> i64 {
@@ -484,7 +484,7 @@ async fn staff_registration_document(
     Query(q): Query<HashMap<String, String>>,
 ) -> Response {
     let result = async {
-        let (principal, account, a) = app_gate(&state, &headers, &RECORD_ACTIONS, &id).await?;
+        let (principal, account, a) = app_gate(&state, &headers, &DOCUMENT_ACTIONS, &id).await?;
         let aid = a.id.clone();
         let d = state
             .store
@@ -540,7 +540,7 @@ async fn staff_reveal_registration(
         if req.fields.is_empty() || req.fields.iter().any(|f| f != "bank" && f != "tax") {
             return Err(GErr::bad("invalid_request", "fields: bank and/or tax"));
         }
-        let (principal, account, a) = app_gate(&state, &headers, &RECORD_ACTIONS, &id).await?;
+        let (principal, account, a) = app_gate(&state, &headers, &REVEAL_ACTIONS, &id).await?;
         let row = registration_audit(
             &state,
             &principal,

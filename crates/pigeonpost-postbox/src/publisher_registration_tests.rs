@@ -783,6 +783,17 @@ async fn staff_reveal_is_the_only_unmasked_read_and_is_audited() {
         )
         .await;
     assert_eq!(s, 403);
+    // The unmasked details are finance's: a reviewer judges the masked copy.
+    let rev = srv.person("regrevealrev").await;
+    staff(&srv, &rev, "reviewer").await;
+    let (s, v) = srv
+        .post(
+            &path,
+            &rev.strong,
+            json!({ "fields": ["bank"], "reason": "Checking the holder" }),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (403, "staff_required"), "{v}");
 }
 
 fn signed(srv: &Srv, body: &Value) -> (Vec<u8>, String) {
