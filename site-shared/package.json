@@ -1,0 +1,7 @@
+{
+  "name": "pigeonpost-platform-shared",
+  "private": true,
+  "description": "Shared shell for account., enterprise., partner. and management.pigeonpost.dev: static files; this manifest exists only so the tests can be run.",
+  "scripts": { "test": "node --test test/*.test.mjs" },
+  "devDependencies": { "jsdom": "^27.0.0" }
+}
