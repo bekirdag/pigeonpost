@@ -1,0 +1,192 @@
+/* Vendored from the Pigeonpost Design Kit (pigeonpost-design-kit/css/tokens.css, v1.0). Do not edit
+   here: re-copy from the kit. Only change: the font URLs point at the inbox's own fonts/ folder. */
+/* Pigeonpost Design Kit — tokens v1.0 (2026-11-14)
+   The single source of truth for colour, type, space, shape, depth and motion in every Pigeonpost
+   product: web (account., enterprise., partner., management., inbox., marketing), iOS, Android,
+   desktop. Mirrors tokens.json; platform kits are generated from that file.
+
+   Three layers:
+   1. Brand palette (--pp-navy-*, --pp-blue-*, --pp-green-*, neutrals, status hues) — raw values.
+   2. Semantic roles (--pp-bg, --pp-text, --pp-accent …) — what components use. Light by default,
+      dark under prefers-color-scheme or [data-theme="dark"].
+   3. Scales (type, space, radius, shadow, motion, z-index).
+   Components never use layer 1 directly except for brand marks and charts. */
+
+@font-face { font-family: "Geist"; src: url("../fonts/Geist-Variable.woff2") format("woff2"); font-weight: 100 900; font-style: normal; font-display: swap; }
+@font-face { font-family: "Geist"; src: url("../fonts/Geist-Italic-Variable.woff2") format("woff2"); font-weight: 100 900; font-style: italic; font-display: swap; }
+@font-face { font-family: "Geist Mono"; src: url("../fonts/GeistMono-Variable.woff2") format("woff2"); font-weight: 100 900; font-style: normal; font-display: swap; }
+
+:root {
+  /* ---- 1. Brand palette ------------------------------------------------------------------ */
+  /* Pigeon Navy — the bird and the wordmark. Trust, permanence. */
+  --pp-navy-50: #EEF2FA; --pp-navy-100: #D6E0F2; --pp-navy-200: #AEC1E6; --pp-navy-300: #7F9BD3;
+  --pp-navy-400: #4F72BD; --pp-navy-500: #2550A6; --pp-navy-600: #0F4199; --pp-navy-700: #05368B;
+  --pp-navy-800: #052B6E; --pp-navy-900: #04204F; --pp-navy-950: #021533;
+  /* Signal Blue — the outgoing bubble. Action, links, focus. */
+  --pp-blue-50: #EDF4FF; --pp-blue-100: #D8E7FF; --pp-blue-200: #B3D0FF; --pp-blue-300: #80B1FF;
+  --pp-blue-400: #4A90FF; --pp-blue-500: #086CFF; --pp-blue-600: #0A5FE0; --pp-blue-700: #0B4FB8;
+  --pp-blue-800: #0D418F; --pp-blue-900: #0E3570; --pp-blue-950: #0A2147;
+  /* Reply Green — the reply bubble. Delivered, success, "agent is working". */
+  --pp-green-50: #ECFBEE; --pp-green-100: #D1F5D4; --pp-green-200: #A6EBAB; --pp-green-300: #6FDD77;
+  --pp-green-400: #4FDB55; --pp-green-500: #26CE2D; --pp-green-600: #1DA824; --pp-green-700: #15801D;
+  --pp-green-800: #136419; --pp-green-900: #114F16; --pp-green-950: #072B0A;
+  /* Neutrals (cool, slightly blue). */
+  --pp-gray-0: #FFFFFF; --pp-gray-25: #FAFBFC; --pp-gray-50: #F4F6F8; --pp-gray-100: #ECEFF3;
+  --pp-gray-200: #DFE3E9; --pp-gray-300: #C9CFD8; --pp-gray-400: #9AA3B0; --pp-gray-500: #6B7482;
+  --pp-gray-600: #4E5663; --pp-gray-700: #343C47; --pp-gray-800: #1F252E; --pp-gray-850: #181C23;
+  --pp-gray-900: #12161C; --pp-gray-950: #0B0E12;
+  /* Status hues. */
+  --pp-red-50: #FDF0EF; --pp-red-200: #F5C2CC; --pp-red-400: #FF6B6B; --pp-red-600: #C42B2B; --pp-red-700: #A3243F;
+  --pp-amber-50: #FDF3E1; --pp-amber-200: #F0D6A4; --pp-amber-400: #F5B547; --pp-amber-600: #B45309; --pp-amber-700: #8A5208;
+  --pp-violet-50: #F1EEFD; --pp-violet-400: #9A85F2; --pp-violet-600: #5735B0;
+  --pp-teal-50: #E6F7F4; --pp-teal-400: #3FC7B4; --pp-teal-600: #0D6458;
+
+  /* Chart palette — categorical, fixed order (colour-blind checked against each neighbour). */
+  --pp-chart-1: #086CFF; --pp-chart-2: #26CE2D; --pp-chart-3: #05368B; --pp-chart-4: #F5B547;
+  --pp-chart-5: #9A85F2; --pp-chart-6: #3FC7B4; --pp-chart-7: #FF6B6B; --pp-chart-8: #6B7482;
+
+  /* ---- 3. Scales -------------------------------------------------------------------------- */
+  --pp-font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --pp-font-mono: "Geist Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  /* Type scale: --pp-fs-* (size) / --pp-lh-* (line-height). Display for marketing, heading for apps, body, label, code. */
+  --pp-fs-display-xl: 56px; --pp-lh-display-xl: 60px;
+  --pp-fs-display-l: 44px;  --pp-lh-display-l: 48px;
+  --pp-fs-display-m: 36px;  --pp-lh-display-m: 42px;
+  --pp-fs-h1: 28px; --pp-lh-h1: 34px;
+  --pp-fs-h2: 22px; --pp-lh-h2: 28px;
+  --pp-fs-h3: 18px; --pp-lh-h3: 24px;
+  --pp-fs-h4: 16px; --pp-lh-h4: 22px;
+  --pp-fs-body-l: 17px; --pp-lh-body-l: 26px;
+  --pp-fs-body: 15px;   --pp-lh-body: 22px;
+  --pp-fs-body-s: 13.5px; --pp-lh-body-s: 20px;
+  --pp-fs-caption: 12px; --pp-lh-caption: 16px;
+  --pp-fs-overline: 11.5px; --pp-lh-overline: 14px;
+  --pp-weight-regular: 400; --pp-weight-medium: 500; --pp-weight-semibold: 600; --pp-weight-bold: 700;
+  --pp-tracking-tight: -0.02em; --pp-tracking-normal: 0; --pp-tracking-wide: 0.06em;
+  /* Space — 4px grid. */
+  --pp-space-0: 0; --pp-space-1: 4px; --pp-space-2: 8px; --pp-space-3: 12px; --pp-space-4: 16px;
+  --pp-space-5: 20px; --pp-space-6: 24px; --pp-space-8: 32px; --pp-space-10: 40px; --pp-space-12: 48px;
+  --pp-space-16: 64px; --pp-space-20: 80px; --pp-space-24: 96px;
+  /* Shape. Bubbles echo the logo: generous radius, one tighter corner toward the sender. */
+  --pp-radius-xs: 4px; --pp-radius-s: 8px; --pp-radius-m: 10px; --pp-radius-l: 14px; --pp-radius-xl: 18px;
+  --pp-radius-2xl: 24px; --pp-radius-full: 999px; --pp-radius-bubble: 18px; --pp-radius-bubble-tail: 6px;
+  /* Control sizes. Touch targets ≥ 44px on mobile. */
+  --pp-control-s: 30px; --pp-control-m: 38px; --pp-control-l: 46px; --pp-touch-min: 44px;
+  /* Motion — calm by default. */
+  --pp-duration-fast: 120ms; --pp-duration-base: 200ms; --pp-duration-slow: 320ms;
+  --pp-ease-standard: cubic-bezier(.2, 0, 0, 1); --pp-ease-enter: cubic-bezier(0, 0, 0, 1); --pp-ease-exit: cubic-bezier(.3, 0, 1, 1);
+  /* Layers. */
+  --pp-z-base: 0; --pp-z-sticky: 20; --pp-z-dropdown: 40; --pp-z-overlay: 60; --pp-z-modal: 80; --pp-z-toast: 90; --pp-z-tooltip: 100;
+  /* Layout. */
+  --pp-content-max: 1480px; --pp-reading-max: 720px; --pp-sidebar-w: 264px; --pp-topbar-h: 60px;
+  --pp-bp-sm: 600px; --pp-bp-md: 900px; --pp-bp-lg: 1100px; --pp-bp-xl: 1440px;
+
+}
+
+/* ---- 2. Semantic roles: light (default, and any element with data-theme="light") ------------- */
+:root, [data-theme="light"] {
+  color-scheme: light;
+  --pp-bg: var(--pp-gray-50);            /* page ground */
+  --pp-bg-subtle: var(--pp-gray-25);     /* side panels, list panes */
+  --pp-surface: var(--pp-gray-0);        /* cards, sheets, menus */
+  --pp-surface-raised: var(--pp-gray-0); /* popovers above cards */
+  --pp-surface-sunken: var(--pp-gray-50);/* wells, table headers, inputs' track */
+  --pp-surface-hover: #EEF1F5;
+  --pp-surface-selected: #E4EBF7;
+  --pp-border: #E1E5EA;                  /* card edges */
+  --pp-border-subtle: #ECEEF2;           /* rules inside cards */
+  --pp-border-strong: #C9CFD8;           /* inputs, buttons */
+  --pp-text: #12161C;                    /* headings, primary text */
+  --pp-text-body: #343C47;               /* paragraphs */
+  --pp-text-muted: #59626E;              /* secondary text (≥ 4.5:1) */
+  --pp-text-faint: #636C78;              /* captions, placeholders (≥ 4.5:1 on bg and surface) */
+  --pp-text-inverse: #FFFFFF;
+  --pp-text-link: var(--pp-blue-600);
+  --pp-accent: var(--pp-blue-500);       /* primary fills (white text 4.57:1) */
+  --pp-accent-hover: var(--pp-blue-600);
+  --pp-accent-pressed: var(--pp-blue-700);
+  --pp-accent-subtle: var(--pp-blue-50);
+  --pp-accent-subtle-border: var(--pp-blue-200);
+  --pp-on-accent: #FFFFFF;
+  --pp-on-solid: #FFFFFF;                /* text on success/danger/warning solid fills */
+  --pp-surface-inverse: #1A1F27;         /* tooltips, toasts, snackbars */
+  --pp-on-inverse: #FFFFFF;
+  --pp-control-thumb: #FFFFFF;           /* switch and slider thumbs */
+  --pp-focus-ring: rgba(8, 108, 255, .35);
+  --pp-brand: var(--pp-navy-700);        /* the wordmark colour */
+  --pp-success: var(--pp-green-700); --pp-success-fill: var(--pp-green-50); --pp-success-border: var(--pp-green-200); --pp-success-solid: var(--pp-green-700);
+  --pp-warning: var(--pp-amber-700); --pp-warning-fill: var(--pp-amber-50); --pp-warning-border: var(--pp-amber-200); --pp-warning-solid: var(--pp-amber-600);
+  --pp-danger: var(--pp-red-600);   --pp-danger-fill: var(--pp-red-50);   --pp-danger-border: var(--pp-red-200);   --pp-danger-solid: var(--pp-red-600);
+  --pp-info: var(--pp-blue-700);    --pp-info-fill: var(--pp-blue-50);    --pp-info-border: var(--pp-blue-200);    --pp-info-solid: var(--pp-blue-500);
+  /* Messaging: your bubble is Signal Blue tinted, theirs neutral; agent replies get the green rail. */
+  --pp-bubble-mine: #EAF1FE; --pp-bubble-mine-border: #C8D9FA; --pp-bubble-mine-text: #13203B;
+  --pp-bubble-theirs: #FFFFFF; --pp-bubble-theirs-border: #E1E5EA; --pp-bubble-theirs-text: #12161C;
+  --pp-bubble-agent-rail: var(--pp-green-500);
+  --pp-tick-sent: #7C8594; --pp-tick-seen: #1E8A50; --pp-tick-working: var(--pp-green-600);
+  /* Overlays and depth. */
+  --pp-scrim: rgba(18, 22, 28, .42);
+  --pp-shadow-1: 0 1px 2px rgba(18, 22, 28, .06);
+  --pp-shadow-2: 0 4px 12px rgba(18, 22, 28, .08), 0 1px 2px rgba(18, 22, 28, .05);
+  --pp-shadow-3: 0 12px 32px rgba(18, 22, 28, .12);
+  --pp-shadow-4: 0 24px 60px rgba(18, 22, 28, .20);
+  --pp-skeleton: linear-gradient(90deg, #F0F2F5, #E6E9EE, #F0F2F5);
+}
+
+/* ---- 2. Semantic roles: dark ---------------------------------------------------------------- */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --pp-bg: #0B0E12; --pp-bg-subtle: #0F1217; --pp-surface: #141820; --pp-surface-raised: #1A1F28;
+    --pp-surface-sunken: #10141A; --pp-surface-hover: #1D232D; --pp-surface-selected: #1C2840;
+    --pp-border: #232A35; --pp-border-subtle: #1C222B; --pp-border-strong: #343D4A;
+    --pp-text: #F2F4F7; --pp-text-body: #D3D8E0; --pp-text-muted: #A3ACB9; --pp-text-faint: #8A93A0;
+    --pp-text-inverse: #0B0E12; --pp-text-link: #6EA8FF;
+    --pp-accent: #086CFF; --pp-accent-hover: #0A5FE0; --pp-accent-pressed: #0B4FB8;
+    --pp-accent-subtle: #13233F; --pp-accent-subtle-border: #23406F; --pp-on-accent: #FFFFFF; --pp-on-solid: #FFFFFF; --pp-control-thumb: #F2F4F7; --pp-surface-inverse: #F2F4F7; --pp-on-inverse: #0B0E12;
+    --pp-focus-ring: rgba(110, 168, 255, .45); --pp-brand: #8FB4FF;
+    --pp-success: #4FDB55; --pp-success-fill: #10261A; --pp-success-border: #1E4A2B; --pp-success-solid: #26CE2D;
+    --pp-warning: #F5B547; --pp-warning-fill: #2A2010; --pp-warning-border: #4D3A16; --pp-warning-solid: #F5B547;
+    --pp-danger: #FF6B6B; --pp-danger-fill: #2B1416; --pp-danger-border: #5A2328; --pp-danger-solid: #C42B2B;
+    --pp-info: #6EA8FF; --pp-info-fill: #13233F; --pp-info-border: #23406F; --pp-info-solid: #086CFF;
+    --pp-bubble-mine: #17325E; --pp-bubble-mine-border: #23477F; --pp-bubble-mine-text: #EAF1FE;
+    --pp-bubble-theirs: #1A1F28; --pp-bubble-theirs-border: #262D38; --pp-bubble-theirs-text: #F2F4F7;
+    --pp-tick-sent: #8A93A0; --pp-tick-seen: #4FDB55;
+    --pp-chart-3: #7F9BD3;  /* navy is 1.6:1 on dark surfaces */
+    --pp-scrim: rgba(0, 0, 0, .6);
+    --pp-shadow-1: 0 1px 2px rgba(0, 0, 0, .4);
+    --pp-shadow-2: 0 4px 12px rgba(0, 0, 0, .45);
+    --pp-shadow-3: 0 12px 32px rgba(0, 0, 0, .55);
+    --pp-shadow-4: 0 24px 60px rgba(0, 0, 0, .65);
+    --pp-skeleton: linear-gradient(90deg, #171C24, #1F2530, #171C24);
+  }
+}
+/* Dark on demand: the page (<html data-theme="dark">) or any element (a preview, a split view). */
+:root[data-theme="dark"], [data-theme="dark"] {
+  color-scheme: dark;
+  --pp-bg: #0B0E12; --pp-bg-subtle: #0F1217; --pp-surface: #141820; --pp-surface-raised: #1A1F28;
+  --pp-surface-sunken: #10141A; --pp-surface-hover: #1D232D; --pp-surface-selected: #1C2840;
+  --pp-border: #232A35; --pp-border-subtle: #1C222B; --pp-border-strong: #343D4A;
+  --pp-text: #F2F4F7; --pp-text-body: #D3D8E0; --pp-text-muted: #A3ACB9; --pp-text-faint: #8A93A0;
+  --pp-text-inverse: #0B0E12; --pp-text-link: #6EA8FF;
+  --pp-accent: #086CFF; --pp-accent-hover: #0A5FE0; --pp-accent-pressed: #0B4FB8;
+  --pp-accent-subtle: #13233F; --pp-accent-subtle-border: #23406F; --pp-on-accent: #FFFFFF; --pp-on-solid: #FFFFFF; --pp-control-thumb: #F2F4F7; --pp-surface-inverse: #F2F4F7; --pp-on-inverse: #0B0E12;
+  --pp-focus-ring: rgba(110, 168, 255, .45); --pp-brand: #8FB4FF;
+  --pp-success: #4FDB55; --pp-success-fill: #10261A; --pp-success-border: #1E4A2B; --pp-success-solid: #26CE2D;
+  --pp-warning: #F5B547; --pp-warning-fill: #2A2010; --pp-warning-border: #4D3A16; --pp-warning-solid: #F5B547;
+  --pp-danger: #FF6B6B; --pp-danger-fill: #2B1416; --pp-danger-border: #5A2328; --pp-danger-solid: #C42B2B;
+  --pp-info: #6EA8FF; --pp-info-fill: #13233F; --pp-info-border: #23406F; --pp-info-solid: #086CFF;
+  --pp-bubble-mine: #17325E; --pp-bubble-mine-border: #23477F; --pp-bubble-mine-text: #EAF1FE;
+  --pp-bubble-theirs: #1A1F28; --pp-bubble-theirs-border: #262D38; --pp-bubble-theirs-text: #F2F4F7;
+  --pp-tick-sent: #8A93A0; --pp-tick-seen: #4FDB55;
+    --pp-chart-3: #7F9BD3;  /* navy is 1.6:1 on dark surfaces */
+  --pp-scrim: rgba(0, 0, 0, .6);
+  --pp-shadow-1: 0 1px 2px rgba(0, 0, 0, .4);
+  --pp-shadow-2: 0 4px 12px rgba(0, 0, 0, .45);
+  --pp-shadow-3: 0 12px 32px rgba(0, 0, 0, .55);
+  --pp-shadow-4: 0 24px 60px rgba(0, 0, 0, .65);
+  --pp-skeleton: linear-gradient(90deg, #171C24, #1F2530, #171C24);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --pp-duration-fast: 0ms; --pp-duration-base: 0ms; --pp-duration-slow: 0ms; }
+}
