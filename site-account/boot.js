@@ -58,13 +58,26 @@
     };
   }
 
+  /// How many authenticator-app credentials the signed-in account has, from the realm's account API
+  /// (CORS admits this origin). Null when it cannot be read.
+  async function authenticatorCount() {
+    const issuer = (window.PP_CONFIG.oidc || {}).issuer;
+    if (!issuer || !PP.token()) return null;
+    const res = await window.fetch(`${issuer}/account/credentials`, { headers: { authorization: `Bearer ${PP.token()}`, accept: "application/json" } });
+    if (!res.ok) return null;
+    const list = await res.json();
+    if (!Array.isArray(list)) return null;
+    const otp = list.find((c) => c && c.type === "otp");
+    return otp ? (otp.userCredentialMetadatas || []).length : 0;
+  }
+
   ACC.context = async function () {
     if (ACC.mapLegacy()) throw new PP.Redirecting("moved");
     const notice = PP.store.get("pp_checkout_notice");
     if (notice) { PP.store.del("pp_checkout_notice"); PP.toast(notice, "info"); }
     if (PP.durable.get("pp_postaction") === "totp") { PP.durable.del("pp_postaction"); PP.toast("Two-factor authentication is set up.", "success"); }
     const probe = (path) => PP.postbox(path, { keepSession: true });
-    const [caps, pubs, orgs, staff] = await Promise.allSettled([probe("/v1/capabilities"), probe("/v1/publishers"), probe("/v1/orgs"), probe("/v1/staff/me")]);
+    const [caps, pubs, orgs, staff, creds] = await Promise.allSettled([probe("/v1/capabilities"), probe("/v1/publishers"), probe("/v1/orgs"), probe("/v1/staff/me"), authenticatorCount()]);
     const ok = (r) => (r.status === "fulfilled" ? r.value : null);
     const features = new Set(((ok(caps) || {}).features || []).map(String));
     const platforms = [];
@@ -74,7 +87,12 @@
     if (((ok(pubs) || {}).data || []).length) platforms.push("partner");
     const roles = ((ok(staff) || {}).data || {}).roles;
     if (Array.isArray(roles) && roles.length) platforms.push("management");
-    return { ...person(), features, platforms, orgs: orgList };
+    const me = person();
+    // Two-step sign-in is on when the account has an authenticator registered (the realm's account
+    // API), whatever this particular sign-in did; the token's acr stays the fallback.
+    const otp = ok(creds);
+    if (typeof otp === "number") me.twoStep = otp > 0 || me.twoStep;
+    return { ...me, features, platforms, orgs: orgList };
   };
 
   ACC.pagesInOrder = () => ORDER.map((k) => ACC.registry[k]).filter(Boolean);

@@ -164,6 +164,21 @@ test("two-factor: an mfa sign-in shows it on; set-up asks the realm for CONFIGUR
   assert.equal(JSON.parse(a.w.localStorage.getItem("pp_pkce")).returnTo, "/#/security");
 });
 
+test("two-factor: a registered authenticator (realm account API) shows it on even when this sign-in's acr does not say so", async (t) => {
+  const routes = fixtures({ "GET /realms/pigeonpost-prod/account/credentials": [200, [{ type: "password", userCredentialMetadatas: [{}] }, { type: "otp", userCredentialMetadatas: [{ credential: { id: "c1" } }] }]] });
+  const a = boot(t, { session: jwt({ acr: "1" }), url: "https://account.pigeonpost.dev/#/security", routes });
+  await a.started; await tick();
+  assert.match(a.text(), /Two-factor is on/);
+  assert.match(a.text(), /Authenticator app/);
+  const call = a.calls.find((c) => c.key === "GET /realms/pigeonpost-prod/account/credentials");
+  assert.match(call.headers.authorization, /^Bearer /);
+  // No authenticator registered: not on, and the overview checklist still offers it.
+  const none = fixtures({ "GET /realms/pigeonpost-prod/account/credentials": [200, [{ type: "password", userCredentialMetadatas: [{}] }, { type: "otp", userCredentialMetadatas: [] }]] });
+  const b = boot(t, { session: jwt({ acr: "1" }), url: "https://account.pigeonpost.dev/#/security", routes: none });
+  await b.started; await tick();
+  assert.doesNotMatch(b.text(), /Two-factor is on/);
+});
+
 test("static: no inline script or style, no HTML from strings", () => {
   const root = new URL("../", import.meta.url);
   const html = readFileSync(new URL("index.html", root), "utf8");

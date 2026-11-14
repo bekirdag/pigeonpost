@@ -21,12 +21,12 @@
       view.append(PP.ui.header({ title: "Security", text: "How you sign in, and the second step that protects it." }),
         el("div", { class: "pp-cols" },
           PP.ui.card({ title: "Two-factor sign-in", tone: on ? null : "warning", actions: on ? PP.ui.badge("On", "success") : PP.ui.badge("Not confirmed", "warning") },
-            on ? el("p", {}, el("strong", {}, "Two-factor is on. "), "You signed in with a code from your authenticator app.")
-              : el("p", { class: "pp-muted" }, "Add two-factor authentication with an app like Google Authenticator, Authy or 1Password. If you already set it up, it shows as on the next time you sign in with your code."),
+            on ? el("p", {}, el("strong", {}, "Two-factor is on. "), "Signing in asks for a code from your authenticator app.")
+              : el("p", { class: "pp-muted" }, "Add two-factor authentication with an app like Google Authenticator, Authy or 1Password."),
             el("div", { class: "pp-card-actions" }, ACC.btn(on ? "Add another authenticator" : "Set up two-factor authentication", { kind: on ? "default" : "primary", id: "acc-2fa", icon: "security", onclick: ACC.setupTotp })),
             el("p", { class: "pp-hint" }, "Opens a single screen with a QR code to scan, then brings you back here.")),
           PP.ui.card({ title: "Sign-in methods" },
-            PP.ui.kv([["Signed in as", (ctx.user && (ctx.user.email || ctx.user.username)) || null], ["Name", ctx.user && ctx.user.name], ["This sign-in", on ? "Password and authenticator code" : "Without an authenticator code"]]),
+            PP.ui.kv([["Signed in as", (ctx.user && (ctx.user.email || ctx.user.username)) || null], ["Name", ctx.user && ctx.user.name], ["Second step", on ? "Authenticator app" : "None"]]),
             el("div", { class: "pp-card-actions" },
               ACC.btn("Manage password and sign-in methods", { icon: "external", href: `${issuer()}/account/` }),
               ACC.btn("Sign in again", { kind: "quiet", onclick: () => PP.switchAccount("/" + PP.href("security")) })))));

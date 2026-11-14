@@ -12,7 +12,7 @@
   ACC.page({
     key: "overview", title: "Overview", group: "", icon: "home",
     async render(view, ctx) {
-      const first = String((ctx.user && ctx.user.name) || "").trim().split(/\s+/)[0];
+      const first = ((n) => (/@/.test(n) ? "" : n))(String((ctx.user && ctx.user.name) || "").trim().split(/\s+/)[0]);
       const marketplace = ACC.feature(ctx, "marketplace");
       const nests = ACC.feature(ctx, "nests");
       const [ov, ids, nest, bal] = await Promise.allSettled([
@@ -43,7 +43,7 @@
       ];
       const left = steps.filter((s) => !s.done).length;
       view.append(
-        PP.ui.header({ eyebrow: "Your Pigeonpost", title: first ? `${greeting()}, ${first}` : "Welcome back", text: "Your inboxes, handles, Nests and purchases in one place." }),
+        PP.ui.header({ eyebrow: "Your Pigeonpost", title: first ? `${greeting()}, ${first}` : greeting(), text: "Your inboxes, handles, Nests and purchases in one place." }),
         PP.ui.stats(tiles),
         el("div", { class: "pp-cols" },
           PP.ui.card({ title: "Get started", text: left ? `${left} of ${steps.length} steps left` : "All set. Nice work." }, PP.ui.checklist(steps)),
