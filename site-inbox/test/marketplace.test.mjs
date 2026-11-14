@@ -515,8 +515,8 @@ test("a listing is created as a draft, edited by changed fields only, and publis
   p.$('[data-publish="lst_1"]').click();
   await tick();
   assert.match(p.$("#mp-pub-status").textContent, /HR helper is published/);
-  assert.match(p.$("#mp-earnings").textContent, /Set a price on a listing/);
-  assert.ok(p.$("#mp-installs"));
+  assert.match(p.$("#mp-earnings").textContent, /Usage and earnings/);
+  assert.equal(p.$('#mp-earnings a').getAttribute("href"), "#analytics");
 });
 
 test("a finance role reads but cannot change anything", async (t) => {

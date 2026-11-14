@@ -274,6 +274,7 @@
     invoices:     { view: "invoices",   label: "Invoices",         group: "Billing" },
     services:     { view: "products",   label: "Services",         group: "Marketplace", tab: "services",
                     lede: "Apps and services from verified publishers, reviewed by Pigeonpost." },
+    analytics:    { view: "analytics", label: "App analytics", group: "Marketplace", needs: "#ac-analytics" },
     publish:      { view: "publish",    label: "Publish",          group: "Marketplace", needs: "#ac-publisher" },
     security:     { view: "security",   label: "Two-factor",       group: "Security & privacy" },
     privacy:      { view: "privacy",    label: "Account deletion", group: "Security & privacy" },
@@ -282,7 +283,7 @@
   // Nests" link and `#nests` the Windows app's (1.0.x); both open the Nests tab, as they always did.
   const ROUTE_ALIASES = { products: "nests", publisher: "publish" };
   // A step-up sign-in from a marketplace card comes back to that card (`pp_mp_return`).
-  const MP_RETURN_ROUTE = { publisher: "publish", services: "services" };
+  const MP_RETURN_ROUTE = { publisher: "publish", services: "services", analytics: "analytics" };
   // Staff tools moved to the back office (/staff); old links to them land there.
   const STAFF_HASHES = ["#staff", "#ac-staff"];
 
@@ -620,6 +621,11 @@
             <div class="ac-card"><h3>Invoices</h3><div id="ac-invoices"><p class="muted">Loading…</p></div></div>
           </section>
 
+          <section class="ac-view ac-view-solo" data-view="analytics" aria-labelledby="ac-h-analytics" hidden>
+            ${viewHead("analytics", "App analytics", "")}
+            <div class="ac-card" id="ac-analytics" hidden></div>
+            <div class="ac-empty" id="ac-empty-analytics"><p class="muted">Loading…</p></div>
+          </section>
           <section class="ac-view ac-view-solo" data-view="publish" aria-labelledby="ac-h-publish" hidden>
             ${viewHead("publish", "Publish", "")}
             <div class="ac-card" id="ac-publisher" hidden></div>
@@ -708,7 +714,7 @@
     // the publisher console) brings its sidebar entry with it.
     if (window.MutationObserver) {
       const watch = new MutationObserver(syncNav);
-      for (const id of ["#credits", "#ac-publisher"]) {
+      for (const id of ["#credits", "#ac-publisher", "#ac-analytics"]) {
         const node = $(id); if (node) watch.observe(node, { attributes: true, attributeFilter: ["hidden"] });
       }
     }
@@ -724,14 +730,17 @@
     const creditsOn = visible("#credits");
     show('#ac-side [data-route="credits"]', creditsOn || marketplaceOn === null);
     show('#ac-side [data-route="publish"]', visible("#ac-publisher") || marketplaceOn === null);
+    show('#ac-side [data-route="analytics"]', visible("#ac-analytics") || marketplaceOn === null);
     show("#ac-dash-credits", creditsOn);
     show("#ac-quick-credits", creditsOn);
     if (!creditsOn) show("#ac-credit-chip", false);
     const li = (sel) => { const a = $(sel); if (a && a.parentElement) a.parentElement.hidden = a.hidden; };
     li('#ac-side [data-route="credits"]'); li('#ac-side [data-route="publish"]');
+    li('#ac-side [data-route="analytics"]');
     if (marketplaceOn === false) {
       const empty = (sel, text) => { const n = $(sel); if (n) n.innerHTML = `<p class="muted">${esc(text)}</p>`; };
       empty("#ac-empty-credits", "Credits pay for marketplace services. The marketplace isn't open on this account yet, so there is nothing to buy credit for.");
+      empty("#ac-empty-analytics", "App analytics opens when the marketplace is available on this account.");
       empty("#ac-empty-publish", "The publisher console opens with the marketplace. It isn't available on this account yet.");
     }
   }
@@ -956,6 +965,8 @@
   // to apply or already publishes. Staff tools are in the back office (/staff).
   function mountMarketplace(stepUp) {
     const deps = { pb: (path, init) => pbFetch(path, init), toast, stepUp };
+    const analytics = $("#ac-analytics");
+    if (analytics && window.PPMarketplace.analytics) { analytics.hidden = false; window.PPMarketplace.analytics(analytics, deps); const empty = $("#ac-empty-analytics"); if(empty) empty.hidden = true; }
     const pub = $("#ac-publisher");
     if (pub && window.PPMarketplace.publisher) { pub.hidden = false; window.PPMarketplace.publisher(pub, deps); }
   }

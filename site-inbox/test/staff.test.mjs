@@ -163,7 +163,7 @@ test("the menu shows only the caller's screens, with later phases greyed", async
   assert.match(p.$(".st-alerts").textContent, /charge was refused by billing/);
   // Finance sees money, not people.
   const f = await page(t, { routes: (m, path) => (path === "/v1/staff/me" ? ME(["finance"]) : path === "/v1/staff/dashboard" ? DASH : { data: [], next_cursor: null }) });
-  assert.deepEqual(navLabels(f), ["Dashboard", "Entitlements", "Credits", "Publishers"]);
+  assert.deepEqual(navLabels(f), ["Dashboard", "Entitlements", "Credits", "App analytics", "Publishers"]);
   // Staff & roles is the platform owner's alone, whatever the role rows say.
   const o = await page(t, { routes: (m, path) => (path === "/v1/staff/me" ? ME(["owner"], { platform_owner: true }) : path === "/v1/staff/dashboard" ? DASH : undefined) });
   assert.ok(navLabels(o).includes("Staff & roles"));

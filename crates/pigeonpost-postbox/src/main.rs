@@ -174,6 +174,7 @@ mod policy;
 mod pow;
 mod principal;
 mod profile_names;
+mod publisher_analytics;
 mod publisher_onboarding;
 mod push;
 mod recipients;
@@ -1115,6 +1116,7 @@ fn build_router(state: AppState) -> Router {
         // Marketplace foundations (build plan M0), behind the `marketplace` flag.
         .merge(marketplace::router())
         .merge(publisher_onboarding::router())
+        .merge(publisher_analytics::router())
         // Marketplace M1: native jobs, staff review and quarantine, behind the same flag.
         .merge(marketplace_m1::router())
         // Marketplace M2: publishers, listings and installations, behind the same flag.
