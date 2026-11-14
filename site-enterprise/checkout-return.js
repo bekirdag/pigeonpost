@@ -19,7 +19,7 @@
     const cardOrg = q.get("card");
     if (cardOrg && /^org_[a-z0-9]{6,64}$/.test(cardOrg)) {
       box(el("h1", {}, "Card form finished"), el("p", { class: "muted" }, "If iyzico accepted the new card, the next renewal uses it. Billing shows any payment that fails."),
-        el("a", { class: "btn btn-primary", href: `/app/billing?org=${encodeURIComponent(cardOrg)}` }, "Back to Billing"));
+        el("a", { class: "btn btn-primary", href: `/app?org=${encodeURIComponent(cardOrg)}#/billing` }, "Back to Billing"));
       return;
     }
     const draft = q.get("d") || PPE.store.get("ppe_ent_draft");
@@ -42,7 +42,7 @@
       if (org && ["active", "past_due"].includes(org.status)) {
         PPE.store.del("ppe_start"); PPE.store.del("ppe_ent_checkout"); PPE.store.del("ppe_ent_draft");
         box(el("h1", {}, `${org.name} is ready`), el("p", { class: "muted" }, "Invite your first teammates."));
-        window.setTimeout(() => window.location.replace(`/app/people?org=${encodeURIComponent(org.id)}`), 800);
+        window.setTimeout(() => window.location.replace(`/app?org=${encodeURIComponent(org.id)}#/people`), 800);
         return;
       }
       if (org && org.status === "paid_unprovisioned") {

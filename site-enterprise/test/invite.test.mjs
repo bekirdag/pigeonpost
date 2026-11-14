@@ -56,7 +56,7 @@ test("a mismatched account sees the masked address and a switch-account action",
     releaseDigest();
   }
   assert.equal(new URL(await navigation).searchParams.get("prompt"), "login");
-  assert.equal(window.sessionStorage.getItem("ppe_session"), null);
+  assert.equal(window.sessionStorage.getItem("pp_session"), null);
   assert.equal(window.sessionStorage.getItem("ppe_invite_token"), TOKEN, "the token survives the account switch");
 });
 
@@ -91,13 +91,13 @@ test("a new invitation fragment clears every previous acceptance decision", asyn
         session: jwt(),
         storage: {
           ppe_invite_token: TOKEN,
-          ppe_resume: { name: "invite.accept", at: Date.now() },
+          pp_resume: { name: "invite.accept", at: Date.now() },
         },
         fetch: (c) => c.url.endsWith("/preview") ? reply(200, preview) : reply(200, { org: { name: "Acme" } }),
       });
       await tick();
       assert.equal(calls.filter((c) => c.url.endsWith("/accept")).length, 0, "a previous decision cannot accept a different link");
-      assert.equal(window.sessionStorage.getItem("ppe_resume"), null);
+      assert.equal(window.localStorage.getItem("pp_resume"), null);
       assert.equal(window.sessionStorage.getItem("ppe_invite_token"), valid ? fragment : null);
       assert.equal(window.location.href, "https://enterprise.pigeonpost.dev/invite");
       assert.match($("#invite").textContent, valid ? /Acme invites you/ : /isn't valid/);
@@ -110,7 +110,7 @@ test("the fragment-less sign-in return preserves the original acceptance", async
   const { window, calls, $ } = load(t, "invite.html", {
     url: "https://enterprise.pigeonpost.dev/invite",
     session: jwt(),
-    storage: { ppe_invite_token: TOKEN, ppe_resume: { name: "invite.accept", at: Date.now() } },
+    storage: { ppe_invite_token: TOKEN, pp_resume: { name: "invite.accept", at: Date.now() } },
     fetch: () => reply(200, { org: { name: "Acme" }, mailbox: { handle: "/acme/john" } }),
   });
   await tick();

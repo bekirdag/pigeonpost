@@ -10,6 +10,8 @@
 //     intro: { heading, text },            // the signed-out screen
 //     context: async () => ({ ... }),      // who the caller is here; thrown errors show an error screen
 //     pages: [{ key, title, group, icon, allow(ctx), count(ctx), render(view, ctx, params) }],
+//     themePosition: "left",               // optional: the theme switch at the top left (default: right)
+//     navHeader: (ctx) => node,            // optional: drawn above the navigation (e.g. an org picker)
 //   });
 //
 // `allow(ctx)` hides a page the caller may not use (the postbox still enforces every route);
@@ -139,11 +141,14 @@
         el("button", { class: "pp-icon-btn pp-side-close", type: "button", "aria-label": "Close menu", onclick: () => setDrawer(false) }, PP.icon("close"))),
       nav,
       el("div", { class: "pp-side-foot", id: "pp-side-foot" }));
+    const left = o.themePosition === "left";
+    const theme = () => el("button", { type: "button", class: `pp-icon-btn pp-theme${left ? " pp-theme-left" : ""}`, "data-theme-toggle": "" });
     const top = el("header", { class: "pp-top" },
       el("button", { class: "pp-icon-btn pp-menu-btn", type: "button", "aria-label": "Open menu", "aria-controls": "pp-side", onclick: () => setDrawer(true) }, PP.icon("menu")),
+      left ? theme() : null,
       el("div", { class: "pp-crumbs", id: "pp-crumbs" }),
       el("div", { class: "pp-top-actions" },
-        el("button", { type: "button", class: "pp-icon-btn pp-theme", "data-theme-toggle": "" }),
+        left ? null : theme(),
         el("div", { class: "pp-switch", id: "pp-switch" }),
         el("div", { class: "pp-user", id: "pp-user" })));
     const main = el("main", { class: "pp-main", id: "pp-main", tabindex: "-1" });
@@ -162,6 +167,13 @@
     const nav = document.getElementById("pp-nav");
     if (!nav) return;
     nav.replaceChildren();
+    const old = document.getElementById("pp-nav-header");
+    if (old) old.remove();
+    if (state.opts.navHeader) {
+      let head = null;
+      try { head = state.opts.navHeader(state.ctx); } catch { head = null; }
+      if (head) nav.before(el("div", { class: "pp-nav-header", id: "pp-nav-header" }, head));
+    }
     const groups = new Map();
     for (const p of visiblePages()) {
       if (p.hidden) continue;
@@ -256,11 +268,11 @@
   function crumbs(page, extra) {
     const c = document.getElementById("pp-crumbs");
     if (!c) return;
-    // replaceChildren is the DOM's, not PP.el: no nulls or arrays (they would print as text).
-    c.replaceChildren(...[el("span", { class: "pp-crumb-group" }, page.group || state.opts.title),
+    // replaceChildren() would print a null as text, so only nodes go in.
+    c.replaceChildren(el("span", { class: "pp-crumb-group" }, page.group || state.opts.title),
       PP.icon("chevron", "pp-crumb-sep"),
       extra ? el("a", { href: PP.href(page.key) }, page.title) : el("span", { class: "pp-crumb-here" }, page.title),
-      extra ? [PP.icon("chevron", "pp-crumb-sep"), el("span", { class: "pp-crumb-here" }, extra)] : null].flat().filter(Boolean));
+      ...(extra ? [PP.icon("chevron", "pp-crumb-sep"), el("span", { class: "pp-crumb-here" }, extra)] : []));
   }
   /// A detail page names itself in the breadcrumbs (e.g. the listing being edited).
   PP.shell.crumb = function (text) { if (state.current) crumbs(state.current, text); };
@@ -323,7 +335,7 @@
         intro.register !== false ? el("button", { class: "pp-btn pp-btn-lg", type: "button", onclick: () => PP.signIn({ prompt: "create" }) }, "Create an account") : null),
       intro.footnote ? el("p", { class: "pp-signin-foot" }, intro.footnote) : null);
     document.body.replaceChildren(el("div", { class: "pp-signin" },
-      el("button", { type: "button", class: "pp-icon-btn pp-theme pp-signin-theme", "data-theme-toggle": "" }),
+      el("button", { type: "button", class: `pp-icon-btn pp-theme pp-signin-theme${o.themePosition === "left" ? " pp-theme-left" : ""}`, "data-theme-toggle": "" }),
       card));
     document.title = `Sign in — Pigeonpost ${o.title}`;
     if (window.PPTheme && window.PPTheme.refresh) window.PPTheme.refresh();

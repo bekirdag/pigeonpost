@@ -17,6 +17,8 @@ p { margin: 0; }
 a { color: var(--blue); text-decoration: none; }
 a:hover { text-decoration: underline; }
 :focus-visible { outline: 2px solid var(--edge-focus); outline-offset: 2px; border-radius: 6px; }
+/* Headings get focus on navigation (for screen readers), not a visible ring. */
+h1[tabindex="-1"]:focus { outline: none; }
 .ico { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .pp-muted { color: var(--muted); }
 .pp-faint { color: var(--faint); font-size: 13px; }
@@ -73,6 +75,7 @@ a:hover { text-decoration: underline; }
   backdrop-filter: saturate(1.4) blur(10px); border-bottom: 1px solid var(--card-rule);
 }
 .pp-menu-btn, .pp-icon-btn.pp-menu-btn { display: none; }
+.pp-nav-header { padding: 4px 12px 8px; }
 .pp-crumbs { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; font-size: 13.5px; color: var(--muted); white-space: nowrap; overflow: hidden; }
 .pp-crumbs a { color: var(--muted); }
 .pp-crumb-here { color: var(--ink); font-weight: 500; overflow: hidden; text-overflow: ellipsis; }
@@ -105,7 +108,9 @@ a:hover { text-decoration: underline; }
 
 .pp-main { flex: 1; padding: 28px 28px 64px; outline: none; }
 .pp-view { width: 100%; max-width: 1480px; margin: 0 auto; }
-.pp-view-inner { display: grid; gap: 22px; }
+.pp-view-inner { display: grid; gap: 22px; grid-template-columns: minmax(0, 1fr); }
+/* Grid tracks would otherwise grow to a wide table's or code block's width on a phone. */
+.pp-section, .pp-card, .pp-gated { grid-template-columns: minmax(0, 1fr); min-width: 0; }
 
 .pp-icon-btn {
   width: 36px; height: 36px; display: inline-grid; place-items: center; border-radius: 10px;
@@ -138,6 +143,7 @@ h1[tabindex="-1"]:focus, h2[tabindex="-1"]:focus { outline: none; }
 
 .pp-signin { min-height: 100vh; display: grid; place-items: center; padding: 24px 16px; position: relative; }
 .pp-signin-theme { position: absolute; top: 16px; right: 16px; }
+.pp-signin-theme.pp-theme-left { right: auto; left: 16px; }
 .pp-signin-card {
   width: 100%; max-width: 480px; padding: 36px; border-radius: 18px; background: var(--raised);
   box-shadow: 0 1px 2px var(--shadow-btn), 0 24px 60px var(--shadow-menu); display: grid; gap: 16px;

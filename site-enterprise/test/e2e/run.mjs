@@ -77,6 +77,8 @@ function mockPostbox(req, res, url, body) {
   }
   if (!who) return json(401, { error: "unauthorized" });
   if (p === "/v1/capabilities") return json(200, { features: ["orgs", "enterprise_portal"] });
+  // The platform switcher's probes: neither a publisher nor staff.
+  if (p === "/v1/publishers" || p === "/v1/staff/me") return json(403, { error: "forbidden" });
   if (p === "/v1/org-invites/accept") {
     const inv = db.inviteTokens.get(body.token);
     if (!inv) return json(404, { error: "invite_invalid" });
@@ -158,6 +160,11 @@ function routeFile(p) {
   if (p === "/checkout/return") return "checkout/return.html";
   if (p === "/auth/callback") return "auth/callback.html";
   if (p.endsWith(".html") && p !== "/") return null;
+  // site-shared/ is copied to /shared/ at deploy.
+  if (p.startsWith("/shared/")) {
+    const shared = path.resolve(SITE, "../site-shared", p.slice("/shared/".length));
+    return shared.startsWith(path.resolve(SITE, "../site-shared") + path.sep) && existsSync(shared) && statSync(shared).isFile() ? path.relative(SITE, shared) : null;
+  }
   const direct = path.join(SITE, p);
   if (!direct.startsWith(SITE + path.sep)) return null;
   if (existsSync(direct) && statSync(direct).isFile()) return p.slice(1);
@@ -297,22 +304,22 @@ try {
 
     // 4. Return polling until active, then the admin app.
     await A.go(`${ORIGIN}/checkout/return?d=${orgId}`);
-    await until(() => A.where().then((w) => w.startsWith("/app/people")), "redirected to People", 30000);
+    await until(() => A.where().then((w) => w.startsWith("/app?org=") && w.endsWith("#/people")), "redirected to People", 30000);
   } else {
     currentUser = "owner";
     await A.go(`${ORIGIN}/app/people?org=${orgId}`);
-    await until(() => A.click("#gate button", "Sign in"), "sign in to app");
+    await until(() => A.click(".pp-signin-actions button", "Sign in"), "sign in to app");
   }
 
   // 5. People: first-run address, invite.
-  await until(() => A.text("#content").then((t) => t.includes("People")), "People page", 20000);
-  if (await A.text("#content").then((t) => t.includes("Choose your address"))) {
-    await A.fill("#content form input", "owner");
-    await A.click("#content form button[type=submit]");
-    await until(() => A.text("#content").then((t) => !t.includes("Choose your address")), "owner address chosen", 10000);
+  await until(() => A.text("#pp-main").then((t) => t.includes("People")), "People page", 20000);
+  if (await A.text("#pp-main").then((t) => t.includes("Choose your address"))) {
+    await A.fill("#pp-main form.first-run input", "owner");
+    await A.click("#pp-main form.first-run button[type=submit]");
+    await until(() => A.text("#pp-main").then((t) => !t.includes("Choose your address")), "owner address chosen", 10000);
     log("owner chose /acme/owner");
   }
-  await A.click("#content .page-head .btn-primary");
+  await until(() => A.click("#pp-main .pp-page-head .pp-btn-primary"), "Invite people button");
   await until(() => A.evaluate(`Boolean(document.querySelector(".sheet .invite-row"))`), "invite sheet");
   await A.fill(".sheet .invite-row input", "John", 0);
   await A.fill(".sheet .invite-row input", "Smith", 1);
@@ -343,10 +350,10 @@ try {
 
   // 7. Rules: a template and a test.
   await A.go(`${ORIGIN}/app/rules`);
-  await until(() => A.text("#content").then((t) => t.includes("Rules")), "Rules page", 15000);
+  await until(() => A.text("#pp-main").then((t) => t.includes("Rules")), "Rules page", 15000);
   await A.click(".templates button", "Everyone at the company is known");
   await until(() => A.evaluate(`document.querySelectorAll(".rule").length > 0`), "template rule shown", 10000);
-  await A.click("#content button", "Test a rule");
+  await A.click("#pp-main button", "Test a rule");
   await A.fill(".sheet input", "/acme/john", 0);
   await A.fill(".sheet input", process.env.OWNER_HANDLE || "/acme/owner", 1);
   await A.click(".sheet button", "Test");
@@ -359,10 +366,10 @@ try {
   await until(() => A.text("#summary").then((t) => t.includes("30 kişi · en fazla 300 ajan adresi")), "Turkish summary");
   check((await A.where()) === "/", "?lang= removed from the address bar");
   await A.go(`${ORIGIN}/app/rules`);
-  await until(() => A.text("#content").then((t) => t.includes("Kurallar") && t.includes("Kural ekle")), "rules page in Turkish (remembered)", 15000);
+  await until(() => A.text("#pp-main").then((t) => t.includes("Kurallar") && t.includes("Kural ekle")), "rules page in Turkish (remembered)", 15000);
   check((await A.evaluate("document.documentElement.lang")) === "tr", "html lang is tr");
-  await A.click("#ppe-lang");
-  await until(() => A.text("#content").then((t) => t.includes("Add rule")), "switched back to English", 15000);
+  await until(() => A.click("#ppe-lang"), "language switch in the shell's top bar");
+  await until(() => A.text("#pp-main").then((t) => t.includes("Add rule")), "switched back to English", 15000);
 
   for (const b of [A, B]) {
     const bad = b.problems.filter((p) => !/favicon|ERR_NAME_NOT_RESOLVED|inbox-stub|evil\.test|status of 40[13] /.test(p));

@@ -113,11 +113,15 @@ test("localStorage throwing defaults to system and allows clicking", async (t) =
 });
 
 test("every page carries the switch, and pigeonpost.dev serves the same theme.js", () => {
-  for (const page of ["index.html", "app.html", "start.html", "invite.html", "checkout.html", "checkout/return.html", "auth/callback.html"]) {
+  for (const page of ["index.html", "start.html", "invite.html", "checkout.html", "checkout/return.html", "auth/callback.html"]) {
     const html = read(page);
     assert.match(html, /<button type="button" class="theme-toggle" data-theme-toggle aria-label="Theme: System"><\/button>/, page);
     assert.ok(html.indexOf('src="/theme.js"') < html.indexOf('rel="stylesheet"'), `${page}: theme.js runs before the styles`);
   }
+  // The admin app draws its switch in the shared shell (top left of the top bar), from the shared copy.
+  const app = read("app.html");
+  assert.ok(app.indexOf('src="/shared/theme.js"') < app.indexOf('rel="stylesheet"'), "app.html: theme.js runs before the styles");
+  assert.equal(read("shared/theme.js"), read("theme.js"), "site-shared/theme.js drifted from site-enterprise/theme.js");
   assert.equal(readFileSync(new URL("../../site/theme.js", import.meta.url), "utf8"), read("theme.js"), "site/theme.js drifted; re-copy it");
 });
 

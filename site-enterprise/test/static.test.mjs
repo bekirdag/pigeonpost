@@ -20,7 +20,7 @@ test("no inline scripts, handlers or styles; only same-origin scripts", () => {
     assert.doesNotMatch(s, /<script(?![^>]*\bsrc=)[^>]*>/, f);
     assert.doesNotMatch(s, /\son[a-z]+=/i, f);
     assert.doesNotMatch(s, /\sstyle=/i, f);
-    for (const m of s.matchAll(/<script src="([^"]+)"/g)) assert.match(m[1], /^\/[a-z0-9-]+\.js$/, `${f}: ${m[1]}`);
+    for (const m of s.matchAll(/<script src="([^"]+)"/g)) assert.match(m[1], /^\/(shared\/)?[a-z0-9-]+\.js$/, `${f}: ${m[1]}`);
   }
 });
 
