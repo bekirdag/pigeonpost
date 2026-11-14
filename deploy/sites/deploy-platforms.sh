@@ -15,11 +15,15 @@ platforms=("$@"); [ ${#platforms[@]} -gt 0 ] || platforms=(account partner manag
 
 assemble() {
   rm -rf "$out"; mkdir -p "$out"
+  rev="$(git -C "$here" rev-parse --short HEAD)$(git -C "$here" diff --quiet || echo -dirty)"
   for p in "${platforms[@]}"; do
     src="$here/site-$p"; [ -d "$src" ] || { echo "missing $src" >&2; exit 1; }
     rsync -a --exclude test --exclude 'test-*' --exclude node_modules --exclude 'package*.json' --exclude '*.md' "$src/" "$out/$p/"
     mkdir -p "$out/$p/shared"
     rsync -a --exclude test --exclude node_modules --exclude 'package*.json' "$here/site-shared/" "$out/$p/shared/"
+    # Cache-bust: every same-origin script and stylesheet a page loads gets ?v=<commit>, so a
+    # deploy reaches browsers at once instead of after the 5-minute static cache.
+    find "$out/$p" -name '*.html' -print0 | xargs -0 perl -pi -e 's{((?:src|href)="/[^"?#]+\.(?:js|css))"}{$1?v='"$rev"'"}g'
     find "$out/$p" -type f | wc -l | xargs echo "$p: files"
   done
 }
