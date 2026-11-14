@@ -76,7 +76,7 @@
   };
   PP.whoami = function () {
     const c = PP.claims(PP.token());
-    return { name: c.name || c.preferred_username || "", username: c.preferred_username || "", sub: c.sub || "" };
+    return { name: c.name || c.preferred_username || "", username: c.preferred_username || "", sub: c.sub || "", email: c.email || "" };
   };
 
   /// Only a same-origin absolute path may be returned to after sign-in.
@@ -86,7 +86,7 @@
   };
 
   /// Build the authorize URL. Pure apart from what it is given, so it can be tested.
-  PP.authorizeUrl = function ({ state, nonce, challenge, acr_values, max_age, prompt, origin }) {
+  PP.authorizeUrl = function ({ state, nonce, challenge, acr_values, max_age, prompt, origin, kc_action }) {
     const o = cfg.oidc || {};
     const q = new URLSearchParams({
       client_id: o.clientId,
@@ -101,11 +101,13 @@
     if (acr_values) q.set("acr_values", acr_values);
     if (max_age !== undefined && max_age !== null) q.set("max_age", String(max_age));
     if (prompt) q.set("prompt", prompt);
+    // A Keycloak required action on an existing sign-in (CONFIGURE_TOTP: the authenticator QR only).
+    if (kc_action) q.set("kc_action", kc_action);
     return `${o.issuer}/protocol/openid-connect/auth?${q.toString()}`;
   };
 
   /// Leave for the realm. `returnTo` is where the callback page sends the person afterwards.
-  PP.signIn = async function ({ returnTo, acr_values, max_age, prompt } = {}) {
+  PP.signIn = async function ({ returnTo, acr_values, max_age, prompt, kc_action } = {}) {
     const verifier = random(48);
     const state = random(24);
     const nonce = random(24);
@@ -114,7 +116,7 @@
       returnTo: PP.safePath(returnTo || window.location.pathname + window.location.search + window.location.hash),
       stepUp: Boolean(acr_values),
     }));
-    const url = PP.authorizeUrl({ state, nonce, challenge: await challengeFor(verifier), acr_values, max_age, prompt });
+    const url = PP.authorizeUrl({ state, nonce, challenge: await challengeFor(verifier), acr_values, max_age, prompt, kc_action });
     PP.navigate(url);
   };
 
@@ -212,8 +214,19 @@
 
   // ---- HTTP ------------------------------------------------------------------------------------
 
+  /// The postbox answers errors in two shapes: `{error: "code", detail, …}` and the marketplace
+  /// contract's `{error: {code, message, details}}`. Both become the first, so `code`, the
+  /// sentence and fields such as `nearest` or `acr_values` are read the same way.
+  function flatError(json) {
+    if (!json || typeof json !== "object" || !json.error || typeof json.error !== "object") return json;
+    const e = json.error;
+    return { ...(e.details && typeof e.details === "object" ? e.details : {}), error: e.code || null, detail: e.message || "", message: e.message || "" };
+  }
+  PP.flatError = flatError;
+
   class ApiError extends Error {
-    constructor(status, body) {
+    constructor(status, raw) {
+      const body = flatError(raw);
       super((body && (body.detail || body.message || body.error)) || `Request failed (${status})`);
       this.status = status;
       this.body = body || {};
@@ -224,17 +237,10 @@
   /// Thrown after a redirect has started, so callers stop quietly.
   PP.Redirecting = class Redirecting extends Error {};
 
-  /// The postbox answers errors in two shapes: `{error: "code", detail, …}` and the marketplace
-  /// contract's `{error: {code, message, details}}`. Both become the first, so `code`, the
-  /// sentence and fields such as `nearest` or `acr_values` are read the same way.
-  PP.flatError = function (json) {
-    if (!json || typeof json !== "object" || !json.error || typeof json.error !== "object") return json;
-    const e = json.error;
-    return { ...(e.details && typeof e.details === "object" ? e.details : {}), error: e.code || null, detail: e.message || "", message: e.message || "" };
-  };
-
   /// One request. `base` is "postbox" or "bridge". A 401 refreshes once; `step_up_required`
-  /// leaves for the realm and comes back to `resume`; a 401 that survives the refresh signs in.
+  /// leaves for the realm and comes back to `resume`; a 401 that survives the refresh signs in —
+  /// unless `keepSession`, for an action whose 401 may be a backend refusing this one operation
+  /// (a payment provider) or a probe that must not end the session: then it is thrown.
   ///
   /// `stepUp: "throw"` keeps the caller on the page instead: the step-up refusal is thrown as an
   /// ApiError carrying `challenge` (acr_values, max_age), so the page can say "Confirm it's you"
@@ -243,7 +249,7 @@
   /// and for a dead session alike. A nested error body (`{ error: { code, message, details } }`)
   /// is flattened to the usual `{ error, detail, ...details }` shape first (PP.flatError).
   /// `blob` sends a file as the body itself with `contentType` (a listing logo); `body` is JSON.
-  PP.api = async function (base, path, { method = "GET", body, blob, contentType, auth = true, resume, raw = false, quiet = false, stepUp } = {}, retried = false) {
+  PP.api = async function (base, path, { method = "GET", body, blob, contentType, auth = true, resume, raw = false, quiet = false, stepUp, keepSession = false } = {}, retried = false) {
     const root = base === "bridge" ? (cfg.apiBase || "/api") : cfg.postbox;
     const headers = { accept: "application/json" };
     if (blob !== undefined) headers["content-type"] = contentType || blob.type || "application/octet-stream";
@@ -264,8 +270,8 @@
         await PP.stepUp(challenge, resume);
         throw new PP.Redirecting("step-up");
       }
-      if (!retried && (await refresh())) return PP.api(base, path, { method, body, blob, contentType, auth, resume, raw, quiet, stepUp }, true);
-      if (quiet) throw new ApiError(res.status, json);
+      if (!retried && (await refresh())) return PP.api(base, path, { method, body, blob, contentType, auth, resume, raw, quiet, stepUp, keepSession }, true);
+      if (quiet || keepSession) throw new ApiError(res.status, json);
       PP.signOutLocal();
       await PP.signIn({});
       throw new PP.Redirecting("sign-in");

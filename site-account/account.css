@@ -1,0 +1,108 @@
+/* account.pigeonpost.dev — what the shared platform.css does not have. Tokens only (tokens.css). */
+
+[hidden] { display: none !important; }
+
+/* Status lines under forms and cards. */
+.acc-status { font-size: 14px; color: var(--muted); min-height: 1px; }
+.acc-status:empty { display: none; }
+.acc-status.is-ok { color: var(--auto-text); }
+.acc-status.is-error { color: var(--danger); }
+.acc-status.is-info { color: var(--body); }
+.acc-status .pp-btn { margin-left: 6px; vertical-align: middle; }
+
+.acc-stack { display: grid; gap: 14px; align-content: start; min-width: 0; }
+.acc-inline { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; }
+.acc-inline .pp-field { flex: 1 1 220px; }
+.acc-toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+.acc-toolbar .pp-field { min-width: 200px; }
+.acc-buy-area { display: grid; gap: 14px; }
+.acc-row-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.acc-cell-stack { display: grid; gap: 4px; justify-items: start; min-width: 0; }
+.acc-pre { margin: 0; padding: 14px; border-radius: 12px; background: var(--code-fill); color: var(--code-text); font: 13px/1.5 var(--mono); overflow-x: auto; white-space: pre; }
+.acc-pre-line { white-space: pre-line; }
+.acc-links { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.acc-ticks { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.acc-ticks li { display: flex; gap: 10px; align-items: flex-start; }
+.acc-ticks .ico { color: var(--green); margin-top: 3px; width: 16px; height: 16px; }
+.acc-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.acc-receipt { display: grid; gap: 4px; padding: 12px 14px; border-radius: 12px; background: var(--inset); font-size: 13.5px; }
+.acc-minus { color: var(--body); }
+.acc-plus { color: var(--auto-text); font-weight: 600; }
+
+/* The page header's gate (P8) leads the content: keep it at full width above cards. */
+.pp-gated > .pp-gate { align-items: center; }
+.pp-gate .pp-btn { flex: none; }
+@media (max-width: 640px) {
+  .pp-gate { flex-wrap: wrap; }
+  .pp-gate p { flex-basis: calc(100% - 40px); }
+}
+
+/* Overview quick actions. */
+.acc-quick { display: grid; gap: 4px; }
+.acc-quick-item { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 12px; color: var(--body); }
+.acc-quick-item:hover { background: var(--hover); text-decoration: none; }
+.acc-quick-item > .ico:first-child { width: 34px; height: 34px; padding: 8px; border-radius: 10px; background: var(--tone1-bg); color: var(--tone1-fg); }
+.acc-quick-item span { flex: 1; display: grid; min-width: 0; }
+.acc-quick-item strong { color: var(--ink); font-weight: 600; }
+.acc-quick-item small { color: var(--muted); font-size: 13px; }
+.acc-quick-go { color: var(--faint); }
+
+/* Get a handle. */
+.acc-search { display: flex; gap: 10px; flex-wrap: wrap; }
+.acc-slash-field { position: relative; flex: 1 1 240px; }
+.acc-slash { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: var(--muted); font: 600 16px var(--mono); }
+.acc-handle-input { padding-left: 30px; font-family: var(--mono); }
+.acc-picker { display: grid; gap: 14px; }
+
+/* Wallet packs. */
+.acc-packs { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 120px), 1fr)); }
+.acc-pack { display: grid; gap: 2px; padding: 14px; border-radius: 12px; background: var(--inset); border: 1.5px solid transparent; cursor: pointer; text-align: center; }
+.acc-pack strong { font-size: 20px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.acc-pack span { font-size: 12.5px; color: var(--muted); }
+.acc-pack:hover { background: var(--hover); }
+.acc-pack:has(input:checked) { background: var(--mine-fill); border-color: var(--edge-focus); }
+.acc-pack:has(input:focus-visible) { outline: 2px solid var(--edge-focus); outline-offset: 2px; }
+
+/* Store tiles and logos. */
+.acc-tile { position: relative; }
+.acc-tile.is-soon { opacity: .82; }
+.acc-tile-summary { color: var(--muted); font-size: 14px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.acc-tile-more { display: inline-flex; align-items: center; gap: 2px; color: var(--blue); font-size: 13.5px; }
+.acc-tile-more .ico { width: 14px; height: 14px; }
+.acc-verified { display: inline-flex; vertical-align: -2px; margin-left: 4px; color: var(--blue); }
+.acc-verified .ico { width: 13px; height: 13px; stroke-width: 2.4; }
+.acc-logo { font-size: 15px; letter-spacing: .02em; }
+.acc-logo[data-size="40"] { width: 40px; height: 40px; }
+.acc-logo[data-size="96"] { width: 80px; height: 80px; border-radius: 20px; font-size: 26px; }
+.acc-tone-0 { background: var(--tone1-bg); color: var(--tone1-fg); }
+.acc-tone-1 { background: var(--tone2-bg); color: var(--tone2-fg); }
+.acc-tone-2 { background: var(--tone3-bg); color: var(--tone3-fg); }
+.acc-tone-3 { background: var(--tone4-bg); color: var(--tone4-fg); }
+.acc-tone-4 { background: var(--tone5-bg); color: var(--tone5-fg); }
+.acc-tone-5 { background: var(--tone6-bg); color: var(--tone6-fg); }
+.acc-hero .pp-table-tools { margin-top: 4px; }
+.acc-catalog { display: grid; gap: 26px; }
+.acc-listing-head { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
+.acc-shots { display: flex; gap: 12px; overflow-x: auto; }
+.acc-shots img { height: 220px; border-radius: 12px; background: var(--inset); }
+.acc-package .acc-ticks { font-size: 14px; }
+
+/* Inbox messages in a sheet. */
+.acc-msgs { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.acc-msg { padding: 12px 14px; border-radius: 12px; background: var(--inset); display: grid; gap: 6px; }
+.acc-msg.is-read { opacity: .75; }
+.acc-msg-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.acc-msg-body { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.acc-check { display: flex; gap: 8px; align-items: center; font-size: 14px; }
+
+@media (max-width: 640px) {
+  .pp-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .pp-stat-value { font-size: 21px; }
+  .acc-row-actions { justify-content: flex-end; }
+  .pp-page-head h1 { font-size: 23px; }
+  .pp-cols { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* The hosted payment page. */
+.acc-pay-card { width: 100%; max-width: 640px; }
