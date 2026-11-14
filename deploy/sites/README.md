@@ -154,6 +154,13 @@ python3 deploy/sites/verify-mac-download.py /path/to/Pigeonpost-Desktop-1.0-30.z
   --sha256 551898e7ddf71bbe0afa383a274601251ff6af7e8fa64462fd2840ff15ab7db3
 ```
 
+Since 1.2 (52) the Developer ID entitlements claim `associated-domains`, which needs an embedded
+profile: export with `signingStyle: manual`, the local `Developer ID Application` identity and the
+`MAC_APP_DIRECT` profile `Pigeonpost Desktop Developer ID` (expires with that certificate,
+2027-02-01). Automatic export fails with "Cloud signing permission error", because the App Store
+Connect API key cannot cloud-sign Developer ID. Dispatch the workflow with `-f version=<x.y>`; the
+tag and archive are `macos-<x.y>-N` and `Pigeonpost-Desktop-<x.y>-N.zip`.
+
 For a new build, use its approved final SHA-256 and matching version/build number. The verifier
 checks the checksum before extraction, both architectures' Developer ID identities and hardened
 runtime, absence of the debugger entitlement, the stapled ticket, and Gatekeeper acceptance.
