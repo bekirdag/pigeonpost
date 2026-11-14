@@ -76,6 +76,8 @@ kotlin { jvmToolchain(17) }
 
 dependencies {
     implementation(project(":core"))
+    // The Pigeonpost Design Kit for Compose (copied from pigeonpost-design-kit/kits/native/android).
+    implementation(project(":pigeonpost-ui"))
     val composeBom = platform("androidx.compose:compose-bom:2025.12.01")
     implementation(composeBom)
     androidTestImplementation(composeBom)

@@ -35,14 +35,14 @@ private fun CalendarContents(store: CalendarStore, s: CalendarState, back: () ->
     val context = s.contextId
     Column(Modifier.fillMaxSize().background(p.ground).testTag("calendar")) {
         Row(Modifier.fillMaxWidth().heightIn(min = 60.dp).padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            ActionIcon("Back to inbox", Icons.AutoMirrored.Outlined.ArrowBack, action = back)
+            ActionIcon("Back to inbox", KitIcons.ChevronLeft, action = back)
             Column(Modifier.weight(1f)) {
                 Text("Calendar", style = geist(22.sp, FontWeight.Bold), color = p.ink)
                 Text(s.mailbox.orEmpty(), style = geistMono(11.sp), color = p.muted, maxLines = 1)
             }
-            ActionIcon("Calendar settings", Icons.Outlined.Tune) { tools = true }
+            ActionIcon("Calendar settings", KitIcons.SlidersHorizontal) { tools = true }
             IconButton({ store.beginEditor(CalendarEventDraft(context, s.selectedDay.text, tzid = s.zone.id, calendarId = s.folders.firstOrNull { it.isDefault == true }?.id)) }, enabled = s.canCreate && s.pending.none { it.kind == CalendarAttemptKind.EVENT }, modifier = Modifier.testTag("calendar:new")) {
-                Icon(Icons.Outlined.Add, "New event", tint = if (s.canCreate) p.accent else p.muted)
+                Icon(KitIcons.Plus, "New event", tint = if (s.canCreate) p.accent else p.muted)
             }
         }
         if (s.loading) LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp)) else Seam(Modifier.fillMaxWidth().height(1.dp))
@@ -71,7 +71,7 @@ private fun CalendarContents(store: CalendarStore, s: CalendarState, back: () ->
                 Text("Invitations", style = geist(16.sp, FontWeight.SemiBold), color = p.ink)
                 s.invitations.forEach { invite ->
                     ListItem(headlineContent = { Text(invite.title ?: "Event invitation") }, supportingContent = { Text(invite.organizer?.handle ?: invite.organizer?.name ?: "Calendar invitation") },
-                        trailingContent = { Icon(Icons.Outlined.ChevronRight, null) }, modifier = Modifier.clickable { store.openEvent(invite.key) })
+                        trailingContent = { Icon(KitIcons.ChevronRight, null) }, modifier = Modifier.clickable { store.openEvent(invite.key) })
                 }
             }
             item {
@@ -80,14 +80,14 @@ private fun CalendarContents(store: CalendarStore, s: CalendarState, back: () ->
                         Text(s.selectedDay.date.format(DateTimeFormatter.ofPattern("EEEE, d MMMM", Locale.getDefault())), style = geist(17.sp, FontWeight.SemiBold), color = p.ink)
                         Text(s.zone.id, style = geist(12.sp), color = p.muted)
                     }
-                    ActionIcon("Refresh calendar", Icons.Outlined.Refresh) { store.refresh() }
+                    ActionIcon("Refresh calendar", KitIcons.RefreshCw) { store.refresh() }
                 }
             }
             if (s.agenda.isEmpty()) item { Text(if (s.selectedFolders?.isEmpty() == true) "No calendars selected." else "No events on this day.", color = p.secondary, modifier = Modifier.padding(vertical = 18.dp)) }
             items(s.agenda, key = { "event:" + it.occurrenceId }) { row ->
                 Surface(color = p.wash, shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth().clickable { store.openEvent(row.key) }.testTag("calendar:event:" + row.eventId)) {
                     Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Icon(if (row.meeting != null) Icons.Outlined.Videocam else Icons.Outlined.Event, null, tint = p.accent)
+                        Icon(if (row.meeting != null) KitIcons.Video else KitIcons.Calendar, null, tint = p.accent)
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Text(row.title ?: "Event", style = geist(15.sp, FontWeight.SemiBold), color = p.ink)
                             Text(if (row.allDay == true) "All day" else calendarTime(row.startsAt, s.zone.id) + " – " + calendarTime(row.endsAt, s.zone.id), style = geist(13.sp), color = p.secondary)
@@ -95,7 +95,7 @@ private fun CalendarContents(store: CalendarStore, s: CalendarState, back: () ->
                             if (row.status == "cancelled") Text("Cancelled", color = p.heldText)
                             else row.myRsvp?.let { Text("Your answer: $it", style = geist(12.sp), color = p.muted) }
                         }
-                        Icon(Icons.Outlined.ChevronRight, null, tint = p.muted)
+                        Icon(KitIcons.ChevronRight, null, tint = p.muted)
                     }
                 }
             }
@@ -117,10 +117,10 @@ private fun CalendarContents(store: CalendarStore, s: CalendarState, back: () ->
 private fun MonthPicker(s: CalendarState, store: CalendarStore) {
     val p = Pp.colors
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        ActionIcon("Previous month", Icons.Outlined.ChevronLeft) { store.select(s.selectedDay.plusMonths(-1)) }
+        ActionIcon("Previous month", KitIcons.ChevronLeft) { store.select(s.selectedDay.plusMonths(-1)) }
         Text(s.selectedDay.date.format(DateTimeFormatter.ofPattern("MMMM yyyy", Locale.getDefault())), Modifier.weight(1f), style = geist(18.sp, FontWeight.SemiBold), color = p.ink)
         TextButton({ store.today() }) { Text("Today") }
-        ActionIcon("Next month", Icons.Outlined.ChevronRight) { store.select(s.selectedDay.plusMonths(1)) }
+        ActionIcon("Next month", KitIcons.ChevronRight) { store.select(s.selectedDay.plusMonths(1)) }
     }
     val days = remember(s.selectedDay, s.weekStart) { CalendarMonthWindow(s.selectedDay, s.weekStart).days }
     Row(Modifier.fillMaxWidth()) {
@@ -133,8 +133,8 @@ private fun MonthPicker(s: CalendarState, store: CalendarStore) {
             Surface(onClick = { store.select(day) }, modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("calendar:day:" + day.text),
                 color = if (selected) p.accent else p.ground, shape = MaterialTheme.shapes.small) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                    Text(day.date.dayOfMonth.toString(), style = geist(14.sp, if (selected) FontWeight.Bold else FontWeight.Normal), color = if (selected) androidx.compose.ui.graphics.Color.White else if (day.date.month == s.selectedDay.date.month) p.ink else p.muted)
-                    Text(if (hasEvents) "•" else " ", style = geist(9.sp), color = if (selected) androidx.compose.ui.graphics.Color.White else p.accent)
+                    Text(day.date.dayOfMonth.toString(), style = geist(14.sp, if (selected) FontWeight.Bold else FontWeight.Normal), color = if (selected) p.onAccent else if (day.date.month == s.selectedDay.date.month) p.ink else p.muted)
+                    Text(if (hasEvents) "•" else " ", style = geist(9.sp), color = if (selected) p.onAccent else p.accent)
                 }
             }
         }
@@ -150,7 +150,7 @@ internal fun CalendarError(message: String, dismiss: () -> Unit) {
     Surface(color = Pp.colors.wash, shape = MaterialTheme.shapes.small) {
         Row(Modifier.padding(start = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(message, Modifier.weight(1f), color = Pp.colors.heldText, style = geist(13.sp))
-            ActionIcon("Dismiss calendar notice", Icons.Outlined.Close, action = dismiss)
+            ActionIcon("Dismiss calendar notice", KitIcons.X, action = dismiss)
         }
     }
 }

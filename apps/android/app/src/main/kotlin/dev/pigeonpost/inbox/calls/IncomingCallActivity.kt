@@ -7,6 +7,7 @@ import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.ui.draw.drawBehind
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -138,7 +139,12 @@ class IncomingCallActivity : ComponentActivity() {
 @Composable
 private fun IncomingCallScreen(ring: IncomingRing, ended: String?, answer: () -> Unit, decline: () -> Unit) {
     val p = Pp.colors
-    Column(Modifier.fillMaxSize().background(Color(0xFF0D0F12)).systemBarsPadding().padding(horizontal = 24.dp, vertical = 32.dp),
+    val k = dev.pigeonpost.design.PP.colors
+    // The kit's ring screen (PPIncomingCallView): an accent glow over the page background.
+    val glow = androidx.compose.ui.graphics.lerp(k.bg, k.accent, 0.3f)
+    Column(Modifier.fillMaxSize().background(k.bg).drawBehind {
+            drawRect(androidx.compose.ui.graphics.Brush.radialGradient(listOf(glow, k.bg), center = androidx.compose.ui.geometry.Offset(size.width / 2, size.height * 0.2f), radius = size.width * 0.9f))
+        }.systemBarsPadding().padding(horizontal = 28.dp, vertical = 32.dp),
         horizontalAlignment = Alignment.CenterHorizontally) {
         Text("Pigeonpost", style = geist(14.sp, FontWeight.Medium), color = p.secondary)
         Spacer(Modifier.height(6.dp))
@@ -147,15 +153,15 @@ private fun IncomingCallScreen(ring: IncomingRing, ended: String?, answer: () ->
         Spacer(Modifier.weight(1f))
         Avatar(ring.callerAddress, ring.callerName, 112.dp)
         Spacer(Modifier.height(20.dp))
-        Text(ring.callerName, style = geist(30.sp, FontWeight.SemiBold), color = p.ink, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(ring.callerName, style = dev.pigeonpost.design.PP.type.h1.copy(fontSize = 30.sp, lineHeight = 36.sp), color = p.ink, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
         ring.callerDetail?.let {
             Spacer(Modifier.height(6.dp))
             Text(it, style = geistMono(14.sp), color = p.secondary, textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Spacer(Modifier.weight(1.4f))
         if (ended == null) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-            RoundAction("Decline", Icons.Filled.CallEnd, Color(0xFFE5484D), decline)
-            RoundAction("Answer", if (ring.video) Icons.Filled.Videocam else Icons.Filled.Call, Color(0xFF2EA043), answer)
+            RoundAction("Decline", dev.pigeonpost.inbox.ui.KitIcons.PhoneOff, k.dangerSolid, decline)
+            RoundAction("Answer", if (ring.video) dev.pigeonpost.inbox.ui.KitIcons.Video else dev.pigeonpost.inbox.ui.KitIcons.Phone, k.successSolid, answer)
         }
         Spacer(Modifier.height(24.dp))
     }
@@ -164,11 +170,11 @@ private fun IncomingCallScreen(ring: IncomingRing, ended: String?, answer: () ->
 @Composable
 private fun RoundAction(label: String, icon: ImageVector, fill: Color, action: () -> Unit) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        IconButton(action, Modifier.size(76.dp).semantics { contentDescription = label },
+        IconButton(action, Modifier.size(64.dp).semantics { contentDescription = label },
             colors = IconButtonDefaults.iconButtonColors(containerColor = fill, contentColor = Color.White)) {
-            Icon(icon, null, Modifier.size(34.dp))
+            Icon(icon, null, Modifier.size(28.dp))
         }
         Spacer(Modifier.height(10.dp))
-        Text(label, style = geist(15.sp, FontWeight.Medium), color = Pp.colors.body)
+        Text(label, style = geist(13.sp), color = Pp.colors.body)
     }
 }

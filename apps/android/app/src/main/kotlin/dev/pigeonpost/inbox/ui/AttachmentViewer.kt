@@ -81,12 +81,12 @@ fun AttachmentViewer(identity: String, attachment: Attachment, load: suspend () 
         Column(Modifier.fillMaxSize().background(if (media) Color(0xFF0B0D10) else p.wash).windowInsetsPadding(WindowInsets.safeDrawing).testTag("attachmentViewer")) {
             Row(Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 val ink = if (media) Color.White else p.ink
-                IconButton(dismiss) { Icon(Icons.Outlined.Close, "Close viewer", tint = ink) }
+                IconButton(dismiss) { Icon(KitIcons.X, "Close viewer", tint = ink) }
                 Column(Modifier.weight(1f).padding(horizontal = 4.dp)) {
                     Text(attachment.filename, style = geist(15.sp, FontWeight.SemiBold), color = ink, maxLines = 1, overflow = TextOverflow.MiddleEllipsis)
                     Text(bytes(attachment.bytes), style = geist(12.sp), color = if (media) Color(0xFF9AA3AE) else p.muted)
                 }
-                IconButton(download) { Icon(Icons.Outlined.Download, "Download ${attachment.filename}", tint = ink) }
+                IconButton(download) { Icon(KitIcons.Download, "Download ${attachment.filename}", tint = ink) }
             }
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 when (val state = loaded) {

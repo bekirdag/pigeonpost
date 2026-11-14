@@ -12,6 +12,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import dev.pigeonpost.design.PP
+import dev.pigeonpost.design.PPRadius
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
@@ -97,34 +99,34 @@ fun ConversationPane(state: InboxState, store: InboxStore, model: InboxViewModel
         } else false
     }) {
         // The bar: who this is with (the name is the button for "who is this"), then the actions.
-        Row(Modifier.fillMaxWidth().heightIn(min = 60.dp).background(p.wash).padding(start = if (wide && showSidebar == null) 14.dp else 2.dp, end = 4.dp),
+        Row(Modifier.fillMaxWidth().heightIn(min = 60.dp).background(p.ground).padding(start = if (wide && showSidebar == null) 14.dp else 2.dp, end = 4.dp),
             verticalAlignment = Alignment.CenterVertically) {
-            if (!wide) ActionIcon("Back to conversations", Icons.AutoMirrored.Outlined.ArrowBack, tint = p.accent) { store.selectPeer(null) }
+            if (!wide) ActionIcon("Back to conversations", KitIcons.ChevronLeft, tint = p.accent) { store.selectPeer(null) }
             showSidebar?.let { show -> IconButton(show, Modifier.testTag("showSidebar")) { Icon(Icons.Outlined.ViewSidebar, "Show conversations", tint = p.secondary) } }
             Row(Modifier.weight(1f).clip(RoundedCornerShape(10.dp)).clickable(onClickLabel = "About $name", onClick = info).padding(horizontal = 6.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Avatar(peer, name, if (wide) 30.dp else 34.dp)
                 Column(Modifier.weight(1f)) {
-                    Text(name, style = geist(14.5.sp, FontWeight.SemiBold), color = if (name.startsWith("~")) p.secondary else p.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(peer, style = geistMono(11.5.sp), color = p.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(name, style = geist(15.sp, FontWeight.SemiBold), color = if (name.startsWith("~")) p.secondary else p.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(peer, style = geistMono(12.sp), color = p.secondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-                if (timer != null) Icon(Icons.Outlined.Timer, "Messages disappear after ${timerLabel(timer)}", Modifier.size(16.dp).testTag("timerBadge"), tint = p.muted)
+                if (timer != null) Icon(KitIcons.Timer, "Messages disappear after ${timerLabel(timer)}", Modifier.size(16.dp).testTag("timerBadge"), tint = p.muted)
             }
-            ActionIcon("Find in conversation", Icons.Outlined.Search) { searching = !searching; if (!searching) query = "" }
-            ActionIcon("Voice call", Icons.Outlined.Call, enabled = !calling, tint = p.accent) { calls?.call(peer, video = false) }
-            ActionIcon("Video call", Icons.Outlined.Videocam, enabled = !calling, tint = p.accent) { calls?.call(peer, video = true) }
-            ActionIcon("Conversation info", Icons.Outlined.Info, action = info)
+            ActionIcon("Find in conversation", KitIcons.Search) { searching = !searching; if (!searching) query = "" }
+            ActionIcon("Voice call", KitIcons.Phone, enabled = !calling, tint = p.accent) { calls?.call(peer, video = false) }
+            ActionIcon("Video call", KitIcons.Video, enabled = !calling, tint = p.accent) { calls?.call(peer, video = true) }
+            ActionIcon("Conversation info", KitIcons.Info, action = info)
             Box {
-                ActionIcon("More conversation actions", Icons.Outlined.MoreVert) { headerMenu = true }
+                ActionIcon("More conversation actions", KitIcons.MoreVertical) { headerMenu = true }
                 DropdownMenu(headerMenu, { headerMenu = false }, containerColor = p.ground) {
                     if (state.has(Features.DISAPPEARING)) DropdownMenuItem({ Text("Disappearing messages") }, { headerMenu = false; info() })
                     if (state.blockedPeer) DropdownMenuItem({ Text("Unblock") }, { headerMenu = false; state.conversation?.contact?.let { store.unblock(it.peer) } })
                     else if (state.conversation?.identity == null) DropdownMenuItem({ Text("Block", color = p.blockedText) }, { headerMenu = false; askBlock(BlockTarget(peer, name)) })
                 }
             }
-            if (wide && subject?.id?.isNotEmpty() == true) ActionIcon("Delete subject", Icons.Outlined.DeleteOutline) { deleteSubject = true }
+            if (wide && subject?.id?.isNotEmpty() == true) ActionIcon("Delete subject", KitIcons.Trash2) { deleteSubject = true }
         }
-        Seam(Modifier.fillMaxWidth().height(1.dp))
+        Seam(Modifier.fillMaxWidth().height(1.dp), p.stroke)
         if (state.has(dev.pigeonpost.core.nests.NestRules.FEATURE)) NestStatusBar(model.nests, peer, model::openNest)
         if (!wide) {
             Row(Modifier.fillMaxWidth().padding(end = 4.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -133,10 +135,10 @@ fun ConversationPane(state: InboxState, store: InboxStore, model: InboxViewModel
                     subjects.forEach { item -> SubjectChip(item, item.id == subject?.id) { store.selectSubject(item.id) } }
                     Box(Modifier.size(36.dp).clip(RoundedCornerShape(9.dp)).background(p.field).border(1.dp, p.strokeStrong, RoundedCornerShape(9.dp))
                         .clickable(onClickLabel = "New subject", role = Role.Button, onClick = newSubject), contentAlignment = Alignment.Center) {
-                        Icon(Icons.Outlined.Add, "New subject", Modifier.size(18.dp), tint = p.ink)
+                        Icon(KitIcons.Plus, "New subject", Modifier.size(18.dp), tint = p.ink)
                     }
                 }
-                if (subject?.id?.isNotEmpty() == true) ActionIcon("Delete subject", Icons.Outlined.DeleteOutline) { deleteSubject = true }
+                if (subject?.id?.isNotEmpty() == true) ActionIcon("Delete subject", KitIcons.Trash2) { deleteSubject = true }
             }
             Seam(Modifier.fillMaxWidth().height(1.dp))
         }
@@ -144,7 +146,7 @@ fun ConversationPane(state: InboxState, store: InboxStore, model: InboxViewModel
             OutlinedTextField(query, { query = it; match = 0 }, Modifier.weight(1f), label = { Text("Find in this subject") }, singleLine = true,
                 shape = RoundedCornerShape(10.dp), textStyle = geist(14.5.sp))
             Text(if (hits.isEmpty()) "0" else "${match.mod(hits.size) + 1}/${hits.size}", Modifier.padding(8.dp), style = geist(12.sp), color = p.muted)
-            ActionIcon("Next match", Icons.Outlined.ArrowDownward) { if (hits.isNotEmpty()) match++ }
+            ActionIcon("Next match", KitIcons.ArrowDown) { if (hits.isNotEmpty()) match++ }
         }
         if (messages.isEmpty()) EmptyPane("Start a conversation", timer?.let { "Messages disappear after ${timerLabel(it)}." } ?: "Send a message in ${subject?.name ?: "General"}.", Modifier.weight(1f))
         else key(state.acting?.address, peer, subject?.id) {
@@ -159,7 +161,7 @@ fun ConversationPane(state: InboxState, store: InboxStore, model: InboxViewModel
         if (state.blockedPeer) BlockedBanner(name, state.actionBusy) { state.conversation?.contact?.let { store.unblock(it.peer) } }
         // The composer: one card holding the attach button, the field and the send button.
         else Column(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 10.dp)
-            .clip(RoundedCornerShape(16.dp)).background(p.composer).border(1.dp, p.stroke, RoundedCornerShape(16.dp))) {
+            .clip(RoundedCornerShape(PPRadius.x2xl)).background(p.composer).border(1.dp, if (editorFocused) p.accent else p.stroke, RoundedCornerShape(PPRadius.x2xl))) {
             MessageComposerContext(state, store)
             if (state.attachments.isNotEmpty()) Row(Modifier.horizontalScroll(rememberScrollState()).padding(start = 10.dp, end = 10.dp, top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 state.attachments.forEach { file -> InputChip(false, { store.removeAttachment(file.id) }, enabled = !state.isSending,
@@ -167,7 +169,7 @@ fun ConversationPane(state: InboxState, store: InboxStore, model: InboxViewModel
                     label = { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         AttachmentPreview("draft:${file.id}", file.name, file.mediaType, compact = true) { model.files.preview(file) }
                         Text(file.name, maxLines = 1, style = geist(13.sp))
-                    } }, trailingIcon = { Icon(Icons.Outlined.Close, "Remove ${file.name}", Modifier.size(16.dp)) }) }
+                    } }, trailingIcon = { Icon(KitIcons.X, "Remove ${file.name}", Modifier.size(16.dp)) }) }
             }
             if (loadingFiles) Row(Modifier.padding(start = 14.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = p.accent)
@@ -176,7 +178,7 @@ fun ConversationPane(state: InboxState, store: InboxStore, model: InboxViewModel
             if (state.quota?.full == true) Text("Storage is full. Delete messages or attachments to make space.", Modifier.padding(horizontal = 14.dp, vertical = 8.dp), color = p.blockedText, style = geist(13.sp))
             Row(Modifier.fillMaxWidth().padding(start = 2.dp, end = 8.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.Bottom) {
                 Box(Modifier.padding(bottom = 4.dp)) {
-                    ActionIcon("Add attachment", Icons.Outlined.AttachFile, enabled = !state.isSending && state.unconfirmedSend == null && state.composerAction?.editing != true) { addMenu = true }
+                    ActionIcon("Add attachment", KitIcons.Paperclip, enabled = !state.isSending && state.unconfirmedSend == null && state.composerAction?.editing != true) { addMenu = true }
                     DropdownMenu(addMenu, { addMenu = false }, containerColor = p.ground) {
                         DropdownMenuItem({ Text("Choose document") }, { addMenu = false; chooseFile() })
                         DropdownMenuItem({ Text("Choose photo") }, { addMenu = false; choosePhoto() })
@@ -193,11 +195,11 @@ fun ConversationPane(state: InboxState, store: InboxStore, model: InboxViewModel
                     latestRequest++; store.send()
                     // The next message can be typed at once: the field keeps focus and the keyboard stays up.
                     if (keepFocus) runCatching { editorFocus.requestFocus() }
-                }, enabled = canSend, modifier = Modifier.padding(bottom = 8.dp).size(40.dp).clip(RoundedCornerShape(11.dp))
-                    .background(if (canSend) p.accent else p.chip)) {
+                }, enabled = canSend, modifier = Modifier.padding(bottom = 6.dp).size(40.dp).clip(CircleShape)
+                    .background(if (canSend || state.isSending) p.accent else p.field).then(if (canSend || state.isSending) Modifier else Modifier.border(1.dp, p.stroke, CircleShape))) {
                     if (state.isSending) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = p.onAccent)
-                    else Icon(if (state.composerAction?.editing == true) Icons.Outlined.Check else Icons.Outlined.ArrowUpward,
-                        if (state.composerAction?.editing == true) "Save edit" else "Send message", Modifier.size(20.dp), tint = if (canSend) p.onAccent else p.muted)
+                    else Icon(if (state.composerAction?.editing == true) KitIcons.Check else KitIcons.SendHorizontal,
+                        if (state.composerAction?.editing == true) "Save edit" else "Send message", Modifier.size(19.dp), tint = if (canSend) p.onAccent else p.muted)
                 }
             }
         }
@@ -245,7 +247,8 @@ fun MessageBubble(message: ThreadMessage, highlighted: Boolean, current: Boolean
     val stroke = if (mine) p.mineStroke else if (heldRequest) p.heldCardStroke else p.stroke
     val divider = if (mine) p.mineRule else if (heldRequest) p.heldCardStroke else p.tile
     val meta = if (mine) p.mineMeta else if (heldRequest) p.heldCardText else p.muted
-    val shape = RoundedCornerShape(14.dp)
+    // The kit's bubble: radius 18 with a 6 corner at the sender's tail (PPRadius.bubble / bubbletail).
+    val shape = dev.pigeonpost.design.ppBubbleShape(mine, dev.pigeonpost.design.PPBubblePosition.Single)
     val openMenu = { menu = true }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start) {
         if (mine) Spacer(Modifier.width(36.dp))
@@ -258,14 +261,14 @@ fun MessageBubble(message: ThreadMessage, highlighted: Boolean, current: Boolean
                     .padding(horizontal = 16.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (decision) {
                         if (message.autonomy == "auto") {
-                            Icon(Icons.Outlined.Bolt, null, Modifier.size(16.dp), tint = p.accent)
-                            BadgeText("Auto · ${message.verb}", MaterialTheme.colorScheme.secondary)
+                            Icon(KitIcons.Zap, null, Modifier.size(16.dp), tint = p.accent)
+                            BadgeText("Auto · ${message.verb}", p.autoText)
                         } else {
-                            Icon(Icons.Outlined.PauseCircle, null, Modifier.size(16.dp), tint = p.heldText)
-                            BadgeText("Held for review · ${message.verb}", MaterialTheme.colorScheme.tertiary)
+                            Icon(KitIcons.Pause, null, Modifier.size(16.dp), tint = p.heldText)
+                            BadgeText("Held for review · ${message.verb}", p.heldText)
                         }
                     }
-                    if (message.display.unattended) BadgeText(if (message.display.failed) "Unattended · failed" else "Unattended reply", MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (message.display.unattended) BadgeText(if (message.display.failed) "Unattended · failed" else "Unattended reply", p.muted)
                 }
                 Seam(Modifier.fillMaxWidth().height(1.dp), divider)
             }
@@ -283,7 +286,7 @@ fun MessageBubble(message: ThreadMessage, highlighted: Boolean, current: Boolean
                 .testTag("messageMeta:" + message.id).heightIn(min = 36.dp).padding(start = 6.dp, end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Spacer(Modifier.weight(1f))
                 if ((message.editCount ?: 0) > 0 || (message.editedAt ?: 0) > 0) Text("edited", Modifier.padding(end = 6.dp), style = geist(11.sp), color = meta)
-                message.expiresAt?.let { at -> Icon(Icons.Outlined.Timer, "Disappears " + java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT).format(java.util.Date(at * 1000)),
+                message.expiresAt?.let { at -> Icon(KitIcons.Timer, "Disappears " + java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT).format(java.util.Date(at * 1000)),
                     Modifier.padding(end = 4.dp).size(13.dp), tint = meta) }
                 Text(when (message.status) {
                     Delivery.SENDING -> if (message.pendingEditId != null) "Saving…" else "Sending…"
@@ -314,13 +317,13 @@ fun MessageBubble(message: ThreadMessage, highlighted: Boolean, current: Boolean
             verticalAlignment = Alignment.CenterVertically) {
             // Contract §6: sent → edit (while editable), copy; received → copy, reply.
             if (mine && editable) IconButton({ store.beginEdit(message.id) }, enabled = canChangeMode, modifier = Modifier.size(36.dp).testTag("edit:" + message.id)) {
-                Icon(Icons.Outlined.Edit, "Edit message", Modifier.size(18.dp), tint = p.secondary)
+                Icon(KitIcons.Pencil, "Edit message", Modifier.size(18.dp), tint = p.secondary)
             }
             IconButton({ clipboard.setText(AnnotatedString(message.display.text)); copied = true }, Modifier.size(36.dp).testTag("copy:" + message.id)) {
-                Icon(if (copied) Icons.Outlined.Check else Icons.Outlined.ContentCopy, "Copy message", Modifier.size(18.dp), tint = p.secondary)
+                Icon(if (copied) KitIcons.Check else KitIcons.Copy, "Copy message", Modifier.size(18.dp), tint = p.secondary)
             }
             if (!mine && replyable) IconButton({ store.beginReply(message.id) }, enabled = canChangeMode, modifier = Modifier.size(36.dp).testTag("reply:" + message.id)) {
-                Icon(Icons.AutoMirrored.Outlined.Reply, "Reply to message", Modifier.size(18.dp), tint = p.secondary)
+                Icon(KitIcons.Reply, "Reply to message", Modifier.size(18.dp), tint = p.secondary)
             }
             if (message.status == Delivery.FAILED && state.unconfirmedSend != pendingId && store.canRetrySend(pendingId))
                 TextButton({ store.retrySend(pendingId) }) { Text("Retry", style = geist(12.sp)) }
@@ -354,13 +357,13 @@ private fun AttachmentTile(file: Attachment, identity: String, model: InboxViewM
                 .combinedClickable(onClick = tap, onLongClick = { fileMenu = true }, onClickLabel = if (viewable) "View ${file.filename}" else "Open ${file.filename}")
                 .padding(start = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Box(Modifier.size(30.dp).background(p.tile, RoundedCornerShape(7.dp)), contentAlignment = Alignment.Center) {
-                    Icon(Icons.Outlined.Description, null, Modifier.size(17.dp), tint = p.secondary)
+                    Icon(KitIcons.FileText, null, Modifier.size(17.dp), tint = p.secondary)
                 }
                 Column(Modifier.weight(1f, fill = false).padding(vertical = 8.dp)) {
                     Text(file.filename, style = geist(13.5.sp, FontWeight.Medium), color = p.ink, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Text(bytes(file.bytes), style = geist(12.sp), color = p.muted)
                 }
-                IconButton({ attachment(file, "download") }, Modifier.size(40.dp)) { Icon(Icons.Outlined.Download, "Download ${file.filename}", Modifier.size(18.dp), tint = p.secondary) }
+                IconButton({ attachment(file, "download") }, Modifier.size(40.dp)) { Icon(KitIcons.Download, "Download ${file.filename}", Modifier.size(18.dp), tint = p.secondary) }
             }
         }
         DropdownMenu(fileMenu, { fileMenu = false }, containerColor = p.ground) {
@@ -380,7 +383,7 @@ fun CallLine(text: String) {
     val p = Pp.colors
     Box(Modifier.fillMaxWidth().padding(vertical = 2.dp), contentAlignment = Alignment.Center) {
         Row(Modifier.clip(RoundedCornerShape(10.dp)).background(p.tile).padding(horizontal = 10.dp, vertical = 5.dp).testTag("missedCall"), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.AutoMirrored.Outlined.CallMissed, null, Modifier.size(14.dp), tint = p.blockedText)
+            Icon(KitIcons.PhoneMissed, null, Modifier.size(14.dp), tint = p.blockedText)
             Text(" $text", style = geist(12.sp, FontWeight.Medium), color = p.secondary)
         }
     }

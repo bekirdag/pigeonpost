@@ -244,7 +244,7 @@ object IncomingCalls {
         canvas.drawCircle(size / 2f, size / 2f, size / 2f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = fill.toArgb() })
         val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = ink.toArgb(); textSize = size * 0.36f; textAlign = Paint.Align.CENTER
-            typeface = try { ResourcesCompat.getFont(context, R.font.geist_bold) } catch (_: Exception) { null } ?: Typeface.DEFAULT_BOLD
+            typeface = try { ResourcesCompat.getFont(context, dev.pigeonpost.design.R.font.geist_bold) } catch (_: Exception) { null } ?: Typeface.DEFAULT_BOLD
         }
         canvas.drawText(PeerFace.initials(ring.callerName), size / 2f, size / 2f - (text.descent() + text.ascent()) / 2, text)
         return bitmap
