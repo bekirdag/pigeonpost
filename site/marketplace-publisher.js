@@ -487,12 +487,10 @@
     }
 
     function laterSections() {
-      return [
-        el("section", { class: "mp-section", id: "mp-installs", "aria-labelledby": "mp-installs-h" }, el("h4", { id: "mp-installs-h", text: "Installations" }),
-          el("p", { class: "muted", text: "How many accounts installed each listing will show here." })),
-        el("section", { class: "mp-section", id: "mp-earnings", "aria-labelledby": "mp-earnings-h" }, el("h4", { id: "mp-earnings-h", text: "Earnings and payouts" }),
-          el("p", { class: "muted", text: "Set a price on a listing to sell it. Earnings and payouts will show here." })),
-      ];
+      return [el("section", {class:"mp-section",id:"mp-earnings"},
+        el("h4",{text:"Usage and earnings"}),
+        el("p",{text:"Compare all your apps, follow daily usage, and see earnings and payouts by currency."}),
+        el("a",{class:"btn btn-secondary",href:"#analytics",text:"Open app analytics"}))];
     }
 
     function draw() {

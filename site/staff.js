@@ -271,6 +271,7 @@
     { id: "credits", label: "Credits", group: "Money", roles: ["finance"] },
     { id: "payouts", label: "Payouts", group: "Money", roles: ["finance"], soon: true },
     { id: "invoices", label: "Invoices", group: "Money", roles: ["finance"], soon: true },
+    { id: "analytics", label: "App analytics", group: "Marketplace", roles: ["finance"] },
     { id: "publishers", label: "Publishers", group: "Marketplace", roles: ["reviewer", "finance"] },
     { id: "reviews", label: "Reviews", group: "Marketplace", roles: ["reviewer"] },
     { id: "listings", label: "Listings & reports", group: "Marketplace", roles: ["reviewer", "ops"] },
@@ -888,6 +889,10 @@
   // Marketplace
 
   const mpDeps = () => ({ pb: (path, init) => pb(path, init), toast, stepUp: (challenge) => login(challenge) });
+
+  SCREENS.analytics = async (root) => {
+    if (MP.analytics) MP.analytics(root, mpDeps(), {staff:true});
+  };
 
   SCREENS.publishers = async (root) => {
     root.append(head("Publishers", "Applications and certification. Payout details come from the finance service, masked."));

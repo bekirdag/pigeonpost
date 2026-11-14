@@ -1029,6 +1029,9 @@ impl Store {
         // Publisher-hosted listings and pay-per-job: guarded column adds, the per_job term, two
         // new job tables (`store::marketplace_hosted`).
         marketplace_hosted::migrate(&conn)?;
+        conn.execute_batch("CREATE INDEX IF NOT EXISTS nest_jobs_analytics ON nest_jobs(listing_id,created_at);
+          CREATE INDEX IF NOT EXISTS nest_hosted_jobs_analytics ON nest_hosted_jobs(listing_id,created_at);
+          CREATE INDEX IF NOT EXISTS nest_installations_analytics ON nest_installations(listing_id,created_at);")?;
         // Marketplace look: logos, categories, featured, links and `coming_soon` (guarded adds).
         marketplace_look::migrate(&conn)?;
         for stmt in MIGRATIONS

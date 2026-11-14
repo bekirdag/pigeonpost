@@ -143,6 +143,106 @@ impl Finance {
         matches!(self.transport, Transport::Http { .. })
     }
 
+    /// Only aggregate, publisher-scoped fields may cross into a publisher response.
+    pub(crate) async fn publisher_analytics(
+        &self,
+        publisher: &str,
+        query: &[(&str, String)],
+    ) -> GResult<Value> {
+        if !id_ok(publisher) {
+            return Err(unavailable());
+        }
+        let (status, v) = self
+            .call(
+                reqwest::Method::GET,
+                &format!("/finance/publishers/{publisher}/analytics"),
+                query,
+                None,
+            )
+            .await?;
+        if status != 200
+            || v["publisher_id"].as_str() != Some(publisher)
+            || v["basis"] != "accrued_sales_current_reversals"
+        {
+            return Err(unavailable());
+        }
+        for (key, expected) in query {
+            if *key == "listing_id" {
+                if v[*key].as_str() != Some(expected) {
+                    return Err(unavailable());
+                }
+            } else if v[*key]
+                .as_str()
+                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                != chrono::DateTime::parse_from_rfc3339(expected).ok()
+            {
+                return Err(unavailable());
+            }
+        }
+        let money = [
+            "sales",
+            "gross_minor",
+            "tax_minor",
+            "commission_minor",
+            "publisher_minor",
+            "reversed_publisher_minor",
+            "net_publisher_minor",
+        ];
+        let mut out = json!({"basis":"accrued_sales_current_reversals"});
+        for (key, fields) in [
+            ("currencies", money.as_slice()),
+            ("apps", money.as_slice()),
+            ("daily", money.as_slice()),
+            (
+                "publisher_balances",
+                [
+                    "payable_minor",
+                    "reserve_minor",
+                    "recoverable_minor",
+                    "paid_out_minor",
+                ]
+                .as_slice(),
+            ),
+        ] {
+            let rows = v[key]
+                .as_array()
+                .filter(|a| a.len() <= 10000)
+                .ok_or_else(unavailable)?;
+            let mut clean = Vec::new();
+            for row in rows {
+                let currency = row["currency"]
+                    .as_str()
+                    .filter(|s| matches!(*s, "USD" | "EUR" | "TRY"))
+                    .ok_or_else(unavailable)?;
+                let mut r = json!({"currency":currency});
+                for field in fields {
+                    let n = row[*field]
+                        .as_i64()
+                        .filter(|n| n.unsigned_abs() <= 9_007_199_254_740_991)
+                        .ok_or_else(unavailable)?;
+                    r[*field] = json!(n);
+                }
+                if matches!(key, "apps" | "daily") {
+                    let id = row.get("listing_id").ok_or_else(unavailable)?;
+                    if !id.is_null() && !id.as_str().is_some_and(id_ok) {
+                        return Err(unavailable());
+                    }
+                    r["listing_id"] = id.clone();
+                }
+                if key == "daily" {
+                    let day = row["day"]
+                        .as_str()
+                        .filter(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").is_ok())
+                        .ok_or_else(unavailable)?;
+                    r["day"] = json!(day);
+                }
+                clean.push(r);
+            }
+            out[key] = json!(clean);
+        }
+        Ok(out)
+    }
+
     async fn call(
         &self,
         method: reqwest::Method,
