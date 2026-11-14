@@ -38,6 +38,8 @@
   // Stroke icons (24×24 paths), built as SVG nodes.
   const ICONS = {
     home: ["M3 11.5 12 4l9 7.5", "M5 10v10h14V10", "M10 20v-6h4v6"],
+    user: ["M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2", "M12 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z"],
+    down: ["m6 9 6 6 6-6"],
     inbox: ["M4 13h4l1.5 3h5l1.5-3h4", "M5.5 5h13L21 13v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-5Z"],
     at: ["M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z", "M16 12v1.5a2.5 2.5 0 0 0 5 0V12a9 9 0 1 0-3.6 7.2"],
     nest: ["M4 14c0 3.3 3.6 6 8 6s8-2.7 8-6", "M4 14c2-1.5 5-2 8-2s6 .5 8 2", "M12 12V7", "M9 7h6", "M12 4v3"],
@@ -95,6 +97,15 @@
     return svg;
   };
 
+  // The design kit's brand lockup and platform tiles (design.pigeonpost.dev, Platform switcher).
+  const PLATFORM_ICONS = { account: "user", enterprise: "building", partner: "store", management: "security" };
+  function logo() {
+    return el("img", { class: "pp-brand-logo", src: "/shared/brand/logo-symbol.png", alt: "", width: "28", height: "26" });
+  }
+  function tile(key) {
+    return el("span", { class: "pp-platform-tile", "data-platform": key, "aria-hidden": "true" }, PP.icon(PLATFORM_ICONS[key] || "grid"));
+  }
+
   // ---- routing -------------------------------------------------------------------------------
 
   /// `#/page/a/b` → { page: "page", params: ["a", "b"] }. Unknown text is just an unknown page.
@@ -134,7 +145,7 @@
     const o = state.opts;
     const nav = el("nav", { class: "pp-nav", id: "pp-nav", "aria-label": `${o.title} sections` });
     const brand = el("a", { class: "pp-brand", href: PP.href(""), "aria-label": `Pigeonpost ${o.title}` },
-      el("span", { class: "pp-brand-mark", "aria-hidden": "true" }, "P"),
+      logo(),
       el("span", { class: "pp-brand-text" }, el("strong", {}, "Pigeonpost"), el("span", {}, o.title)));
     const side = el("aside", { class: "pp-side", id: "pp-side" },
       el("div", { class: "pp-side-head" }, brand,
@@ -146,10 +157,10 @@
     const top = el("header", { class: "pp-top" },
       el("button", { class: "pp-icon-btn pp-menu-btn", type: "button", "aria-label": "Open menu", "aria-controls": "pp-side", onclick: () => setDrawer(true) }, PP.icon("menu")),
       left ? theme() : null,
+      el("div", { class: "pp-switch", id: "pp-switch" }),
       el("div", { class: "pp-crumbs", id: "pp-crumbs" }),
       el("div", { class: "pp-top-actions" },
         left ? null : theme(),
-        el("div", { class: "pp-switch", id: "pp-switch" }),
         el("div", { class: "pp-user", id: "pp-user" })));
     const main = el("main", { class: "pp-main", id: "pp-main", tabindex: "-1" });
     const scrim = el("div", { class: "pp-drawer-scrim", onclick: () => setDrawer(false) });
@@ -233,8 +244,9 @@
       const list = el("div", { class: "pp-pop", id: "pp-switch-pop", hidden: true, role: "menu" },
         el("p", { class: "pp-pop-heading" }, "Switch to"),
         platforms.map((p) => el("a", { class: "pp-pop-item" + (p.key === state.opts.platform ? " is-current" : ""), href: p.url, role: "menuitem", "aria-current": p.key === state.opts.platform ? "true" : null },
-          el("strong", {}, p.name), el("span", {}, p.text))));
-      const btn = el("button", { class: "pp-switch-btn", type: "button", "aria-haspopup": "true", "aria-expanded": "false", "aria-controls": "pp-switch-pop" }, PP.icon("grid"), el("span", {}, state.opts.title));
+          tile(p.key), el("span", { class: "pp-pop-text" }, el("strong", {}, p.name), el("span", {}, p.text)), PP.icon("check", "pp-pop-check"))));
+      const btn = el("button", { class: "pp-switch-btn", type: "button", "aria-haspopup": "true", "aria-expanded": "false", "aria-controls": "pp-switch-pop" },
+        tile(state.opts.platform), el("span", {}, state.opts.title), PP.icon("down"));
       btn.addEventListener("click", (e) => { e.stopPropagation(); togglePop("pp-switch-pop", btn); });
       sw.append(btn, list);
     }
@@ -326,7 +338,7 @@
     const o = state.opts;
     const intro = o.intro || {};
     const card = el("section", { class: "pp-signin-card" },
-      el("div", { class: "pp-signin-brand" }, el("span", { class: "pp-brand-mark", "aria-hidden": "true" }, "P"), el("span", {}, el("strong", {}, "Pigeonpost"), " ", o.title)),
+      el("div", { class: "pp-signin-brand" }, logo(), el("span", {}, el("strong", {}, "Pigeonpost"), " ", o.title)),
       el("h1", {}, intro.heading || `Sign in to Pigeonpost ${o.title}`),
       intro.text ? el("p", { class: "pp-lede" }, intro.text) : null,
       intro.points ? el("ul", { class: "pp-signin-points" }, intro.points.map((t) => el("li", {}, PP.icon("check"), t))) : null,
