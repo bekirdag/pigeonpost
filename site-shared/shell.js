@@ -13,7 +13,7 @@
 //   });
 //
 // `allow(ctx)` hides a page the caller may not use (the postbox still enforces every route);
-// `count(ctx)` puts a number badge on the navigation entry; `render` fills `view` and may be async.
+// `count(ctx)` puts a number badge on the navigation entry; `tag` a small text label ("soon"); `render` fills `view` and may be async.
 // Routes are `#/<page>/<param>/<param>`; the first allowed page is the default.
 //
 // Rules: nothing from a server is written as HTML (PP.el only); one page renders at a time and a
@@ -177,6 +177,7 @@
         list.append(el("li", {},
           el("a", { class: "pp-nav-item", href: PP.href(p.key), "data-page": p.key },
             PP.icon(p.icon || "grid"), el("span", { class: "pp-nav-label" }, p.title),
+            p.tag ? el("span", { class: "pp-nav-tag" }, p.tag) : null,
             count ? el("span", { class: "pp-nav-count", "aria-label": `${count} waiting` }, String(count > 99 ? "99+" : count)) : null)));
       }
       nav.append(el("div", { class: "pp-nav-group" }, g ? el("p", { class: "pp-nav-heading" }, g) : null, list));
@@ -255,10 +256,11 @@
   function crumbs(page, extra) {
     const c = document.getElementById("pp-crumbs");
     if (!c) return;
-    c.replaceChildren(el("span", { class: "pp-crumb-group" }, page.group || state.opts.title),
+    // replaceChildren is the DOM's, not PP.el: no nulls or arrays (they would print as text).
+    c.replaceChildren(...[el("span", { class: "pp-crumb-group" }, page.group || state.opts.title),
       PP.icon("chevron", "pp-crumb-sep"),
       extra ? el("a", { href: PP.href(page.key) }, page.title) : el("span", { class: "pp-crumb-here" }, page.title),
-      extra ? [PP.icon("chevron", "pp-crumb-sep"), el("span", { class: "pp-crumb-here" }, extra)] : null);
+      extra ? [PP.icon("chevron", "pp-crumb-sep"), el("span", { class: "pp-crumb-here" }, extra)] : null].flat().filter(Boolean));
   }
   /// A detail page names itself in the breadcrumbs (e.g. the listing being edited).
   PP.shell.crumb = function (text) { if (state.current) crumbs(state.current, text); };

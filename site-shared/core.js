@@ -226,7 +226,13 @@
 
   /// One request. `base` is "postbox" or "bridge". A 401 refreshes once; `step_up_required`
   /// leaves for the realm and comes back to `resume`; a 401 that survives the refresh signs in.
-  PP.api = async function (base, path, { method = "GET", body, auth = true, resume, raw = false } = {}, retried = false) {
+  ///
+  /// `stepUp: "throw"` keeps the caller on the page instead: the step-up refusal is thrown as an
+  /// ApiError carrying `challenge` (acr_values, max_age), so the page can say "Confirm it's you"
+  /// in place and call PP.stepUp itself (management.pigeonpost.dev does this on every staff route).
+  /// A nested error body (`{ error: { code, message, details } }`) is flattened to the usual
+  /// `{ error, detail, ...details }` shape first.
+  PP.api = async function (base, path, { method = "GET", body, auth = true, resume, raw = false, stepUp } = {}, retried = false) {
     const root = base === "bridge" ? (cfg.apiBase || "/api") : cfg.postbox;
     const headers = { accept: "application/json" };
     if (body !== undefined) headers["content-type"] = "application/json";
@@ -237,13 +243,19 @@
     let json = null;
     try { json = text ? JSON.parse(text) : {}; } catch { json = { error: "bad_response" }; }
     if (res.ok) return json;
+    if (json && json.error && typeof json.error === "object") {
+      const n = json.error;
+      json = { ...(n.details || {}), error: n.code || null, detail: n.message || "" };
+    }
     if (res.status === 401 && auth) {
       const code = json && (json.error || json.code);
       if (code === "step_up_required") {
-        await PP.stepUp(PP.parseChallenge(res.headers.get("www-authenticate"), json), resume);
+        const challenge = PP.parseChallenge(res.headers.get("www-authenticate"), json);
+        if (stepUp === "throw") throw Object.assign(new ApiError(res.status, json), { challenge });
+        await PP.stepUp(challenge, resume);
         throw new PP.Redirecting("step-up");
       }
-      if (!retried && (await refresh())) return PP.api(base, path, { method, body, auth, resume, raw }, true);
+      if (!retried && (await refresh())) return PP.api(base, path, { method, body, auth, resume, raw, stepUp }, true);
       PP.signOutLocal();
       await PP.signIn({});
       throw new PP.Redirecting("sign-in");
@@ -378,6 +390,7 @@
       webhook_limit: "An organization can have at most 10 webhooks. Delete one first.",
       invalid_webhook_url: "Use a public https:// address on port 443 or 8443.",
       staff_required: "This needs a Pigeonpost staff role.",
+      step_up_required: "This needs a recent two-step sign-in.",
       billing_unavailable: "Payments are not answering right now. Try again in a minute; nothing was charged.",
       billing_profile_required: "Add your billing details first.",
       insufficient_credit: "Not enough credit. Top up your wallet first.",
