@@ -239,7 +239,7 @@ jobs:
           # because invitation acceptance matches the verified sign-in address (SDS §7.2).
           # The signed-in platforms (site-shared, site-account, site-partner, site-management, the
           # enterprise app) and the help centre name the member's actual sign-in and contact
-          # address (OIDC claim, billing contact, "email me a sign-in code") — not messaging.
+          # address (OIDC claim, billing contact, sign-in codes sent to that address) — not messaging.
           # Hosted-app privacy/deletion pages and the Google Play service identity likewise
           # describe actual sign-in and support addresses, rather than Pigeonpost messaging.
           # The private deletion-queue notifier imports Python's standard transport module.
