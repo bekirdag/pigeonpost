@@ -92,7 +92,7 @@ struct CalendarDashboard: View {
     private var content: some View {
         List {
             if let problem = store.lastError {
-                Section { Label(problem, systemImage: "exclamationmark.circle").foregroundStyle(Color.red) }
+                Section { Label(problem, systemImage: "exclamationmark.circle").foregroundStyle(Theme.danger) }
             }
             Section {
                 month
@@ -100,7 +100,7 @@ struct CalendarDashboard: View {
                     .font(.geist(12)).foregroundStyle(Theme.secondary)
                 if let zone = store.settings.timezone, TimeZone(identifier: zone) == nil {
                     Text("Saved timezone \(zone) is unavailable. Showing the device timezone; choose a timezone in Calendar settings.")
-                        .font(.geist(12)).foregroundStyle(Color.red)
+                        .font(.geist(12)).foregroundStyle(Theme.danger)
                 }
             }
             Section {
@@ -141,7 +141,7 @@ struct CalendarDashboard: View {
                                     .strikethrough(item.status == "cancelled")
                                 Text(CalendarPresentation.time(item, zone: store.zone)).font(.geist(13))
                                 if let location = item.location, !location.isEmpty { Text(location).font(.geist(12)).foregroundStyle(Theme.secondary) }
-                                if item.status == "cancelled" { Text("Cancelled").foregroundStyle(Color.red) }
+                                if item.status == "cancelled" { Text("Cancelled").foregroundStyle(Theme.danger) }
                                 else if item.invited == true { Text("Invitation · \(CalendarPresentation.rsvp(item.myRsvp))").foregroundStyle(Theme.secondary) }
                             }
                             Spacer(minLength: 0)

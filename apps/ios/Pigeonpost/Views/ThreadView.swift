@@ -349,7 +349,7 @@ struct ThreadView: View {
                 Image(systemName: "paperclip")
                     .font(.geist(17, .medium))
                     .foregroundStyle(Theme.secondary)
-                    .frame(width: 34, height: 34)
+                    .frame(width: 40, height: 40)
                     .contentShape(Rectangle())
             }
             .accessibilityLabel("Attach")
@@ -372,16 +372,17 @@ struct ThreadView: View {
                 Image(systemName: "arrow.up")
                     .font(.geist(15, .bold))
                     .foregroundStyle(sendable ? Theme.onAccent : Theme.muted)
-                    .frame(width: 34, height: 34)
-                    .background(sendable ? Theme.accent : Theme.chip, in: RoundedRectangle(cornerRadius: 9))
+                    .frame(width: 40, height: 40)
+                    .background(sendable ? Theme.accent : Theme.field, in: Circle())
+                    .overlay(Circle().strokeBorder(sendable ? Color.clear : Theme.stroke, lineWidth: 1))
             }
             .disabled(!sendable)
             .accessibilityLabel(editing ? "Save edit" : "Send")
         }
         // One card around the three, as the conversation design draws its composer.
         .padding(6)
-        .background(Theme.composer, in: RoundedRectangle(cornerRadius: 14))
-        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.strokeStrong, lineWidth: 1))
+        .background(Theme.composer, in: RoundedRectangle(cornerRadius: Theme.Radius.xxl, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.xxl, style: .continuous).stroke(Theme.stroke, lineWidth: 1))
         .frame(maxWidth: 860)
         .frame(maxWidth: .infinity)
         .padding(.horizontal, embedded ? 24 : 12)

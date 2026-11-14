@@ -12,7 +12,7 @@ struct AppleSignInButton: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(action) }
     func makeUIView(context: Context) -> ASAuthorizationAppleIDButton {
         let button = ASAuthorizationAppleIDButton(type: .signIn, style: .black)
-        button.cornerRadius = 10
+        button.cornerRadius = Theme.Radius.l
         button.accessibilityIdentifier = "signInWithApple"
         button.addTarget(context.coordinator, action: #selector(Coordinator.pressed), for: .touchUpInside)
         return button
@@ -35,7 +35,7 @@ struct AppleSignInButton: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(action) }
     func makeNSView(context: Context) -> ASAuthorizationAppleIDButton {
         let button = ASAuthorizationAppleIDButton(type: .signIn, style: .black)
-        button.cornerRadius = 10
+        button.cornerRadius = Theme.Radius.l
         button.setAccessibilityIdentifier("signInWithApple")
         button.target = context.coordinator
         button.action = #selector(Coordinator.pressed)

@@ -29,7 +29,7 @@ struct SignInView: View {
                         .padding(.vertical, 13)
                 }
                 .buttonStyle(.plain)
-                .background(Theme.accent, in: RoundedRectangle(cornerRadius: 10))
+                .background(Theme.accent, in: RoundedRectangle(cornerRadius: Theme.Radius.l, style: .continuous))
                 .foregroundStyle(Theme.onAccent)
                 .disabled(working)
 

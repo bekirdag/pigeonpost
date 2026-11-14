@@ -100,7 +100,7 @@ struct NestDetailContent: View {
                 }
             }
             if let message = store.message {
-                Section { Text(message).foregroundStyle(.red).accessibilityIdentifier("nest-detail-message") }
+                Section { Text(message).foregroundStyle(Theme.danger).accessibilityIdentifier("nest-detail-message") }
             }
         }
         .navigationTitle(nest.label)
@@ -239,7 +239,7 @@ struct NestStatusHeader: View {
             Text(NestWords.status(nest)).font(.subheadline.weight(.medium))
             Spacer()
             if waiting > 0 {
-                Text("\(waiting) to approve").font(.caption.weight(.semibold)).foregroundStyle(.orange)
+                Text("\(waiting) to approve").font(.caption.weight(.semibold)).foregroundStyle(Theme.amber)
                     .accessibilityIdentifier("nest-waiting")
             }
             Text("Nest").font(.caption).foregroundStyle(.secondary)

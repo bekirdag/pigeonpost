@@ -24,7 +24,7 @@ struct GroupLiveBanner: View {
                     .font(.geist(11, .bold))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 7).padding(.vertical, 3)
-                    .background(Color.red, in: RoundedRectangle(cornerRadius: 5))
+                    .background(Theme.dangerSolid, in: RoundedRectangle(cornerRadius: 5))
                 Text(LiveStreams.bannerText(stream, me: me, name: groups.name))
                     .font(.geist(13.5, .medium))
                     .foregroundStyle(Theme.ink)

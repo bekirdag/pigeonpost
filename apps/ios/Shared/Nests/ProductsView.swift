@@ -101,7 +101,7 @@ struct BuyNestsSection: View {
             }
             if !store.duplicates.isEmpty {
                 Text("You are also paying for another Nest package, and it adds nothing. Cancel it where you bought it.")
-                    .font(.footnote).foregroundStyle(.orange)
+                    .font(.footnote).foregroundStyle(Theme.amber)
                     .accessibilityIdentifier("nest-duplicate-package")
             }
         } header: { Text("Nests") }
@@ -181,7 +181,7 @@ struct BuyNestsSection: View {
             #endif
         } footer: {
             if let message = store.message {
-                Text(message).foregroundStyle(.red).accessibilityIdentifier("nest-message")
+                Text(message).foregroundStyle(Theme.danger).accessibilityIdentifier("nest-message")
             } else if store.awaitingClaim {
                 Text("Your payment is safe. Your Nest is set up as soon as Pigeonpost confirms it.")
             }
@@ -220,7 +220,7 @@ struct NestPackageRow: View {
             HStack {
                 Spacer()
                 if current {
-                    Label("Current", systemImage: "checkmark.circle.fill").font(.subheadline).foregroundStyle(.green)
+                    Label("Current", systemImage: "checkmark.circle.fill").font(.subheadline).foregroundStyle(Theme.green)
                 } else {
                     Button(action: buy) { Text("Subscribe") }
                         .buttonStyle(.borderedProminent)
@@ -307,7 +307,7 @@ struct OrgNestsSection: View {
                     }
                 }
                 .disabled(handle.isEmpty || NestWords.validLabel(label) == nil)
-                if let message { Text(message).foregroundStyle(.red).font(.footnote) }
+                if let message { Text(message).foregroundStyle(Theme.danger).font(.footnote) }
             }
         }
     }
