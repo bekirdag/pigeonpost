@@ -794,7 +794,7 @@ test("the account page mounts the publisher console only with the marketplace fe
 
   const on = await accountPage(t, { features: ["nests", "marketplace"] });
   assert.equal(on.doc.querySelector("#ac-publisher").hidden, false);
-  assert.match(on.doc.querySelector("#mp-pub-title").textContent, /Publish on the marketplace/);
+  assert.match(on.doc.querySelector("#mp-pub-title").textContent, /App workspace/);
   assert.equal(on.doc.querySelector("#ac-nav-staff").hidden, true, "a 403 staff_required keeps the back office link hidden");
   assert.equal(on.doc.querySelector("#credits").hidden, false);
   assert.match(on.doc.querySelector("#cr-balance").textContent, /Balance: \$12\.34/);
@@ -845,8 +845,7 @@ test("the postbox's buy_url (/account#credits) opens Credits, and the sidebar fo
   assert.deepEqual(shown(p.doc), ["billing"]);
   assert.deepEqual(current(p.doc), ["billing"]);
   assert.ok(p.doc.querySelector("#ac-billing"), "cards stay mounted while hidden");
-  p.window.history.back();
-  await settle();
+  await new Promise(resolve => { p.window.addEventListener("hashchange", resolve, {once:true}); p.window.history.back(); });
   assert.deepEqual(shown(p.doc), ["credits"]);
   assert.deepEqual(current(p.doc), ["credits"]);
 });
@@ -879,7 +878,7 @@ test("the apps' #products and #nests links open the Nests tab; #services opens t
 test("a step-up sign-in comes back to the publisher console it left", async (t) => {
   const p = await accountPage(t, { features: ["nests", "marketplace"], before: (w) => w.localStorage.setItem("pp_mp_return", "publisher") });
   assert.deepEqual(shown(p.doc), ["publish"]);
-  assert.equal(p.window.location.hash, "#publish");
+  assert.equal(p.window.location.hash, "#business");
   assert.equal(p.window.localStorage.getItem("pp_mp_return"), null);
 });
 
@@ -887,7 +886,7 @@ test("without the marketplace, Credits and Publish leave the sidebar and their s
   const p = await accountPage(t, { features: ["nests"], url: "https://pigeonpost.dev/account#credits" });
   assert.deepEqual(shown(p.doc), ["credits"]);
   assert.equal(p.doc.querySelector('#ac-side [data-route="credits"]').hidden, true);
-  assert.equal(p.doc.querySelector('#ac-side [data-route="publish"]').hidden, true);
+  assert.equal(p.doc.querySelector('#ac-side [data-route="business"]').hidden, true);
   assert.equal(p.doc.querySelector("#ac-nav-staff").hidden, true, "staff navigation only for staff");
   assert.match(p.doc.querySelector("#ac-empty-credits").textContent, /marketplace/);
   assert.equal(p.doc.querySelector("#ac-credit-chip").hidden, true);

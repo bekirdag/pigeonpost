@@ -65,6 +65,8 @@ const ROUTERS: &[(&str, &str)] = &[
     ("nest_org.rs", "pub(crate) fn router("),
     ("marketplace.rs", "pub(crate) fn router("),
     ("publisher_onboarding.rs", "pub(crate) fn router("),
+    ("publisher_analytics.rs", "pub(crate) fn router("),
+    ("partner_support.rs", "pub(crate) fn router("),
     ("marketplace_m1.rs", "pub(crate) fn router("),
     ("marketplace_m1.rs", "pub(crate) fn internal_router("),
     ("marketplace_m2.rs", "pub(crate) fn router("),

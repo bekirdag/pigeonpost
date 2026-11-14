@@ -54,7 +54,10 @@
     ["private", "Private", "Only your publisher team can see it."],
   ];
 
-  MP.publisher = function (root, deps) {
+  MP.publisher = function (root, deps, options = {}) {
+    const business = options.section === "business";
+    root.classList.toggle("business-workspace",business);
+    let onboarding = null;
     const st = { publishers: null, orgs: [], current: null, data: null, review: null, findings: null, error: null, gen: 0, editing: null, preset: null };
     const status = MP.statusRegion("mp-pub-status");
     const pub = () => (st.publishers || []).find((p) => p.id === st.current) || null;
@@ -152,11 +155,11 @@
           el("select", { id: "mp-pub-select", onchange: (e) => { st.current = e.target.value; st.review = null; st.findings = null; draw(); loadPublisher(); } },
             st.publishers.map((x) => el("option", { value: x.id, text: x.display_name, selected: x.id === st.current }))));
       }
-      box.append(el("p", { id: "mp-pub-state" },
+      box.append(...[el("p", { id: "mp-pub-state" },
         el("strong", { text: p.display_name }),
         ` · ${p.owner_kind === "org" ? "organization" : "personal"} publisher · your role: ${ROLE_TEXT[p.role] || p.role}`),
-        el("p", { class: p.status === "approved" ? "muted" : "pp-warn", text: PUB_STATUS[p.status] || p.status }),
-        p.decision_reason && p.status !== "approved" ? el("p", { class: "muted", text: `Reason: ${p.decision_reason}` }) : null);
+        !business ? el("p", { class: p.status === "approved" ? "muted" : "pp-warn", text: PUB_STATUS[p.status] || p.status }) : null,
+        p.decision_reason && p.status !== "approved" ? el("p", { class: "muted", text: `Reason: ${p.decision_reason}` }) : null].filter(v=>v!=null));
       return box;
     }
 
@@ -494,8 +497,9 @@
     }
 
     function draw() {
+      if(onboarding) { onboarding.destroy(); onboarding=null; }
       root.textContent = "";
-      root.append(el("h3", { id: "mp-pub-title", text: "Publish on the marketplace" }), status);
+      root.append(el("h3", { id: business ? "mp-business-title" : "mp-pub-title", text: business ? "Business workspace" : "App workspace" }), status);
       if (st.error) { root.append(el("p", { class: "muted", text: MP.errorText(st.error) })); return; }
       if (!st.publishers) { root.append(el("p", { class: "muted", text: "Loading…" })); return; }
       if (!st.publishers.length) {
@@ -504,6 +508,17 @@
       }
       const p = pub();
       root.append(header(p));
+      if(business){
+        if(MP.workspaceLinks)root.append(MP.workspaceLinks());
+        const box=el("div",{id:"publisher-onboarding"});root.append(box);
+        if(MP.onboarding)onboarding=MP.onboarding(box,deps,p);
+        if(st.data)root.append(teamSection(p,st.data));
+        if(st.orgs.length)root.append(el("details",{class:"mp-more"},el("summary",{text:"Add another business"}),applyForm()));
+        return;
+      }
+      if(options.section === "apps" && p.status!=="approved"){
+        root.append(el("section",{class:"workspace-hero"},el("div",{},el("p",{class:"workspace-eyebrow",text:"Before your first app"}),el("h3",{text:"Complete your business application"}),el("p",{text:"You can publish apps once your business is approved. Your application status and any requests from our team are in My business."})),el("div",{class:"workspace-hero-actions"},el("a",{href:"#business",class:"btn btn-primary",text:"View my application →"}),el("a",{href:"#support",class:"btn btn-secondary",text:"Get help"}))));return;
+      }
       if (p.status === "rejected") root.append(applyForm());
       if (p.status === "applied") {
         const onboarding = el("div", {id:"publisher-onboarding"}); root.append(onboarding);
@@ -515,7 +530,9 @@
       if (!d) { root.append(el("p", { class: "muted", text: "Loading…" })); return; }
       const admin = isAdmin() && p.status === "approved";
       if (!admin && p.status === "approved") root.append(el("p", { class: "muted", id: "mp-readonly", text: "Your role can read this publisher but not change it." }));
-      root.append(teamSection(p, d));
+      if(!options.section)root.append(teamSection(p, d));
+      root.append(el("div",{class:"workspace-stats"},[[d.listings.length,"Apps"],[d.listings.filter(l=>l.status==="published").length,"Published"],[d.reviews.filter(r=>["submitted","in_review"].includes(r.status)).length,"In review"],[d.builds.length,"Builds"]].map(([n,label])=>el("div",{class:"workspace-stat"},el("strong",{text:String(n)}),el("span",{text:label})))));
+      root.append(el("nav",{class:"workspace-tabs","aria-label":"App workflow"},[["templates","1 · Templates"],["builds","2 · Builds"],["reviews","3 · Reviews"],["listings","4 · Listings"]].map(([part,label])=>el("button",{type:"button",class:"btn btn-small",text:label,onclick:()=>root.querySelector("#mp-"+part)?.scrollIntoView({behavior:"smooth",block:"start"})}))));
       if (st.review) root.append(reviewDetail(d, admin));
       root.append(templatesSection(d, admin), buildsSection(d, admin), reviewsSection(d), listingsSection(d, admin), ...laterSections());
       if (st.orgs.length) {
@@ -525,6 +542,6 @@
 
     draw();
     load();
-    return { reload: load };
+    return { reload: load, destroy(){st.gen++;onboarding?.destroy();} };
   };
 })();

@@ -254,7 +254,7 @@
     search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
     account: '<circle cx="12" cy="8" r="4"/><path d="M5 21a7 7 0 0 1 14 0"/>',
   };
-  const icon = (name) => `<svg class="ac-ico" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${ICONS[name] || ""}</svg>`;
+  const icon = (name) => `<svg class="ac-ico" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${ICONS[name === "support" ? "mailboxes" : name] || ""}</svg>`;
 
   // ---- routes -----------------------------------------------------------------------------------
 
@@ -263,6 +263,7 @@
   // owner. `soon`: a later phase, drawn greyed and not clickable.
   const ROUTES = [
     { id: "dashboard", label: "Dashboard", group: "Overview", roles: ALL },
+    { id: "support", label: "Partner support", group: "Partners", roles: ["owner", "support"] },
     { id: "accounts", label: "Accounts", group: "People", roles: ["owner", "support"] },
     { id: "handles", label: "Handles", group: "People", roles: ["owner", "support"] },
     { id: "mailboxes", label: "Mailboxes", group: "People", roles: ["owner", "support"] },
@@ -271,8 +272,8 @@
     { id: "credits", label: "Credits", group: "Money", roles: ["finance"] },
     { id: "payouts", label: "Payouts", group: "Money", roles: ["finance"], soon: true },
     { id: "invoices", label: "Invoices", group: "Money", roles: ["finance"], soon: true },
-    { id: "analytics", label: "App analytics", group: "Marketplace", roles: ["finance"] },
-    { id: "publishers", label: "Publishers", group: "Marketplace", roles: ["reviewer", "finance"] },
+    { id: "analytics", label: "Partner analytics", group: "Partners", roles: ["finance"] },
+    { id: "publishers", label: "Businesses & applications", group: "Partners", roles: ["reviewer", "finance"] },
     { id: "reviews", label: "Reviews", group: "Marketplace", roles: ["reviewer"] },
     { id: "listings", label: "Listings & reports", group: "Marketplace", roles: ["reviewer", "ops"] },
     { id: "jobs", label: "Hosted jobs", group: "Marketplace", roles: ["reviewer", "ops"] },
@@ -888,7 +889,10 @@
 
   // Marketplace
 
-  const mpDeps = () => ({ pb: (path, init) => pb(path, init), toast, stepUp: (challenge) => login(challenge) });
+  const mpDeps = () => ({ getToken, postbox: POSTBOX, pb: (path, init) => pb(path, init), toast, stepUp: (challenge) => login(challenge) });
+
+  let supportScreen = null;
+  SCREENS.support = async (root) => { if(MP.partnerSupport) supportScreen=MP.partnerSupport(root,mpDeps(),{staff:true}); };
 
   SCREENS.analytics = async (root) => {
     if (MP.analytics) MP.analytics(root, mpDeps(), {staff:true});
@@ -1247,6 +1251,7 @@
     const { route, arg } = parseHash(window.location.hash);
     let spec = ROUTES.find((r) => r.id === route);
     if (!spec || !canSee(spec)) { spec = ROUTES[0]; if (route) history.replaceState(null, "", window.location.pathname + "#dashboard"); }
+    supportScreen?.destroy(); supportScreen=null;
     const gen = ++showing;
     view.textContent = "";
     document.querySelectorAll("#ac-side [data-route]").forEach((a) => { if (a.dataset.route === spec.id) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current"); });

@@ -148,6 +148,9 @@ pub(crate) enum Action {
     /// Back office people screens (accounts, handles, mailboxes, organizations): personal data,
     /// so a step-up no older than [`STAFF_READ_STEP_UP_SECS`].
     StaffPeopleRead,
+    /// Partner support conversations: owner/support staff with fresh human sign-in.
+    StaffSupportRead,
+    StaffSupportWrite,
     /// Back office plans screen (entitlements and store subscriptions): personal data.
     StaffPlansRead,
     /// Back office credit reads proxied to saas_be (balances, history, sales, refunds).
@@ -456,7 +459,9 @@ impl Action {
             | Action::PayoutApprove
             | Action::StaffFinanceWrite
             | Action::MarketplaceOps => Requirement::Staff,
-            Action::StaffPeopleRead
+            Action::StaffSupportRead
+            | Action::StaffSupportWrite
+            | Action::StaffPeopleRead
             | Action::StaffPlansRead
             | Action::StaffFinanceRead
             | Action::StaffAuditRead => Requirement::StaffRead,
@@ -472,7 +477,9 @@ impl Action {
             Action::NestReview | Action::NestAttest | Action::NestQuarantine => &[Reviewer],
             Action::PayoutPrepare | Action::PayoutApprove => &[Finance],
             Action::StaffOverview => &StaffRole::ALL,
-            Action::StaffPeopleRead => &[Owner, Support],
+            Action::StaffPeopleRead | Action::StaffSupportRead | Action::StaffSupportWrite => {
+                &[Owner, Support]
+            }
             Action::StaffPlansRead => &[Support, Finance],
             Action::StaffFinanceRead | Action::StaffFinanceWrite => &[Finance],
             Action::StaffAuditRead => &[Owner],

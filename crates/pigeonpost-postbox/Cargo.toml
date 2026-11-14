@@ -15,7 +15,7 @@ publish = false
 # see docs/planning/hosted-postbox-architecture-2026-08-12.md. Kept dependency-light so it always
 # builds; the pigeonpost-core/-loft/-mcp/-registry integrations are added as the build lands.
 [dependencies]
-axum = "0.8"
+axum = { version = "0.8", features = ["ws"] }
 async-stream = "0.3"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "signal", "sync", "process", "io-util"] }
@@ -62,3 +62,6 @@ ssh-key = { version = "=0.7.0-rc.11", default-features = false, features = ["ed2
 # rusqlite; this only makes the use direct.
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[dev-dependencies]
+tokio-tungstenite = "0.29"

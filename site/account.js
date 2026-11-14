@@ -274,16 +274,18 @@
     invoices:     { view: "invoices",   label: "Invoices",         group: "Billing" },
     services:     { view: "products",   label: "Services",         group: "Marketplace", tab: "services",
                     lede: "Apps and services from verified publishers, reviewed by Pigeonpost." },
-    analytics:    { view: "analytics", label: "App analytics", group: "Marketplace", needs: "#ac-analytics" },
-    publish:      { view: "publish",    label: "Publish",          group: "Marketplace", needs: "#ac-publisher" },
+    analytics:    { view: "analytics", label: "My analytics", group: "My business", needs: "#ac-analytics" },
+    business:     { view: "publish", label: "My business", group: "My business", needs: "#ac-publisher" },
+    apps:         { view: "apps", label: "My apps", group: "My business", needs: "#ac-apps" },
+    support:      { view: "support", label: "Support", group: "My business", needs: "#ac-support" },
     security:     { view: "security",   label: "Two-factor",       group: "Security & privacy" },
     privacy:      { view: "privacy",    label: "Account deletion", group: "Security & privacy" },
   };
   // Hashes other sites and apps already link to. `#products` is the Linux and web apps' "buy
   // Nests" link and `#nests` the Windows app's (1.0.x); both open the Nests tab, as they always did.
-  const ROUTE_ALIASES = { products: "nests", publisher: "publish" };
+  const ROUTE_ALIASES = { products: "nests", publisher: "business", publish: "business" };
   // A step-up sign-in from a marketplace card comes back to that card (`pp_mp_return`).
-  const MP_RETURN_ROUTE = { publisher: "publish", services: "services", analytics: "analytics" };
+  const MP_RETURN_ROUTE = { publisher: "business", services: "services", analytics: "analytics", support: "support" };
   // Staff tools moved to the back office (/staff); old links to them land there.
   const STAFF_HASHES = ["#staff", "#ac-staff"];
 
@@ -334,6 +336,7 @@
     });
     const title = $("#ac-top-title"); if (title) title.textContent = spec.label;
     syncBillingGate();
+    window.dispatchEvent(new CustomEvent("pp-workspace-route",{detail:route}));
     const head = $(`#ac-h-${spec.view}`);
     if (head && spec.tab) head.textContent = spec.label;
     // The products view is shared by three sidebar items: its subtitle follows the item too.
@@ -423,7 +426,7 @@
     chevron: '<path d="m9 6 6 6-6 6"/>',
     out: '<path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 16l-4-4 4-4M6 12h10"/>',
   };
-  const icon = (name) => `<svg class="ac-ico" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${ICON_PATHS[name] || ""}</svg>`;
+  const icon = (name) => `<svg class="ac-ico" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${ICON_PATHS[({business:"publish",apps:"services",analytics:"credits",support:"mailboxes"})[name] || name] || ""}</svg>`;
 
   function navHtml() {
     const groups = [];
@@ -433,6 +436,9 @@
       if (!g) { g = { key, items: [] }; groups.push(g); }
       g.items.push(`<li><a class="ac-nav-link" href="#${route}" data-route="${route}">${icon(route)}<span>${esc(spec.label)}</span></a></li>`);
     }
+    groups.sort((a,b)=> (a.key === "" ? -2 : a.key === "My business" ? -1 : 0) - (b.key === "" ? -2 : b.key === "My business" ? -1 : 0));
+    const businessGroup=groups.find(g=>g.key==="My business");
+    if(businessGroup)businessGroup.items.sort((a,b)=>["business","apps","analytics","support"].findIndex(r=>a.includes(`data-route="${r}"`))-["business","apps","analytics","support"].findIndex(r=>b.includes(`data-route="${r}"`)));
     return groups.map((g) => `
       <div class="ac-nav-group">
         ${g.key ? `<p class="ac-nav-label" id="ac-nav-${esc(g.key.replace(/[^a-z]+/gi, "-").toLowerCase())}">${esc(g.key)}</p>` : ""}
@@ -622,16 +628,21 @@
           </section>
 
           <section class="ac-view ac-view-solo" data-view="analytics" aria-labelledby="ac-h-analytics" hidden>
-            ${viewHead("analytics", "App analytics", "")}
+            ${viewHead("analytics", "My analytics", "Performance and earnings across your publishing business.")}
             <div class="ac-card" id="ac-analytics" hidden></div>
             <div class="ac-empty" id="ac-empty-analytics"><p class="muted">Loading…</p></div>
           </section>
           <section class="ac-view ac-view-solo" data-view="publish" aria-labelledby="ac-h-publish" hidden>
-            ${viewHead("publish", "Publish", "")}
+            ${viewHead("publish", "My business", "Manage your application, verification, and publisher profile.")}
             <div class="ac-card" id="ac-publisher" hidden></div>
             <div class="ac-empty" id="ac-empty-publish"><p class="muted">Loading…</p></div>
           </section>
 
+          <section class="ac-view" data-view="apps" aria-labelledby="ac-h-apps" hidden>
+            ${viewHead("apps", "My apps", "Bring your next idea to the marketplace. Manage releases, reviews and published apps.")}
+            <div class="ac-card" id="ac-apps" hidden></div><p class="muted" id="ac-empty-apps">App publishing is available when the marketplace is enabled for your account.</p>
+          </section>
+          <section class="ac-view" data-view="support" aria-label="Partner support" hidden><div id="ac-support" hidden></div><p class="muted" id="ac-empty-support">Partner support opens with the marketplace. Your business profile connects you to the team.</p></section>
           <section class="ac-view ac-view-solo" data-view="security" aria-labelledby="ac-h-security" hidden>
             ${viewHead("security", "Two-factor", "")}
             <div class="ac-card">
@@ -714,7 +725,7 @@
     // the publisher console) brings its sidebar entry with it.
     if (window.MutationObserver) {
       const watch = new MutationObserver(syncNav);
-      for (const id of ["#credits", "#ac-publisher", "#ac-analytics"]) {
+      for (const id of ["#credits", "#ac-publisher", "#ac-analytics", "#ac-apps", "#ac-support"]) {
         const node = $(id); if (node) watch.observe(node, { attributes: true, attributeFilter: ["hidden"] });
       }
     }
@@ -729,14 +740,15 @@
     const show = (sel, on) => { const n = $(sel); if (n) n.hidden = !on; };
     const creditsOn = visible("#credits");
     show('#ac-side [data-route="credits"]', creditsOn || marketplaceOn === null);
-    show('#ac-side [data-route="publish"]', visible("#ac-publisher") || marketplaceOn === null);
+    show('#ac-side [data-route="business"]', visible("#ac-publisher") || marketplaceOn === null);
     show('#ac-side [data-route="analytics"]', visible("#ac-analytics") || marketplaceOn === null);
+    for(const route of ["apps","support"])show(`#ac-side [data-route="${route}"]`, visible(`#ac-${route}`) || marketplaceOn === null);
     show("#ac-dash-credits", creditsOn);
     show("#ac-quick-credits", creditsOn);
     if (!creditsOn) show("#ac-credit-chip", false);
     const li = (sel) => { const a = $(sel); if (a && a.parentElement) a.parentElement.hidden = a.hidden; };
-    li('#ac-side [data-route="credits"]'); li('#ac-side [data-route="publish"]');
-    li('#ac-side [data-route="analytics"]');
+    li('#ac-side [data-route="credits"]'); li('#ac-side [data-route="business"]');
+    li('#ac-side [data-route="analytics"]');li('#ac-side [data-route="apps"]');li('#ac-side [data-route="support"]');
     if (marketplaceOn === false) {
       const empty = (sel, text) => { const n = $(sel); if (n) n.innerHTML = `<p class="muted">${esc(text)}</p>`; };
       empty("#ac-empty-credits", "Credits pay for marketplace services. The marketplace isn't open on this account yet, so there is nothing to buy credit for.");
@@ -964,11 +976,15 @@
   // Only with the postbox's `marketplace` feature on. The publisher card is for anyone who wants
   // to apply or already publishes. Staff tools are in the back office (/staff).
   function mountMarketplace(stepUp) {
-    const deps = { pb: (path, init) => pbFetch(path, init), toast, stepUp };
+    const deps = { pb: (path, init) => pbFetch(path, init), toast, stepUp, getToken, postbox: POSTBOX };
     const analytics = $("#ac-analytics");
     if (analytics && window.PPMarketplace.analytics) { analytics.hidden = false; window.PPMarketplace.analytics(analytics, deps); const empty = $("#ac-empty-analytics"); if(empty) empty.hidden = true; }
+    const apps = $("#ac-apps");
+    if(apps && window.PPMarketplace.publisher){apps.hidden=false;$("#ac-empty-apps").hidden=true;window.PPMarketplace.publisher(apps,deps,{section:"apps"});}
+    const support = $("#ac-support");
+    if(support && window.PPMarketplace.partnerSupport){support.hidden=false;$("#ac-empty-support").hidden=true;window.PPMarketplace.partnerSupport(support,{...deps,isActive:()=>currentRoute==="support"});}
     const pub = $("#ac-publisher");
-    if (pub && window.PPMarketplace.publisher) { pub.hidden = false; window.PPMarketplace.publisher(pub, deps); }
+    if (pub && window.PPMarketplace.publisher) { pub.hidden = false; window.PPMarketplace.publisher(pub, deps, {section:"business"}); }
   }
 
   function renderDeletion(el) {

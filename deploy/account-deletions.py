@@ -262,6 +262,16 @@ def erase(conn, request_id, blob_root, evidence):
             conn.execute("UPDATE staff_roles SET revoked_at=COALESCE(revoked_at, ?), account_id=? WHERE account_id=?", (now, "erased_" + request_id, account))
             conn.execute("UPDATE staff_roles SET granted_by=? WHERE granted_by=?", ("erased_" + request_id, account))
             conn.execute("UPDATE staff_roles SET revoked_by=? WHERE revoked_by=?", ("erased_" + request_id, account))
+        if has(conn, "partner_support_tickets"):
+            # Remove a departing publisher's conversations, including staff replies and receipts.
+            owned = "SELECT id FROM partner_support_tickets WHERE publisher_id IN (SELECT id FROM publisher_profiles WHERE owner_kind='account' AND owner_id=?)"
+            conn.execute("DELETE FROM partner_support_reads WHERE ticket_id IN (" + owned + ")", (account,))
+            conn.execute("DELETE FROM partner_support_messages WHERE ticket_id IN (" + owned + ")", (account,))
+            conn.execute("DELETE FROM partner_support_tickets WHERE id IN (" + owned + ")", (account,))
+            conn.execute("DELETE FROM partner_support_reads WHERE account_id=?", (account,))
+            conn.execute("UPDATE partner_support_messages SET author_id=?, body='[erased]', client_id='erased_' || seq WHERE author_id=?", ("erased_" + request_id, account))
+            conn.execute("UPDATE partner_support_tickets SET created_by=?, subject='[erased]', client_id='erased_' || id WHERE created_by=?", ("erased_" + request_id, account))
+            conn.execute("UPDATE partner_support_tickets SET assigned_to=NULL WHERE assigned_to=?", (account,))
         if has(conn, "publisher_profiles"):
             # Remove sealed legal/bank details and evidence before anonymizing the owner.
             for table in ("publisher_documents", "publisher_dossier_events", "publisher_kyc_sessions", "publisher_dossiers"):
