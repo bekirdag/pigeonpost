@@ -183,3 +183,20 @@ test("server text is never parsed as HTML", async (t) => {
   const e = w.PP.ui.empty({ title: nasty, text: nasty });
   for (const n of [t1, c, e]) assert.equal(n.querySelector("img"), null);
 });
+
+test("PP.api: stepUp 'throw' keeps the page and carries the challenge; nested error bodies are flattened", async (t) => {
+  const challenge = { ok: false, status: 401, headers: { get: (h) => (h === "www-authenticate" ? 'Bearer error="insufficient_user_authentication", acr_values="gold", max_age=300' : null) }, text: async () => JSON.stringify({ error: "step_up_required" }) };
+  const { w, nav } = boot(t, { session: jwt(), fetch: (u) => (u.endsWith("/nested") ? reply(409, { error: { code: "conflict", message: "Changed meanwhile", details: { revision: 3 } } }) : challenge) });
+  const e = await w.PP.postbox("/v1/staff/x", { stepUp: "throw" }).catch((x) => x);
+  assert.equal(e.code, "step_up_required");
+  assert.deepEqual({ ...e.challenge }, { acr_values: "gold", max_age: 300 });
+  assert.equal(nav.length, 0, "no redirect");
+  const n = await w.PP.postbox("/nested").catch((x) => x);
+  assert.equal(n.code, "conflict");
+  assert.equal(n.message, "Changed meanwhile");
+  assert.equal(n.body.revision, 3);
+  // Without the option the shared behaviour is unchanged: straight to the realm.
+  await w.PP.postbox("/v1/staff/x").catch(() => {});
+  await tick();
+  assert.equal(new URL(nav[0]).searchParams.get("acr_values"), "gold");
+});
