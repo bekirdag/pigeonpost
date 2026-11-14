@@ -49,6 +49,8 @@ RUN echo 'deb http://deb.debian.org/debian bookworm-backports main' > /etc/apt/s
  && apt-get install -y --no-install-recommends "zstd=${ZSTD_VERSION}" "xz-utils=${XZ_VERSION}" \
  && rm -rf /var/lib/apt/lists/*
 COPY --from=fetch /fetch/osv-scanner /fetch/grype /fetch/gitleaks /usr/local/bin/
+# grype db update (run by nestscan-update) fetches over HTTPS: it needs the CA bundle.
+COPY --from=fetch /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 # The scan never writes outside /out and /tmp (the root is read-only at run time).
 USER 0:0
 ENTRYPOINT ["/bin/false"]
