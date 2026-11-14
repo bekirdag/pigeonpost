@@ -1,4 +1,4 @@
-// Static guarantees: the CSP has nothing inline to forgive, the tokens are the inbox's, and no page
+// Static guarantees: the CSP has nothing inline to forgive, the tokens are the design kit's, and no page
 // links a third-party script.
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -32,8 +32,16 @@ test("scripts never parse server text as HTML outside the isolated payment page"
   }
 });
 
-test("design tokens are an exact copy of the inbox's", () => {
-  const ours = readFileSync(join(root, "tokens.css"), "utf8").split("\n").slice(2).join("\n");
-  const inbox = readFileSync(join(root, "../site-inbox/app.css"), "utf8");
-  assert.ok(inbox.includes(ours.trimEnd()), "tokens.css drifted from site-inbox/app.css; re-copy it");
+test("every page reads the design kit tokens from /shared/, and no stylesheet hard-codes a colour", () => {
+  for (const f of html) {
+    const s = readFileSync(f, "utf8");
+    assert.match(s, /<link rel="stylesheet" href="\/shared\/tokens\.css">/, f);
+    assert.doesNotMatch(s, /href="\/tokens\.css"/, f);
+  }
+  const kit = readFileSync(join(root, "../site-shared/tokens.css"), "utf8");
+  for (const v of ["--pp-navy-700: #05368B", "--pp-blue-500: #086CFF", "--pp-green-500: #26CE2D"]) assert.ok(kit.includes(v), v);
+  for (const name of ["site.css", "app.css"]) {
+    const css = readFileSync(join(root, name), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+    assert.doesNotMatch(css, /#[0-9a-fA-F]{3,8}\b|rgba?\(/, `${name} names a colour outside the kit tokens`);
+  }
 });
