@@ -125,10 +125,8 @@ test("every page carries the switch, and pigeonpost.dev serves the same theme.js
   assert.equal(readFileSync(new URL("../../site/theme.js", import.meta.url), "utf8"), read("theme.js"), "site/theme.js drifted; re-copy it");
 });
 
-test("the portal's dark palette is the same for the device setting and the switch", () => {
+test("the portal follows the kit's light and dark roles instead of a palette of its own", () => {
   const css = read("site.css");
-  const media = /@media \(prefers-color-scheme: dark\) \{\n  :root:not\(\[data-theme="light"\]\) \{([^}]*)\}/.exec(css)[1];
-  const forced = /:root\[data-theme="dark"\] \{([^}]*)\}/.exec(css)[1];
-  const norm = (block) => block.split("\n").map((l) => l.trim()).filter(Boolean).join("\n");
-  assert.equal(norm(forced), norm(media));
+  assert.equal((css.match(/--pe-bg:/g) || []).length, 1, "site.css should not redefine its palette for dark");
+  assert.match(css, /--pe-bg: var\(--pp-bg\)/);
 });

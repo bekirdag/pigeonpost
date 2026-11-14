@@ -5,11 +5,11 @@
 .pp-boot { min-height: 100vh; display: grid; place-items: center; }
 
 /* The organization above the navigation. */
-.org-card { display: flex; align-items: center; gap: 10px; padding: 10px; border-radius: 12px; background: var(--raised); border: 1px solid var(--card-rule); }
-.org-mark { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; flex: none; background: var(--tone1-bg); color: var(--tone1-fg); font-weight: 700; }
+.org-card { display: flex; align-items: center; gap: 10px; padding: 10px; border-radius: var(--pp-radius-m); background: var(--pp-surface); border: 1px solid var(--pp-border); }
+.org-mark { width: 30px; height: 30px; border-radius: var(--pp-radius-s); display: grid; place-items: center; flex: none; background: var(--tone1-bg); color: var(--tone1-fg); font-weight: 700; }
 .org-text { display: grid; min-width: 0; line-height: 1.25; }
-.org-text strong { color: var(--ink); font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.org-text span { font-size: 12px; color: var(--muted); }
+.org-text strong { color: var(--pp-text); font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.org-text span { font-size: 12px; color: var(--pp-text-muted); }
 .org-pick { margin-top: 8px; height: 34px; font-size: 13px; }
 
 /* Language switch in the top bar (i18n.js). */
@@ -21,54 +21,54 @@
 .actions { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; align-items: center; }
 .quick { display: flex; flex-wrap: wrap; gap: 8px; }
 .chips { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
-.sub { display: block; color: var(--muted); font-size: 12.5px; margin-top: 2px; }
-.note { font-size: 13px; color: var(--muted); }
+.sub { display: block; color: var(--pp-text-muted); font-size: 12.5px; margin-top: 2px; }
+.note { font-size: 13px; color: var(--pp-text-muted); }
 .inline { display: inline-flex; align-items: center; gap: 6px; }
 .status-line { font-size: 13px; min-height: 1.2em; }
-.status-bad { color: var(--danger); }
-.status-ok { color: var(--auto-text); }
+.status-bad { color: var(--pp-danger); }
+.status-ok { color: var(--pp-success); }
 .pp-table td .pp-badge + .pp-badge { margin-left: 4px; }
 fieldset.pp-card { margin: 0; min-width: 0; }
-fieldset.pp-card legend { padding: 0 6px; font-size: 13.5px; font-weight: 600; color: var(--label); }
-details > summary { cursor: pointer; color: var(--blue); font-size: 14px; }
+fieldset.pp-card legend { padding: 0 6px; font-size: 13.5px; font-weight: 600; color: var(--pp-text); }
+details > summary { cursor: pointer; color: var(--pp-text-link); font-size: 14px; }
 details[open] > summary { margin-bottom: 10px; }
 .paste { display: grid; gap: 10px; }
 .inline-form { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
 .inline-form > .field { flex: 1 1 220px; max-width: 360px; }
 .pp-stats { grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); }
 
-.check { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; color: var(--body); }
-.check input { margin-top: 3px; width: 16px; height: 16px; accent-color: var(--accent-fill); flex: none; }
+.check { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; color: var(--pp-text-body); }
+.check input { margin-top: 3px; width: 16px; height: 16px; accent-color: var(--pp-accent); flex: none; }
 .check .sub { display: block; }
 
 .prefixed { display: flex; align-items: stretch; }
-.prefixed > span { display: flex; align-items: center; padding: 0 10px; border: 1px solid var(--edge); border-right: 0; border-radius: 10px 0 0 10px; background: var(--inset); color: var(--muted); font-family: var(--mono); font-size: 13px; white-space: nowrap; }
+.prefixed > span { display: flex; align-items: center; padding: 0 10px; border: 1px solid var(--pp-border-strong); border-right: 0; border-radius: 10px 0 0 10px; background: var(--pp-surface-sunken); color: var(--pp-text-muted); font-family: var(--pp-font-mono); font-size: 13px; white-space: nowrap; }
 .prefixed > input { border-radius: 0 10px 10px 0; min-width: 0; }
 
 .secret { display: flex; gap: 8px; align-items: center; }
-.secret code { flex: 1; min-width: 0; font-family: var(--mono); font-size: 12px; background: var(--inset); border: 1px solid var(--card-rule); border-radius: 8px; padding: 8px 10px; overflow-wrap: anywhere; color: var(--ink); }
+.secret code { flex: 1; min-width: 0; font-family: var(--pp-font-mono); font-size: 12px; background: var(--pp-surface-sunken); border: 1px solid var(--pp-border); border-radius: var(--pp-radius-s); padding: 8px 10px; overflow-wrap: anywhere; color: var(--pp-text); }
 
-.setting { display: flex; align-items: center; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--card-rule); }
+.setting { display: flex; align-items: center; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--pp-border); }
 .setting:last-child { border-bottom: 0; }
 .setting p { margin: 0; flex: 1; }
 .switch { position: relative; width: 44px; height: 26px; flex: none; }
-.switch input { appearance: none; -webkit-appearance: none; width: 44px; height: 26px; margin: 0; border-radius: 999px; background: var(--seg-track); border: 1px solid var(--edge); cursor: pointer; transition: background .15s; }
-.switch input::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: var(--seg-on); box-shadow: 0 1px 2px var(--shadow-btn); transition: transform .15s; }
-.switch input:checked { background: var(--accent-fill); border-color: var(--accent-fill); }
+.switch input { appearance: none; -webkit-appearance: none; width: 44px; height: 26px; margin: 0; border-radius: 999px; background: var(--pp-surface-sunken); border: 1px solid var(--pp-border-strong); cursor: pointer; transition: background .15s; }
+.switch input::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: var(--pp-surface); box-shadow: var(--pp-shadow-1); transition: transform .15s; }
+.switch input:checked { background: var(--pp-accent); border-color: var(--pp-accent); }
 .switch input:checked::after { transform: translateX(18px); }
 .switch input:disabled { opacity: .6; }
 
-.meter { height: 8px; border-radius: 999px; background: var(--seg-track); overflow: hidden; }
-.meter > span { display: block; height: 100%; width: 0; background: var(--accent-fill); }
+.meter { height: 8px; border-radius: 999px; background: var(--pp-surface-sunken); overflow: hidden; }
+.meter > span { display: block; height: 100%; width: 0; background: var(--pp-accent); }
 
 /* Rules: a sentence made of controls. */
 .rules { display: grid; gap: 12px; }
-.rule .sentence { font-size: 15px; color: var(--ink); line-height: 2.2; }
+.rule .sentence { font-size: 15px; color: var(--pp-text); line-height: 2.2; }
 .rule .sentence .pp-input { width: auto; display: inline-block; height: 32px; padding: 0 8px; margin: 0 2px; font-weight: 500; vertical-align: middle; }
 .rule .sentence input[type="text"] { width: 15ch; }
 .rule .sentence .check { display: inline-flex; margin: 0 6px; vertical-align: middle; }
-.rule .meta { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
-.rule .meta .check { font-size: 13px; color: var(--muted); }
+.rule .meta { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; font-size: 13px; color: var(--pp-text-muted); }
+.rule .meta .check { font-size: 13px; color: var(--pp-text-muted); }
 .rule .meta .pp-input { width: auto; height: 32px; }
 .rule .meta .pp-input-num { width: 80px; }
 .rule .meta > .pp-input:last-child { flex: 1; min-width: 180px; }
@@ -77,7 +77,7 @@ details[open] > summary { margin-bottom: 10px; }
 .deliveries { list-style: none; margin: 0; padding: 0; }
 .deliveries .sub { display: block; }
 
-.pp-tile.is-current { border-color: var(--edge-focus); box-shadow: 0 0 0 1px var(--edge-focus); }
+.pp-tile.is-current { border-color: var(--pp-accent); box-shadow: 0 0 0 1px var(--pp-accent); }
 .pp-tile-logo .ico { width: 22px; height: 22px; }
 .pp-tile p { font-size: 13.5px; }
 
