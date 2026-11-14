@@ -167,22 +167,26 @@
 
   // ---- the switch ------------------------------------------------------------------------------
 
+  /// The language switch, in the public pages' header or, in the admin app, among the shell's
+  /// top-bar actions (the app calls this again once the shell has drawn its top bar).
   function addSwitch() {
-    var top = document.querySelector("header.top");
-    if (!top || document.getElementById("ppe-lang")) return;
+    if (document.getElementById("ppe-lang")) return;
+    var shell = document.querySelector(".pp-top-actions");
+    var top = shell || document.querySelector("header.top");
+    if (!top) return;
     // Not on the sign-in callback or the payment pages: reloading those would repeat a step.
     if (/^\/(auth|checkout)(\/|$)/.test(window.location.pathname)) return;
     var other = lang === "tr" ? "en" : "tr";
     var b = document.createElement("button");
     b.type = "button";
     b.id = "ppe-lang";
-    b.className = "btn btn-quiet lang-switch";
+    b.className = shell ? "pp-btn pp-btn-quiet pp-btn-sm lang-switch" : "btn btn-quiet lang-switch";
     b.setAttribute("translate", "no");
     b.setAttribute("lang", other);
     b.textContent = other === "tr" ? "Türkçe" : "English";
     b.setAttribute("aria-label", other === "tr" ? "Türkçe kullan" : "Use English");
     b.addEventListener("click", function () { remember(other); window.location.reload(); });
-    var account = document.getElementById("ppe-account");
+    var account = document.getElementById(shell ? "pp-switch" : "ppe-account");
     if (account && account.parentNode === top) top.insertBefore(b, account); else top.appendChild(b);
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", addSwitch); else addSwitch();
@@ -194,5 +198,8 @@
     t: t,
     pick: pick,
     translate: translate,
+    addSwitch: addSwitch,
   };
+  // The shared platform core (/shared/core.js) reads PP_I18N; it is the same object.
+  window.PP_I18N = window.PPE_I18N;
 })();

@@ -1,0 +1,11 @@
+{
+  "name": "pigeonpost-management-site",
+  "private": true,
+  "description": "management.pigeonpost.dev staff platform: static files; this manifest exists only so the tests can be run.",
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "jsdom": "^27.0.0"
+  }
+}

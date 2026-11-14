@@ -5,6 +5,8 @@
 // the member token itself.
 window.PPE_CONFIG = {
   postbox: "https://postbox.pigeonpost.dev",
+  // Where a sign-in returns when it was started without a page of its own.
+  home: "/app",
   apiBase: "/api",
   inbox: "https://inbox.pigeonpost.dev",
   site: "https://pigeonpost.dev",
@@ -54,3 +56,5 @@ window.PPE_CONFIG = {
     };
   })(),
 };
+// The shared platform core (/shared/core.js) reads PP_CONFIG; it is the same object.
+window.PP_CONFIG = window.PPE_CONFIG;

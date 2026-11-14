@@ -237,6 +237,9 @@ jobs:
           # So does Sign in with Apple's requested-scope enum in the iOS session.
           # site-enterprise/config.js requests the realm's standard address scope by its spec name,
           # because invitation acceptance matches the verified sign-in address (SDS §7.2).
+          # The signed-in platforms (site-shared, site-account, site-partner, site-management, the
+          # enterprise app) and the help centre name the member's actual sign-in and contact
+          # address (OIDC claim, billing contact, sign-in codes sent to that address) — not messaging.
           # Hosted-app privacy/deletion pages and the Google Play service identity likewise
           # describe actual sign-in and support addresses, rather than Pigeonpost messaging.
           # The private deletion-queue notifier imports Python's standard transport module.
@@ -260,6 +263,8 @@ jobs:
           # to exercise human-only guest invitations without sending any external delivery.
           # Developer identity verification collects an external contact address and uses its
           # native HTML input type; these two files do not redefine Pigeonpost messaging.
+          # partner.pigeonpost.dev carries the same application form (page-application.js) and,
+          # like site-enterprise/config.js, requests the realm's standard address scope by name.
           if git grep -n -i -w "$forbidden_word" -- . \
               ':(exclude)site/account.js' \
               ':(exclude)site/publisher-onboarding.js' \
@@ -270,6 +275,13 @@ jobs:
               ':(exclude)site/reserved.js' \
               ':(exclude)site/app-privacy.html' \
               ':(exclude)site/delete-account.html' \
+              ':(exclude)site-shared' \
+              ':(exclude)site-account' \
+              ':(exclude)site-partner' \
+              ':(exclude)site-management' \
+              ':(exclude)site-enterprise/app.js' \
+              ':(exclude)site-enterprise/i18n-tr.js' \
+              ':(exclude)site-help' \
               ':(exclude)deploy/account-deletions.py' \
               ':(exclude)deploy/identity/provision-chatgpt.py' \
               ':(exclude)crates/pigeonpost-cli/src/login_cmd.rs' \

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Secure payment — Pigeonpost</title>
+<meta name="robots" content="noindex">
+<meta name="color-scheme" content="light dark">
+<!-- The web server replaces this placeholder with the per-request CSP nonce. -->
+<meta name="csp-nonce" content="__CSP_NONCE__">
+<script src="/shared/theme.js"></script>
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="stylesheet" href="/shared/tokens.css">
+<link rel="stylesheet" href="/shared/platform.css">
+<link rel="stylesheet" href="/account.css">
+</head>
+<body>
+<div class="pp-signin acc-pay">
+  <section class="pp-signin-card acc-pay-card">
+    <div class="pp-signin-brand"><span class="pp-brand-mark" aria-hidden="true">P</span><span><strong>Pigeonpost</strong> Account</span></div>
+    <h1 id="pp-pay-title">Secure payment</h1>
+    <p class="pp-lede" id="pp-pay-summary">Preparing the iyzico payment form…</p>
+    <p class="pp-hint">Your card details go directly to iyzico. Pigeonpost never sees or stores them.</p>
+    <p class="pp-hint">Seller: Piyote Bilişim (iyzico merchant 101064752). <a href="https://pigeonpost.dev/app-terms.html">Terms</a></p>
+    <div id="pp-pay-form"></div>
+    <p><a href="/" id="pp-pay-back">Back to your account</a></p>
+  </section>
+</div>
+<script src="/config.js"></script>
+<script src="/billing/checkout.js"></script>
+</body>
+</html>

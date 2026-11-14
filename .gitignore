@@ -60,3 +60,4 @@ dist/
 
 # Local todo scratchpad for issues sent over Pigeonpost
 /AGENT-TODO.md
+site-shared/node_modules/

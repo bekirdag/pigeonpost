@@ -55,16 +55,19 @@ function postbox({ roles = ["owner"], features = ["orgs", "enterprise_portal", "
   return fn;
 }
 
-const open = (t, page, opts = {}) => load(t, "app.html", { url: `https://enterprise.pigeonpost.dev/app/${page}`, session: jwt(), fetch: postbox(opts), ...opts.load });
-const navText = (window) => [...window.document.querySelectorAll("#nav a")].map((a) => a.textContent);
+const open = (t, page, opts = {}) => load(t, "app.html", { url: `https://enterprise.pigeonpost.dev/app#/${page}`, session: jwt(), fetch: postbox(opts), ...opts.load });
+const navText = (window) => [...window.document.querySelectorAll(".pp-nav-item")].map((a) => a.textContent);
+const shown = (window) => window.document.querySelector("#pp-main .pp-view").getAttribute("data-page");
+/// Answer the confirmation sheet (PP.ui.confirm) with its confirm or Cancel button.
+const answer = async (window, label) => { await tick(5); [...window.document.querySelectorAll(".sheet button")].find((b) => b.textContent === label).click(); await tick(30); };
 const sheet = (window) => window.document.querySelector(".sheet");
-const button = (root, text) => [...root.querySelectorAll("button, a.btn")].find((b) => b.textContent === text);
+const button = (root, text) => [...root.querySelectorAll("button, a.pp-btn")].find((b) => b.textContent === text);
 
 async function keySheet(t, opts = {}) {
   const pb = postbox(opts);
-  const ctx = load(t, "app.html", { url: "https://enterprise.pigeonpost.dev/app/api-keys", session: jwt(), fetch: pb, ...(opts.load || {}) });
+  const ctx = load(t, "app.html", { url: "https://enterprise.pigeonpost.dev/app#/api-keys", session: jwt(), fetch: pb, ...(opts.load || {}) });
   await tick(60);
-  ctx.$("#content .page-head .btn-primary").click();
+  ctx.$("#pp-main .pp-page-head .pp-btn-primary").click();
   await tick(30);
   const s = sheet(ctx.window);
   const scope = (v) => s.querySelector(`input[type=checkbox][value="${v}"]`);
@@ -74,28 +77,28 @@ async function keySheet(t, opts = {}) {
 test("owners see API keys and webhooks in the nav; the keys page lists every key with its state", async (t) => {
   const { window, $ } = open(t, "api-keys");
   await tick(60);
-  assert.deepEqual(navText(window).slice(0, 9), ["People", "Agents", "Rooms", "Rules", "Security", "API keys", "Webhooks", "Billing", "Organization"]);
-  assert.equal($("#content h1").textContent, "API keys");
-  assert.equal(window.document.querySelectorAll("#content table").length, 1);
-  assert.equal(window.document.querySelectorAll("#content .page-head .btn-primary").length, 1);
-  const rows = [...window.document.querySelectorAll("#content tbody tr")].map((r) => r.textContent);
+  assert.deepEqual(navText(window), ["Overview", "Setup", "People", "Agents", "Rooms", "Rules", "Security", "Packages", "Billing", "Organization", "API keys", "Webhooks", "Support"]);
+  assert.equal($("#pp-main h1").textContent, "API keys");
+  assert.equal(window.document.querySelectorAll("#pp-main table").length, 1);
+  assert.equal(window.document.querySelectorAll("#pp-main .pp-page-head .pp-btn-primary").length, 1);
+  const rows = [...window.document.querySelectorAll("#pp-main tbody tr")].map((r) => r.textContent);
   assert.match(rows[0], /HR sync.*org:read.*members:write.*1 allowed network.*pk_org_…abcd.*Never.*Never.*Active.*Revoke/);
   assert.match(rows[1], /Old bot.*sends as \/acme\/ci-bot.*pk_org_…wxyz.*Expired/);
   assert.match(rows[2], /Gone.*Revoked/);
-  assert.equal(window.document.querySelectorAll("#content tbody tr")[2].querySelector("button"), null, "a revoked key has no actions");
+  assert.equal(window.document.querySelectorAll("#pp-main tbody tr")[2].querySelector("button"), null, "a revoked key has no actions");
 });
 
 test("admins see the pages too; people, agent and billing admins don't", async (t) => {
   const admin = open(t, "webhooks", { roles: ["admin"] });
   await tick(60);
   assert.ok(navText(admin.window).includes("API keys") && navText(admin.window).includes("Webhooks"));
-  assert.equal(admin.$("#content h1").textContent, "Webhooks");
+  assert.equal(admin.$("#pp-main h1").textContent, "Webhooks");
   for (const roles of [["people_admin"], ["agent_admin", "billing_admin"]]) {
     const other = open(t, "api-keys", { roles });
     await tick(60);
     const nav = navText(other.window);
     assert.ok(!nav.includes("API keys") && !nav.includes("Webhooks"), roles.join());
-    assert.notEqual(other.$("#content h1").textContent, "API keys", "a hidden page falls back");
+    assert.notEqual(other.$("#pp-main h1").textContent, "API keys", "a hidden page falls back");
   }
 });
 
@@ -103,14 +106,14 @@ test("with org_api off the pages are hidden, and a feature_disabled answer hides
   const off = open(t, "api-keys", { features: ["orgs", "enterprise_portal"] });
   await tick(60);
   assert.ok(!navText(off.window).includes("API keys") && !navText(off.window).includes("Webhooks"));
-  assert.equal(off.$("#content h1").textContent, "People");
+  assert.equal(shown(off.window), "overview");
   off.window.PPE.app.go("webhooks"); await tick(30);
-  assert.equal(off.$("#content h1").textContent, "People");
+  assert.equal(shown(off.window), "overview");
 
   const gone = open(t, "webhooks", { disabled: true });
   await tick(80);
   assert.ok(!navText(gone.window).includes("Webhooks"));
-  assert.equal(gone.$("#content h1").textContent, "People");
+  assert.equal(shown(gone.window), "overview");
   assert.ok(!gone.window.PPE.app.features.includes("org_api"));
 });
 
@@ -136,7 +139,7 @@ test("creating a key posts the form, shows the secret once, and drops it when cl
   assert.equal(code.textContent, "", "the detached node no longer holds it");
   assert.ok(!window.document.documentElement.outerHTML.includes(KEY_SECRET), "gone from the page");
   assert.ok(!JSON.stringify(Object.fromEntries(Object.entries(window.sessionStorage))).includes(KEY_SECRET), "never stored");
-  assert.equal(window.document.querySelector("#content h1").textContent, "API keys", "the list is refreshed");
+  assert.equal(window.document.querySelector("#pp-main h1").textContent, "API keys", "the list is refreshed");
 });
 
 test("messages:send needs an agent; only active agents are offered; client checks run before posting", async (t) => {
@@ -178,20 +181,20 @@ test("step_up_required takes the existing step-up path and replays the request o
   const u = new URL(to);
   assert.equal(u.searchParams.get("acr_values"), "gold");
   assert.equal(u.searchParams.get("max_age"), "300");
-  const resume = JSON.parse(first.window.sessionStorage.getItem("ppe_resume"));
+  const resume = JSON.parse(first.window.localStorage.getItem("pp_resume"));
   assert.equal(resume.name, "app.apikey");
   assert.deepEqual(resume.payload, { name: "Audit export", scopes: ["audit:read"] });
-  assert.equal(JSON.parse(first.window.sessionStorage.getItem("ppe_pkce")).returnTo, "/app/api-keys");
+  assert.equal(JSON.parse(first.window.localStorage.getItem("pp_pkce")).returnTo, "/app#/api-keys");
   assert.equal(first.window.document.querySelectorAll(".toast-error").length, 0, "no error toast while leaving");
 
   // Back from the realm with a stronger session: the same request goes out once and the secret shows.
   const pb = postbox();
-  const back = load(t, "app.html", { url: "https://enterprise.pigeonpost.dev/app/api-keys", session: jwt(), fetch: pb,
-    storage: { ppe_resume: { ...resume } } });
+  const back = load(t, "app.html", { url: "https://enterprise.pigeonpost.dev/app#/api-keys", session: jwt(), fetch: pb,
+    storage: { pp_resume: { ...resume } } });
   await tick(90);
   assert.deepEqual(plain(pb.sent), [{ method: "POST", path: `/v1/orgs/${ORG.id}/api-keys`, body: { name: "Audit export", scopes: ["audit:read"] } }]);
   assert.equal(sheet(back.window).querySelector(".secret code").textContent, KEY_SECRET);
-  assert.equal(back.window.sessionStorage.getItem("ppe_resume"), null);
+  assert.equal(back.window.localStorage.getItem("pp_resume"), null);
 });
 
 test("step_up_unavailable says keys can't be created here", async (t) => {
@@ -206,35 +209,33 @@ test("step_up_unavailable says keys can't be created here", async (t) => {
 
 test("revoking asks first, then deletes the key", async (t) => {
   const pb = postbox();
-  const { window } = load(t, "app.html", { url: "https://enterprise.pigeonpost.dev/app/api-keys", session: jwt(), fetch: pb });
+  const { window } = load(t, "app.html", { url: "https://enterprise.pigeonpost.dev/app#/api-keys", session: jwt(), fetch: pb });
   await tick(60);
-  let asked = "";
-  window.confirm = (q) => { asked = q; return false; };
-  window.document.querySelector('#content button[aria-label="Revoke HR sync"]').click();
-  await tick(20);
-  assert.match(asked, /Revoke HR sync\?/);
+  window.document.querySelector('#pp-main button[aria-label="Revoke HR sync"]').click();
+  await tick(10);
+  assert.match(sheet(window).textContent, /Revoke HR sync\?/);
+  await answer(window, "Cancel");
   assert.equal(pb.sent.length, 0, "cancelled");
-  window.confirm = () => true;
-  window.document.querySelector('#content button[aria-label="Revoke HR sync"]').click();
-  await tick(30);
+  window.document.querySelector('#pp-main button[aria-label="Revoke HR sync"]').click();
+  await answer(window, "Revoke");
   assert.deepEqual(plain(pb.sent), [{ method: "DELETE", path: `/v1/orgs/${ORG.id}/api-keys/okey_1` }]);
 });
 
 test("the webhooks page lists endpoints, events and last delivery, and links the signature guide", async (t) => {
   const { window, $ } = open(t, "webhooks");
   await tick(60);
-  assert.equal(window.document.querySelectorAll("#content table").length, 1);
-  const rows = [...window.document.querySelectorAll("#content tbody tr")].map((r) => r.textContent);
+  assert.equal(window.document.querySelectorAll("#pp-main table").length, 1);
+  const rows = [...window.document.querySelectorAll("#pp-main tbody tr")].map((r) => r.textContent);
   assert.match(rows[0], /https:\/\/hooks\.example\.test\/pp.*HR system.*All events.*Delivered.*HTTP 204/);
   assert.match(rows[1], /member\.joined, member\.removed.*Nothing sent yet/);
-  assert.equal($('#content a[href="https://developers.pigeonpost.dev/org-api-webhooks"]').textContent, "How to verify signatures");
+  assert.equal($('#pp-main a[href="https://developers.pigeonpost.dev/org-api-webhooks"]').textContent, "How to verify signatures");
 });
 
 test("adding a webhook posts url, events and description and shows the signing secret once", async (t) => {
   const pb = postbox();
-  const { window, $ } = load(t, "app.html", { url: "https://enterprise.pigeonpost.dev/app/webhooks", session: jwt(), fetch: pb });
+  const { window, $ } = load(t, "app.html", { url: "https://enterprise.pigeonpost.dev/app#/webhooks", session: jwt(), fetch: pb });
   await tick(60);
-  $("#content .page-head .btn-primary").click();
+  $("#pp-main .pp-page-head .pp-btn-primary").click();
   const s = sheet(window);
   s.querySelector("input[type=url]").value = "http://hooks.example.test/x";
   s.querySelector('input[value="member.joined"]').checked = true;
@@ -257,12 +258,12 @@ test("adding a webhook posts url, events and description and shows the signing s
 
 test("rotating shows the new secret once with the 24-hour note; deleting confirms; deliveries render", async (t) => {
   const pb = postbox();
-  const { window } = load(t, "app.html", { url: "https://enterprise.pigeonpost.dev/app/webhooks", session: jwt(), fetch: pb });
+  const { window } = load(t, "app.html", { url: "https://enterprise.pigeonpost.dev/app#/webhooks", session: jwt(), fetch: pb });
   await tick(60);
-  const manage = () => { window.document.querySelector('#content button[aria-label="Manage https://hooks.example.test/pp"]').click(); return sheet(window); };
+  const manage = () => { window.document.querySelector('#pp-main button[aria-label="Manage https://hooks.example.test/pp"]').click(); return sheet(window); };
 
   button(manage(), "Rotate secret").click();
-  await tick(30);
+  await answer(window, "Rotate secret");
   assert.deepEqual(plain(pb.sent[0]), { method: "POST", path: `/v1/orgs/${ORG.id}/webhooks/wh_1/rotate`, body: {} });
   const rotated = sheet(window);
   assert.equal(rotated.querySelector(".secret code").textContent, `whsec_${"R".repeat(32)}`);
@@ -280,7 +281,7 @@ test("rotating shows the new secret once with the 24-hour note; deleting confirm
   assert.equal(sheet(window).querySelectorAll("table").length, 0, "the page keeps its one table");
 
   button(manage(), "Delete webhook").click();
-  await tick(30);
+  await answer(window, "Delete webhook");
   assert.deepEqual(plain(pb.sent.at(-1)), { method: "DELETE", path: `/v1/orgs/${ORG.id}/webhooks/wh_1` });
   assert.equal(sheet(window), null);
 });
@@ -288,11 +289,11 @@ test("rotating shows the new secret once with the 24-hour note; deleting confirm
 test("the security page points to the new pages only when they are available", async (t) => {
   const on = open(t, "security");
   await tick(60);
-  assert.ok(button(on.$("#content"), "Manage API keys"));
-  assert.doesNotMatch(on.$("#content").textContent, /Coming in Phase 5/);
+  assert.ok(button(on.$("#pp-main"), "Manage API keys"));
+  assert.doesNotMatch(on.$("#pp-main").textContent, /Coming in Phase 5/);
   const off = open(t, "security", { features: ["orgs", "enterprise_portal"] });
   await tick(60);
-  assert.equal(button(off.$("#content"), "Manage API keys"), undefined);
+  assert.equal(button(off.$("#pp-main"), "Manage API keys"), undefined);
 });
 
 test("helpers: allowlist entries and key states", async (t) => {

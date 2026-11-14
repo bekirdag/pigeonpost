@@ -46,8 +46,29 @@
     }
   }
 
+  /// A Nest package for the organization (admin app → Nests → Buy): the same isolated form. The
+  /// bridge decides who may buy and what it costs; the return lands on the account page, which
+  /// confirms it.
+  async function nest(pending) {
+    $("#pay-title").textContent = "Company Nest package";
+    PPE.store.del("ppe_nest_checkout");
+    try {
+      const r = await PPE.bridge("/v1/nests/checkout", { method: "POST", body: pending });
+      say(`${PPE.money(r.amount, r.currency)} per month for the organization, renewing until you cancel.`);
+      PPE.mountIyzico(r.checkout_form_content, $("#pay-form"), document.querySelector('meta[name="csp-nonce"]')?.content || "");
+    } catch (e) {
+      if (e instanceof PPE.Redirecting) return;
+      say("The payment form could not be opened: " + PPE.explain(e));
+    }
+  }
+
   async function run() {
     PPE.renderAccount();
+    const company = PPE.store.json("ppe_nest_checkout");
+    if (company && /^org_[a-z0-9]{6,64}$/.test(company.org_id || "") && /^[a-f0-9]{32}$/.test(company.intent_id || "") && PPE.signedIn()) {
+      await nest(company);
+      return;
+    }
     const update = PPE.store.json("ppe_ent_card");
     if (update && /^org_[a-z0-9]{6,64}$/.test(update.org_id || "") && /^[a-f0-9]{32}$/.test(update.intent_id || "") && PPE.signedIn()) {
       await card(update);
