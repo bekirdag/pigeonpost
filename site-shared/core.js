@@ -76,7 +76,7 @@
   };
   PP.whoami = function () {
     const c = PP.claims(PP.token());
-    return { name: c.name || c.preferred_username || "", username: c.preferred_username || "", sub: c.sub || "" };
+    return { name: c.name || c.preferred_username || "", username: c.preferred_username || "", sub: c.sub || "", email: c.email || "" };
   };
 
   /// Only a same-origin absolute path may be returned to after sign-in.
@@ -86,7 +86,7 @@
   };
 
   /// Build the authorize URL. Pure apart from what it is given, so it can be tested.
-  PP.authorizeUrl = function ({ state, nonce, challenge, acr_values, max_age, prompt, origin }) {
+  PP.authorizeUrl = function ({ state, nonce, challenge, acr_values, max_age, prompt, origin, kc_action }) {
     const o = cfg.oidc || {};
     const q = new URLSearchParams({
       client_id: o.clientId,
@@ -101,11 +101,13 @@
     if (acr_values) q.set("acr_values", acr_values);
     if (max_age !== undefined && max_age !== null) q.set("max_age", String(max_age));
     if (prompt) q.set("prompt", prompt);
+    // A Keycloak required action on an existing sign-in (CONFIGURE_TOTP: the authenticator QR only).
+    if (kc_action) q.set("kc_action", kc_action);
     return `${o.issuer}/protocol/openid-connect/auth?${q.toString()}`;
   };
 
   /// Leave for the realm. `returnTo` is where the callback page sends the person afterwards.
-  PP.signIn = async function ({ returnTo, acr_values, max_age, prompt } = {}) {
+  PP.signIn = async function ({ returnTo, acr_values, max_age, prompt, kc_action } = {}) {
     const verifier = random(48);
     const state = random(24);
     const nonce = random(24);
@@ -114,7 +116,7 @@
       returnTo: PP.safePath(returnTo || window.location.pathname + window.location.search + window.location.hash),
       stepUp: Boolean(acr_values),
     }));
-    const url = PP.authorizeUrl({ state, nonce, challenge: await challengeFor(verifier), acr_values, max_age, prompt });
+    const url = PP.authorizeUrl({ state, nonce, challenge: await challengeFor(verifier), acr_values, max_age, prompt, kc_action });
     PP.navigate(url);
   };
 
@@ -212,8 +214,17 @@
 
   // ---- HTTP ------------------------------------------------------------------------------------
 
+  /// The marketplace routes answer `{error: {code, message, details}}`; everything else
+  /// `{error: "code", detail}`. Read the first as the second.
+  function flatError(body) {
+    const nested = body && typeof body.error === "object" && body.error ? body.error : null;
+    return nested ? { ...(nested.details || {}), error: nested.code || null, detail: nested.message || "" } : body;
+  }
+  PP.flatError = flatError;
+
   class ApiError extends Error {
-    constructor(status, body) {
+    constructor(status, raw) {
+      const body = flatError(raw);
       super((body && (body.detail || body.message || body.error)) || `Request failed (${status})`);
       this.status = status;
       this.body = body || {};
@@ -225,8 +236,10 @@
   PP.Redirecting = class Redirecting extends Error {};
 
   /// One request. `base` is "postbox" or "bridge". A 401 refreshes once; `step_up_required`
-  /// leaves for the realm and comes back to `resume`; a 401 that survives the refresh signs in.
-  PP.api = async function (base, path, { method = "GET", body, auth = true, resume, raw = false } = {}, retried = false) {
+  /// leaves for the realm and comes back to `resume`; a 401 that survives the refresh signs in —
+  /// unless `keepSession`, for an action whose 401 may be a backend refusing this one operation
+  /// (a payment provider) or a probe that must not end the session: then it is thrown.
+  PP.api = async function (base, path, { method = "GET", body, auth = true, resume, raw = false, keepSession = false } = {}, retried = false) {
     const root = base === "bridge" ? (cfg.apiBase || "/api") : cfg.postbox;
     const headers = { accept: "application/json" };
     if (body !== undefined) headers["content-type"] = "application/json";
@@ -238,12 +251,14 @@
     try { json = text ? JSON.parse(text) : {}; } catch { json = { error: "bad_response" }; }
     if (res.ok) return json;
     if (res.status === 401 && auth) {
-      const code = json && (json.error || json.code);
+      const flat = flatError(json);
+      const code = flat && (flat.error || flat.code);
       if (code === "step_up_required") {
-        await PP.stepUp(PP.parseChallenge(res.headers.get("www-authenticate"), json), resume);
+        await PP.stepUp(PP.parseChallenge(res.headers.get("www-authenticate"), flat), resume);
         throw new PP.Redirecting("step-up");
       }
-      if (!retried && (await refresh())) return PP.api(base, path, { method, body, auth, resume, raw }, true);
+      if (!retried && (await refresh())) return PP.api(base, path, { method, body, auth, resume, raw, keepSession }, true);
+      if (keepSession) throw new ApiError(res.status, json);
       PP.signOutLocal();
       await PP.signIn({});
       throw new PP.Redirecting("sign-in");

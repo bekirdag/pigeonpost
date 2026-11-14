@@ -255,10 +255,11 @@
   function crumbs(page, extra) {
     const c = document.getElementById("pp-crumbs");
     if (!c) return;
-    c.replaceChildren(el("span", { class: "pp-crumb-group" }, page.group || state.opts.title),
+    // replaceChildren() writes a null argument as the text "null": build the list without them.
+    c.replaceChildren(...[el("span", { class: "pp-crumb-group" }, page.group || state.opts.title),
       PP.icon("chevron", "pp-crumb-sep"),
       extra ? el("a", { href: PP.href(page.key) }, page.title) : el("span", { class: "pp-crumb-here" }, page.title),
-      extra ? [PP.icon("chevron", "pp-crumb-sep"), el("span", { class: "pp-crumb-here" }, extra)] : null);
+      extra ? [PP.icon("chevron", "pp-crumb-sep"), el("span", { class: "pp-crumb-here" }, extra)] : null].flat().filter(Boolean));
   }
   /// A detail page names itself in the breadcrumbs (e.g. the listing being edited).
   PP.shell.crumb = function (text) { if (state.current) crumbs(state.current, text); };

@@ -114,6 +114,13 @@ a:hover { text-decoration: underline; }
 .pp-icon-btn:hover { background: var(--hover); color: var(--ink); }
 .pp-icon-btn-sm { width: 28px; height: 28px; border-radius: 8px; }
 .pp-theme svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+/* theme.js draws all three icons; only the one in force shows. */
+.pp-theme .theme-icon { display: none; }
+.pp-theme[data-choice="system"] .theme-icon-system, .pp-theme[data-choice="light"] .theme-icon-light, .pp-theme[data-choice="dark"] .theme-icon-dark { display: block; }
+/* .pp-icon-btn (above) would otherwise show the drawer buttons on wide screens. */
+.pp-icon-btn.pp-side-close, .pp-icon-btn.pp-menu-btn { display: none; }
+/* The shell moves focus to the page title on navigation; that is not a keyboard focus ring. */
+.pp-view h1[tabindex="-1"]:focus { outline: none; }
 
 /* Narrow screens: the navigation becomes a drawer. */
 .pp-drawer-scrim { display: none; }
@@ -122,7 +129,7 @@ a:hover { text-decoration: underline; }
   .pp-side { position: fixed; z-index: 60; left: 0; top: 0; width: 290px; max-width: 86vw; transform: translateX(-102%); transition: transform .18s ease; box-shadow: 0 0 40px var(--shadow-sheet); }
   .pp-drawer-open .pp-side { transform: none; }
   .pp-drawer-open .pp-drawer-scrim { display: block; position: fixed; inset: 0; z-index: 50; background: var(--scrim); }
-  .pp-side-close, .pp-menu-btn { display: inline-grid; }
+  .pp-side-close, .pp-menu-btn, .pp-icon-btn.pp-side-close, .pp-icon-btn.pp-menu-btn { display: inline-grid; }
   .pp-top { padding: 0 14px; }
   .pp-main { padding: 20px 16px 48px; }
   .pp-user-name, .pp-switch-btn span { display: none; }

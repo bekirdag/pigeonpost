@@ -183,3 +183,18 @@ test("server text is never parsed as HTML", async (t) => {
   const e = w.PP.ui.empty({ title: nasty, text: nasty });
   for (const n of [t1, c, e]) assert.equal(n.querySelector("img"), null);
 });
+
+test("core: nested marketplace errors are read flat; keepSession throws a 401 instead of signing in; kc_action reaches the realm", async (t) => {
+  const { w, nav } = boot(t, { session: jwt(), fetch: (u) => u.includes("/nested") ? reply(409, { error: { code: "already_installed", message: "Installed", details: { x: 1 } } }) : reply(401, { error: "unauthorized" }) });
+  const e = await w.PP.postbox("/nested").catch((x) => x);
+  assert.equal(e.code, "already_installed");
+  assert.equal(e.message, "Installed");
+  assert.equal(e.body.x, 1);
+  const u = await w.PP.bridge("/v1/x", { keepSession: true }).catch((x) => x);
+  assert.equal(u.status, 401);
+  assert.ok(w.PP.signedIn(), "still signed in");
+  assert.equal(nav.length, 0);
+  await w.PP.signIn({ kc_action: "CONFIGURE_TOTP" });
+  assert.equal(new URL(nav[0]).searchParams.get("kc_action"), "CONFIGURE_TOTP");
+  assert.equal(w.PP.whoami().name, "Ada Lovelace");
+});
