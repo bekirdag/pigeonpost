@@ -16,6 +16,7 @@ use std::path::Path;
 
 /// `(method, path)` → why it needs no policy decision.
 const OPEN_ROUTES: &[(&str, &str, &str)] = &[
+    ("POST", "/v1/verification/shuftipro", "authenticated by provider signature over exact raw bytes and a bound server-generated reference"),
     ("GET", "/", "static onboarding page"),
     ("GET", "/health", "liveness probe; no data"),
     (
@@ -63,6 +64,7 @@ const ROUTERS: &[(&str, &str)] = &[
     ("nest_manage.rs", "pub(crate) fn router("),
     ("nest_org.rs", "pub(crate) fn router("),
     ("marketplace.rs", "pub(crate) fn router("),
+    ("publisher_onboarding.rs", "pub(crate) fn router("),
     ("marketplace_m1.rs", "pub(crate) fn router("),
     ("marketplace_m1.rs", "pub(crate) fn internal_router("),
     ("marketplace_m2.rs", "pub(crate) fn router("),

@@ -440,6 +440,7 @@ async fn apply_publisher(
                      VALUES (?1, ?2, ?3, ?4, 'applied', ?5, ?6, ?6)",
                     params![rid, kind, oid, name, by, now],
                 )?;
+                crate::publisher_onboarding::init_in(tx, &rid, now)?;
                 Ok(())
             })
             .await?;
