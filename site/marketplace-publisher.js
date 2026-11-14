@@ -32,7 +32,7 @@
     owner: "Owner", org_admin: "Organization admin", publisher_admin: "Publisher admin", publisher_finance: "Publisher finance (read only)",
   };
   const PUB_STATUS = {
-    applied: "Application received. Pigeonpost reviews every publisher before it can submit anything.",
+    applied: "Approval is required before submitting apps. Check My business for your application status.",
     approved: "Certified publisher.",
     rejected: "Application not approved.",
     revoked: "Certification revoked. Your listings are suspended.",

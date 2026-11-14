@@ -431,7 +431,8 @@ test("an application under review shows its state and nothing to build yet", asy
   const p = publisherPage(t, { publishers: [{ ...PUB, status: "applied" }] });
   await tick();
   assert.match(p.$("#mp-pub-state").textContent, /Acme.*personal publisher.*Owner/s);
-  assert.match(p.root.textContent, /Application received/);
+  assert.match(p.root.textContent, /Approval is required/);
+  assert.doesNotMatch(p.root.textContent, /Application received/);
   assert.equal(p.$("#mp-templates"), null);
   assert.equal(p.calls.some((c) => c.path.endsWith("/templates")), false);
 });
