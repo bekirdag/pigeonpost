@@ -8,32 +8,23 @@
 <link rel="icon" href="/favicon.ico" sizes="any">
 <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
 <link rel="apple-touch-icon" href="/favicon-180.png">
-<script src="/theme.js"></script>
+<script src="/shared/theme.js"></script>
 <script src="/i18n-tr.js"></script>
 <script src="/i18n.js"></script>
-<link rel="stylesheet" href="/tokens.css">
-<link rel="stylesheet" href="/site.css">
+<link rel="stylesheet" href="/shared/tokens.css">
+<link rel="stylesheet" href="/shared/platform.css">
+<link rel="stylesheet" href="/app.css">
 <title>Admin — Pigeonpost for teams</title>
 <meta name="robots" content="noindex">
 </head>
-<body class="console">
-<header class="top">
-  <button type="button" class="icon-btn nav-toggle" id="nav-toggle" aria-controls="nav" aria-expanded="false" aria-label="Open navigation" hidden><svg class="ico" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
-  <a class="brand" href="/"><img class="logo-light" src="/logo.png" alt="Pigeonpost" width="640" height="213"><img class="logo-dark" src="/logo_white.png" alt="" width="640" height="213"><span class="brand-tag">for teams</span></a>
-  <button type="button" class="theme-toggle" data-theme-toggle aria-label="Theme: System"></button>
-  <span class="top-sep" id="top-sep" aria-hidden="true" hidden></span>
-  <span class="top-title" id="top-title" aria-hidden="true"></span>
-  <div class="top-spacer"></div>
-  <div class="account" id="ppe-account"></div>
-</header>
-<div class="shell" id="shell" hidden>
-  <nav class="nav" id="nav" aria-label="Organization"></nav>
-  <div class="nav-scrim" id="nav-scrim" hidden></div>
-  <main class="main"><div class="page" id="content" aria-live="polite"></div></main>
-</div>
-<main class="page narrow" id="gate"><p class="muted">Loading…</p></main>
+<body>
+<main class="pp-boot" id="pp-boot" aria-busy="true"><p class="pp-muted">Loading…</p></main>
 <script src="/config.js"></script>
+<script src="/shared/core.js"></script>
 <script src="/core.js"></script>
+<script src="/shared/ui.js"></script>
+<script src="/shared/shell.js"></script>
+<script src="/pricing.js"></script>
 <script src="/rules.js"></script>
 <script src="/app.js"></script>
 </body>

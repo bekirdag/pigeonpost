@@ -17,7 +17,7 @@
       // A new link starts a new decision, even if its token is invalid or empty.
       // Only a fragment-less OIDC return may resume an earlier acceptance.
       PPE.store.del(KEY);
-      PPE.store.del("ppe_resume");
+      PPE.durable.del("pp_resume");
       window.history.replaceState({}, "", window.location.pathname + window.location.search);
       if (TOKEN.test(hash)) PPE.store.set(KEY, hash);
     }

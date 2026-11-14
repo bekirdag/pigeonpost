@@ -20,13 +20,17 @@ function fill(template) {
     .replace(/\/handles\/\$\{[^}]*\}/g, "/handles/acme")
     .replace(/\/ent\/orgs\/\$\{[^}]*\}/g, `/ent/orgs/${ORG}`)
     .replace(/\/ent\/checkout\/\$\{[^}]*\}/g, `/ent/checkout/${ORG}`)
+    .replace(/\/nests\/subscriptions\/\$\{[^}]*\}/g, `/nests/subscriptions/${UUID}`)
+    .replace(/\?org_id=\$\{[^}]*\}/g, `?org_id=${ORG}`)
     .replace(/\$\{cfg\.apiBase \|\| "\/api"\}/g, "");
 }
 
 /// Every bridge request in the portal's scripts, as { method, path, where }.
 export function portalCalls() {
   const calls = [];
-  for (const file of readdirSync(SITE).filter((f) => f.endsWith(".js"))) {
+  // The site's own scripts, and the shared platform core it loads from /shared/ (sign-in exchange).
+  const files = [...readdirSync(SITE).filter((f) => f.endsWith(".js")), "../site-shared/core.js"];
+  for (const file of files) {
     const lines = readFileSync(new URL(file, SITE), "utf8").split("\n");
     const helpers = {};
     lines.forEach((line, n) => {

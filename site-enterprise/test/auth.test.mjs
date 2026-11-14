@@ -9,7 +9,7 @@ test("sign-in sends a PKCE S256 challenge for the stored verifier and one fixed 
   await window.PPE.signIn({ returnTo: "/app/rules" });
   const url = new URL(nav.at(-1));
   assert.equal(url.origin + url.pathname, "https://auth.pigeonpost.dev/realms/pigeonpost-prod/protocol/openid-connect/auth");
-  const pending = JSON.parse(window.sessionStorage.getItem("ppe_pkce"));
+  const pending = JSON.parse(window.localStorage.getItem("pp_pkce"));
   assert.equal(url.searchParams.get("client_id"), "pigeonpost-web");
   assert.equal(url.searchParams.get("redirect_uri"), "https://enterprise.pigeonpost.dev/auth/callback");
   assert.equal(url.searchParams.get("code_challenge_method"), "S256");
@@ -22,19 +22,19 @@ test("sign-in sends a PKCE S256 challenge for the stored verifier and one fixed 
 
 test("the callback refuses a foreign state and exchanges a matching code through the bridge", async (t) => {
   const pending = { state: "s-good", verifier: "v".repeat(64), nonce: "n", returnTo: "/app/agents" };
-  const bad = load(t, "auth/callback.html", { url: "https://enterprise.pigeonpost.dev/auth/callback?code=c&state=s-evil", storage: { ppe_pkce: pending } });
+  const bad = load(t, "auth/callback.html", { url: "https://enterprise.pigeonpost.dev/auth/callback?code=c&state=s-evil", storage: { pp_pkce: pending } });
   await tick();
   assert.equal(bad.calls.length, 0);
   assert.match(bad.document.querySelector("#callback").textContent, /couldn't|could not/i);
 
-  const good = load(t, "auth/callback.html", { url: "https://enterprise.pigeonpost.dev/auth/callback?code=c1&state=s-good", storage: { ppe_pkce: pending },
+  const good = load(t, "auth/callback.html", { url: "https://enterprise.pigeonpost.dev/auth/callback?code=c1&state=s-good", storage: { pp_pkce: pending },
     fetch: () => reply(200, { session: "acc", refresh: "ref" }) });
   await tick();
   const ex = good.calls[0];
   assert.equal(ex.url, "/api/v1/auth/exchange");
   assert.deepEqual(ex.body, { code: "c1", redirectUri: "https://enterprise.pigeonpost.dev/auth/callback", codeVerifier: pending.verifier });
-  assert.equal(good.window.sessionStorage.getItem("ppe_session"), "acc");
-  assert.equal(good.window.sessionStorage.getItem("ppe_pkce"), null, "the verifier is single use");
+  assert.equal(good.window.sessionStorage.getItem("pp_session"), "acc");
+  assert.equal(good.window.localStorage.getItem("pp_pkce"), null, "the verifier is single use");
 });
 
 test("only same-origin paths are returned to", (t) => {
@@ -54,7 +54,7 @@ test("a step-up challenge leaves for the realm with acr_values and max_age and r
   const url = new URL(nav.at(-1));
   assert.equal(url.searchParams.get("acr_values"), "mfa");
   assert.equal(url.searchParams.get("max_age"), "600");
-  const resume = JSON.parse(window.sessionStorage.getItem("ppe_resume"));
+  const resume = JSON.parse(window.localStorage.getItem("pp_resume"));
   assert.equal(resume.name, "app.enroll");
   assert.deepEqual(plain(resume.payload), { address: "/k/x" });
   let ran = null;
@@ -66,7 +66,7 @@ test("a step-up challenge leaves for the realm with acr_values and max_age and r
 
 test("a plain 401 refreshes once through the bridge and retries", async (t) => {
   let n = 0;
-  const { window, calls } = load(t, "auth/callback.html", { url: "https://enterprise.pigeonpost.dev/auth/callback", session: "old", storage: { ppe_refresh: "r1" },
+  const { window, calls } = load(t, "auth/callback.html", { url: "https://enterprise.pigeonpost.dev/auth/callback", session: "old", storage: { pp_refresh: "r1" },
     fetch: (c) => c.url.endsWith("/v1/auth/refresh") ? reply(200, { session: "new", refresh: "r2" }) : (n++ ? reply(200, { ok: 1 }) : reply(401, { error: "unauthorized" })) });
   const r = await window.PPE.postbox("/v1/orgs");
   assert.deepEqual(plain(r), { ok: 1 });

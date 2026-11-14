@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { load as loadPage, read, reply, tick } from "./helpers.mjs";
+import { load as loadPage, read, reply, tick, jwt } from "./helpers.mjs";
 
 // jsdom keeps localStorage per origin across pages in one process; start each page without a
 // remembered language unless the test sets one.
@@ -16,7 +16,11 @@ const files = (dir) => readdirSync(dir).flatMap((f) => {
   if (["node_modules", "test", "fonts"].includes(f)) return [];
   return statSync(p).isDirectory() ? files(p) : [p];
 });
-const sources = files(root).filter((f) => (f.endsWith(".js") || f.endsWith(".html")) && !/i18n(-tr)?\.js$/.test(f));
+// The shared platform shell (site-shared/, served at /shared/) draws part of the admin app, so its
+// interface text is translated here too.
+const shared = join(root, "../site-shared");
+const sources = [...files(root), ...files(shared).filter((f) => /\/(core|shell|ui)\.js$/.test(f))]
+  .filter((f) => (f.endsWith(".js") || f.endsWith(".html")) && !/i18n(-tr)?\.js$/.test(f));
 const TR = (() => { const w = {}; new Function("window", read("i18n-tr.js"))(w); return w.PPE_STRINGS_TR; })();
 const tr = (t, page, opts = {}) => load(t, page, { ...opts, url: (opts.url || `https://enterprise.pigeonpost.dev/${page === "index.html" ? "" : page.replace(/\.html$/, "")}`) + "?lang=tr" });
 
@@ -138,11 +142,30 @@ test("rule sentences are built from Turkish pieces", (t) => {
     "Everyone at Acme accept messages from everyone at Acme as a known contact.");
 });
 
-test("the signed-out admin gate is in Turkish", async (t) => {
+test("the signed-out admin screen is in Turkish", async (t) => {
   const { $ } = tr(t, "app.html", { url: "https://enterprise.pigeonpost.dev/app" });
   await tick();
-  assert.match($("#gate").textContent, /Kuruluşunuzu yönetmek için giriş yapın/);
-  assert.match($("#ppe-account").textContent, /Giriş yap/);
+  assert.match($(".pp-signin-card").textContent, /Kuruluşunuzu yönetmek için giriş yapın/);
+  assert.match($(".pp-signin-actions").textContent, /Giriş yap/);
+});
+
+test("the signed-in admin app is in Turkish, with the language switch in the shell's top bar", async (t) => {
+  const ORG = { id: "org_abc123", name: "Acme", namespace: "acme", status: "active", seats: 30, seats_used: 3, agent_limit: 300, agents_used: 1, plan_code: "ent-30-yearly-usd", settings: {}, created_at: 1800000000 };
+  const fetch = (c) => {
+    const p = new URL(c.url, "https://enterprise.pigeonpost.dev").pathname;
+    if (p === "/v1/capabilities") return reply(200, { features: ["orgs", "enterprise_portal"] });
+    if (p === "/v1/orgs") return reply(200, { orgs: [{ ...ORG, my_roles: ["owner"] }] });
+    if (p === `/v1/orgs/${ORG.id}`) return reply(200, { org: ORG, me: { member_id: "m1", roles: ["owner"], mailbox: { handle: "/acme/ada" } } });
+    if (p.endsWith("/members")) return reply(200, { members: [] });
+    return reply(404, { error: "not_found" });
+  };
+  const { $, window } = load(t, "app.html", { url: "https://enterprise.pigeonpost.dev/app?lang=tr#/people", session: jwt({ name: "Ada Lovelace" }), fetch });
+  await tick(80);
+  assert.equal($("#pp-main h1").textContent, "Kişiler");
+  assert.match($("#pp-main .pp-page-head p").textContent, /Kullanılan kullanıcı: 3 \/ 30/);
+  assert.ok([...window.document.querySelectorAll(".pp-nav-item")].some((a) => a.textContent === "Genel bakış"));
+  assert.equal($(".pp-top-actions #ppe-lang").textContent, "English");
+  assert.equal($(".pp-user-name").textContent, "Ada Lovelace", "names are never translated");
 });
 
 test("the suspended banner with its deletion date is fully in Turkish", (t) => {
@@ -169,7 +192,7 @@ test("every Turkish entry still matches text in the pages, with the same placeho
 test("every interface sentence in the scripts has a Turkish entry", () => {
   // Double-quoted literals that read as interface text: a capital letter, then words. Templates
   // are covered by the source check above plus the page tests.
-  const notInterface = new Set(["SHA-256", "Escape", "Türkiye", "Jane, Doe, jane@acme.com, jane",
+  const notInterface = new Set(["SHA-256", "Escape", "Enter", "Pigeonpost", "Türkiye", "Jane, Doe, jane@acme.com, jane",
     // Quoted inside a translated confirm() sentence, not shown on its own.
     "This group was deleted"]);
   const missing = [];

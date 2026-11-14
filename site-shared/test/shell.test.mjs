@@ -183,3 +183,31 @@ test("server text is never parsed as HTML", async (t) => {
   const e = w.PP.ui.empty({ title: nasty, text: nasty });
   for (const n of [t1, c, e]) assert.equal(n.querySelector("img"), null);
 });
+
+test("themePosition left puts the theme switch at the top left; navHeader draws above the navigation", async (t) => {
+  const { w } = boot(t, { session: jwt() });
+  await w.PP.shell.start({ platform: "enterprise", title: "Enterprise", themePosition: "left", navHeader: (ctx) => w.PP.el("p", { class: "org" }, ctx.org), context: async () => ({ org: "Acme" }), pages: PAGES([]) });
+  await tick();
+  const doc = w.document;
+  const top = doc.querySelector(".pp-top");
+  const theme = top.querySelector("[data-theme-toggle]");
+  assert.ok(theme.classList.contains("pp-theme-left"));
+  assert.equal(theme.parentElement, top, "not inside the right-hand actions");
+  assert.ok(theme.compareDocumentPosition(doc.getElementById("pp-crumbs")) & w.Node.DOCUMENT_POSITION_FOLLOWING, "before the breadcrumbs");
+  assert.equal(doc.querySelector(".pp-top-actions [data-theme-toggle]"), null);
+  assert.equal(doc.querySelector("#pp-nav-header .org").textContent, "Acme");
+  await w.PP.shell.reload();
+  assert.equal(doc.querySelectorAll("#pp-nav-header").length, 1, "redrawn, not duplicated");
+  // Default stays at the right.
+  const other = boot(t, { session: jwt() });
+  await other.w.PP.shell.start({ platform: "account", title: "Account", context: async () => ({}), pages: PAGES([]) });
+  await tick();
+  assert.ok(other.w.document.querySelector(".pp-top-actions [data-theme-toggle]"));
+});
+
+test("breadcrumbs hold only the group and the page (no stray text)", async (t) => {
+  const { w } = boot(t, { session: jwt() });
+  await w.PP.shell.start({ platform: "account", title: "Account", context: async () => ({}), pages: PAGES([]) });
+  await tick();
+  assert.equal(w.document.getElementById("pp-crumbs").textContent, "AccountOverview");
+});

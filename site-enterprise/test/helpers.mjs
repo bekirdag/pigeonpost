@@ -4,7 +4,8 @@ import { webcrypto } from "node:crypto";
 import { JSDOM, VirtualConsole } from "jsdom";
 
 const root = new URL("../", import.meta.url);
-export const read = (path) => readFileSync(new URL(path, root), "utf8");
+/// A site file; `shared/…` is site-shared/, which the deploy copies into /shared/.
+export const read = (path) => readFileSync(new URL(path.startsWith("shared/") ? `../site-shared/${path.slice(7)}` : path, root), "utf8");
 export const tick = async (n = 30) => { for (let i = 0; i < n; i++) await new Promise((r) => setImmediate(r)); };
 
 /// A JSON response the scripts can read like fetch's.
@@ -39,14 +40,15 @@ export function load(t, page, { url = "https://enterprise.pigeonpost.dev/", fetc
     return fetch ? fetch(call) : reply(404, { error: "not_found" });
   };
   window.confirm = () => true;
-  if (session) window.sessionStorage.setItem("ppe_session", session);
-  for (const [k, v] of Object.entries(storage)) window.sessionStorage.setItem(k, typeof v === "string" ? v : JSON.stringify(v));
+  if (session) window.sessionStorage.setItem("pp_session", session);
+  // pp_pkce and pp_resume survive the realm round trip in localStorage (shared core); the rest is per tab.
+  for (const [k, v] of Object.entries(storage)) (/^pp_(pkce|resume)$/.test(k) ? window.localStorage : window.sessionStorage).setItem(k, typeof v === "string" ? v : JSON.stringify(v));
   window.eval(read("config.js"));
   if (before) before(window);
   for (const s of scripts) {
     if (s === "config.js") continue;
     window.eval(read(s));
-    if (s === "core.js") window.PPE.navigate = (to) => { nav.push(to); resolveNavigation(to); };
+    if (s === "shared/core.js") window.PP.navigate = (to) => { nav.push(to); resolveNavigation(to); };
   }
   return { window, document: window.document, calls, nav, navigation, $: (s) => window.document.querySelector(s) };
 }

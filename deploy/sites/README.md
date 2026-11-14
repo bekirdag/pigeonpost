@@ -220,6 +220,9 @@ Deploy the same staging-directory way as the inbox (wodo's home, then one `sudo 
 ts="$(date -u +%Y%m%dT%H%M%SZ)"
 rsync -a --delete --exclude node_modules --exclude test --exclude package.json \
   --exclude package-lock.json --exclude README.md site-enterprise/ raijin:pp-enterprise-stage/
+# The admin app (/app) runs on the shared platform shell: site-shared/ is served at /shared/.
+rsync -a --delete --exclude node_modules --exclude test --exclude package.json \
+  --exclude package-lock.json site-shared/ raijin:pp-enterprise-stage/shared/
 printf '%s\n' "$PW" | ssh raijin "sudo -S -p '' sh -c '
   mkdir -p /var/backups/pigeonpost/enterprise-$ts
   [ ! -d /var/www/pigeonpost-enterprise ] || cp -a /var/www/pigeonpost-enterprise /var/backups/pigeonpost/enterprise-$ts/site
@@ -228,6 +231,11 @@ printf '%s\n' "$PW" | ssh raijin "sudo -S -p '' sh -c '
   chown -R www-data:www-data /var/www/pigeonpost-enterprise'"
 ```
 
-Check: `curl -sI https://enterprise.pigeonpost.dev/` returns 200 with the strict CSP, `/checkout`
+Since 2026-11-14 `/app` is the shared shell (hash routes, `/app#/people`; old `/app/<page>` links are
+rewritten on load) and every page loads `/shared/core.js` before `/core.js`, so `/shared/` must be
+deployed with the site. Sessions are the shared core's (`pp_session` per tab; the PKCE verifier and a
+pending step-up in localStorage), so anyone signed in under the old keys signs in once more.
+
+Check: `curl -sI https://enterprise.pigeonpost.dev/` returns 200 with the strict CSP, `/shared/core.js` answers 200, `/checkout`
 returns the iyzico CSP with a nonce, and `/api/healthz` answers from the bridge. Before DNS exists,
 test through raijin directly: `curl -s -H 'Host: enterprise.pigeonpost.dev' http://192.168.12.165:48880/`.
