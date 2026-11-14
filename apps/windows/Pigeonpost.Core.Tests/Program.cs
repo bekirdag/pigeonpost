@@ -1081,6 +1081,7 @@ tests.AddRange(CalendarStoreTests.MeetingBridge());
 tests.AddRange(CalendarDraftTests.All());
 tests.AddRange(CalendarWindowsGapTests.All());
 tests.AddRange(CallRingTests.All());
+tests.AddRange(DesignTokenTests.All());
 tests.AddRange(PrivacyTests.All());
 tests.AddRange(GroupTests.All());
 tests.AddRange(GroupsModelTests.All());

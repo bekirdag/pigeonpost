@@ -1,7 +1,8 @@
-"""The Pigeonpost conversation design for GTK: palette, type and the person's appearance choice.
+"""The Pigeonpost Design Kit for GTK: palette, type and the person's appearance choice.
 
-Dark is the conversation design's own values; light is the same language re-derived for paper.
-The values are apps/ios/Shared/Design/Theme.swift's, so every platform shares one palette.
+Colours come from the kit's tokens (design_tokens.json is a copy of the kit's generated tokens.json,
+tokens v1.0): each name below maps onto a kit semantic role, with its light and dark values, so the
+Linux app shares one palette with the web, Apple, Android and Windows clients. Accent is Signal Blue.
 Geist and Geist Mono (SIL OFL 1.1, see fonts/Geist-OFL.txt) are registered with fontconfig for
 this process only; if that fails, the system sans and monospace faces stand in.
 """
@@ -9,6 +10,7 @@ import ctypes
 import ctypes.util
 import json
 import os
+import re
 from pathlib import Path
 
 import gi
@@ -17,52 +19,91 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, GLib, Gtk
 
 FONTS = Path(__file__).resolve().parent / "fonts"
+TOKENS = Path(__file__).resolve().parent / "design_tokens.json"
 CHOICES = ("system", "light", "dark")
 
-# token: (light, dark)
-PALETTE = {
-    "accent": ("#2F6BE0", "#8AB4FF"),
-    "on_accent": ("#FFFFFF", "#0D0F12"),
-    "green": ("#1E8A50", "#7DD3A0"),
-    "amber": ("#A35F00", "#F0B860"),
-    "rose": ("#B0284B", "#F29AAE"),
-    "ink": ("#14181F", "#E8EAED"),
-    "body": ("#2E353F", "#D7DCE3"),
-    "secondary": ("#5B6470", "#9AA3AE"),
-    "muted": ("#737C88", "#7D8590"),
-    "quiet": ("#3E4651", "#C3C9D1"),
-    "app": ("#F3F4F6", "#0D0F12"),
-    "sidebar": ("#F7F8FA", "#111419"),
-    "column": ("#F4F5F8", "#13161B"),
-    "wash": ("#FAFBFC", "#0F1216"),
-    "ground": ("#FFFFFF", "#171B21"),
-    "field": ("#ECEEF2", "#171B21"),
-    "composer": ("#FFFFFF", "#151920"),
-    "selected": ("#E6EAF0", "#1C2129"),
-    "chip": ("#DFE3EA", "#252B34"),
-    "tile": ("#E9ECF1", "#22272F"),
-    "rule": ("#E3E6EB", "#1F242B"),
-    "stroke": ("#DFE3E8", "#262B33"),
-    "stroke_strong": ("#D3D8DF", "#2A3039"),
-    "mine_fill": ("#EDF3FF", "#131C2E"),
-    "mine_stroke": ("#C9D8F6", "#263556"),
-    "mine_text": ("#14213D", "#E6ECF8"),
-    "mine_meta": ("#5B6B8E", "#8C9AB8"),
-    "held_text": ("#A35F00", "#F0B860"),
-    "held_fill": ("#FCEFD3", "#2A2213"),
-    "held_stroke": ("#F4DDAE", "#45361A"),
-    "auto_text": ("#1E7A47", "#7DD3A0"),
-    "auto_fill": ("#E2F4E9", "#142A1F"),
-    "auto_stroke": ("#C4E8D2", "#1F4030"),
-    "toast": ("#14181F", "#2A3039"),
+# GTK name -> kit semantic role (css/tokens.css --pp-<role>). A (role, opacity) pair is that role's
+# colour at that opacity over the role named third (how the kit's color-mix() reads on its fill).
+ROLES = {
+    "accent": "accent",
+    "accent_hover": "accent-hover",
+    "on_accent": "on-accent",
+    "link": "text-link",
+    "focus_ring": "focus-ring",
+    "green": "success",
+    "amber": "warning",
+    "rose": "danger",
+    "ink": "text",
+    "body": "text-body",
+    "secondary": "text-muted",
+    "muted": "text-faint",
+    "quiet": "text-body",
+    "app": "bg",
+    "sidebar": "bg-subtle",
+    "column": "bg-subtle",
+    "wash": "bg",
+    "ground": "surface",
+    "raised": "surface-raised",
+    "field": "surface-sunken",
+    "composer": "surface",
+    "hover": "surface-hover",
+    "selected": "surface-selected",
+    "chip": "surface-hover",
+    "tile": "surface-sunken",
+    "rule": "border",
+    "stroke": "border",
+    "stroke_strong": "border-strong",
+    "theirs_fill": "bubble-theirs",
+    "theirs_stroke": "bubble-theirs-border",
+    "theirs_text": "bubble-theirs-text",
+    "mine_fill": "bubble-mine",
+    "mine_stroke": "bubble-mine-border",
+    "mine_text": "bubble-mine-text",
+    "mine_meta": ("bubble-mine-text", 0.62, "bubble-mine"),
+    "agent_rail": "bubble-agent-rail",
+    "tick_sent": "tick-sent",
+    "tick_seen": "tick-seen",
+    "tick_working": "tick-working",
+    "held_text": "warning",
+    "held_fill": "warning-fill",
+    "held_stroke": "warning-border",
+    "auto_text": "success",
+    "auto_fill": "success-fill",
+    "auto_stroke": "success-border",
+    "toast": "surface-inverse",
+    "on_toast": "on-inverse",
 }
+
+
+def _mix(top, opacity, under):
+    a = [int(top[i:i + 2], 16) for i in (1, 3, 5)]
+    b = [int(under[i:i + 2], 16) for i in (1, 3, 5)]
+    return "#" + "".join(f"{round(x * opacity + y * (1 - opacity)):02X}" for x, y in zip(a, b))
+
+
+def load_palette(path=TOKENS):
+    """{name: (light, dark)} from the kit's tokens.json."""
+    semantic = json.loads(Path(path).read_text())["semantic"]
+    palette = {}
+    for name, role in ROLES.items():
+        if isinstance(role, tuple):
+            top, opacity, under = role
+            palette[name] = tuple(_mix(semantic[top][m], opacity, semantic[under][m]) for m in ("light", "dark"))
+        else:
+            palette[name] = (semantic[role]["light"], semantic[role]["dark"])
+    # GTK's CSS parser wants a leading zero on alpha values ("rgba(8, 108, 255, .35)" -> "0.35").
+    return {name: tuple(re.sub(r"(?<![\d.])\.(\d)", r"0.\1", v) for v in pair) for name, pair in palette.items()}
+
+
+# token: (light, dark)
+PALETTE = load_palette()
 
 STYLE = """
 window, dialog, popover, .pp-root { font-family: "Geist", "Cantarell", "Inter", sans-serif; }
 .pp-mono, .pp-peer, .pp-title, .pp-address { font-family: "Geist Mono", "DejaVu Sans Mono", monospace; }
 
 window.background, .pp-root { background-color: @pp_app; color: @pp_ink; }
-headerbar { background-color: @pp_app; color: @pp_ink; box-shadow: none; border-bottom: 1px solid @pp_rule; min-height: 46px; }
+headerbar { background-color: @pp_ground; color: @pp_ink; box-shadow: none; border-bottom: 1px solid @pp_rule; min-height: 46px; }
 headerbar .title { font-weight: 600; font-size: 14px; }
 headerbar .subtitle { font-family: "Geist Mono", monospace; font-size: 11.5px; color: @pp_muted; opacity: 1; }
 paned > separator { background-color: @pp_rule; min-width: 1px; min-height: 1px; background-image: none; }
@@ -72,43 +113,49 @@ paned > separator { background-color: @pp_rule; min-width: 1px; min-height: 1px;
 .pp-wash { background-color: @pp_wash; }
 .pp-toolbar { border-bottom: 1px solid @pp_rule; }
 
-.pp-overline { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; color: @pp_muted; }
+.pp-overline { font-size: 11.5px; font-weight: 600; letter-spacing: 0.06em; color: @pp_muted; }
 .pp-title { font-size: 15px; font-weight: 600; color: @pp_ink; }
-.pp-meta { font-size: 11.5px; color: @pp_muted; opacity: 1; }
+.pp-meta { font-size: 11.5px; color: @pp_muted; opacity: 1; font-feature-settings: "tnum"; }
 .pp-status { font-size: 11.5px; color: @pp_secondary; opacity: 1; }
 
-dropdown.pp-mailbox > button { background-color: @pp_field; border: 1px solid @pp_stroke; border-radius: 10px; padding: 8px 10px; box-shadow: none; }
+dropdown.pp-mailbox > button { background-color: @pp_ground; border: 1px solid @pp_stroke_strong; border-radius: 10px; padding: 8px 10px; box-shadow: none; }
 dropdown.pp-mailbox > button label { font-family: "Geist Mono", monospace; font-weight: 600; font-size: 13px; }
 
 entry.search, searchentry, .pp-sidebar entry, .pp-wash entry {
-  background-color: @pp_field; color: @pp_ink; border: 1px solid @pp_stroke; border-radius: 9px;
-  min-height: 34px; box-shadow: none; outline-color: alpha(@pp_accent, 0.5);
+  background-color: @pp_field; color: @pp_ink; border: 1px solid transparent; border-radius: 10px;
+  min-height: 36px; box-shadow: none; outline-color: @pp_focus_ring;
+}
+entry.search:focus-within, searchentry:focus-within, .pp-sidebar entry:focus-within, .pp-wash entry:focus-within {
+  border-color: @pp_accent; background-color: @pp_ground;
 }
 searchentry > image, entry.search > image { color: @pp_muted; }
+entry > text > placeholder, textview > text > placeholder { color: @pp_muted; }
 
-button { border-radius: 8px; }
+button { border-radius: 10px; }
 button.flat, .pp-icon-button { color: @pp_secondary; }
-button.flat:hover { background-color: @pp_selected; color: @pp_ink; }
-button.suggested-action { background-color: @pp_accent; color: @pp_on_accent; border-radius: 9px; font-weight: 600; box-shadow: none; }
+button.flat:hover { background-color: @pp_hover; color: @pp_ink; }
+button.suggested-action { background-color: @pp_accent; color: @pp_on_accent; border-radius: 10px; font-weight: 600; box-shadow: none; }
+button.suggested-action:hover { background-color: @pp_accent_hover; }
 button.suggested-action:disabled { background-color: @pp_chip; color: @pp_muted; }
-button.destructive-action { border-radius: 9px; }
+button.destructive-action { border-radius: 10px; }
 .pp-pill-button { background-color: @pp_ground; border: 1px solid @pp_stroke_strong; color: @pp_quiet; border-radius: 8px; font-size: 12.5px; font-weight: 500; padding: 4px 10px; box-shadow: none; }
-.pp-pill-button:hover { background-color: @pp_selected; color: @pp_ink; }
+.pp-pill-button:hover { background-color: @pp_hover; color: @pp_ink; }
 
 list.pp-list { background-color: transparent; }
-list.pp-list > row { border-radius: 10px; margin: 1px 0; padding: 0; color: @pp_ink; }
-list.pp-list > row:hover { background-color: alpha(@pp_selected, 0.7); }
+list.pp-list > row { border-radius: 14px; margin: 1px 0; padding: 0; color: @pp_ink; }
+list.pp-list > row:hover { background-color: @pp_hover; }
 list.pp-list > row:selected { background-color: @pp_selected; color: @pp_ink; }
-.pp-peer { font-size: 13.5px; font-weight: 600; color: @pp_ink; }
-.pp-preview { font-size: 12.5px; color: @pp_secondary; opacity: 1; }
+.pp-peer { font-size: 14px; font-weight: 600; color: @pp_ink; }
+.pp-preview { font-size: 13.5px; color: @pp_muted; opacity: 1; }
 .pp-subject { font-size: 13px; color: @pp_quiet; }
 .pp-subject.heading { color: @pp_ink; font-weight: 600; }
 
-.pp-bubble { background-color: @pp_ground; border: 1px solid @pp_stroke; border-radius: 14px; color: @pp_body; }
-.pp-bubble.pp-mine { background-color: @pp_mine_fill; border-color: @pp_mine_stroke; color: @pp_mine_text; }
+/* Kit bubbles: 18 px radius, the corner toward the sender 6 px; theirs neutral, mine Signal Blue tinted. */
+.pp-bubble { background-color: @pp_theirs_fill; border: 1px solid @pp_theirs_stroke; border-radius: 18px; border-bottom-left-radius: 6px; color: @pp_theirs_text; }
+.pp-bubble.pp-mine { background-color: @pp_mine_fill; border-color: @pp_mine_stroke; color: @pp_mine_text; border-bottom-left-radius: 18px; border-bottom-right-radius: 6px; }
 .pp-bubble .pp-meta { color: @pp_muted; }
 .pp-bubble.pp-mine .pp-meta { color: @pp_mine_meta; }
-.pp-body { font-size: 14.5px; line-height: 1.45; }
+.pp-body { font-size: 15px; line-height: 1.4667; }
 .pp-body selection, label.pp-body > selection { background-color: alpha(@pp_accent, 0.32); color: inherit; }
 .pp-verb { font-size: 12.5px; font-weight: 600; border-radius: 6px; padding: 2px 7px; }
 .pp-verb.pp-held { color: @pp_held_text; background-color: @pp_held_fill; border: 1px solid @pp_held_stroke; }
@@ -122,22 +169,25 @@ list.pp-list > row:selected { background-color: @pp_selected; color: @pp_ink; }
 .pp-system.pp-security { color: @pp_ink; font-weight: 500; }
 .pp-call-missed .title, .pp-call-missed .subtitle { color: @error_color; }
 .pp-banner { background-color: alpha(@error_color, 0.08); border: 1px solid alpha(@error_color, 0.35); border-radius: 10px; margin-left: 16px; margin-right: 16px; padding: 4px 4px 4px 12px; }
-.pp-badge { font-size: 11px; font-weight: 600; color: @pp_mine_text; background-color: @pp_accent; border-radius: 9px; padding: 0 6px; }
+.pp-badge { font-size: 11.5px; font-weight: 600; color: @pp_on_accent; background-color: @pp_accent; border-radius: 10px; padding: 0 6px; min-height: 20px; min-width: 8px; font-feature-settings: "tnum"; }
 .pp-preview-button > frame, .pp-chip-preview { border-radius: 10px; border: 1px solid @pp_stroke; background-color: @pp_tile; }
 
-.pp-composer { background-color: @pp_composer; border: 1px solid @pp_stroke_strong; border-radius: 14px; padding: 6px; }
+/* Kit composer: a 24 px box that takes a Signal Blue edge while focused; the send button is a pill. */
+.pp-composer { background-color: @pp_composer; border: 1px solid @pp_stroke; border-radius: 24px; padding: 6px; }
+.pp-composer:hover { border-color: @pp_stroke_strong; }
+.pp-composer:focus-within { border-color: @pp_accent; }
 .pp-composer scrolledwindow, .pp-composer textview, .pp-composer textview > text { background-color: transparent; color: @pp_ink; }
-.pp-composer textview { font-size: 14px; }
-.pp-composer button.suggested-action { min-width: 38px; min-height: 34px; }
+.pp-composer textview { font-size: 15px; }
+.pp-composer button.suggested-action { min-width: 40px; min-height: 40px; border-radius: 999px; padding: 0 14px; }
 
-.pp-segmented { background-color: @pp_field; border: 1px solid @pp_stroke; border-radius: 9px; padding: 2px; }
+.pp-segmented { background-color: @pp_field; border: 1px solid @pp_stroke; border-radius: 10px; padding: 2px; }
 .pp-segmented > button { background: none; border: none; box-shadow: none; border-radius: 7px; color: @pp_secondary; font-weight: 500; min-height: 28px; padding: 0 14px; }
-.pp-segmented > button:checked { background-color: @pp_chip; color: @pp_ink; }
+.pp-segmented > button:checked { background-color: @pp_ground; color: @pp_ink; box-shadow: 0 1px 2px alpha(black, 0.08); }
 
 .pp-viewer-text, .pp-viewer-text > text { background-color: @pp_ground; color: @pp_body; font-family: "Geist Mono", monospace; font-size: 13px; }
 .pp-viewer-page { background-color: #FFFFFF; border: 1px solid @pp_stroke; }
 
-toast { background-color: @pp_toast; color: #FFFFFF; border-radius: 10px; }
+toast { background-color: @pp_toast; color: @pp_on_toast; border-radius: 10px; }
 """
 
 _registered = None
@@ -178,16 +228,17 @@ def stylesheet(dark):
     defined = "".join(f"@define-color pp_{name} {value};\n" for name, value in tokens.items())
     # libadwaita's own named colours, so stock widgets (dialogs, popovers, settings lists) match.
     named = {
-        "accent_color": tokens["accent"], "accent_bg_color": tokens["accent"], "accent_fg_color": tokens["on_accent"],
+        "accent_color": tokens["link"], "accent_bg_color": tokens["accent"], "accent_fg_color": tokens["on_accent"],
         "window_bg_color": tokens["app"], "window_fg_color": tokens["ink"],
         "view_bg_color": tokens["wash"], "view_fg_color": tokens["body"],
         "headerbar_bg_color": tokens["app"], "headerbar_fg_color": tokens["ink"],
         "headerbar_backdrop_color": tokens["app"], "headerbar_border_color": tokens["rule"],
         "sidebar_bg_color": tokens["sidebar"], "sidebar_fg_color": tokens["ink"],
         "card_bg_color": tokens["ground"], "card_fg_color": tokens["body"],
-        "dialog_bg_color": tokens["ground"], "dialog_fg_color": tokens["ink"],
-        "popover_bg_color": tokens["ground"], "popover_fg_color": tokens["ink"],
-        "success_color": tokens["green"], "warning_color": tokens["amber"],
+        "dialog_bg_color": tokens["raised"], "dialog_fg_color": tokens["ink"],
+        "popover_bg_color": tokens["raised"], "popover_fg_color": tokens["ink"],
+        "success_color": tokens["green"], "warning_color": tokens["amber"], "error_color": tokens["rose"],
+        "destructive_color": tokens["rose"],
     }
     defined += "".join(f"@define-color {name} {value};\n" for name, value in named.items())
     return defined + STYLE + "".join(EXTRA_CSS)

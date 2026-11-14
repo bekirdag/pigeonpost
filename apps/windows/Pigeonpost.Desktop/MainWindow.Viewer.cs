@@ -112,7 +112,7 @@ public sealed partial class MainWindow
                 player.Height = 120;
                 player.VerticalAlignment = VerticalAlignment.Center;
                 var panel = new StackPanel { Spacing = 24, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Stretch, MaxWidth = 640 };
-                panel.Children.Add(new FontIcon { Glyph = "", FontSize = 64, Foreground = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 0x9A, 0xA1, 0xAB)) });
+                panel.Children.Add(new FontIcon { Glyph = "", FontSize = 64, Foreground = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 0xA3, 0xAC, 0xB9)) });
                 panel.Children.Add(player);
                 return panel;
             }
@@ -149,13 +149,13 @@ public sealed partial class MainWindow
                 {
                     Text = truncated ? text + "\n\n… (the rest of this file is not shown; save it to read everything)" : text,
                     FontFamily = (FontFamily)Application.Current.Resources["MonoFont"], FontSize = 13, LineHeight = 20, TextWrapping = TextWrapping.Wrap,
-                    IsTextSelectionEnabled = true, Foreground = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 0xE8, 0xEA, 0xED)),
+                    IsTextSelectionEnabled = true, Foreground = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 0xF2, 0xF4, 0xF7)),
                     MaxWidth = 960, HorizontalAlignment = HorizontalAlignment.Left
                 };
                 AutomationProperties.SetName(block, "Contents of " + filename);
                 return new Border
                 {
-                    Background = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 0x16, 0x19, 0x1E)), CornerRadius = new CornerRadius(10),
+                    Background = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 0x14, 0x18, 0x20)), CornerRadius = new CornerRadius(10),
                     Padding = new Thickness(20, 16, 20, 16),
                     Child = new ScrollViewer { Content = block, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, VerticalScrollBarVisibility = ScrollBarVisibility.Auto }
                 };
@@ -174,7 +174,7 @@ public sealed partial class MainWindow
     {
         Text = text, TextWrapping = TextWrapping.Wrap, FontSize = 14, HorizontalAlignment = HorizontalAlignment.Center,
         VerticalAlignment = VerticalAlignment.Center, TextAlignment = TextAlignment.Center, MaxWidth = 520,
-        Foreground = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 0xC9, 0xCE, 0xD6))
+        Foreground = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 0xD3, 0xD8, 0xE0))
     };
 
     private static async Task<IRandomAccessStream> Stream(byte[] bytes)
