@@ -258,8 +258,12 @@ jobs:
           # Calendar screens describe actual contact-address guest delivery, distinct from
           # Pigeonpost messages. The local protocol fixture uses fixed verified OIDC claims
           # to exercise human-only guest invitations without sending any external delivery.
+          # Developer identity verification collects an external contact address and uses its
+          # native HTML input type; these two files do not redefine Pigeonpost messaging.
           if git grep -n -i -w "$forbidden_word" -- . \
               ':(exclude)site/account.js' \
+              ':(exclude)site/publisher-onboarding.js' \
+              ':(exclude)crates/pigeonpost-postbox/src/publisher_onboarding.rs' \
               ':(exclude)site/account.html' \
               ':(exclude)site/account-config.js' \
               ':(exclude)site-enterprise/config.js' \

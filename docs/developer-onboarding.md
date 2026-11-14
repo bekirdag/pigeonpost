@@ -26,7 +26,7 @@ company evidence or successful individual KYC. App releases keep their separate 
 Approved publishers can be revoked using the existing revocation action.
 
 Submission creates durable account events for current reviewers; decisions create publisher
-account events. This feature does not add outbound email notifications. Applicants can refresh
+account events. This feature does not add outbound contact-address notifications. Applicants can refresh
 their application to see requests and history. Drafts and requests are editable; submitted records
 are locked until staff request changes. Rejected applicants can use the existing new-application
 flow. Existing approved publishers retain certification and minimal public profiles.

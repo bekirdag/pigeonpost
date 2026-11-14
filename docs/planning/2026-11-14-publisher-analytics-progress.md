@@ -9,6 +9,6 @@
 - All424web tests passed, including6new analytics tests. Browser mobile390px has no page overflow, dark theme inputs use correct tokens; desktop reviewed.
 - Backend validation caught query-index creation before hosted table migration on new databases; moved indexes after migration before rerunning route tests. No production change yet.
 - Staff policy intentionally requires the finance role; the platform-owner identity alone does not bypass it. Updated documentation and gate tests to reflect existing role policy.
-- Live readiness inspected read-only: finance URL/token file already configured on postbox. Raijin billing image saas-be-api:main-18145cb matches all three modified source-file preimages exactly. Host /srv/saas_be/repo is older and dirty with unrelated email/compose changes; preserve it and build from the running image with verified scoped source changes.
+- Live readiness inspected read-only: finance URL/token file already configured on postbox. Raijin billing image saas-be-api:main-18145cb matches all three modified source-file preimages exactly. Host /srv/saas_be/repo is older and dirty with unrelated notification/compose changes; preserve it and build from the running image with verified scoped source changes.
 
 - Final validation:851postbox tests passed(2ignored),4analytics backend tests,424web tests,clippy with warnings denied,63finance regression tests,TypeScript and ESLint passed. Docdex cannot map the postbox crate target, so Cargo ran the full binary suite directly.
