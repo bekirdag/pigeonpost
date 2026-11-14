@@ -342,7 +342,7 @@ struct MacThreadView: View {
                 Button { pick() } label: {
                     Image(systemName: "paperclip")
                         .font(.geist(16, .medium))
-                        .frame(width: 34, height: 34)
+                        .frame(width: 40, height: 40)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -370,8 +370,9 @@ struct MacThreadView: View {
                     Image(systemName: "arrow.up")
                         .font(.geist(14, .bold))
                         .foregroundStyle(sendable ? Theme.onAccent : Theme.muted)
-                        .frame(width: 34, height: 34)
-                        .background(sendable ? Theme.accent : Theme.chip, in: RoundedRectangle(cornerRadius: 9))
+                        .frame(width: 40, height: 40)
+                        .background(sendable ? Theme.accent : Theme.field, in: Circle())
+                        .overlay(Circle().strokeBorder(sendable ? Color.clear : Theme.stroke, lineWidth: 1))
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -382,8 +383,8 @@ struct MacThreadView: View {
             }
             // One card around the three, as the conversation design draws its composer.
             .padding(6)
-            .background(Theme.composer, in: RoundedRectangle(cornerRadius: 14))
-            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.strokeStrong, lineWidth: 1))
+            .background(Theme.composer, in: RoundedRectangle(cornerRadius: Theme.Radius.xxl, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.xxl, style: .continuous).stroke(Theme.stroke, lineWidth: 1))
             .frame(maxWidth: 860)
             .frame(maxWidth: .infinity)
             .padding(.horizontal, 24)

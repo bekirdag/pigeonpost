@@ -17,7 +17,7 @@ struct UnreadBadge: View {
     /// not a fill of the accent, so the badge reads the same on both.
     var inverted: Bool = false
 
-    private static let size: CGFloat = 11
+    private static let size: CGFloat = 11.5
     /// SF's cap height is very close to 0.72 em, and this only has to be right to the pixel.
     private static let capHeight: CGFloat = size * 0.72
 
@@ -29,8 +29,8 @@ struct UnreadBadge: View {
             .alignmentGuide(VerticalAlignment.center) { d in
                 d[.firstTextBaseline] - Self.capHeight / 2
             }
-            .padding(.horizontal, 5)
-            .frame(minWidth: 18, minHeight: 18)
+            .padding(.horizontal, 6)
+            .frame(minWidth: 20, minHeight: 20)
             .background(Theme.accent, in: Capsule())
             // Never let a neighbour compress it; the count is two characters at most and all of it
             // matters.
@@ -108,7 +108,7 @@ struct PillView: View {
         .foregroundStyle(foreground)
         .padding(.horizontal, 6)
         .frame(minHeight: 18)
-        .background(fill, in: RoundedRectangle(cornerRadius: 5))
+        .background(fill, in: RoundedRectangle(cornerRadius: Theme.Radius.xs))
     }
 
     private var foreground: Color {

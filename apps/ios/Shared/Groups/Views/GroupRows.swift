@@ -40,28 +40,32 @@ struct GroupRow: View {
     @Environment(GroupStore.self) private var groups
 
     var body: some View {
+        // The kit's thread row, as `ConversationRow`: the time in Signal Blue and the preview a
+        // step bolder while something is unread.
+        let unread = group.unread > 0 && groups.open != group.id
         HStack(alignment: .center, spacing: compact ? 11 : 12) {
-            GroupFace(id: group.id, name: group.name, size: compact ? 38 : 40)
-            VStack(alignment: .leading, spacing: compact ? 2 : 3) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
+            GroupFace(id: group.id, name: group.name, size: compact ? 38 : 44)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(group.name)
-                        .font(.geist(compact ? 13.5 : 14.5, .semibold))
+                        .font(.geist(compact ? 13.5 : 15, .semibold))
                         .foregroundStyle(Theme.ink)
                         .lineLimit(1)
-                    Spacer(minLength: 0)
+                    Spacer(minLength: 4)
                     if let at = group.lastAt, at > 0 {
                         Text(Time.listTime(at))
-                            .font(.geist(11.5))
-                            .foregroundStyle(Theme.muted)
+                            .font(.geist(compact ? 11.5 : 12, unread ? .semibold : .regular))
+                            .monospacedDigit()
+                            .foregroundStyle(unread ? Theme.link : Theme.muted)
                             .fixedSize()
                     }
                 }
                 HStack(alignment: .center, spacing: 6) {
                     Text(groups.preview(group))
-                        .font(.geist(compact ? 13 : 13.5))
-                        .foregroundStyle(Theme.secondary)
+                        .font(.geist(compact ? 13 : 13.5, unread ? .medium : .regular))
+                        .foregroundStyle(unread ? Theme.body : Theme.secondary)
                         .lineLimit(1)
-                    Spacer(minLength: 0)
+                    Spacer(minLength: 4)
                     if group.ephemeralSecs != nil {
                         Image(systemName: "timer")
                             .font(.geist(11.5))

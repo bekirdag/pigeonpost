@@ -23,7 +23,7 @@ struct CalendarGuestLinkBrowser: View {
                     Button(safeURL.path == "/m/u" ? "Open notification settings" : "Open invitation") {
                         if NSWorkspace.shared.open(safeURL) { dismiss() } else { failed = true }
                     }.buttonStyle(.borderedProminent).tint(Theme.navy)
-                    if failed { Text("The browser could not be opened.").foregroundStyle(Color.red) }
+                    if failed { Text("The browser could not be opened.").foregroundStyle(Theme.danger) }
                 }.padding(32)
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
             }.frame(width: 560, height: 340)

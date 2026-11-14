@@ -6,6 +6,26 @@
 
 import SwiftUI
 
+/// The kit's message shape (`.pp-bubble`): 18pt corners with a 6pt tail corner at the bottom of the
+/// speaker's side.
+struct BubbleShape: InsettableShape {
+    var mine: Bool
+    var inset: CGFloat = 0
+
+    func path(in rect: CGRect) -> Path {
+        let r = Theme.Radius.bubble, t = Theme.Radius.bubbleTail
+        return UnevenRoundedRectangle(
+            topLeadingRadius: r,
+            bottomLeadingRadius: mine ? r : t,
+            bottomTrailingRadius: mine ? t : r,
+            topTrailingRadius: r,
+            style: .continuous
+        ).path(in: rect.insetBy(dx: inset, dy: inset))
+    }
+
+    func inset(by amount: CGFloat) -> BubbleShape { BubbleShape(mine: mine, inset: inset + amount) }
+}
+
 struct MessageBubble: View {
     let message: ThreadMessage
     /// What the find bar is looking for, so the words themselves can be marked. Empty everywhere
@@ -242,17 +262,26 @@ struct MessageBubble: View {
                 .padding(.vertical, 5)
                 .overlay(alignment: .top) { Rectangle().fill(divider).frame(height: 1) }
         }
-        .background(fill, in: RoundedRectangle(cornerRadius: 14))
+        // An agent's report carries the kit's green rail down its leading edge (`bubbleAgentRail`).
+        .overlay(alignment: .leading) {
+            if message.autoReply != nil && !isMine {
+                Rectangle().fill(Theme.Theirs.agentRail).frame(width: 3)
+            }
+        }
+        .background(fill, in: shape)
         // A border on the match you are standing on, and nothing else. The words inside carry
         // the mark — see `MarkdownText.marked` — because a whole card tinted purple says
         // "somewhere in these forty lines", which is barely narrower than not having searched.
         // The outline is only so the eye lands on the right card after a jump.
         .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .stroke(isFound ? Theme.found : stroke, lineWidth: isFound ? 2 : 1)
+            shape.stroke(isFound ? Theme.found : stroke, lineWidth: isFound ? 2 : 1)
         )
-        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .clipShape(shape)
     }
+
+    /// The kit's bubble: `--pp-radius-bubble` on three corners and the small `bubbletail` corner on
+    /// the speaker's side, at the bottom — trailing for your own words, leading for theirs.
+    private var shape: BubbleShape { BubbleShape(mine: isMine) }
 
     private var meta: some View {
         HStack(spacing: 6) {

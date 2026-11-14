@@ -101,7 +101,7 @@ struct CalendarEditor: View {
             .safeAreaInset(edge: .top, spacing: 0) {
                 if let message = problem ?? store.lastError {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text(message).foregroundStyle(Color.red).accessibilityIdentifier("calendar-editor-error")
+                        Text(message).foregroundStyle(Theme.danger).accessibilityIdentifier("calendar-editor-error")
                         if store.revisionConflict {
                             Button("Review current version") { confirmReload = true }
                                 .accessibilityIdentifier("calendar-review-conflict")

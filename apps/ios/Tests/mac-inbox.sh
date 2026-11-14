@@ -2,6 +2,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 out=$(mktemp -d)
+. Tests/kit-tokens.sh
 trap 'rm -rf "$out"' EXIT
 app="$out/Mac Inbox Tests.app"
 mkdir -p "$app/Contents/MacOS"
@@ -16,7 +17,7 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 <key>NSPrincipalClass</key><string>NSApplication</string>
 </dict></plist>
 PLIST
-swiftc -O -parse-as-library -D MAC_INBOX_UI_TESTS -o "$app/Contents/MacOS/mac-inbox" \
+swiftc -O -parse-as-library -D MAC_INBOX_UI_TESTS $kit -o "$app/Contents/MacOS/mac-inbox" \
   Tests/InboxLoadingTests.swift Tests/MacInboxLoadingTests.swift \
   Shared/People/PeopleModels.swift Shared/People/PeopleAPI.swift Shared/People/PeopleStore.swift \
   Shared/People/PeopleNameViews.swift Shared/People/PeopleLabels.swift \
