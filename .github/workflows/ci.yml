@@ -260,9 +260,13 @@ jobs:
           # to exercise human-only guest invitations without sending any external delivery.
           # Developer identity verification collects an external contact address and uses its
           # native HTML input type; these two files do not redefine Pigeonpost messaging.
+          # partner.pigeonpost.dev carries the same application form (page-application.js) and,
+          # like site-enterprise/config.js, requests the realm's standard address scope by name.
           if git grep -n -i -w "$forbidden_word" -- . \
               ':(exclude)site/account.js' \
               ':(exclude)site/publisher-onboarding.js' \
+              ':(exclude)site-partner/page-application.js' \
+              ':(exclude)site-partner/config.js' \
               ':(exclude)crates/pigeonpost-postbox/src/publisher_onboarding.rs' \
               ':(exclude)site/account.html' \
               ':(exclude)site/account-config.js' \

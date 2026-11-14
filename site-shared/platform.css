@@ -108,9 +108,12 @@ h1[tabindex="-1"]:focus { outline: none; }
 
 .pp-main { flex: 1; padding: 28px 28px 64px; outline: none; }
 .pp-view { width: 100%; max-width: 1480px; margin: 0 auto; }
-.pp-view-inner { display: grid; gap: 22px; grid-template-columns: minmax(0, 1fr); }
-/* Grid tracks would otherwise grow to a wide table's or code block's width on a phone. */
-.pp-section, .pp-card, .pp-gated { grid-template-columns: minmax(0, 1fr); min-width: 0; }
+.pp-view-inner { display: grid; gap: 22px; }
+/* One-column grids get an explicit minmax(0, 1fr) track, and grid items min-width 0: otherwise a
+   wide child (a stepper, a table, a form) widens the page past a phone's screen instead of
+   wrapping or scrolling inside itself. */
+.pp-view-inner, .pp-section, .pp-card, .pp-gated { grid-template-columns: minmax(0, 1fr); }
+.pp-view-inner > *, .pp-cols > *, .pp-grid > *, .pp-section > *, .pp-card > * { min-width: 0; }
 
 .pp-icon-btn {
   width: 36px; height: 36px; display: inline-grid; place-items: center; border-radius: 10px;
@@ -119,10 +122,15 @@ h1[tabindex="-1"]:focus { outline: none; }
 .pp-icon-btn:hover { background: var(--hover); color: var(--ink); }
 .pp-icon-btn-sm { width: 28px; height: 28px; border-radius: 8px; }
 .pp-theme svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
-/* theme.js draws all three icons; only the one in force shows. */
+/* theme.js draws all three icons; only the choice in force shows. */
 .pp-theme .theme-icon { display: none; }
-.pp-theme:not([data-choice]) .theme-icon-system, .pp-theme[data-choice="system"] .theme-icon-system,
-.pp-theme[data-choice="light"] .theme-icon-light, .pp-theme[data-choice="dark"] .theme-icon-dark { display: block; }
+.pp-theme:not([data-choice]) .theme-icon-system,
+.pp-theme[data-choice="system"] .theme-icon-system,
+.pp-theme[data-choice="light"] .theme-icon-light,
+.pp-theme[data-choice="dark"] .theme-icon-dark { display: block; }
+/* The drawer controls exist only on narrow screens (the media query below shows them). */
+.pp-side-close, .pp-menu-btn { display: none; }
+/* The shell moves focus to the page title for screen readers; no ring for that. */
 h1[tabindex="-1"]:focus, h2[tabindex="-1"]:focus { outline: none; }
 
 /* Narrow screens: the navigation becomes a drawer. */
@@ -210,6 +218,7 @@ a.pp-stat:hover { text-decoration: none; background: var(--hover); }
 .pp-btn-danger:hover { background: var(--danger-fill); border-color: var(--danger-edge-hover); }
 .pp-btn-quiet { background: transparent; border-color: transparent; box-shadow: none; color: var(--blue); }
 .pp-btn-quiet:hover { background: var(--hover); }
+.pp-btn[hidden] { display: none; }
 .pp-btn-sm { height: 30px; padding: 0 10px; font-size: 13px; border-radius: 8px; }
 .pp-btn-lg { height: 44px; padding: 0 20px; font-size: 15px; }
 .pp-btn .ico { width: 16px; height: 16px; }
@@ -294,6 +303,7 @@ select.pp-input { padding-right: 30px; }
 .pp-table-host { overflow-x: auto; border-radius: 14px; background: var(--raised); border: 1px solid var(--card-rule); box-shadow: 0 1px 2px var(--shadow-btn); }
 .pp-table { width: 100%; border-collapse: collapse; font-size: 14px; }
 .pp-table th { text-align: left; font-size: 12.5px; font-weight: 600; color: var(--muted); padding: 11px 14px; background: var(--inset); border-bottom: 1px solid var(--card-rule); white-space: nowrap; }
+.pp-table th.pp-num { text-align: right; }
 .pp-table td { padding: 12px 14px; border-bottom: 1px solid var(--card-rule); vertical-align: middle; color: var(--body); }
 .pp-table tr:last-child td { border-bottom: 0; }
 .pp-table-dense td { padding: 8px 14px; }

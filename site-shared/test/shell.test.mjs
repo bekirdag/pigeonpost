@@ -228,3 +228,27 @@ test("breadcrumbs hold only the group and the page (no stray text)", async (t) =
   await tick();
   assert.equal(w.document.getElementById("pp-crumbs").textContent, "AccountOverview");
 });
+
+test("api: the marketplace's nested error shape is read like the flat one; quiet probes never leave; files go up as the body", async (t) => {
+  const seen = [];
+  const { w, nav } = boot(t, { session: jwt(), fetch: (u, init) => {
+    seen.push({ u, init });
+    if (u.endsWith("/nested")) return reply(422, { error: { code: "price_not_invoiceable", message: "Pick another", details: { nearest: [1900, 2000] } } });
+    if (u.endsWith("/probe")) return reply(401, { error: "step_up_required", acr_values: "gold" });
+    if (u.endsWith("/logo")) return reply(200, { data: { ok: true } });
+    return reply(404, {});
+  } });
+  const e = await w.PP.postbox("/nested").catch((x) => x);
+  assert.equal(e.code, "price_not_invoiceable");
+  assert.equal(e.message, "Pick another");
+  assert.deepEqual([...e.body.nearest], [1900, 2000]);
+  const q = await w.PP.postbox("/probe", { quiet: true }).catch((x) => x);
+  assert.equal(q.code, "step_up_required");
+  assert.ok(!(q instanceof w.PP.Redirecting));
+  assert.equal(nav.length, 0, "a quiet call does not leave for the realm");
+  const blob = new w.Blob(["png"], { type: "image/png" });
+  await w.PP.postbox("/logo", { method: "PUT", blob, contentType: "image/png" });
+  const up = seen.at(-1);
+  assert.equal(up.init.body, blob);
+  assert.equal(up.init.headers["content-type"], "image/png");
+});
