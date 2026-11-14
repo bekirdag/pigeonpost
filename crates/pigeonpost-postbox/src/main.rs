@@ -2180,14 +2180,18 @@ async fn delete_identity(
     }
 }
 
-/// Web origins allowed to call the API from a browser: the signed-in account page on
-/// pigeonpost.dev, and the inbox app, which is a separate origin because it is a separate
-/// deployment rather than a page of the marketing site.
-const CORS_ORIGINS: [&str; 4] = [
+/// Web origins allowed to call the API from a browser: the marketing site (whose /account and
+/// /staff now redirect), the inbox app, and the four signed-in platforms (plan
+/// 2026-11-14-platform-separation): account. for a person, enterprise. for an organization,
+/// partner. for publishers and management. for Pigeonpost staff. Each is a separate deployment.
+pub(crate) const CORS_ORIGINS: [&str; 7] = [
     "https://pigeonpost.dev",
     "https://www.pigeonpost.dev",
     "https://inbox.pigeonpost.dev",
     "https://enterprise.pigeonpost.dev",
+    "https://account.pigeonpost.dev",
+    "https://partner.pigeonpost.dev",
+    "https://management.pigeonpost.dev",
 ];
 
 /// The request headers a browser may send us.
@@ -7350,6 +7354,28 @@ mod tests {
     /// for a whole release because `Access-Control-Allow-Headers` named only `authorization` and
     /// `content-type`. Nothing failed on the server — the requests were never sent. Any new
     /// `x-pigeonpost-*` header a browser must send belongs in this list *and* in this test.
+    /// The four signed-in platforms are separate origins (plan 2026-11-14-platform-separation);
+    /// a platform missing here cannot read anything from the postbox, silently.
+    #[test]
+    fn every_signed_in_platform_is_an_allowed_origin() {
+        for origin in [
+            "https://account.pigeonpost.dev",
+            "https://enterprise.pigeonpost.dev",
+            "https://partner.pigeonpost.dev",
+            "https://management.pigeonpost.dev",
+            "https://inbox.pigeonpost.dev",
+            "https://pigeonpost.dev",
+        ] {
+            assert!(
+                CORS_ORIGINS.contains(&origin),
+                "{origin} is not an allowed origin"
+            );
+        }
+        assert!(!CORS_ORIGINS
+            .iter()
+            .any(|o| o.ends_with('/') || o.starts_with("http:")));
+    }
+
     #[test]
     fn preflight_admits_every_header_a_browser_sends() {
         for name in [
