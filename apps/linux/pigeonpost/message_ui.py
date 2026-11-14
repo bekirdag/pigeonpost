@@ -15,17 +15,18 @@ add_css("""
 .pp-message:focus-within .pp-actions button { opacity: 1; }
 .pp-footer { margin-top: 2px; }
 .pp-actions button { min-height: 30px; min-width: 30px; padding: 0; border-radius: 8px; color: @pp_muted; }
-.pp-actions button:hover { color: @pp_ink; background-color: alpha(@pp_chip, 0.7); }
+.pp-actions button:hover { color: @pp_ink; background-color: @pp_hover; }
 .pp-actions button image { -gtk-icon-size: 18px; }
-.pp-tick { font-size: 11.5px; font-weight: 600; color: @pp_muted; }
-.pp-tick.pp-seen, .pp-tick.pp-working { color: @pp_green; }
+.pp-tick { font-size: 11.5px; font-weight: 600; color: @pp_tick_sent; }
+.pp-tick.pp-seen { color: @pp_tick_seen; }
+.pp-tick.pp-working { color: @pp_tick_working; }
 .pp-tick.pp-failed { color: @pp_rose; }
 @keyframes pp-spin { from { -gtk-icon-transform: rotate(0turn); } to { -gtk-icon-transform: rotate(1turn); } }
-image.pp-gear { color: @pp_green; -gtk-icon-size: 12px; animation: pp-spin 3s linear infinite; }
+image.pp-gear { color: @pp_tick_working; -gtk-icon-size: 12px; animation: pp-spin 3s linear infinite; }
 image.pp-gear.pp-still { animation: none; }
 .pp-edited { font-size: 11px; font-style: italic; color: @pp_muted; }
-.pp-quote { border-left: 3px solid alpha(@pp_accent, 0.6); padding: 2px 8px; border-radius: 4px; background-color: alpha(@pp_chip, 0.45); }
-.pp-quote .pp-quote-from { font-size: 11.5px; font-weight: 600; color: @pp_quiet; }
+.pp-quote { border-left: 3px solid @pp_accent; padding: 2px 8px; border-radius: 4px; background-color: alpha(@pp_chip, 0.6); }
+.pp-quote .pp-quote-from { font-size: 12px; font-weight: 600; color: @pp_link; }
 .pp-quote .pp-quote-text { font-size: 12.5px; color: @pp_secondary; }
 .pp-highlight { outline: 2px solid alpha(@pp_accent, 0.7); outline-offset: 2px; }
 .pp-modebar { background-color: alpha(@pp_accent, 0.08); border: 1px solid alpha(@pp_accent, 0.3); border-radius: 10px; padding: 4px 4px 4px 10px; margin-left: 16px; margin-right: 16px; }
