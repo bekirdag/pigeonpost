@@ -359,10 +359,22 @@
         const back = await PP.completeSignIn();
         window.history.replaceState(null, "", back);
       } catch (e) {
-        PP.toast(PP.explain(e), "error");
+        // A silent check that found no realm session is not an error: show the sign-in screen.
+        if (!e.silent) PP.toast(PP.explain(e), "error");
       }
     }
-    if (!PP.signedIn()) { signedOut(); return; }
+    if (!PP.signedIn()) {
+      // Sessions are per tab. Once per tab, ask the realm without a prompt: someone already signed
+      // in on any Pigeonpost platform comes straight back signed in; otherwise the realm answers
+      // login_required and the sign-in screen shows. (A signed-out tab never loops: the flag stays.)
+      if (opts.silentSignIn !== false && !PP.store.get("pp_silent_checked")) {
+        PP.store.set("pp_silent_checked", "1");
+        await PP.signIn({ prompt: "none" });
+        return;
+      }
+      signedOut();
+      return;
+    }
     frame();
     try {
       state.ctx = await opts.context();

@@ -36,8 +36,31 @@ const PAGES = (log) => [
   { key: "broken", title: "Broken", group: "Identity", render: () => { throw Object.assign(new Error("boom"), { code: "billing_unavailable" }); } },
 ];
 
+test("signed out, first visit in a tab: a silent check with the realm (prompt=none) keeping the page's query and route", async (t) => {
+  const { w, nav } = boot(t, { url: "https://account.pigeonpost.dev/?credits=c9#/wallet" });
+  await w.PP.shell.start({ platform: "account", title: "Account", context: async () => ({}), pages: PAGES([]) });
+  await tick();
+  assert.equal(nav.length, 1);
+  assert.equal(new URL(nav[0]).searchParams.get("prompt"), "none");
+  assert.equal(JSON.parse(w.localStorage.getItem("pp_pkce")).returnTo, "/?credits=c9#/wallet");
+  assert.equal(w.document.querySelector(".pp-signin-card"), null, "nothing drawn while leaving");
+});
+
+test("silent check answered login_required: the sign-in screen, no error toast, the original URL back", async (t) => {
+  const { w, nav } = boot(t, { url: "https://account.pigeonpost.dev/?error=login_required&state=s1" });
+  w.localStorage.setItem("pp_pkce", JSON.stringify({ state: "s1", verifier: "v", nonce: "n", returnTo: "/?credits=c9#/wallet", silent: true }));
+  w.sessionStorage.setItem("pp_silent_checked", "1");
+  await w.PP.shell.start({ platform: "account", title: "Account", context: async () => ({}), pages: PAGES([]) });
+  await tick();
+  assert.ok(w.document.querySelector(".pp-signin-card"));
+  assert.equal(w.document.querySelector(".toast"), null);
+  assert.equal(w.location.pathname + w.location.search + w.location.hash, "/?credits=c9#/wallet");
+  assert.equal(nav.length, 0, "no second silent round trip in this tab");
+});
+
 test("signed out: the sign-in screen offers sign-in and registration, and sign-in goes to the realm with PKCE", async (t) => {
   const { w, nav } = boot(t);
+  w.sessionStorage.setItem("pp_silent_checked", "1");
   await w.PP.shell.start({ platform: "account", title: "Account", intro: { heading: "Your Pigeonpost", points: ["Inboxes"] }, context: async () => ({}), pages: PAGES([]) });
   const doc = w.document;
   assert.equal(doc.querySelector(".pp-signin-card h1").textContent, "Your Pigeonpost");

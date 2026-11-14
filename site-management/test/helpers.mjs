@@ -35,6 +35,8 @@ function fakeSocket(w, list) {
 
 export function boot(t, { url = "https://management.pigeonpost.dev/", session = jwt(), routes = {}, setup } = {}) {
   const dom = new JSDOM("<!doctype html><html><head></head><body></body></html>", { url, runScripts: "outside-only", pretendToBeVisual: true, virtualConsole: new VirtualConsole() });
+  // The shell asks the realm silently once per tab; tests start as a tab that already did.
+  try { dom.window.sessionStorage.setItem("pp_silent_checked", "1"); } catch { /* opaque origin */ }
   t.after(() => dom.window.close());
   const w = dom.window;
   Object.defineProperty(w, "crypto", { value: webcrypto, configurable: true });

@@ -115,6 +115,7 @@
       state, verifier, nonce,
       returnTo: PP.safePath(returnTo || window.location.pathname + window.location.search + window.location.hash),
       stepUp: Boolean(acr_values),
+      silent: prompt === "none",
     }));
     const url = PP.authorizeUrl({ state, nonce, challenge: await challengeFor(verifier), acr_values, max_age, prompt, kc_action });
     PP.navigate(url);
@@ -138,8 +139,12 @@
     const params = new URLSearchParams(window.location.search);
     const pending = durable.json("pp_pkce");
     durable.del("pp_pkce");
-    window.history.replaceState({}, "", window.location.pathname);
-    if (params.get("error")) throw new Error(params.get("error_description") || "Sign-in was cancelled.");
+    // Back to where the round trip started (its query carries payment returns, its fragment the
+    // route), whether the realm answered with a code or an error.
+    window.history.replaceState({}, "", pending && pending.returnTo ? PP.safePath(pending.returnTo) : window.location.pathname);
+    if (params.get("error")) {
+      throw Object.assign(new Error(params.get("error_description") || "Sign-in was cancelled."), { code: params.get("error"), silent: Boolean(pending && pending.silent) });
+    }
     const code = params.get("code");
     if (!pending || !code || params.get("state") !== pending.state) throw new Error("This sign-in could not be verified. Start again.");
     const res = await window.fetch(`${cfg.apiBase || "/api"}/v1/auth/exchange`, {

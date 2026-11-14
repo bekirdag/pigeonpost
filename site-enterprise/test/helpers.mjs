@@ -26,6 +26,8 @@ export function load(t, page, { url = "https://enterprise.pigeonpost.dev/", fetc
   const html = read(page);
   const scripts = [...html.matchAll(/<script src="\/([^"]+)"><\/script>/g)].map((m) => m[1]);
   const dom = new JSDOM(html.replace(/<script src="[^"]+"><\/script>/g, ""), { url, runScripts: "outside-only", pretendToBeVisual: true, virtualConsole: new VirtualConsole() });
+  // The shell asks the realm silently once per tab; tests start as a tab that already did.
+  try { dom.window.sessionStorage.setItem("pp_silent_checked", "1"); } catch { /* opaque origin */ }
   t.after(() => dom.window.close());
   const { window } = dom;
   Object.defineProperty(window, "crypto", { value: webcrypto, configurable: true });

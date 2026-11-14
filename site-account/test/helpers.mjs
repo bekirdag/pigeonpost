@@ -62,6 +62,8 @@ export function boot(t, { url = "https://account.pigeonpost.dev/", session = jwt
   const html = read("index.html");
   const scripts = [...html.matchAll(/<script src="\/([^"]+)"><\/script>/g)].map((m) => m[1]);
   const dom = new JSDOM(html.replace(/<script src="[^"]+"><\/script>/g, ""), { url, runScripts: "outside-only", pretendToBeVisual: true, virtualConsole: new VirtualConsole() });
+  // The shell asks the realm silently once per tab; tests start as a tab that already did.
+  try { dom.window.sessionStorage.setItem("pp_silent_checked", "1"); } catch { /* opaque origin */ }
   t.after(() => dom.window.close());
   const w = dom.window;
   Object.defineProperty(w, "crypto", { value: webcrypto, configurable: true });
