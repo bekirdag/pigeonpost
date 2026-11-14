@@ -113,7 +113,14 @@ a:hover { text-decoration: underline; }
 }
 .pp-icon-btn:hover { background: var(--hover); color: var(--ink); }
 .pp-icon-btn-sm { width: 28px; height: 28px; border-radius: 8px; }
-.pp-theme svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.pp-theme svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; display: none; }
+/* theme.js draws all three icons; show the one in force. */
+.pp-theme:not([data-choice]) .theme-icon-system,
+.pp-theme[data-choice="system"] .theme-icon-system,
+.pp-theme[data-choice="light"] .theme-icon-light,
+.pp-theme[data-choice="dark"] .theme-icon-dark { display: block; }
+/* Headings focused by the router after navigation need no ring. */
+h1[tabindex="-1"]:focus, h2[tabindex="-1"]:focus { outline: none; }
 
 /* Narrow screens: the navigation becomes a drawer. */
 .pp-drawer-scrim { display: none; }

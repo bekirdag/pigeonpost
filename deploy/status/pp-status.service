@@ -1,0 +1,8 @@
+[Unit]
+Description=Pigeonpost status page health pass (status.pigeonpost.dev)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 %h/pp-status/pp-status.py
+Environment=PP_STATUS_OUT=/var/www/pigeonpost-status/status.json
+TimeoutStartSec=90
