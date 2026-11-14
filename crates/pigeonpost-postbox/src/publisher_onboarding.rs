@@ -617,7 +617,8 @@ pub(crate) async fn review(
  // Recheck live staff membership and conflicts in the same transaction as the decision.
  if !crate::store::marketplace::live_staff_roles_in(c,&who)?.contains(&crate::policy::StaffRole::Reviewer)||crate::store::marketplace::publisher_conflict_in(c,&who,&id)?{return Err(GErr::forbidden("staff_required","Reviewer access changed"))}
  let row:Option<(String,i64)>=c.query_row("SELECT state,revision FROM publisher_dossiers WHERE publisher_id=?1",[&id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
- let (status,revision)=row.ok_or_else(not_found)?;if revision!=req.revision{return Err(conflict())}if !matches!(status.as_str(),"submitted"|"in_review"){return Err(GErr::conflict("application_decided","Only submitted applications can be reviewed"))}
+ let (status,revision)=row.ok_or_else(not_found)?;if revision!=req.revision{return Err(conflict())}
+ if !matches!(status.as_str(),"submitted"|"in_review"){return Err(GErr::conflict("application_decided","Only submitted applications can be reviewed"))}
  if req.decision=="approved" {let d=complete_in(c,&st,&id)?;let public=json!({"name":d.public_name,"summary":d.public_summary,"website":d.website});c.execute("UPDATE publisher_dossiers SET public_profile=?2 WHERE publisher_id=?1",params![id,public.to_string()])?;}
  if matches!(req.decision.as_str(),"approved"|"rejected"){
  let n=c.execute("UPDATE publisher_profiles SET status=?2,decided_by=?3,decided_at=?4,decision_reason=?5,updated_at=?4 WHERE id=?1 AND status='applied'",params![id,req.decision,who,now_unix()as i64,reason])?;if n!=1{return Err(conflict())}

@@ -11,6 +11,7 @@ const core = read("../../site/marketplace-core.js");
 const catalogJs = read("../../site/marketplace-catalog.js");
 const publisherJs = read("../../site/marketplace-publisher.js");
 const staffJs = read("../../site/marketplace-staff.js");
+const onboardingJs = read("../../site/publisher-onboarding.js");
 const products = read("../../site/products.js");
 const creditsJs = read("../../site/credits.js");
 const accountJs = read("../../site/account.js");
@@ -40,7 +41,7 @@ function page(t, routes) {
   const dom = new JSDOM('<div id="root"></div>', { url: "https://pigeonpost.dev/account", runScripts: "outside-only", virtualConsole: new VirtualConsole() });
   t.after(() => dom.window.close());
   const { window } = dom;
-  for (const s of [core, catalogJs, publisherJs, staffJs, creditsJs, products]) window.eval(s);
+  for (const s of [core, catalogJs, onboardingJs, publisherJs, staffJs, creditsJs, products]) window.eval(s);
   const calls = [], stepUps = [];
   const pb = async (path, init = {}) => {
     const method = init.method || "GET";
@@ -414,7 +415,7 @@ test("someone with no publisher applies for themselves or for an org they run", 
   p.submit(p.$("#mp-apply"));
   await tick();
   assert.deepEqual(p.calls.find((c) => c.path === "/v1/publisher-applications").body, { display_name: "Acme", org_id: "org_1" });
-  assert.match(p.$("#mp-pub-status").textContent, /Application sent/);
+  assert.match(p.$("#mp-pub-status").textContent, /Draft created/);
 });
 
 test("a second application is explained, not guessed", async (t) => {
@@ -570,6 +571,16 @@ function staffPage(t, { gate = null, reviewers = ["acct_owner"], apps = APPS, ex
       const status = new URL(path, "https://x").searchParams.get("status");
       return { data: status === "approved" ? [{ ...APPS[0], id: "pub_1", display_name: "Acme", status: "approved" }] : apps };
     }
+    const dossier = (id, state = id === "pub_1" ? "approved" : "submitted", revision = 4) => ({ id, state, revision, kind: "company", country: "TR", details: { public_name: id === "pub_1" ? "Acme" : "Newco" }, documents: [], history: [], kyc_status: "not_started" });
+    if (path.startsWith("/v1/staff/publisher-dossiers?")) {
+      const approved = new URL(path, "https://x").searchParams.get("status") === "approved";
+      const data = approved ? [{ id: "pub_1", display_name: "Acme", state: "approved" }] : apps.map(a => ({ ...a, state: "submitted" }));
+      return { data, total: data.length, next_offset: null };
+    }
+    if (path.startsWith("/v1/staff/publisher-dossiers/")) {
+      const id = path.split("/")[4];
+      return { data: dossier(id, method === "POST" ? body.decision : undefined, method === "POST" ? body.revision + 1 : 4) };
+    }
     if (path === "/v1/staff/roles") { if (!reviewers) throw fail(403, "forbidden"); return { data: reviewers.map((a) => ({ id: "s_" + a, account_id: a, role: "reviewer" })) }; }
     if (path === "/v1/marketplace/listings") return { data: [LISTING] };
     if (path === "/v1/staff/reviews/rev_1") return { data: { id: "rev_1", status: "open", release_id: "rel_1", version: "1.0.0", release_digest: "sha256:abc", image: "img@sha256:1", sbom_digest: "sha256:s", source_digest: "sha256:src", security_state: "normal", first_party: false,
@@ -666,29 +677,34 @@ test("release quarantine and a typed revocation", async (t) => {
   assert.deepEqual(p.calls.filter((c) => c.path === "/v1/staff/releases/rel_1/security")[1].body, { action: "revoke", reason: "bad" });
 });
 
-test("applications are decided, conflicted ones are not offered, and certified publishers can be revoked", async (t) => {
+test("submitted applications require a versioned review, conflicts are excluded, and revocation is confirmed", async (t) => {
   const p = staffPage(t);
   await tick();
-  assert.ok(p.$('[data-application="pub_8"] [data-conflict]'));
-  assert.equal(p.$('[data-application="pub_8"] form'), null);
-  p.$("#mp-app-pub_9-ok").checked = true;
-  p.$("#mp-app-pub_9-reason").value = "Verified";
-  p.submit(p.$("#mp-app-pub_9"));
+  const row = id => [...p.doc.querySelectorAll(".on-table tbody tr")].find(r => r.querySelector("small").textContent === id);
+  assert.match(row("pub_8").textContent, /Conflict of interest/);
+  assert.equal(row("pub_8").querySelector("button"), null);
+  row("pub_9").querySelector("button").click();
   await tick();
-  assert.deepEqual(p.calls.find((c) => c.path === "/v1/staff/publisher-applications/pub_9/decisions").body, { decision: "approved", reason: "Verified" });
-  const filter = p.$("#mp-staff-app-filter");
+  p.$('.on-review select[aria-label="Decision"]').value = "approved";
+  p.$(".on-review textarea").value = "Verified";
+  p.submit(p.$(".on-review form"));
+  await tick();
+  assert.deepEqual(p.calls.find(c => c.path === "/v1/staff/publisher-dossiers/pub_9/review").body, { revision: 4, decision: "approved", reason: "Verified", requested_documents: [] });
+  const filter = p.$(".on-filters select");
   filter.value = "approved";
   filter.dispatchEvent(new p.window.Event("change", { bubbles: true }));
+  p.submit(p.$(".on-filters"));
   await tick();
-  p.$('button[aria-label="Revoke Acme"]').click();
-  p.$("#mp-revoke-pub_1-reason").value = "abuse";
-  p.submit(p.$("#mp-revoke-pub_1"));
+  row("pub_1").querySelector("button").click();
   await tick();
-  assert.equal(p.calls.some((c) => c.path.endsWith("/revocation")), false);
-  p.type(p.$("#mp-revoke-pub_1-confirm"), "REVOKE");
-  p.submit(p.$("#mp-revoke-pub_1"));
+  p.$('.on-review textarea[aria-label="Revocation reason"]').value = "abuse";
+  p.submit(p.$(".on-review form"));
   await tick();
-  assert.deepEqual(p.calls.find((c) => c.path === "/v1/staff/publishers/pub_1/revocation").body, { reason: "abuse" });
+  assert.equal(p.calls.some(c => c.path.endsWith("/revocation")), false);
+  p.type(p.$('.on-review input[aria-label="Type REVOKE to confirm"]'), "REVOKE");
+  p.submit(p.$(".on-review form"));
+  await tick();
+  assert.deepEqual(p.calls.find(c => c.path === "/v1/staff/publishers/pub_1/revocation").body, { reason: "abuse" });
 });
 
 test("a listing is suspended with a reason", async (t) => {
@@ -703,14 +719,19 @@ test("a listing is suspended with a reason", async (t) => {
   assert.deepEqual(p.calls.find((c) => c.path === "/v1/staff/listings/lst_a/moderation").body, { action: "suspend", reason: "reported" });
 });
 
-test("a decision refused for a stake reads as a conflict", async (t) => {
-  const p = staffPage(t, { extra: (m, path) => { if (m === "POST" && path.endsWith("/decisions")) throw fail(403, "staff_conflict"); } });
+test("a conflicted reviewer cannot record a decision", async (t) => {
+  const p = staffPage(t, { extra: (m, path) => { if (m === "POST" && path === "/v1/staff/publisher-dossiers/pub_9/review") throw fail(403, "staff_conflict"); } });
   await tick();
-  p.$("#mp-app-pub_9-no").checked = true;
-  p.$("#mp-app-pub_9-reason").value = "No";
-  p.submit(p.$("#mp-app-pub_9"));
+  const row = [...p.doc.querySelectorAll(".on-table tbody tr")].find(r => r.querySelector("small").textContent === "pub_9");
+  row.querySelector("button").click();
   await tick();
-  assert.match(p.$("#mp-staff-status").textContent, /You have a stake in this publisher/);
+  p.$('.on-review select[aria-label="Decision"]').value = "rejected";
+  p.$(".on-review textarea").value = "No";
+  p.submit(p.$(".on-review form"));
+  await tick();
+  assert.match(p.$('#mp-staff-apps p[role="status"]').textContent, /staff_conflict/);
+  assert.equal(p.calls.find(c => c.path.endsWith("/pub_9/review")).body.revision, 4);
+  assert.match(p.$(".on-review h3").textContent, /Submitted/);
 });
 
 // ---- the account page ---------------------------------------------------------------------------
@@ -755,7 +776,7 @@ async function accountPage(t, { features, nested = false, url = "https://pigeonp
     if (path.startsWith("/api/v1/credits/history")) return res({ entries: [], next_cursor: null });
     return res({ identities: [], keys: [], handles: [], subscriptions: [], invoices: [], paymentMethods: [], billingProfiles: [], data: [], packages: [] });
   };
-  for (const s of [core, catalogJs, publisherJs, staffJs, creditsJs, products]) window.eval(s);
+  for (const s of [core, catalogJs, onboardingJs, publisherJs, staffJs, creditsJs, products]) window.eval(s);
   window.eval(accountJs);
   for (let i = 0; i < 40; i++) await tick(1);
   return { window, doc: window.document, calls, navigations };
