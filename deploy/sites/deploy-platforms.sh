@@ -51,8 +51,9 @@ for p in "$@"; do
   echo "installed $p (backup site-$p-$ts.tgz)"
 done
 REMOTE
-  ssh raijin "rm -rf ~/stage-platforms && mkdir -p ~/stage-platforms"
-  rsync -az "$out/" raijin:stage-platforms/
+  # Only install.sh may read stdin (the password): keep every earlier ssh off it.
+  ssh -n raijin "rm -rf ~/stage-platforms && mkdir -p ~/stage-platforms"
+  rsync -az "$out/" raijin:stage-platforms/ </dev/null
   # stdin (the sudo password) passes through ssh to install.sh's read.
   ssh raijin "bash ~/stage-platforms/install.sh ${platforms[*]}"
 }
