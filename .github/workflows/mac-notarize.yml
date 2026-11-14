@@ -5,12 +5,17 @@ name: macOS notarization
 on:
   workflow_dispatch:
     inputs:
+      version:
+        description: "Marketing version (CFBundleShortVersionString) of the macos-<version>-N draft release."
+        required: false
+        default: "1.0"
+        type: string
       build_number:
-        description: "Build number of the macos-1.0-N draft release."
+        description: "Build number of the macos-<version>-N draft release."
         required: true
         type: string
       sha256:
-        description: "SHA-256 of the signed Pigeonpost-Desktop-1.0-N.zip archive."
+        description: "SHA-256 of the signed Pigeonpost-Desktop-<version>-N.zip archive."
         required: true
         type: string
 
@@ -27,6 +32,7 @@ jobs:
     timeout-minutes: 30
     env:
       GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ inputs.version }}
       BUILD_NUMBER: ${{ inputs.build_number }}
       EXPECTED_SHA256: ${{ inputs.sha256 }}
     steps:
@@ -34,10 +40,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]
           [[ "$BUILD_NUMBER" =~ ^[0-9]+$ ]]
           [[ "$EXPECTED_SHA256" =~ ^[0-9a-f]{64}$ ]]
-          tag="macos-1.0-$BUILD_NUMBER"
-          archive="Pigeonpost-Desktop-1.0-$BUILD_NUMBER.zip"
+          tag="macos-$VERSION-$BUILD_NUMBER"
+          archive="Pigeonpost-Desktop-$VERSION-$BUILD_NUMBER.zip"
           mkdir -p "$RUNNER_TEMP/input" "$RUNNER_TEMP/unpacked" "$RUNNER_TEMP/output"
           gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern "$archive" --dir "$RUNNER_TEMP/input"
           cd "$RUNNER_TEMP/input"
@@ -65,7 +72,7 @@ jobs:
           umask 077
           printf '%s\n' "$APPLE_KEY" > "$key"
           trap 'rm -f "$key"' EXIT
-          xcrun notarytool submit "$RUNNER_TEMP/input/Pigeonpost-Desktop-1.0-$BUILD_NUMBER.zip" \
+          xcrun notarytool submit "$RUNNER_TEMP/input/Pigeonpost-Desktop-$VERSION-$BUILD_NUMBER.zip" \
             --key "$key" --key-id "$APPLE_KEY_ID" --issuer "$APPLE_ISSUER" \
             --wait --timeout 20m --output-format json > "$RUNNER_TEMP/notarization.json"
           cat "$RUNNER_TEMP/notarization.json"
@@ -79,21 +86,21 @@ jobs:
           xcrun stapler staple "$app"
           xcrun stapler validate "$app"
           spctl --assess --type execute --verbose=2 "$app"
-          ditto -c -k --sequesterRsrc --keepParent "$app" "$RUNNER_TEMP/output/Pigeonpost-Desktop-1.0-$BUILD_NUMBER.zip"
+          ditto -c -k --sequesterRsrc --keepParent "$app" "$RUNNER_TEMP/output/Pigeonpost-Desktop-$VERSION-$BUILD_NUMBER.zip"
 
       - name: Update the draft download
         shell: bash
         run: |
           set -euo pipefail
-          gh release upload "macos-1.0-$BUILD_NUMBER" \
-            "$RUNNER_TEMP/output/Pigeonpost-Desktop-1.0-$BUILD_NUMBER.zip" \
+          gh release upload "macos-$VERSION-$BUILD_NUMBER" \
+            "$RUNNER_TEMP/output/Pigeonpost-Desktop-$VERSION-$BUILD_NUMBER.zip" \
             --repo "$GITHUB_REPOSITORY" --clobber
 
       - name: Keep the notarization report
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: pigeonpost-mac-notarization-${{ inputs.build_number }}
+          name: pigeonpost-mac-notarization-${{ inputs.version }}-${{ inputs.build_number }}
           path: ${{ runner.temp }}/notarization.json
           if-no-files-found: warn
           retention-days: 30
