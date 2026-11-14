@@ -20,7 +20,7 @@
       rows = ((await res.json()) || {}).data;
     } catch (_) { return; }
     if (!Array.isArray(rows) || !rows.length) return;
-    const open = "/account#services";
+    const open = "https://account.pigeonpost.dev/#services";
     const rank = (l) => (l.featured ? Number(l.featured_rank ?? 1e6) : 1e9);
     const sorted = rows.slice().sort((a, b) => rank(a) - rank(b) || Number(Boolean(a.coming_soon)) - Number(Boolean(b.coming_soon)));
     const soon = rows.every((l) => l.coming_soon);
