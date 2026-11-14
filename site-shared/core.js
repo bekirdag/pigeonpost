@@ -224,26 +224,41 @@
   /// Thrown after a redirect has started, so callers stop quietly.
   PP.Redirecting = class Redirecting extends Error {};
 
+  /// The postbox answers errors in two shapes: `{error: "code", detail, …}` and the marketplace
+  /// contract's `{error: {code, message, details}}`. Both become the first, so `code`, the
+  /// sentence and fields such as `nearest` or `acr_values` are read the same way.
+  PP.flatError = function (json) {
+    if (!json || typeof json !== "object" || !json.error || typeof json.error !== "object") return json;
+    const e = json.error;
+    return { ...(e.details && typeof e.details === "object" ? e.details : {}), error: e.code || null, detail: e.message || "", message: e.message || "" };
+  };
+
   /// One request. `base` is "postbox" or "bridge". A 401 refreshes once; `step_up_required`
   /// leaves for the realm and comes back to `resume`; a 401 that survives the refresh signs in.
-  PP.api = async function (base, path, { method = "GET", body, auth = true, resume, raw = false } = {}, retried = false) {
+  /// `quiet: true` (a probe that must never move the page) throws instead of leaving.
+  /// `blob` sends a file as the body itself with `contentType` (a listing logo); `body` is JSON.
+  PP.api = async function (base, path, { method = "GET", body, blob, contentType, auth = true, resume, raw = false, quiet = false } = {}, retried = false) {
     const root = base === "bridge" ? (cfg.apiBase || "/api") : cfg.postbox;
     const headers = { accept: "application/json" };
-    if (body !== undefined) headers["content-type"] = "application/json";
+    if (blob !== undefined) headers["content-type"] = contentType || blob.type || "application/octet-stream";
+    else if (body !== undefined) headers["content-type"] = "application/json";
     if (auth && PP.token()) headers.authorization = `Bearer ${PP.token()}`;
-    const res = await window.fetch(root + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+    const res = await window.fetch(root + path, { method, headers, body: blob !== undefined ? blob : body === undefined ? undefined : JSON.stringify(body) });
     if (raw && res.ok) return res;
     const text = await res.text();
     let json = null;
     try { json = text ? JSON.parse(text) : {}; } catch { json = { error: "bad_response" }; }
     if (res.ok) return json;
+    json = PP.flatError(json);
     if (res.status === 401 && auth) {
       const code = json && (json.error || json.code);
       if (code === "step_up_required") {
+        if (quiet) throw new ApiError(res.status, json);
         await PP.stepUp(PP.parseChallenge(res.headers.get("www-authenticate"), json), resume);
         throw new PP.Redirecting("step-up");
       }
-      if (!retried && (await refresh())) return PP.api(base, path, { method, body, auth, resume, raw }, true);
+      if (!retried && (await refresh())) return PP.api(base, path, { method, body, blob, contentType, auth, resume, raw, quiet }, true);
+      if (quiet) throw new ApiError(res.status, json);
       PP.signOutLocal();
       await PP.signIn({});
       throw new PP.Redirecting("sign-in");
@@ -385,6 +400,16 @@
       publisher_not_certified: "Your business needs an approved application first.",
       price_not_invoiceable: "That price cannot be invoiced exactly with tax. Pick one of the suggested prices.",
       request_timeout: "That took too long. Try again shortly.",
+      publisher_role_required: "Your publisher role doesn't cover this. Ask a publisher admin.",
+      kyc_not_configured: "The identity check isn't switched on yet. Your draft is saved.",
+      kyc_recently_started: "An identity check was started in the last hour. Finish that one, or wait before starting another.",
+      application_exists: "There is already an open or approved application for this owner.",
+      listing_address_taken: "Another listing already uses this address.",
+      review_required: "This release hasn't been approved by Pigeonpost review yet.",
+      template_exists: "That package name is taken.",
+      version_exists: "That version has already been built for this template.",
+      revision_conflict: "Your application changed in another tab or by a teammate. Reload it before continuing.",
+      application_locked: "This application is with Pigeonpost for review, so it can't be changed right now.",
     };
     return (e && e.code && known[e.code]) || (e && e.message) || "Something went wrong.";
   };

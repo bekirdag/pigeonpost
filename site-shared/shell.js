@@ -258,7 +258,7 @@
     c.replaceChildren(el("span", { class: "pp-crumb-group" }, page.group || state.opts.title),
       PP.icon("chevron", "pp-crumb-sep"),
       extra ? el("a", { href: PP.href(page.key) }, page.title) : el("span", { class: "pp-crumb-here" }, page.title),
-      extra ? [PP.icon("chevron", "pp-crumb-sep"), el("span", { class: "pp-crumb-here" }, extra)] : null);
+      ...(extra ? [PP.icon("chevron", "pp-crumb-sep"), el("span", { class: "pp-crumb-here" }, extra)] : []));
   }
   /// A detail page names itself in the breadcrumbs (e.g. the listing being edited).
   PP.shell.crumb = function (text) { if (state.current) crumbs(state.current, text); };
