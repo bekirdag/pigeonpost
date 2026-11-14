@@ -115,31 +115,31 @@ private fun Sidebar(state: InboxState, store: InboxStore, model: InboxViewModel,
     Column(modifier) {
         Row(Modifier.fillMaxWidth().height(60.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(hide, Modifier.testTag("hideSidebar")) { Icon(Icons.Outlined.ViewSidebar, "Hide conversations", tint = p.secondary) }
-            if (state.viewingArchive) ActionIcon("Back to inbox", Icons.AutoMirrored.Outlined.ArrowBack, tint = p.accent) { store.showArchive(false) }
+            if (state.viewingArchive) ActionIcon("Back to inbox", KitIcons.ChevronLeft, tint = p.accent) { store.showArchive(false) }
             Text(if (state.viewingArchive) "Archive" else "Inbox", Modifier.weight(1f).padding(start = 4.dp), style = geist(17.sp, FontWeight.SemiBold), color = p.ink)
-            ActionIcon("Search conversations", Icons.Outlined.Search) { searching = !searching; if (!searching) store.filter("") }
-            ActionIcon("New conversation", Icons.Outlined.Edit, action = newConversation)
-            if (groups.enabled) ActionIcon("New group", Icons.Outlined.GroupAdd, action = newGroup)
-            ActionIcon("Settings", Icons.Outlined.Settings, action = settings)
+            ActionIcon("Search conversations", KitIcons.Search) { searching = !searching; if (!searching) store.filter("") }
+            ActionIcon("New conversation", KitIcons.Pencil, action = newConversation)
+            if (groups.enabled) ActionIcon("New group", KitIcons.UserPlus, action = newGroup)
+            ActionIcon("Settings", KitIcons.Settings, action = settings)
         }
         Seam(Modifier.fillMaxWidth().height(1.dp))
         MailboxSwitcher(state, username, switching, { switching = !switching }) { mailbox -> switching = false; if (mailbox.address != state.acting?.address) store.switchMailbox(mailbox) }
         if (groups.enabled && "orgs" in state.features && model.organizationRooms != null) Row(Modifier.padding(horizontal = 8.dp).fillMaxWidth().clip(RoundedCornerShape(9.dp))
             .clickable(onClick = model::openOrganizationRooms).padding(horizontal = 10.dp, vertical = 12.dp).testTag("sidebar:organizationRooms"),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Icon(Icons.Outlined.Business, null, Modifier.size(18.dp), tint = p.secondary)
+            Icon(KitIcons.Building2, null, Modifier.size(18.dp), tint = p.secondary)
             Text("Organization rooms", style = geist(13.sp), color = p.secondary)
         }
         if (model.meetingNotes != null && Features.MEETING_SUMMARIES in state.features) Row(Modifier.padding(horizontal = 8.dp).fillMaxWidth().clip(RoundedCornerShape(9.dp))
             .clickable(onClickLabel = "Open meeting notes", onClick = model::openMeetingNotes).padding(horizontal = 10.dp, vertical = 12.dp).testTag("sidebar:meetingNotes"),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Icon(Icons.Outlined.Description, null, Modifier.size(18.dp), tint = p.secondary)
+            Icon(KitIcons.FileText, null, Modifier.size(18.dp), tint = p.secondary)
             Text("Meeting notes", style = geist(14.sp, FontWeight.Medium), color = p.ink)
         }
         if (model.calendar != null && "calendar" in state.features) Row(Modifier.padding(horizontal = 8.dp).fillMaxWidth().clip(RoundedCornerShape(9.dp))
             .clickable(onClickLabel = "Open calendar", onClick = model::openCalendar).padding(horizontal = 10.dp, vertical = 12.dp).testTag("sidebar:calendar"),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Icon(Icons.Outlined.CalendarMonth, null, Modifier.size(18.dp), tint = p.secondary)
+            Icon(KitIcons.CalendarDays, null, Modifier.size(18.dp), tint = p.secondary)
             Text("Calendar", style = geist(14.sp, FontWeight.Medium), color = p.ink)
         }
         // Calls, under the mailbox switcher (SDS §12.1), with the unseen-missed badge.
@@ -147,7 +147,7 @@ private fun Sidebar(state: InboxState, store: InboxStore, model: InboxViewModel,
             .clickable(onClickLabel = "Open calls") { store.showView(LeftView.CALLS) }.padding(horizontal = 10.dp, vertical = 9.dp).testTag("sidebar:calls")
             .semantics(mergeDescendants = true) { contentDescription = if (state.calls.unseen > 0) "Calls, ${state.calls.unseen} missed" else "Calls" },
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Icon(Icons.Outlined.Call, null, Modifier.size(18.dp), tint = p.secondary)
+            Icon(KitIcons.Phone, null, Modifier.size(18.dp), tint = p.secondary)
             Text("Calls", Modifier.weight(1f), style = geist(14.sp, FontWeight.Medium), color = p.ink)
             if (state.calls.unseen > 0) UnreadBadge(state.calls.unseen)
         }
@@ -171,7 +171,7 @@ private fun Sidebar(state: InboxState, store: InboxStore, model: InboxViewModel,
         Seam(Modifier.fillMaxWidth().height(1.dp))
         Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("Pigeonpost ${BuildConfig.VERSION_NAME}", Modifier.weight(1f), style = geist(12.sp), color = p.muted)
-            ActionIcon("Refresh", Icons.Outlined.Refresh, enabled = !state.loading) { store.refresh(); model.groups?.poke() }
+            ActionIcon("Refresh", KitIcons.RefreshCw, enabled = !state.loading) { store.refresh(); model.groups?.poke() }
         }
     }
 }
@@ -191,7 +191,7 @@ private fun MailboxSwitcher(state: InboxState, username: String?, open: Boolean,
             Text("MAILBOX", style = geist(10.5.sp, FontWeight.Medium).copy(letterSpacing = 0.6.sp), color = p.muted)
             Text(acting.name, style = geistMono(13.sp, FontWeight.Medium), color = p.ink, maxLines = 1, overflow = TextOverflow.MiddleEllipsis)
         }
-        if (many) Icon(Icons.Outlined.ExpandMore, null, Modifier.size(20.dp).rotate(if (open) 180f else 0f), tint = p.secondary)
+        if (many) Icon(KitIcons.ChevronDown, null, Modifier.size(20.dp).rotate(if (open) 180f else 0f), tint = p.secondary)
     }
     if (open) Column(Modifier.heightIn(max = 260.dp).verticalScroll(rememberScrollState()).padding(start = 8.dp, end = 8.dp, bottom = 10.dp)) {
         orderedMailboxes(state.mailboxes, username).forEach { mailbox ->
@@ -202,7 +202,7 @@ private fun MailboxSwitcher(state: InboxState, username: String?, open: Boolean,
                     .padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Avatar(mailbox.key, mailbox.name, 24.dp)
                     Text(mailbox.name, Modifier.weight(1f), style = geistMono(12.5.sp), color = p.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    if (current) Icon(Icons.Outlined.Check, "Selected", Modifier.size(14.dp), tint = p.accent)
+                    if (current) Icon(KitIcons.Check, "Selected", Modifier.size(14.dp), tint = p.accent)
                 }
                 CopyAddressButton(mailbox.key)
             }
@@ -225,7 +225,7 @@ private fun SubjectsColumn(state: InboxState, store: InboxStore, modifier: Modif
             }
             Box(Modifier.size(32.dp).clip(RoundedCornerShape(8.dp)).background(p.field).border(1.dp, p.strokeStrong, RoundedCornerShape(8.dp))
                 .clickable(role = Role.Button, onClickLabel = "New subject", onClick = newSubject), contentAlignment = Alignment.Center) {
-                Icon(Icons.Outlined.Add, "New subject", Modifier.size(18.dp), tint = p.ink)
+                Icon(KitIcons.Plus, "New subject", Modifier.size(18.dp), tint = p.ink)
             }
         }
         Seam(Modifier.fillMaxWidth().height(1.dp))

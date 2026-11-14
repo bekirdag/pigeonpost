@@ -99,9 +99,9 @@ fun CallsPane(state: InboxState, store: InboxStore, modifier: Modifier, phone: B
     LaunchedEffect(calls.unseen, calls.loaded) { if (calls.loaded && calls.unseen > 0) store.markCallsSeen() }
     Column(modifier.testTag("callsPane")) {
         Row(Modifier.fillMaxWidth().height(if (phone) 56.dp else 60.dp).padding(start = if (back != null) 4.dp else 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            back?.let { ActionIcon("Back to conversations", Icons.AutoMirrored.Outlined.ArrowBack, tint = p.accent, action = it) }
+            back?.let { ActionIcon("Back to conversations", KitIcons.ChevronLeft, tint = p.accent, action = it) }
             Text("Calls", Modifier.weight(1f), style = geist(if (phone) 22.sp else 17.sp, if (phone) FontWeight.Bold else FontWeight.SemiBold), color = p.ink)
-            ActionIcon("Refresh calls", Icons.Outlined.Refresh, enabled = !calls.loading) { store.loadCalls() }
+            ActionIcon("Refresh calls", KitIcons.RefreshCw, enabled = !calls.loading) { store.loadCalls() }
             ActionIcon("Clear all calls", Icons.Outlined.DeleteSweep, enabled = calls.entries.isNotEmpty()) { confirmClear = true }
         }
         SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp).testTag("callsFilter")) {
@@ -127,9 +127,9 @@ fun CallsPane(state: InboxState, store: InboxStore, modifier: Modifier, phone: B
                 Row(Modifier.fillMaxWidth().clickable(onClickLabel = if (filteredOpen) "Hide filtered calls" else "Show filtered calls") {
                     filteredOpen = !filteredOpen; if (filteredOpen && calls.filtered == null) store.loadFilteredCalls()
                 }.padding(horizontal = 16.dp, vertical = 14.dp).testTag("filteredCalls"), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Outlined.FilterAlt, null, Modifier.size(18.dp), tint = p.secondary)
+                    Icon(KitIcons.Filter, null, Modifier.size(18.dp), tint = p.secondary)
                     Text("Filtered calls" + (calls.filtered?.size?.takeIf { it > 0 }?.let { " ($it)" } ?: ""), Modifier.weight(1f).padding(start = 10.dp), style = geist(14.sp, FontWeight.Medium), color = p.secondary)
-                    Icon(if (filteredOpen) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, null, tint = p.muted)
+                    Icon(if (filteredOpen) KitIcons.ChevronUp else KitIcons.ChevronDown, null, tint = p.muted)
                 }
             }
             if (filteredOpen) {
@@ -160,15 +160,15 @@ private fun CallRow(entry: CallLogEntry, contacts: List<Contact>, phone: Boolean
         Column(Modifier.weight(1f)) {
             Text(name, style = geistMono(14.sp, FontWeight.SemiBold), color = if (entry.missed) p.blockedText else p.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(when { entry.missed -> Icons.AutoMirrored.Outlined.CallMissed; entry.incoming -> Icons.AutoMirrored.Outlined.CallReceived; else -> Icons.AutoMirrored.Outlined.CallMade },
+                Icon(when { entry.missed -> KitIcons.PhoneMissed; entry.incoming -> KitIcons.PhoneIncoming; else -> Icons.AutoMirrored.Outlined.CallMade },
                     null, Modifier.size(14.dp), tint = if (entry.missed) p.blockedText else p.muted)
                 Text(entry.summary, Modifier.padding(start = 4.dp), style = geist(12.5.sp), color = if (entry.missed) p.blockedText else p.secondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
         Text(shortTime(entry.startedAt), style = geist(11.5.sp), color = p.muted)
-        if (key != null) ActionIcon("Call $name back, $kind", if (entry.video) Icons.Outlined.Videocam else Icons.Outlined.Call, tint = p.accent) { callBack(key, entry.video) }
+        if (key != null) ActionIcon("Call $name back, $kind", if (entry.video) KitIcons.Video else KitIcons.Phone, tint = p.accent) { callBack(key, entry.video) }
         Box {
-            ActionIcon("More actions for this call", Icons.Outlined.MoreVert) { menu = true }
+            ActionIcon("More actions for this call", KitIcons.MoreVertical) { menu = true }
             DropdownMenu(menu, { menu = false }, containerColor = p.ground) {
                 DropdownMenuItem({ Text("Delete from history") }, { menu = false; store.deleteCall(entry) })
                 if (key != null) DropdownMenuItem({ Text("Block", color = p.blockedText) }, { menu = false; askBlock(BlockTarget(key, name, callId = entry.id.takeIf { entry.incoming })) })
@@ -185,9 +185,9 @@ fun FilteredEntry(count: Int, open: () -> Unit) {
     Row(Modifier.fillMaxWidth().clickable(onClickLabel = "Open filtered", onClick = open).padding(horizontal = 16.dp, vertical = 14.dp)
         .semantics { contentDescription = "Filtered, $count ${if (count == 1) "conversation" else "conversations"}" }.testTag("filteredEntry"),
         verticalAlignment = Alignment.CenterVertically) {
-        Icon(Icons.Outlined.FilterAlt, null, Modifier.size(20.dp), tint = p.secondary)
+        Icon(KitIcons.Filter, null, Modifier.size(20.dp), tint = p.secondary)
         Text("Filtered ($count)", Modifier.weight(1f).padding(start = 12.dp), style = geist(14.5.sp, FontWeight.Medium), color = p.secondary)
-        Icon(Icons.Outlined.ChevronRight, null, tint = p.muted)
+        Icon(KitIcons.ChevronRight, null, tint = p.muted)
     }
 }
 
@@ -197,7 +197,7 @@ fun FilteredPane(state: InboxState, modifier: Modifier, phone: Boolean, back: ()
     val p = Pp.colors
     Column(modifier.testTag("filteredPane")) {
         Row(Modifier.fillMaxWidth().height(if (phone) 56.dp else 60.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            ActionIcon("Back to conversations", Icons.AutoMirrored.Outlined.ArrowBack, tint = p.accent, action = back)
+            ActionIcon("Back to conversations", KitIcons.ChevronLeft, tint = p.accent, action = back)
             Text("Filtered", Modifier.weight(1f), style = geist(if (phone) 22.sp else 17.sp, FontWeight.SemiBold), color = p.ink)
         }
         Text("Messages your Privacy & filtering settings moved out of the inbox. They don’t notify you or count as unread.",

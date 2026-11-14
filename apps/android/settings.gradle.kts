@@ -13,4 +13,4 @@ dependencyResolutionManagement {
     }
 }
 rootProject.name = "Pigeonpost"
-include(":core", ":app")
+include(":core", ":pigeonpost-ui", ":app")

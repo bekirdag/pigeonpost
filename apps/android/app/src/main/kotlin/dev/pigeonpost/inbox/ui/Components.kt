@@ -54,7 +54,7 @@ fun CopyAddressButton(address: String, modifier: Modifier = Modifier) {
             android.widget.Toast.makeText(context, "Couldn’t copy the address. Select it and copy manually.", android.widget.Toast.LENGTH_LONG).show()
         }
     }, enabled = address.isNotEmpty(), modifier = modifier.size(48.dp).semantics { stateDescription = if (copied) "Copied" else "" }) {
-        Icon(if (copied) Icons.Outlined.Check else Icons.Outlined.ContentCopy, "Copy address $address", Modifier.size(18.dp), tint = Pp.colors.secondary)
+        Icon(if (copied) KitIcons.Check else KitIcons.Copy, "Copy address $address", Modifier.size(18.dp), tint = Pp.colors.secondary)
     }
 }
 
@@ -151,7 +151,7 @@ fun EmptyPane(title: String, detail: String, modifier: Modifier = Modifier) {
     Box(modifier.fillMaxSize().padding(28.dp), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Box(Modifier.size(52.dp).background(Pp.colors.tile, RoundedCornerShape(14.dp)), contentAlignment = Alignment.Center) {
-                Icon(Icons.Outlined.Forum, null, Modifier.size(26.dp), tint = Pp.colors.secondary)
+                Icon(KitIcons.MessagesSquare, null, Modifier.size(26.dp), tint = Pp.colors.secondary)
             }
             Text(title, style = geist(16.sp, FontWeight.SemiBold), color = Pp.colors.ink, textAlign = TextAlign.Center)
             Text(detail, color = Pp.colors.muted, style = geist(13.5.sp), textAlign = TextAlign.Center)
