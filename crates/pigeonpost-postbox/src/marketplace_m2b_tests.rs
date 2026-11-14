@@ -1108,6 +1108,7 @@ async fn org_webhooks_hear_publisher_and_installation_events_by_id_only() {
         .await;
     assert_eq!(s, 201, "{v}");
     let p = v["data"]["id"].as_str().unwrap().to_string();
+    crate::publisher_onboarding::tests::fixture(&srv, &p).await;
     let (s, v) = certify(&srv, &rev, &p, "approved").await;
     assert_eq!(s, 201, "{v}");
     let t = template(&srv, &boss, &p, "team-digest").await;

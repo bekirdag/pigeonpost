@@ -178,7 +178,7 @@ pub(crate) fn router() -> Router<AppState> {
         )
         .route(
             "/v1/staff/publisher-applications/{application}/decisions",
-            post(staff_certify),
+            post(crate::publisher_onboarding::review),
         )
         .route(
             "/v1/staff/publishers/{publisher}/revocation",
@@ -3600,91 +3600,6 @@ async fn staff_list_applications(
             })
             .await?;
         Ok(Json(json!({ "data": rows, "next_cursor": null })))
-    }
-    .await;
-    into_response(result)
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CertifyReq {
-    decision: String,
-    reason: String,
-}
-
-/// `POST /v1/staff/publisher-applications/{application}/decisions` — certify or reject.
-async fn staff_certify(
-    State(state): State<AppState>,
-    client_ip: Option<Extension<ClientIp>>,
-    headers: HeaderMap,
-    Path(application): Path<String>,
-    body: Result<Json<Value>, JsonRejection>,
-) -> Response {
-    let result = async {
-        let req: CertifyReq = parse(body)?;
-        if !matches!(req.decision.as_str(), "approved" | "rejected") {
-            return Err(GErr::bad("invalid_request", "decision: approved or rejected"));
-        }
-        let reason = reason_of(&req.reason)?;
-        let aid = application.clone();
-        let exists = state
-            .store
-            .group_read(move |c| -> GResult<bool> { Ok(pub_in(c, &aid)?.is_some()) })
-            .await?;
-        let (principal, account) = staff_gate(
-            &state,
-            &headers,
-            Action::NestReview,
-            &application,
-            exists.then(|| application.clone()),
-        )
-        .await?;
-        if !exists {
-            return Err(not_found());
-        }
-        let now = now_unix() as i64;
-        let audit = audit_row(
-            &state,
-            &principal,
-            &account,
-            "marketplace.publisher.decision",
-            format!("publisher:{application}"),
-            json!({ "decision": req.decision }),
-            &client_ip,
-            &headers,
-        );
-        let (v, wake_list) = state
-            .store
-            .group_tx(move |tx| -> GResult<(Value, Vec<String>)> {
-                let n = tx.execute(
-                    "UPDATE publisher_profiles SET status = ?2, decided_by = ?3, decided_at = ?4,
-                        decision_reason = ?5, updated_at = ?4 WHERE id = ?1 AND status = 'applied'",
-                    params![application, req.decision, account, now, reason],
-                )?;
-                if n == 0 {
-                    return Err(conflict_code(
-                        "application_decided",
-                        "this application is not waiting for a decision",
-                    ));
-                }
-                tx.execute(
-                    "INSERT INTO publisher_certifications (id, publisher_id, decision, reason, decided_by, created_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                    params![new_id("crt"), application, req.decision, reason, account, now],
-                )?;
-                crate::store::audit::append_in(tx, &audit)?;
-                let w = store::publisher_event_in(
-                    tx,
-                    &application,
-                    "nest.publisher.decision",
-                    &json!({ "publisher_id": application, "status": req.decision }),
-                    now as u64,
-                )?;
-                Ok((pub_in(tx, &application)?.map(|p| p.json()).unwrap_or(Value::Null), w))
-            })
-            .await?;
-        wake(&state, wake_list);
-        Ok((StatusCode::CREATED, Json(json!({ "data": v }))))
     }
     .await;
     into_response(result)

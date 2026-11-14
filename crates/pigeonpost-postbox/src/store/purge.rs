@@ -119,6 +119,10 @@ pub(crate) const TABLES: &[(&str, Rule)] = &[
             "(owner_kind = 'account' AND owner_id = ?1) OR applied_by = ?1",
         ),
     ),
+    ("publisher_dossiers", Keep("Private publisher records; publisher profile blocks empty-account purge; consented erasure removes them")),
+    ("publisher_documents", Keep("Private publisher records; publisher profile blocks empty-account purge; consented erasure removes them")),
+    ("publisher_dossier_events", Keep("Private publisher records; publisher profile blocks empty-account purge; consented erasure removes them")),
+    ("publisher_kyc_sessions", Keep("Private publisher records; publisher profile blocks empty-account purge; consented erasure removes them")),
     (
         "nest_templates",
         Keep("Catalog record of a publisher; the publisher profile blocks the purge"),
@@ -770,6 +774,16 @@ mod tests {
         ] {
             store.exec_raw(sql).await.unwrap_or_else(|e| panic!("{sql}: {e}"));
         }
+        store.group_tx(move |c| {
+        for (publisher, account) in [("pub_e", "acct_e"), ("pub_k", "acct_k")] {
+            c.execute(&format!("INSERT INTO publisher_profiles(id,owner_kind,owner_id,display_name,status,applied_by,created_at,updated_at) VALUES ('{publisher}','account','{account}','Private developer','applied','{account}',1,1)"), []).unwrap();
+            c.execute(&format!("INSERT INTO publisher_dossiers(publisher_id,sealed,updated_at) VALUES ('{publisher}',x'1234',1)"), []).unwrap();
+            c.execute(&format!("INSERT INTO publisher_documents(id,publisher_id,category,filename,mime,size,sealed,created_at,created_revision) VALUES ('doc_{publisher}','{publisher}','tax','private.pdf','application/pdf',2,x'1234',1,1)"), []).unwrap();
+            c.execute(&format!("INSERT INTO publisher_dossier_events(publisher_id,actor,event,revision,note,created_at) VALUES ('{publisher}','{account}','saved',1,x'1234',1)"), []).unwrap();
+            c.execute(&format!("INSERT INTO publisher_kyc_sessions(reference,publisher_id,identity_digest,status,created_at) VALUES ('kyc_{publisher}','{publisher}','digest','verified',1)"), []).unwrap();
+        }
+        Ok::<_, StoreError>(())
+        }).await.unwrap();
         let evidence = dir.join("evidence.json");
         let mut ev = serde_json::json!({"request_id": "del_dddddddddddddddddddddddddddddddd"});
         for k in [
@@ -805,6 +819,10 @@ mod tests {
                 .output()
                 .unwrap()
         };
+        let out = run(ev.to_string());
+        assert!(!out.status.success());
+        assert!(String::from_utf8_lossy(&out.stderr).contains("shuftipro_retention_reviewed"));
+        ev["shuftipro_retention_reviewed"] = serde_json::Value::Bool(true);
         // The person organizes an upcoming event that was never cancelled: against the real
         // schema, erasure refuses until --cancel-calendar has run (audit P2-17) ...
         let out = run(ev.to_string());
@@ -843,6 +861,29 @@ mod tests {
             n("SELECT COUNT(*) FROM avatars WHERE owner_id='/k/erase'").await,
             0
         );
+        for table in [
+            "publisher_dossiers",
+            "publisher_documents",
+            "publisher_dossier_events",
+            "publisher_kyc_sessions",
+        ] {
+            assert_eq!(
+                n(&format!(
+                    "SELECT COUNT(*) FROM {table} WHERE publisher_id='pub_e'"
+                ))
+                .await,
+                0,
+                "{table}"
+            );
+            assert_eq!(
+                n(&format!(
+                    "SELECT COUNT(*) FROM {table} WHERE publisher_id='pub_k'"
+                ))
+                .await,
+                1,
+                "{table}"
+            );
+        }
         assert!(!dir.join("blobs/avatars/cc/cc").join(&digest).exists());
         assert_eq!(n("SELECT COUNT(*) FROM events").await, 0);
         assert_eq!(n("SELECT COUNT(*) FROM event_attendees").await, 0);

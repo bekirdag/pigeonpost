@@ -688,7 +688,8 @@
         st.builtins = builtins || null;
         draw();
         if (!st.listings && !st.error && st.gen === 0) {
-          load();
+          const deepLink = returnParams.get("listing");
+          load().then(() => { if (deepLink && /^lst_[a-z0-9]+$/.test(deepLink)) openListing(deepLink); });
           if (returning) {
             if (deps.clearReturn) { deps.clearReturn("mp_purchase"); deps.clearReturn("mp_checkout"); }
             checkPurchase(returning);

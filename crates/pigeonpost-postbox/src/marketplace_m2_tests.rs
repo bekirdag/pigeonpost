@@ -54,7 +54,9 @@ pub(crate) async fn apply(srv: &Srv, who: &Person, body: Value) -> String {
         .post("/v1/publisher-applications", &who.token, body)
         .await;
     assert_eq!(s, 201, "{v}");
-    v["data"]["id"].as_str().unwrap().to_string()
+    let id = v["data"]["id"].as_str().unwrap().to_string();
+    crate::publisher_onboarding::tests::fixture(srv, &id).await;
+    id
 }
 
 pub(crate) async fn certify(
@@ -63,10 +65,24 @@ pub(crate) async fn certify(
     publisher: &str,
     decision: &str,
 ) -> (u16, Value) {
+    let pid = publisher.to_string();
+    let revision = srv
+        .state
+        .store
+        .group_read(move |c| -> Result<i64, crate::groups::GErr> {
+            Ok(c.query_row(
+                "SELECT revision FROM publisher_dossiers WHERE publisher_id=?1",
+                [pid],
+                |r| r.get(0),
+            )
+            .unwrap_or(0))
+        })
+        .await
+        .unwrap();
     srv.post(
         &format!("/v1/staff/publisher-applications/{publisher}/decisions"),
         &rev.strong,
-        json!({ "decision": decision, "reason": "synthetic check" }),
+        json!({ "decision": decision, "reason": "synthetic check", "revision":revision }),
     )
     .await
 }

@@ -113,7 +113,7 @@
     function apply(name, org) {
       const body = { display_name: name.trim() };
       if (org) body.org_id = org;
-      return act(() => post("/v1/publisher-applications", body), "Application sent. Pigeonpost reviews it and you'll see the decision here.", load);
+      return act(() => post("/v1/publisher-applications", body), "Draft created. Complete the application steps before submitting for review.", load);
     }
 
     async function openReview(id) {
@@ -142,7 +142,7 @@
         el("fieldset", {}, el("legend", { text: "Apply to publish" }),
           el("label", { for: "mp-apply-name" }, "Publisher name buyers will see"), name,
           owner ? el("label", { for: "mp-apply-owner" }, "Publish as") : null, owner,
-          el("button", { type: "submit", class: "btn btn-secondary" }, "Apply")));
+          el("button", { type: "submit", class: "btn btn-secondary" }, "Start application")));
     }
 
     function header(p) {
@@ -507,7 +507,12 @@
       const p = pub();
       root.append(header(p));
       if (p.status === "rejected") root.append(applyForm());
-      if (p.status === "applied" || p.status === "rejected") return;
+      if (p.status === "applied") {
+        const onboarding = el("div", {id:"publisher-onboarding"}); root.append(onboarding);
+        if (MP.onboarding) MP.onboarding(onboarding, deps, p);
+        return;
+      }
+      if (p.status === "rejected") return;
       const d = st.data;
       if (!d) { root.append(el("p", { class: "muted", text: "Loading…" })); return; }
       const admin = isAdmin() && p.status === "approved";

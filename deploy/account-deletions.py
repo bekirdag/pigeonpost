@@ -137,6 +137,11 @@ def erase(conn, request_id, blob_root, evidence):
         account, subject = r["account_id"], r["oidc_sub"]
         if not subject or conn.execute("SELECT id FROM accounts WHERE id=? AND oidc_sub=?", (account, subject)).fetchone() is None:
             raise ValueError("Request no longer matches account ownership")
+        if has(conn, "publisher_kyc_sessions") and conn.execute(
+                "SELECT 1 FROM publisher_kyc_sessions k JOIN publisher_profiles p ON p.id=k.publisher_id "
+                "WHERE p.owner_kind='account' AND p.owner_id=?", (account,)).fetchone():
+            if evidence.get("shuftipro_retention_reviewed") is not True:
+                raise ValueError("Review ShuftiPro deletion/retention for this publisher and record shuftipro_retention_reviewed first")
         addresses = [v[0] for v in conn.execute("SELECT address FROM identities WHERE account_id=?", (account,))]
         # Organizations own their members' org data and audit trail; offboard first (portal or
         # org API), so ownership transfer and the org's own records are decided by the org.
@@ -258,6 +263,15 @@ def erase(conn, request_id, blob_root, evidence):
             conn.execute("UPDATE staff_roles SET granted_by=? WHERE granted_by=?", ("erased_" + request_id, account))
             conn.execute("UPDATE staff_roles SET revoked_by=? WHERE revoked_by=?", ("erased_" + request_id, account))
         if has(conn, "publisher_profiles"):
+            # Remove sealed legal/bank details and evidence before anonymizing the owner.
+            for table in ("publisher_documents", "publisher_dossier_events", "publisher_kyc_sessions", "publisher_dossiers"):
+                if has(conn, table):
+                    conn.execute("DELETE FROM " + table + " WHERE publisher_id IN "
+                                 "(SELECT id FROM publisher_profiles WHERE owner_kind='account' AND owner_id=?)", (account,))
+            if has(conn, "publisher_dossier_events"):
+                conn.execute("UPDATE publisher_dossier_events SET actor=? WHERE actor=?", ("erased_" + request_id, account))
+            if has(conn, "publisher_dossiers"):
+                conn.execute("UPDATE publisher_dossiers SET reviewer=? WHERE reviewer=?", ("erased_" + request_id, account))
             conn.execute("UPDATE publisher_profiles SET status='revoked', owner_id=?, display_name='erased', updated_at=? WHERE owner_kind='account' AND owner_id=?", ("erased_" + request_id, now, account))
             conn.execute("UPDATE publisher_profiles SET applied_by=? WHERE applied_by=?", ("erased_" + request_id, account))
         # Marketplace M1: unused zero-priced quotes and authorizations go; a job keeps its states

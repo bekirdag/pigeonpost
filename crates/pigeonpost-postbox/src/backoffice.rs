@@ -357,7 +357,7 @@ async fn dashboard(State(state): State<AppState>, headers: HeaderMap) -> Respons
                         &[],
                     )?,
                     "publisher_applications": n(
-                        "SELECT COUNT(*) FROM publisher_profiles WHERE status = 'applied' AND owner_kind <> 'platform'",
+                        "SELECT COUNT(*) FROM publisher_dossiers WHERE state IN ('submitted','in_review')",
                         &[],
                     )?,
                     "hosted_jobs_failed_24h": n(

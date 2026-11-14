@@ -110,6 +110,12 @@
     // ---- applications -------------------------------------------------------------------------------
 
     function applicationsSection() {
+      const section=el("section",{id:"mp-staff-apps"});
+      if(MP.applicationReview) MP.applicationReview(section,deps);
+      return section;
+    }
+
+    function legacyApplicationsSection() {
       const s = el("section", { class: "mp-section", id: "mp-staff-apps", "aria-labelledby": "mp-staff-apps-h" },
         el("h4", { id: "mp-staff-apps-h", text: "Publisher applications" }),
         filterSelect("mp-staff-app-filter", "Show", APP_FILTERS, st.appFilter, (v) => { st.appFilter = v; load(); }));
