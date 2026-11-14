@@ -202,7 +202,7 @@ internal sealed class DesktopNotifications : IDisposable
         {
             graphics.SmoothingMode = SmoothingMode.AntiAlias;
             graphics.Clear(Color.Transparent);
-            using var background = new SolidBrush(Color.FromArgb(196, 36, 53));
+            using var background = new SolidBrush(Color.FromArgb(196, 43, 43));
             graphics.FillEllipse(background, 0, 0, 32, 32);
             var text = unread > 99 ? "99+" : unread.ToString();
             using var font = new Font("Segoe UI", text.Length > 2 ? 12 : 16, FontStyle.Bold, GraphicsUnit.Pixel);
