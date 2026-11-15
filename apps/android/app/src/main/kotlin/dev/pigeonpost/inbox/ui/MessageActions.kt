@@ -39,8 +39,8 @@ internal fun MessageReceiptMark(message: ThreadMessage, state: InboxState, meta:
             val transition = rememberInfiniteTransition(label = "agentWorking")
             transition.animateFloat(0f, 360f, infiniteRepeatable(tween(3000, easing = LinearEasing)), label = "agentGear").value
         } else 0f
-        Icon(Icons.Outlined.Settings, "Agent working on this", Modifier.size(15.dp).rotate(angle).testTag("receipt:working"), tint = p.green)
-        if (!animated) Text("Working…", style = geist(11.sp), color = p.green)
+        Icon(KitIcons.Settings, "Agent working on this", Modifier.size(15.dp).rotate(angle).testTag("receipt:working"), tint = p.tickWorking)
+        if (!animated) Text("Working…", style = geist(11.sp), color = p.tickWorking)
         return
     }
     val label = when (delivery) {
@@ -53,15 +53,15 @@ internal fun MessageReceiptMark(message: ThreadMessage, state: InboxState, meta:
         MessageDeliveryState.WORKING -> "Agent working on this"
     }
     val icon = when (delivery) {
-        MessageDeliveryState.SENDING -> Icons.Outlined.Schedule
-        MessageDeliveryState.SENT -> Icons.Outlined.Check
-        MessageDeliveryState.SEEN, MessageDeliveryState.DELIVERED -> Icons.Outlined.DoneAll
-        else -> Icons.Outlined.WarningAmber
+        MessageDeliveryState.SENDING -> KitIcons.Clock
+        MessageDeliveryState.SENT -> KitIcons.Check
+        MessageDeliveryState.SEEN, MessageDeliveryState.DELIVERED -> KitIcons.CheckCheck
+        else -> KitIcons.AlertTriangle
     }
     val tint = when (delivery) {
-        MessageDeliveryState.SEEN -> p.green
+        MessageDeliveryState.SEEN -> p.tickSeen
         MessageDeliveryState.AGENT_FAILED, MessageDeliveryState.UNCONFIRMED -> p.blockedText
-        else -> meta
+        else -> p.tickSent
     }
     Icon(icon, label, Modifier.size(15.dp).testTag("receipt:" + delivery.name.lowercase()), tint = tint)
 }
@@ -95,14 +95,14 @@ internal fun MessageComposerContext(state: InboxState, store: InboxStore) {
                 Text(mode.quote, style = geist(12.sp), color = p.secondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             IconButton({ store.cancelMessageAction() }, enabled = !state.isSending && unconfirmed == null, modifier = Modifier.size(36.dp)) {
-                Icon(Icons.Outlined.Close, if (mode.editing) "Cancel edit" else "Cancel reply", Modifier.size(16.dp), tint = p.secondary)
+                Icon(KitIcons.X, if (mode.editing) "Cancel edit" else "Cancel reply", Modifier.size(16.dp), tint = p.secondary)
             }
         }
     }
     if (unconfirmed != null) Row(Modifier.fillMaxWidth().padding(start = 14.dp, end = 4.dp).testTag("unconfirmedSend"), verticalAlignment = Alignment.CenterVertically) {
         Text("Delivery unconfirmed", Modifier.weight(1f), style = geist(12.sp), color = p.blockedText)
         TextButton({ store.retrySend(unconfirmed) }, enabled = store.canRetrySend(unconfirmed)) { Text("Retry") }
-        IconButton({ stop = true }, Modifier.size(36.dp)) { Icon(Icons.Outlined.Close, "Stop retrying", Modifier.size(16.dp), tint = p.secondary) }
+        IconButton({ stop = true }, Modifier.size(36.dp)) { Icon(KitIcons.X, "Stop retrying", Modifier.size(16.dp), tint = p.secondary) }
     }
     if (!state.isSending && unconfirmed == null) store.messageComposerProblem()?.let {
         Text(it, Modifier.padding(horizontal = 14.dp, vertical = 6.dp), color = p.blockedText, style = geist(12.sp))

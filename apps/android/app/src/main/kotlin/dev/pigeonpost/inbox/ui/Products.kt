@@ -129,7 +129,7 @@ private fun NestsTab(store: NestStore, state: NestState, openLink: (String) -> U
         "You pay for more than one Nest package. Only one is used; cancel the other where you bought it to stop paying twice.",
         color = MaterialTheme.colorScheme.error)
     snapshot?.setups.orEmpty().forEach { setup ->
-        Card(Modifier.fillMaxWidth()) {
+        dev.pigeonpost.design.PPCard(Modifier.fillMaxWidth(), padding = 0.dp) {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("Paid · ${setup.label} is being set up", fontWeight = FontWeight.Medium)
                 Text(if (setup.status == "failed") "Setup did not finish. Your payment is safe." else "This usually takes seconds.", style = MaterialTheme.typography.bodySmall)
@@ -195,7 +195,7 @@ private fun PackageCard(store: NestStore, state: NestState, pkg: NestPackage) {
     val price = state.priceFor(pkg)
     val current = state.funding?.`package` == pkg.code
     val elsewhere = state.funding != null && state.funding?.source !in setOf("google", "grant", "test")
-    Card(Modifier.fillMaxWidth().testTag("package-${pkg.code}")) {
+    dev.pigeonpost.design.PPCard(Modifier.fillMaxWidth().testTag("package-${pkg.code}"), padding = 0.dp) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(pkg.name, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
@@ -277,7 +277,7 @@ private fun NestDetailPage(store: NestStore, state: NestState, detail: NestDetai
 /** One approval card: exactly what will happen, shown before anything happens. */
 @Composable
 private fun ApprovalCard(store: NestStore, state: NestState, card: NestApproval) {
-    Card(Modifier.fillMaxWidth().testTag("approval-${card.approvalId}")) {
+    dev.pigeonpost.design.PPCard(Modifier.fillMaxWidth().testTag("approval-${card.approvalId}"), padding = 0.dp) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(if (card.tool == "send_message") "Send a message to ${card.to.orEmpty()}" else card.tool, fontWeight = FontWeight.Medium)
             card.body?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }

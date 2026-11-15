@@ -26,10 +26,10 @@ internal fun GroupReceiptMark(item: HistoryItem, groups: GroupsState, shareReads
     val receipts = groups.receipts[groups.open]?.let { if (shareReads) it else it.copy(readReceipts = false) }
     val state = if (item.pending && item.sendFailed) "unconfirmed" else GroupActions.receipt(item, receipts)
     val icon = when (state) {
-        "sending" -> Icons.Outlined.Schedule
-        "unconfirmed" -> Icons.Outlined.WarningAmber
-        "seen", "delivered" -> Icons.Outlined.DoneAll
-        else -> Icons.Outlined.Check
+        "sending" -> KitIcons.Clock
+        "unconfirmed" -> KitIcons.AlertTriangle
+        "seen", "delivered" -> KitIcons.CheckCheck
+        else -> KitIcons.Check
     }
     val label = when (state) {
         "sending" -> "Sending"
@@ -52,13 +52,13 @@ internal fun GroupComposerContext(gid: String, groups: GroupsState, store: Group
     val pending = groups.history[gid].orEmpty().firstOrNull { it.kind == "message" && it.pending }
     var stop by remember(groups.contextId, gid, pending?.cmid) { mutableStateOf(false) }
     if (mode != null) Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 8.dp).testTag("groupComposerMode"), verticalAlignment = Alignment.CenterVertically) {
-        Icon(if (mode.kind == GroupComposerKind.EDIT) Icons.Outlined.Edit else Icons.Outlined.Reply, null, Modifier.size(18.dp), tint = p.accent)
+        Icon(if (mode.kind == GroupComposerKind.EDIT) KitIcons.Pencil else KitIcons.Reply, null, Modifier.size(18.dp), tint = p.accent)
         Column(Modifier.weight(1f).padding(horizontal = 8.dp)) {
             Text(if (mode.kind == GroupComposerKind.EDIT) "Editing message" else "Replying to ${name(mode.sender)}", style = geist(12.5.sp, FontWeight.SemiBold), color = p.accent)
             Text(mode.excerpt, style = geist(12.sp), color = p.secondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         IconButton({ store.cancelAction(gid) }, enabled = !groups.sending && pending == null, modifier = Modifier.size(36.dp)) {
-            Icon(Icons.Outlined.Close, if (mode.kind == GroupComposerKind.EDIT) "Cancel edit" else "Cancel reply", Modifier.size(18.dp), tint = p.secondary)
+            Icon(KitIcons.X, if (mode.kind == GroupComposerKind.EDIT) "Cancel edit" else "Cancel reply", Modifier.size(18.dp), tint = p.secondary)
         }
     }
     if (pending != null && !groups.sending) Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp).testTag("groupUnconfirmedSend")) {

@@ -36,9 +36,9 @@ fun PageDialog(title: String, dismiss: () -> Unit, back: (() -> Unit)? = null, d
             color = Pp.colors.ground, border = androidx.compose.foundation.BorderStroke(1.dp, Pp.colors.stroke)) {
             Column {
                 Row(Modifier.fillMaxWidth().padding(start = 24.dp, end = 8.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    if (back != null) ActionIcon("Back", Icons.AutoMirrored.Outlined.ArrowBack, enabled = dismissEnabled, tint = Pp.colors.accent, action = back)
-                    Text(title, Modifier.weight(1f).padding(start = if (back != null) 4.dp else 0.dp), style = geist(19.sp, FontWeight.SemiBold), color = Pp.colors.ink)
-                    ActionIcon("Close $title", Icons.Outlined.Close, enabled = dismissEnabled, action = dismiss)
+                    if (back != null) ActionIcon("Back", KitIcons.ChevronLeft, enabled = dismissEnabled, tint = Pp.colors.accent, action = back)
+                    Text(title, Modifier.weight(1f).padding(start = if (back != null) 4.dp else 0.dp), style = dev.pigeonpost.design.PP.type.h3, color = Pp.colors.ink)
+                    ActionIcon("Close $title", KitIcons.X, enabled = dismissEnabled, action = dismiss)
                 }
                 key(title) {
                     Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp), content = content)
@@ -61,7 +61,7 @@ fun MailboxDialog(state: InboxState, select: (Mailbox) -> Unit, dismiss: () -> U
                 colors = ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent),
                 trailingContent = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (mailbox.address == state.acting?.address) Icon(Icons.Outlined.Check, "Selected", Modifier.size(18.dp), tint = Pp.colors.accent)
+                        if (mailbox.address == state.acting?.address) Icon(KitIcons.Check, "Selected", Modifier.size(18.dp), tint = Pp.colors.accent)
                         CopyAddressButton(mailbox.key)
                     }
                 }, modifier = Modifier.testTag("mailbox:" + mailbox.address).semantics { selected = mailbox.address == state.acting?.address }.clickable { select(mailbox) })
@@ -106,11 +106,11 @@ private enum class SettingsPage(val title: String) {
 @Composable
 private fun SettingsRow(title: String, detail: String, icon: ImageVector, click: () -> Unit) {
     val p = Pp.colors
-    Surface(shape = MaterialTheme.shapes.medium, color = p.wash, border = androidx.compose.foundation.BorderStroke(1.dp, p.stroke)) {
+    Surface(shape = MaterialTheme.shapes.large, color = p.ground, border = androidx.compose.foundation.BorderStroke(1.dp, p.stroke)) {
         ListItem(headlineContent = { Text(title, style = geist(15.sp, FontWeight.Medium), color = p.ink) },
             supportingContent = { Text(detail, style = geist(13.sp), color = p.secondary) },
-            leadingContent = { Box(Modifier.size(34.dp).background(p.tile, MaterialTheme.shapes.small), contentAlignment = Alignment.Center) { Icon(icon, null, Modifier.size(19.dp), tint = p.accent) } },
-            trailingContent = { Icon(Icons.Outlined.ChevronRight, null, tint = p.muted) },
+            leadingContent = { Box(Modifier.size(34.dp).background(dev.pigeonpost.design.PP.colors.accentSubtle, MaterialTheme.shapes.small), contentAlignment = Alignment.Center) { Icon(icon, null, Modifier.size(19.dp), tint = p.link) } },
+            trailingContent = { Icon(KitIcons.ChevronRight, null, tint = p.muted) },
             colors = ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent),
             modifier = Modifier.fillMaxWidth().clickable(onClick = click))
     }
@@ -141,25 +141,25 @@ fun SettingsDialog(state: InboxState, session: SessionState, fixtures: Boolean, 
     PageDialog(page.title, dismiss, back = back) {
         when (page) {
             SettingsPage.ROOT -> {
-                SettingsRow("Account", session.username ?: "Your profile and devices", Icons.Outlined.AccountCircle) { navigate(SettingsPage.ACCOUNT) }
-                SettingsRow("Scan for login", "Sign in on another device", Icons.Outlined.QrCodeScanner, scan)
-                if (state.has("orgs") && model?.deviceApproval != null) SettingsRow("Sign in a machine", "Review an agent's terminal code", Icons.Outlined.Computer) { dismiss(); model.openDeviceApproval() }
-                if (state.has("orgs") && state.has("groups") && model?.organizationRooms != null) SettingsRow("Organization rooms", "Your team's encrypted conversations", Icons.Outlined.Business) { dismiss(); model.openOrganizationRooms() }
-                if (state.has(Features.MEETING_SUMMARIES) && model?.meetingNotes != null) SettingsRow("Meeting notes", "Summaries and transcripts of calls you agreed to", Icons.Outlined.Description) { dismiss(); model.openMeetingNotes() }
+                SettingsRow("Account", session.username ?: "Your profile and devices", KitIcons.User) { navigate(SettingsPage.ACCOUNT) }
+                SettingsRow("Scan for login", "Sign in on another device", KitIcons.QrCode, scan)
+                if (state.has("orgs") && model?.deviceApproval != null) SettingsRow("Sign in a machine", "Review an agent's terminal code", KitIcons.Laptop) { dismiss(); model.openDeviceApproval() }
+                if (state.has("orgs") && state.has("groups") && model?.organizationRooms != null) SettingsRow("Organization rooms", "Your team's encrypted conversations", KitIcons.Building2) { dismiss(); model.openOrganizationRooms() }
+                if (state.has(Features.MEETING_SUMMARIES) && model?.meetingNotes != null) SettingsRow("Meeting notes", "Summaries and transcripts of calls you agreed to", KitIcons.FileText) { dismiss(); model.openMeetingNotes() }
                 if (state.has(dev.pigeonpost.core.nests.NestRules.FEATURE) && model?.nests != null)
-                    SettingsRow("Products", "Inboxes, Nests and Services", Icons.Outlined.Storefront) { dismiss(); model.openProducts() }
-                SettingsRow("Handles", "Your names and subscriptions", Icons.Outlined.AlternateEmail) { navigate(SettingsPage.HANDLES) }
-                SettingsRow("Inbox and storage", "Storage and archived conversations", Icons.Outlined.Inbox) { navigate(SettingsPage.INBOX) }
-                if (state.has(Features.AVATARS) && model != null) SettingsRow("Profile picture", "Your face instead of initials", Icons.Outlined.Face) { navigate(SettingsPage.PROFILE) }
-                SettingsRow("Contacts and permissions", "Senders you know and trust", Icons.Outlined.PeopleOutline, contacts)
-                if (state.has(Features.PHONE_NUMBERS) && model?.people != null) SettingsRow("Phone number", "Verify your number and choose who can find you", Icons.Outlined.Phone) { navigate(SettingsPage.PHONE) }
-                if (state.has(Features.CONTACT_DISCOVERY) && model?.people != null) SettingsRow("Find people I know", "Check contacts with your permission", Icons.Outlined.PeopleOutline) { navigate(SettingsPage.FIND_PEOPLE) }
-                if (state.has(Features.DISPLAY_NAMES) && model?.people != null) SettingsRow("Display name", "A free name for this inbox", Icons.Outlined.AccountCircle) { navigate(SettingsPage.DISPLAY_NAME) }
+                    SettingsRow("Products", "Inboxes, Nests and Services", KitIcons.Store) { dismiss(); model.openProducts() }
+                SettingsRow("Handles", "Your names and subscriptions", KitIcons.AtSign) { navigate(SettingsPage.HANDLES) }
+                SettingsRow("Inbox and storage", "Storage and archived conversations", KitIcons.Inbox) { navigate(SettingsPage.INBOX) }
+                if (state.has(Features.AVATARS) && model != null) SettingsRow("Profile picture", "Your face instead of initials", KitIcons.Smile) { navigate(SettingsPage.PROFILE) }
+                SettingsRow("Contacts and permissions", "Senders you know and trust", KitIcons.Users, contacts)
+                if (state.has(Features.PHONE_NUMBERS) && model?.people != null) SettingsRow("Phone number", "Verify your number and choose who can find you", KitIcons.Phone) { navigate(SettingsPage.PHONE) }
+                if (state.has(Features.CONTACT_DISCOVERY) && model?.people != null) SettingsRow("Find people I know", "Check contacts with your permission", KitIcons.Users) { navigate(SettingsPage.FIND_PEOPLE) }
+                if (state.has(Features.DISPLAY_NAMES) && model?.people != null) SettingsRow("Display name", "A free name for this inbox", KitIcons.User) { navigate(SettingsPage.DISPLAY_NAME) }
                 if (state.has(Features.CALL_ADMISSION) || state.has(Features.MESSAGE_FILTERING) || state.has(Features.CALL_HISTORY) || state.has(Features.RECEIPTS))
-                    SettingsRow("Privacy & filtering", "Read receipts, strangers, calls and blocking", Icons.Outlined.Shield) { navigate(SettingsPage.PRIVACY) }
+                    SettingsRow("Privacy & filtering", "Read receipts, strangers, calls and blocking", KitIcons.Shield) { navigate(SettingsPage.PRIVACY) }
                 else SettingsRow("Blocked", "People and namespaces you blocked", Icons.Outlined.Block) { navigate(SettingsPage.BLOCKED) }
-                if (groups.enabled && model?.groups != null) SettingsRow("Group encryption", "This device’s keys and fingerprint", Icons.Outlined.Lock) { navigate(SettingsPage.GROUPS) }
-                SettingsRow("Help and about", "Support, privacy and app information", Icons.Outlined.HelpOutline) { navigate(SettingsPage.HELP) }
+                if (groups.enabled && model?.groups != null) SettingsRow("Group encryption", "This device’s keys and fingerprint", KitIcons.Lock) { navigate(SettingsPage.GROUPS) }
+                SettingsRow("Help and about", "Support, privacy and app information", KitIcons.HelpCircle) { navigate(SettingsPage.HELP) }
                 AppearancePicker(appearance, chooseAppearance)
             }
             SettingsPage.ACCOUNT -> {
@@ -174,7 +174,7 @@ fun SettingsDialog(state: InboxState, session: SessionState, fixtures: Boolean, 
             SettingsPage.HANDLES -> {
                 if (paidHandles != null) SettingsRow("Get a handle", "Register a name or restore purchases", Icons.Outlined.AddCircleOutline) { navigate(SettingsPage.PURCHASES) }
                 if (paidHandles != null) SettingsRow("Google Play subscriptions", "Renewals and subscription settings", Icons.Outlined.Subscriptions) { navigate(SettingsPage.SUBSCRIPTIONS) }
-                SettingsRow("Tester registration", "Complimentary names for approved testers", Icons.Outlined.CardGiftcard) { navigate(SettingsPage.PREVIEW) }
+                SettingsRow("Tester registration", "Complimentary names for approved testers", KitIcons.Gift) { navigate(SettingsPage.PREVIEW) }
         accountHandles?.let { owned ->
             val holdings by owned.state.collectAsStateWithLifecycle()
             LaunchedEffect(owned) { owned.refresh() }
@@ -221,7 +221,7 @@ fun SettingsDialog(state: InboxState, session: SessionState, fixtures: Boolean, 
                     LinearProgressIndicator(progress = { quota.fraction }, modifier = Modifier.fillMaxWidth(), color = if (quota.warning) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
                     Text("${bytes(quota.usedBytes)} of ${bytes(quota.limitBytes)} · ${quota.tier}", style = MaterialTheme.typography.bodyMedium)
                 } ?: Text("Storage information is unavailable.")
-                SettingsRow("Archived conversations", "Saved conversations, out of the way", Icons.Outlined.Archive, archive)
+                SettingsRow("Archived conversations", "Saved conversations, out of the way", KitIcons.Archive, archive)
                 HorizontalDivider()
                 Text("Notifications", style = MaterialTheme.typography.titleMedium)
                 Text("Get notified about new messages in your selected inbox, even when Pigeonpost is closed. Allow notifications in Android settings.", style = MaterialTheme.typography.bodyMedium)
@@ -385,8 +385,8 @@ fun AppearancePicker(choice: AppearanceChoice, choose: (AppearanceChoice) -> Uni
         SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().testTag("appearance-picker")) {
             AppearanceChoice.entries.forEachIndexed { index, option ->
                 SegmentedButton(choice == option, { choose(option) }, SegmentedButtonDefaults.itemShape(index, AppearanceChoice.entries.size),
-                    colors = SegmentedButtonDefaults.colors(activeContainerColor = p.chip, activeContentColor = p.ink, inactiveContainerColor = p.wash,
-                        inactiveContentColor = p.secondary, activeBorderColor = p.strokeStrong, inactiveBorderColor = p.strokeStrong),
+                    colors = SegmentedButtonDefaults.colors(activeContainerColor = p.selected, activeContentColor = p.ink, inactiveContainerColor = p.ground,
+                        inactiveContentColor = p.secondary, activeBorderColor = p.stroke, inactiveBorderColor = p.stroke),
                     icon = {}) { Text(option.label, style = geist(14.sp, FontWeight.Medium)) }
             }
         }

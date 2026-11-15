@@ -5,12 +5,15 @@ import android.app.Activity
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import dev.pigeonpost.design.PP
+import dev.pigeonpost.design.PPRadius
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -166,7 +169,7 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
                 state.selectedPeer != null || groups.open != null -> p.wash
                 else -> p.sidebar
             }
-            Scaffold(snackbarHost = { SnackbarHost(snackbar) { Snackbar(it, containerColor = p.toastFill, contentColor = androidx.compose.ui.graphics.Color.White) } },
+            Scaffold(snackbarHost = { SnackbarHost(snackbar) { Snackbar(it, containerColor = p.toastFill, contentColor = p.onToast) } },
                 contentWindowInsets = WindowInsets.safeDrawing, containerColor = ground) { padding ->
                 Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)
                     .padding(top = if (callMode == CallHost.Mode.MINI) 64.dp else 0.dp).imePadding()) {
@@ -260,13 +263,13 @@ private fun SignIn(state: SessionState, signIn: (String?, Boolean) -> Unit, open
     Box(Modifier.fillMaxSize().background(p.app), contentAlignment = Alignment.Center) {
         Column(Modifier.widthIn(max = 420.dp).verticalScroll(rememberScrollState()).padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Image(painterResource(R.drawable.ic_pigeonpost), "Pigeonpost", Modifier.size(96.dp).clip(RoundedCornerShape(22.dp)))
-            Text("Pigeonpost", style = geist(30.sp, FontWeight.Bold), color = p.ink)
-            Text("A direct line to your agents.", style = geist(16.sp), color = p.secondary)
+            Text("Pigeonpost", style = PP.type.h1, color = p.brand)
+            Text("A direct line to your agents.", style = PP.type.bodyL, color = p.secondary)
             Spacer(Modifier.height(18.dp))
-            Button({ signIn(null, false) }, Modifier.fillMaxWidth().height(48.dp), enabled = !state.busy, shape = RoundedCornerShape(12.dp)) { Text("Sign in", style = geist(15.sp, FontWeight.SemiBold)) }
+            Button({ signIn(null, false) }, Modifier.fillMaxWidth().height(48.dp), enabled = !state.busy, shape = RoundedCornerShape(PPRadius.l)) { Text("Sign in", style = geist(15.sp, FontWeight.SemiBold)) }
             listOf("google" to "Continue with Google", "github" to "Continue with GitHub", "apple" to "Continue with Apple").forEach { (provider, label) ->
-                OutlinedButton({ signIn(provider, false) }, Modifier.fillMaxWidth().height(48.dp), enabled = !state.busy, shape = RoundedCornerShape(12.dp),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, p.strokeStrong),
+                OutlinedButton({ signIn(provider, false) }, Modifier.fillMaxWidth().height(48.dp), enabled = !state.busy, shape = RoundedCornerShape(PPRadius.l),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, p.stroke),
                     colors = ButtonDefaults.outlinedButtonColors(containerColor = p.ground, contentColor = p.ink)) { Text(label, style = geist(15.sp, FontWeight.Medium)) }
             }
             TextButton({ signIn(null, true) }, enabled = !state.busy) { Text("Use a different account") }
@@ -288,10 +291,10 @@ private fun FirstInbox(state: InboxState, store: InboxStore, signOut: () -> Unit
     Column(Modifier.fillMaxSize().background(p.app).padding(28.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
         Image(painterResource(R.drawable.ic_pigeonpost), null, Modifier.size(88.dp).clip(RoundedCornerShape(20.dp)))
         Spacer(Modifier.height(16.dp))
-        Text(if (state.accountLoaded) "Your first inbox" else "Couldn’t open your inboxes", style = geist(22.sp, FontWeight.SemiBold), color = p.ink)
+        Text(if (state.accountLoaded) "Your first inbox" else "Couldn’t open your inboxes", style = PP.type.h2, color = p.ink)
         Text(if (state.accountLoaded) "Create an inbox to start a conversation with your agents." else "Check your connection and try again.",
             Modifier.padding(vertical = 16.dp), color = p.secondary, style = geist(15.sp), textAlign = TextAlign.Center)
-        Button({ if (state.accountLoaded) store.createFirstInbox() else store.loadAccount() }, enabled = !state.creating && !state.accountLoading, shape = RoundedCornerShape(12.dp)) {
+        Button({ if (state.accountLoaded) store.createFirstInbox() else store.loadAccount() }, enabled = !state.creating && !state.accountLoading, shape = RoundedCornerShape(PPRadius.l)) {
             Text(if (state.creating) "Creating…" else if (state.accountLoaded) "Create inbox" else "Try again")
         }
         TextButton(signOut) { Text("Sign out", color = p.secondary) }
@@ -306,9 +309,9 @@ fun SearchField(value: String, change: (String) -> Unit, placeholder: String, mo
     BasicTextField(value, change, modifier.semantics { contentDescription = placeholder }, singleLine = true,
         textStyle = geist(14.5.sp, color = p.ink), cursorBrush = SolidColor(p.accent),
         decorationBox = { inner ->
-            Row(Modifier.fillMaxWidth().height(40.dp).background(p.field, RoundedCornerShape(10.dp)).padding(horizontal = 12.dp),
+            Row(Modifier.fillMaxWidth().height(40.dp).background(p.field, RoundedCornerShape(PPRadius.full)).border(1.dp, p.rule, RoundedCornerShape(PPRadius.full)).padding(horizontal = 12.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Icon(Icons.Outlined.Search, null, Modifier.size(18.dp), tint = p.muted)
+                Icon(KitIcons.Search, null, Modifier.size(18.dp), tint = p.muted)
                 Box(Modifier.weight(1f)) {
                     if (value.isEmpty()) Text(placeholder, style = geist(14.5.sp), color = p.muted, maxLines = 1)
                     inner()
@@ -340,12 +343,12 @@ private fun PhoneHome(state: InboxState, store: InboxStore, model: InboxViewMode
         }
         val hasCalendar = model.calendar != null && "calendar" in state.features
         if (state.has(Features.CALL_HISTORY) || hasCalendar) NavigationBar(containerColor = p.sidebar, tonalElevation = 0.dp, modifier = Modifier.height(64.dp)) {
-            NavigationBarItem(state.leftView == LeftView.INBOX || state.leftView == LeftView.FILTERED, { store.showView(LeftView.INBOX) }, { Icon(Icons.Outlined.Forum, null) },
+            NavigationBarItem(state.leftView == LeftView.INBOX || state.leftView == LeftView.FILTERED, { store.showView(LeftView.INBOX) }, { Icon(KitIcons.MessagesSquare, null) },
                 label = { Text("Conversations") }, modifier = Modifier.testTag("tab:conversations"))
             if (state.has(Features.CALL_HISTORY)) NavigationBarItem(state.leftView == LeftView.CALLS, { store.showView(LeftView.CALLS) }, {
-                BadgedBox(badge = { if (state.calls.unseen > 0) Badge { Text(if (state.calls.unseen > 99) "99+" else state.calls.unseen.toString()) } }) { Icon(Icons.Outlined.Call, null) }
+                BadgedBox(badge = { if (state.calls.unseen > 0) Badge { Text(if (state.calls.unseen > 99) "99+" else state.calls.unseen.toString()) } }) { Icon(KitIcons.Phone, null) }
             }, label = { Text("Calls") }, modifier = Modifier.testTag("tab:calls").semantics { contentDescription = if (state.calls.unseen > 0) "Calls, ${state.calls.unseen} missed" else "Calls" })
-            if (hasCalendar) NavigationBarItem(state.leftView == LeftView.CALENDAR, model::openCalendar, { Icon(Icons.Outlined.CalendarMonth, null) },
+            if (hasCalendar) NavigationBarItem(state.leftView == LeftView.CALENDAR, model::openCalendar, { Icon(KitIcons.CalendarDays, null) },
                 label = { Text("Calendar") }, modifier = Modifier.testTag("tab:calendar"))
         }
     }
@@ -359,29 +362,29 @@ private fun InboxList(state: InboxState, store: InboxStore, model: InboxViewMode
     var invitesOpen by rememberSaveable { mutableStateOf(true) }
     Column(modifier) {
         Row(Modifier.fillMaxWidth().padding(start = 8.dp, end = 4.dp, top = 6.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (state.viewingArchive) ActionIcon("Back to inbox", Icons.AutoMirrored.Outlined.ArrowBack, tint = p.accent) { store.showArchive(false) }
+            if (state.viewingArchive) ActionIcon("Back to inbox", KitIcons.ChevronLeft, tint = p.accent) { store.showArchive(false) }
             Row(Modifier.weight(1f).clip(RoundedCornerShape(10.dp)).clickable(onClick = mailbox).padding(horizontal = 8.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 state.acting?.let { Avatar(it.key, it.name, 30.dp) }
                 Column(Modifier.weight(1f, fill = false)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(if (state.viewingArchive) "Archive" else "Inbox", style = geist(22.sp, FontWeight.Bold), color = p.ink)
-                        Icon(Icons.Outlined.ExpandMore, null, Modifier.padding(start = 2.dp).size(20.dp), tint = p.secondary)
+                        Text(if (state.viewingArchive) "Archive" else "Inbox", style = PP.type.h2, color = p.ink)
+                        Icon(KitIcons.ChevronDown, null, Modifier.padding(start = 2.dp).size(20.dp), tint = p.secondary)
                     }
                     state.acting?.let { Text(it.name, style = geistMono(12.sp), color = p.muted, maxLines = 1, overflow = TextOverflow.MiddleEllipsis) }
                 }
             }
             // New group sits in the compose menu on a phone (SDS §4.2), when groups are on.
             if (groups.enabled) Box {
-                ActionIcon("New conversation", Icons.Outlined.Edit) { compose = true }
+                ActionIcon("New conversation", KitIcons.Pencil) { compose = true }
                 DropdownMenu(compose, { compose = false }, containerColor = p.ground) {
-                    DropdownMenuItem({ Text("New conversation") }, { compose = false; new() }, leadingIcon = { Icon(Icons.Outlined.Edit, null) })
-                    DropdownMenuItem({ Text("New group") }, { compose = false; newGroup() }, leadingIcon = { Icon(Icons.Outlined.GroupAdd, null) }, modifier = Modifier.testTag("menu:newGroup"))
+                    DropdownMenuItem({ Text("New conversation") }, { compose = false; new() }, leadingIcon = { Icon(KitIcons.Pencil, null) })
+                    DropdownMenuItem({ Text("New group") }, { compose = false; newGroup() }, leadingIcon = { Icon(KitIcons.UserPlus, null) }, modifier = Modifier.testTag("menu:newGroup"))
                     if (state.has("orgs") && model.organizationRooms != null) DropdownMenuItem({ Text("Organization rooms") }, { compose = false; model.openOrganizationRooms() },
-                        leadingIcon = { Icon(Icons.Outlined.Business, null) }, modifier = Modifier.testTag("menu:organizationRooms"))
+                        leadingIcon = { Icon(KitIcons.Building2, null) }, modifier = Modifier.testTag("menu:organizationRooms"))
                 }
-            } else ActionIcon("New conversation", Icons.Outlined.Edit, action = new)
-            ActionIcon("Settings", Icons.Outlined.Settings, action = settings)
+            } else ActionIcon("New conversation", KitIcons.Pencil, action = new)
+            ActionIcon("Settings", KitIcons.Settings, action = settings)
         }
         SearchField(state.filter, store::filter, "Search conversations", Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp))
         if (state.loading) LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp), color = p.accent, trackColor = p.rule)
@@ -403,7 +406,7 @@ private fun InboxList(state: InboxState, store: InboxStore, model: InboxViewMode
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text("${state.visible.size} conversations", style = geist(12.sp), color = p.muted)
             TextButton({ store.refresh(); model.groups?.poke() }, enabled = !state.loading) {
-                Icon(Icons.Outlined.Refresh, null, Modifier.size(16.dp), tint = p.secondary); Spacer(Modifier.width(6.dp)); Text("Refresh", color = p.secondary, style = geist(13.sp, FontWeight.Medium))
+                Icon(KitIcons.RefreshCw, null, Modifier.size(16.dp), tint = p.secondary); Spacer(Modifier.width(6.dp)); Text("Refresh", color = p.secondary, style = geist(13.sp, FontWeight.Medium))
             }
         }
     }
@@ -416,7 +419,7 @@ fun ConversationRow(row: Conversation, selected: Boolean, phone: Boolean, select
     val name = peerLabel(row.peer, row.identity?.name ?: row.contact?.alias, row.name)
     val preview = row.messages.lastOrNull()?.display?.text?.lineSequence()?.firstOrNull { it.isNotBlank() }?.trimStart('#', ' ', '>')?.take(140)?.ifBlank { "Attachment" }
         ?: if (row.messages.lastOrNull()?.attachments?.isNotEmpty() == true) "Attachment" else "Start a conversation"
-    val shape = RoundedCornerShape(10.dp)
+    val shape = RoundedCornerShape(PPRadius.l)
     Column(Modifier.fillMaxWidth().then(if (phone) Modifier else Modifier.padding(horizontal = 8.dp, vertical = 1.dp))
         .clip(if (phone) RoundedCornerShape(0.dp) else shape).background(if (selected) p.selected else androidx.compose.ui.graphics.Color.Transparent)
         .clickable(onClick = select).testTag("conversation:" + row.peer)) {
@@ -425,11 +428,11 @@ fun ConversationRow(row: Conversation, selected: Boolean, phone: Boolean, select
             Avatar(row.peer, name, if (phone) 44.dp else 38.dp)
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(name, Modifier.weight(1f), style = geist(if (phone) 14.5.sp else 13.sp, FontWeight.SemiBold), color = if (name.startsWith("~")) p.secondary else p.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(shortTime(row.last), style = geist(11.5.sp), color = p.muted)
+                    Text(name, Modifier.weight(1f), style = geist(if (phone) 15.sp else 13.5.sp, FontWeight.SemiBold), color = if (name.startsWith("~")) p.secondary else p.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(shortTime(row.last), style = geist(12.sp, if (row.unread > 0) FontWeight.SemiBold else FontWeight.Normal), color = if (row.unread > 0) p.link else p.muted)
                 }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(preview, Modifier.weight(1f), style = geist(if (phone) 14.sp else 13.sp), maxLines = 1, overflow = TextOverflow.Ellipsis, color = p.secondary)
+                    Text(preview, Modifier.weight(1f), style = geist(if (phone) 13.5.sp else 13.sp, if (row.unread > 0) FontWeight.Medium else FontWeight.Normal), maxLines = 1, overflow = TextOverflow.Ellipsis, color = if (row.unread > 0) p.body else p.secondary)
                     if (row.blocked) Pill("BLOCKED", PillKind.BLOCKED)
                     else if (row.held > 0) Pill("HELD", PillKind.HELD)
                     if (row.unread > 0) UnreadBadge(row.unread, inverted = false)

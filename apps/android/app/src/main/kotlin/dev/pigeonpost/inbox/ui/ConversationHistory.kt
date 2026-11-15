@@ -120,7 +120,7 @@ internal fun ConversationHistory(
                 window = window.latest(ids)
                 requestPosition(window.ids.firstOrNull())
             }, Modifier.align(Alignment.BottomEnd).padding(12.dp)) {
-                Icon(Icons.Outlined.ArrowDownward, "Latest messages")
+                Icon(KitIcons.ArrowDown, "Latest messages")
             }
         }
     }

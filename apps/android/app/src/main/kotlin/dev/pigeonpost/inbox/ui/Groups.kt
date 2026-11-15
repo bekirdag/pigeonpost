@@ -92,9 +92,9 @@ fun LazyListScope.groupRows(groups: GroupsState, inbox: InboxState, store: Group
             val p = Pp.colors
             Row(Modifier.fillMaxWidth().clickable(onClickLabel = if (invitesOpen) "Hide invitations" else "Show invitations", onClick = toggleInvites)
                 .padding(horizontal = 16.dp, vertical = 12.dp).testTag("groupInvitations"), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Outlined.GroupAdd, null, Modifier.size(20.dp), tint = p.accent)
+                Icon(KitIcons.UserPlus, null, Modifier.size(20.dp), tint = p.accent)
                 Text("Invitations (${invitations.size})", Modifier.weight(1f).padding(start = 12.dp), style = geist(14.5.sp, FontWeight.SemiBold), color = p.ink)
-                Icon(if (invitesOpen) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, null, tint = p.muted)
+                Icon(if (invitesOpen) KitIcons.ChevronUp else KitIcons.ChevronDown, null, tint = p.muted)
             }
         }
         if (invitesOpen) items(invitations, key = { "invite:" + it.id }) { g -> InvitationCard(g, groups, inbox, store) }
@@ -143,8 +143,8 @@ private fun GroupRow(g: Group, groups: GroupsState, inbox: InboxState, phone: Bo
                 }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(preview, Modifier.weight(1f), style = geist(if (phone) 14.sp else 13.sp), maxLines = 1, overflow = TextOverflow.Ellipsis, color = p.secondary)
-                    if (g.ephemeralSecs != null) Icon(Icons.Outlined.Timer, "Disappearing messages: ${timerLabel(g.ephemeralSecs)}", Modifier.size(15.dp), tint = p.muted)
-                    if (g.muted(System.currentTimeMillis() / 1000)) Icon(Icons.Outlined.NotificationsOff, "Muted", Modifier.size(15.dp), tint = p.muted)
+                    if (g.ephemeralSecs != null) Icon(KitIcons.Timer, "Disappearing messages: ${timerLabel(g.ephemeralSecs)}", Modifier.size(15.dp), tint = p.muted)
+                    if (g.muted(System.currentTimeMillis() / 1000)) Icon(KitIcons.BellOff, "Muted", Modifier.size(15.dp), tint = p.muted)
                     val unread = g.my?.unread ?: 0
                     if (unread > 0 && !selected) UnreadBadge(unread)
                 }
@@ -179,7 +179,7 @@ fun NewGroupDialog(inbox: InboxState, groups: GroupsState, store: GroupStore, op
         Text("Who", style = geist(14.5.sp, FontWeight.Medium), color = p.ink)
         if (chips.isNotEmpty()) FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             chips.forEach { chip -> InputChip(false, { chips = chips - chip }, { Text(chip, style = geistMono(12.5.sp)) },
-                trailingIcon = { Icon(Icons.Outlined.Close, "Remove $chip", Modifier.size(16.dp)) }) }
+                trailingIcon = { Icon(KitIcons.X, "Remove $chip", Modifier.size(16.dp)) }) }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(who, { who = it.take(300); if (it.endsWith(',') || it.endsWith(' ')) addChip() }, Modifier.weight(1f).testTag("groupWho"), singleLine = true,
@@ -267,7 +267,7 @@ fun GroupPane(model: InboxViewModel, groups: GroupsState, inbox: InboxState, sto
     var goLive by remember(groups.contextId, g.id) { mutableStateOf(false) }
     Column(modifier.fillMaxHeight().background(p.wash).testTag("groupPane")) {
         Row(Modifier.fillMaxWidth().heightIn(min = 60.dp).padding(start = if (wide && showSidebar == null) 14.dp else 2.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (!wide) ActionIcon("Back to conversations", Icons.AutoMirrored.Outlined.ArrowBack, tint = p.accent) { store.close() }
+            if (!wide) ActionIcon("Back to conversations", KitIcons.ChevronLeft, tint = p.accent) { store.close() }
             showSidebar?.let { show -> IconButton(show, Modifier.testTag("showSidebar")) { Icon(Icons.Outlined.ViewSidebar, "Show conversations", tint = p.secondary) } }
             Row(Modifier.weight(1f).clip(RoundedCornerShape(10.dp)).clickable(onClickLabel = "Group info", onClick = info).padding(horizontal = 6.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -279,30 +279,30 @@ fun GroupPane(model: InboxViewModel, groups: GroupsState, inbox: InboxState, sto
                 }
             }
             if (active && model.calls != null) {
-                ActionIcon("Group voice call", Icons.Outlined.Call, enabled = !calling, tint = p.accent) { model.calls.callGroup(g.id, g.name, video = false, join = false) }
-                ActionIcon("Group video call", Icons.Outlined.Videocam, enabled = !calling, tint = p.accent) { model.calls.callGroup(g.id, g.name, video = true, join = false) }
+                ActionIcon("Group voice call", KitIcons.Phone, enabled = !calling, tint = p.accent) { model.calls.callGroup(g.id, g.name, video = false, join = false) }
+                ActionIcon("Group video call", KitIcons.Video, enabled = !calling, tint = p.accent) { model.calls.callGroup(g.id, g.name, video = true, join = false) }
                 if (streaming && live == null && GroupStreams.canGoLive(g))
                     ActionIcon("Go live", Icons.Outlined.Sensors, enabled = !calling && showing == null, tint = p.accent) { goLive = true }
             }
-            ActionIcon("Group info", Icons.Outlined.Info, action = info)
+            ActionIcon("Group info", KitIcons.Info, action = info)
         }
         Seam(Modifier.fillMaxWidth().height(1.dp))
         if (active && groups.call?.active == true && model.calls != null) {
             Row(Modifier.fillMaxWidth().background(p.autoFill).clickable(enabled = !calling) { model.calls.callGroup(g.id, g.name, video = groups.call?.kind == "video", join = true) }
                 .padding(horizontal = 16.dp, vertical = 10.dp).testTag("joinGroupCall"), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Outlined.Call, null, Modifier.size(18.dp), tint = p.autoText)
+                Icon(KitIcons.Phone, null, Modifier.size(18.dp), tint = p.autoText)
                 Text("Call in progress — Join", Modifier.padding(start = 10.dp), style = geist(14.sp, FontWeight.SemiBold), color = p.autoText)
             }
         }
         if (live != null) {
             val mine = groups.mailbox
             val busy = calling && showing?.streamId != live.id
-            Column(Modifier.fillMaxWidth().background(Color(0xFFB3261E)).clickable(enabled = !busy, onClickLabel = GroupStreams.actionLabel(live, mine, showing)) {
+            Column(Modifier.fillMaxWidth().background(dev.pigeonpost.design.PP.colors.dangerSolid).clickable(enabled = !busy, onClickLabel = GroupStreams.actionLabel(live, mine, showing)) {
                 if (showing?.streamId == live.id) model.calls?.showStream() else model.calls?.watchStream(g.id, g.name, live.id)
             }.padding(horizontal = 16.dp, vertical = 10.dp).testTag("groupLiveBanner")) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("LIVE", Modifier.background(Color.White, RoundedCornerShape(4.dp)).padding(horizontal = 6.dp, vertical = 1.dp),
-                        style = geist(11.sp, FontWeight.Bold), color = Color(0xFFB3261E))
+                        style = geist(11.sp, FontWeight.Bold), color = dev.pigeonpost.design.PP.colors.dangerSolid)
                     Text(GroupStreams.bannerText(live, mine, name), Modifier.weight(1f), style = geist(14.sp, FontWeight.SemiBold), color = Color.White,
                         maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(GroupStreams.actionLabel(live, mine, showing), style = geist(14.sp, FontWeight.Bold), color = Color.White, modifier = Modifier.testTag("groupLiveAction"))
@@ -359,7 +359,7 @@ fun GroupPane(model: InboxViewModel, groups: GroupsState, inbox: InboxState, sto
             item(key = "e2ee-note") {
                 Column(Modifier.fillMaxWidth().padding(vertical = 10.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Outlined.Lock, null, Modifier.size(14.dp), tint = p.muted)
+                        Icon(KitIcons.Lock, null, Modifier.size(14.dp), tint = p.muted)
                         Text(" Messages in this group are end-to-end encrypted. The postbox cannot read them.", style = geist(12.sp), color = p.muted, textAlign = TextAlign.Center)
                     }
                     if (history.none { it.kind == "message" }) Text(g.ephemeralSecs?.let { "Messages disappear after ${timerLabel(it)}." } ?: "No messages yet. Say hello.",
@@ -378,11 +378,11 @@ fun GroupPane(model: InboxViewModel, groups: GroupsState, inbox: InboxState, sto
                 GroupComposerContext(g.id, groups, store, model, name)
                 if (files.isNotEmpty()) Row(Modifier.horizontalScroll(rememberScrollState()).padding(start = 10.dp, end = 10.dp, top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     files.forEach { f -> InputChip(false, { model.unstageGroupFile(g.id, f.id) }, { Text(f.name, maxLines = 1, style = geist(13.sp)) }, enabled = !groups.sending,
-                        trailingIcon = { Icon(Icons.Outlined.Close, "Remove ${f.name}", Modifier.size(16.dp)) }, border = BorderStroke(1.dp, p.stroke)) }
+                        trailingIcon = { Icon(KitIcons.X, "Remove ${f.name}", Modifier.size(16.dp)) }, border = BorderStroke(1.dp, p.stroke)) }
                 }
                 Row(Modifier.fillMaxWidth().padding(start = 2.dp, end = 8.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.Bottom) {
                     Box(Modifier.padding(bottom = 4.dp)) {
-                        ActionIcon("Add attachment", Icons.Outlined.AttachFile, enabled = !editing && !unconfirmed && !groups.sending) { addMenu = true }
+                        ActionIcon("Add attachment", KitIcons.Paperclip, enabled = !editing && !unconfirmed && !groups.sending) { addMenu = true }
                         DropdownMenu(addMenu, { addMenu = false }, containerColor = p.ground) {
                             DropdownMenuItem({ Text("Choose document") }, { addMenu = false; model.chooseGroupAttachments(g.id); chooseFile() })
                             DropdownMenuItem({ Text("Choose photo") }, { addMenu = false; model.chooseGroupAttachments(g.id); choosePhoto() })
@@ -397,7 +397,7 @@ fun GroupPane(model: InboxViewModel, groups: GroupsState, inbox: InboxState, sto
                         model.sendGroup(g.id, draft)
                     }, enabled = canSend, modifier = Modifier.padding(bottom = 8.dp).size(40.dp).clip(RoundedCornerShape(11.dp)).background(if (canSend) p.accent else p.chip)) {
                         if (groups.sending) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = p.onAccent)
-                        else Icon(if (editing) Icons.Outlined.Check else Icons.Outlined.ArrowUpward, if (editing) "Save group edit" else "Send to the group", Modifier.size(20.dp), tint = if (canSend) p.onAccent else p.muted)
+                        else Icon(if (editing) KitIcons.Check else KitIcons.ArrowUp, if (editing) "Save group edit" else "Send to the group", Modifier.size(20.dp), tint = if (canSend) p.onAccent else p.muted)
                     }
                 }
             }
@@ -416,7 +416,7 @@ private fun SystemLine(text: String, security: Boolean = false, warning: Boolean
     Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
         Row(Modifier.clip(RoundedCornerShape(10.dp)).background(if (warning) p.blockedFill else if (security) p.heldPillFill else p.tile).padding(horizontal = 10.dp, vertical = 5.dp)
             .testTag(if (warning) "groupWarning" else if (security) "deviceChange" else "systemLine"), verticalAlignment = Alignment.CenterVertically) {
-            if (security || warning) Icon(if (warning) Icons.Outlined.GppMaybe else Icons.Outlined.Devices, null, Modifier.size(14.dp).padding(end = 2.dp), tint = if (warning) p.blockedText else p.heldText)
+            if (security || warning) Icon(if (warning) Icons.Outlined.GppMaybe else KitIcons.Smartphone, null, Modifier.size(14.dp).padding(end = 2.dp), tint = if (warning) p.blockedText else p.heldText)
             Text(text, style = geist(12.sp, if (security || warning) FontWeight.Medium else FontWeight.Normal), color = if (warning) p.blockedText else if (security) p.heldText else p.secondary, textAlign = TextAlign.Center)
         }
     }
@@ -467,19 +467,19 @@ private fun GroupBubble(x: HistoryItem, g: Group, groups: GroupsState, sender: S
                             Row(Modifier.padding(top = 6.dp, end = 8.dp).clip(RoundedCornerShape(10.dp)).background(if (mine) p.mineRule else p.field)
                                 .clickable(onClickLabel = "Open ${file.name}") { openFile(file, "view") }.padding(start = 10.dp).testTag("groupFile:" + file.name),
                                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Icon(Icons.Outlined.Description, null, Modifier.size(17.dp), tint = p.secondary)
+                                Icon(KitIcons.FileText, null, Modifier.size(17.dp), tint = p.secondary)
                                 Column(Modifier.weight(1f, fill = false).padding(vertical = 8.dp)) {
                                     Text(file.name, style = geist(13.5.sp, FontWeight.Medium), color = p.ink, maxLines = 2, overflow = TextOverflow.Ellipsis)
                                     Text(bytes(file.size), style = geist(12.sp), color = p.muted)
                                 }
-                                IconButton({ openFile(file, "download") }, Modifier.size(40.dp)) { Icon(Icons.Outlined.Download, "Download ${file.name}", Modifier.size(18.dp), tint = p.secondary) }
+                                IconButton({ openFile(file, "download") }, Modifier.size(40.dp)) { Icon(KitIcons.Download, "Download ${file.name}", Modifier.size(18.dp), tint = p.secondary) }
                             }
                         }
                     }
                 }
                 Row(Modifier.align(Alignment.End), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     val meta = if (mine) p.mineMeta else p.muted
-                    x.expiresAt?.let { deadline -> Icon(Icons.Outlined.Timer, "Disappears " + DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(deadline * 1000)), Modifier.size(13.dp), tint = meta) }
+                    x.expiresAt?.let { deadline -> Icon(KitIcons.Timer, "Disappears " + DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(deadline * 1000)), Modifier.size(13.dp), tint = meta) }
                     Text(shortTime(x.createdAt) + if (x.editOf != null && x.actionsVerified) " · edited" else "", style = geist(11.5.sp), color = meta)
                     if (mine) GroupReceiptMark(x, groups, inbox.policy?.readReceipts != false, meta)
                     // The full action list is the bubble's long-press (TalkBack: "Message actions"); no action icon sits inside the bubble (SDS §14C).
@@ -500,13 +500,13 @@ private fun GroupBubble(x: HistoryItem, g: Group, groups: GroupsState, sender: S
         if (readable) Row(Modifier.fillMaxWidth().padding(start = if (mine) 0.dp else 38.dp, end = if (mine) 4.dp else 32.dp).testTag("groupMessageActions:" + (x.seq ?: x.cmid)),
             horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start) {
             if (mine && editable) IconButton({ x.seq?.let { store.beginEdit(g.id, it) } }, enabled = canChange, modifier = Modifier.size(36.dp).testTag("groupEdit:" + x.seq)) {
-                Icon(Icons.Outlined.Edit, "Edit message", Modifier.size(18.dp), tint = p.secondary)
+                Icon(KitIcons.Pencil, "Edit message", Modifier.size(18.dp), tint = p.secondary)
             }
             if (!x.text.isNullOrEmpty()) IconButton({ clipboard.setText(AnnotatedString(x.text!!)) }, modifier = Modifier.size(36.dp).testTag("groupCopy:" + (x.seq ?: x.cmid))) {
-                Icon(Icons.Outlined.ContentCopy, "Copy message", Modifier.size(18.dp), tint = p.secondary)
+                Icon(KitIcons.Copy, "Copy message", Modifier.size(18.dp), tint = p.secondary)
             }
             if (!mine && replyable) IconButton({ x.seq?.let { store.beginReply(g.id, it) } }, enabled = canChange, modifier = Modifier.size(36.dp).testTag("groupReply:" + x.seq)) {
-                Icon(Icons.Outlined.Reply, "Reply to message", Modifier.size(18.dp), tint = p.secondary)
+                Icon(KitIcons.Reply, "Reply to message", Modifier.size(18.dp), tint = p.secondary)
             }
         }
     }
@@ -644,7 +644,7 @@ private fun MemberRow(g: Group, m: GroupMember, groups: GroupsState, name: Strin
             }
             Pill(when (m.state) { "active" -> ROLE_LABEL[m.role] ?: m.role; "invited" -> "Invited"; else -> "Joining" }, if (m.role == "owner" || m.role == "admin") PillKind.AUTO else PillKind.NEUTRAL, dot = false)
             Box {
-                ActionIcon("Actions for $name", Icons.Outlined.MoreVert) { menu = true }
+                ActionIcon("Actions for $name", KitIcons.MoreVertical) { menu = true }
                 DropdownMenu(menu, { menu = false }, containerColor = p.ground) {
                     @Composable fun act(label: String, role: String?, state: String?) {
                         DropdownMenuItem({ Text(label) }, { menu = false
