@@ -74,7 +74,7 @@ pub(crate) fn render(
     link: &str,
     expires: &str,
 ) -> (String, String, String) {
-    use crate::mail_layout::{self as layout, escape as esc, BODY, INK, MUTED, RULE};
+    use crate::mail_layout::{self as layout, escape as esc, Button, Tone};
     let subject =
         format!("{inviter} invited you to {org} on Pigeonpost").replace(['\r', '\n'], " ");
     let text = format!(
@@ -84,21 +84,31 @@ pub(crate) fn render(
          expecting this, ignore it; nothing happens unless you accept.\n\n--\n\
          Pigeonpost · pigeonpost.dev\nReplies to this message are not read.\n"
     );
-    let card = format!(
-        r#"<p class="pp-muted" style="margin:0 0 6px;color:{MUTED};font-size:14px;line-height:1.5;">{lead}</p>
-<h1 class="pp-ink" style="margin:0 0 16px;font-size:22px;line-height:1.3;font-weight:700;letter-spacing:-0.01em;color:{INK};">{inviter} invited you to {org}</h1>
-<p class="pp-body" style="margin:0 0 14px;color:{BODY};font-size:15px;line-height:1.6;">Your company address will be <strong class="pp-ink" style="color:{INK};">{handle}</strong>. You will use it in the Pigeonpost apps beside your own mailboxes.</p>
-<p style="margin:22px 0 6px;">{button}</p>
-<p class="pp-muted pp-rule" style="margin:20px 0 0;padding-top:16px;border-top:1px solid {RULE};color:{MUTED};font-size:13px;line-height:1.55;">This link works once and expires on {expires}. It opens enterprise.pigeonpost.dev — if your browser shows any other address, do not continue. If you were not expecting this invitation, you can ignore it.</p>"#,
-        lead = esc("Organization invitation"),
-        inviter = esc(inviter),
-        org = esc(org),
-        handle = esc(handle),
-        button = layout::button(link, "Accept invitation"),
-        expires = esc(expires),
-    );
+    let card = [
+        layout::badge("Organization invitation", Tone::Info),
+        layout::heading(&format!("{inviter} invited you to {org}")),
+        layout::para_html(&format!(
+            "{} invited you to join {} on Pigeonpost. You will use your company address in the Pigeonpost apps beside your own mailboxes.",
+            layout::strong(inviter),
+            layout::strong(org)
+        )),
+        layout::panel_rows(&[
+            ("Organization", org),
+            ("Your company address", handle),
+            ("Link expires", expires),
+        ]),
+        layout::buttons(&[Button {
+            href: link,
+            label: "Accept invitation",
+            primary: true,
+        }]),
+        layout::rule_note(
+            "This link works once. It opens enterprise.pigeonpost.dev — if your browser shows any other address, do not continue. If you were not expecting this invitation, you can ignore it.",
+        ),
+    ]
+    .concat();
     let footer = format!(
-        "Pigeonpost · Private messaging for people and AI agents · pigeonpost.dev<br>You received this because an administrator of {} entered this address on Pigeonpost.<br>Replies to this message are not read.",
+        "You received this because an administrator of {} entered this address on Pigeonpost.<br>Replies to this message are not read.",
         esc(org)
     );
     let preheader = format!("Your company address will be {handle}.");

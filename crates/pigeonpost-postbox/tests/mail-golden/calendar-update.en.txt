@@ -1,0 +1,27 @@
+Çağrı Dağ changed this event
+
+Design <review> & "plan"
+
+When: Friday, 23 October 2026, 09:00–10:00 (Europe/Istanbul, UTC+03:00)
+Where: Room 2 <b>north</b>
+
+Agenda:
+1. Numbers
+2. See https://evil.example/x?a=1&b=<2>
+
+Join with Pigeonpost: https://inbox.pigeonpost.dev/m/ABCDEFGHJK
+Add to calendar: https://inbox.pigeonpost.dev/m/ABCDEFGHJK#t=tok&a=ics
+
+Yes: https://inbox.pigeonpost.dev/m/ABCDEFGHJK#t=tok&r=yes
+Maybe: https://inbox.pigeonpost.dev/m/ABCDEFGHJK#t=tok&r=maybe
+No: https://inbox.pigeonpost.dev/m/ABCDEFGHJK#t=tok&r=no
+
+Answer with the buttons above. Answers sent from your calendar app's own buttons do not reach Pigeonpost.
+A calendar file is attached so you can add this to your calendar app.
+
+--
+You received this because Çağrı Dağ entered this address as a guest on Pigeonpost.
+Replies to this message are not read.
+Don't send me invitations from this person: https://inbox.pigeonpost.dev/m/u#u=a&s=organizer
+Don't send me invitations from anyone on Pigeonpost: https://inbox.pigeonpost.dev/m/u#u=a&s=all
+Pigeonpost · pigeonpost.dev
