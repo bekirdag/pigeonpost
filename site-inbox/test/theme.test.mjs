@@ -141,3 +141,17 @@ test("the favicons still follow the device, not the setting", () => {
   assert.match(index, /favicon-32\.png" media="\(prefers-color-scheme: light\)"/);
   assert.match(index, /favicon-32-dark\.png" media="\(prefers-color-scheme: dark\)"/);
 });
+
+test("every page loads the design kit's tokens before the inbox stylesheet", () => {
+  // app.css names kit roles (--pp-surface, --pp-bubble-mine …) without defining them; a page that
+  // skips kit/tokens.css renders with no colours at all.
+  for (const page of ["index.html", "m.html", "join.html", "pair.html", "native-call.html", "g/index.html"]) {
+    const html = read(page);
+    const kit = html.search(/href="\/?kit\/tokens\.css\?v=[^"]+"/);
+    const app = html.search(/href="\/?app\.css\?v=[^"]+"/);
+    assert.ok(kit !== -1 && app !== -1 && kit < app, page);
+  }
+  const tokens = read("kit/tokens.css");
+  for (const role of ["--pp-bg:", "--pp-accent:", "--pp-bubble-mine:", "--pp-tick-working:"]) assert.ok(tokens.includes(role), role);
+  assert.match(tokens, /url\("\.\.\/fonts\/Geist-Variable\.woff2"\)/);
+});

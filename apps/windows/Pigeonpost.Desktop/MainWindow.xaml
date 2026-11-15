@@ -46,19 +46,23 @@
                 <Setter Property="MinWidth" Value="0" /><Setter Property="MinHeight" Value="0" /><Setter Property="VerticalAlignment" Value="Center" />
             </Style>
             <Style x:Key="SecondaryActionButton" TargetType="Button">
-                <Setter Property="MinHeight" Value="36" /><Setter Property="Padding" Value="16,0" /><Setter Property="CornerRadius" Value="9" />
-                <Setter Property="FontSize" Value="13.5" /><Setter Property="FontWeight" Value="Medium" />
+                <Setter Property="MinHeight" Value="{StaticResource PPControlM}" /><Setter Property="Padding" Value="14,0" /><Setter Property="CornerRadius" Value="{StaticResource PPRadiusM}" />
+                <Setter Property="FontSize" Value="14" /><Setter Property="FontWeight" Value="Medium" />
             </Style>
             <Style x:Key="PrimaryActionButton" TargetType="Button" BasedOn="{StaticResource AccentButtonStyle}">
-                <Setter Property="MinHeight" Value="34" /><Setter Property="Padding" Value="16,0" /><Setter Property="CornerRadius" Value="9" />
-                <Setter Property="FontSize" Value="13" /><Setter Property="FontWeight" Value="SemiBold" />
+                <Setter Property="MinHeight" Value="{StaticResource PPControlM}" /><Setter Property="Padding" Value="14,0" /><Setter Property="CornerRadius" Value="{StaticResource PPRadiusM}" />
+                <Setter Property="FontSize" Value="14" /><Setter Property="FontWeight" Value="SemiBold" />
+            </Style>
+            <!-- Kit composer send: a Signal Blue pill, 40 px tall. -->
+            <Style x:Key="SendActionButton" TargetType="Button" BasedOn="{StaticResource PrimaryActionButton}">
+                <Setter Property="MinHeight" Value="40" /><Setter Property="Padding" Value="16,0" /><Setter Property="CornerRadius" Value="20" />
             </Style>
             <Style x:Key="SidebarComboBox" TargetType="ComboBox">
-                <Setter Property="CornerRadius" Value="9" /><Setter Property="MinHeight" Value="36" /><Setter Property="FontSize" Value="13" />
+                <Setter Property="CornerRadius" Value="{StaticResource PPRadiusM}" /><Setter Property="MinHeight" Value="{StaticResource PPControlM}" /><Setter Property="FontSize" Value="13.5" />
             </Style>
             <Style x:Key="AttachmentButton" TargetType="Button">
                 <Setter Property="Background" Value="{ThemeResource AttachmentSurfaceBrush}" /><Setter Property="BorderBrush" Value="{ThemeResource AttachmentBorderBrush}" />
-                <Setter Property="BorderThickness" Value="1" /><Setter Property="CornerRadius" Value="10" />
+                <Setter Property="BorderThickness" Value="1" /><Setter Property="CornerRadius" Value="{StaticResource PPRadiusM}" />
             </Style>
             <Style x:Key="SectionLabel" TargetType="TextBlock">
                 <Setter Property="FontFamily" Value="{StaticResource SansFont}" />
@@ -75,10 +79,10 @@
                 <!-- §14C.7: the bubble, then the action row below and outside it (copy, reply). -->
                 <StackPanel HorizontalAlignment="Left" MaxWidth="620" Margin="24,7,64,7" Spacing="2" Background="Transparent"
                             PointerEntered="MessageStack_PointerEntered" PointerExited="MessageStack_PointerExited" GotFocus="MessageStack_FocusChanged" LostFocus="MessageStack_FocusChanged">
-                <Border CornerRadius="14" HorizontalAlignment="Left" Tag="{x:Bind}" Loaded="MessageAction_Loaded" Unloaded="MessageAction_Unloaded"
+                <Border CornerRadius="{StaticResource PPRadiusBubbleTheirs}" HorizontalAlignment="Left" Tag="{x:Bind}" Loaded="MessageAction_Loaded" Unloaded="MessageAction_Unloaded"
                         Background="{ThemeResource IncomingMessageBrush}" BorderBrush="{ThemeResource IncomingBorderBrush}" BorderThickness="1">
                     <StackPanel>
-                        <StackPanel Padding="16,12,16,8">
+                        <StackPanel Padding="12,8,12,4">
                             <Button Tag="{x:Bind}" Visibility="{x:Bind HasReply}" Loaded="MessageAction_Loaded" Unloaded="MessageAction_Unloaded" Click="ReplyParent_Click"
                                     AutomationProperties.Name="{x:Bind ReplyAccessibility}" ToolTipService.ToolTip="Open quoted message" Style="{StaticResource AttachmentButton}"
                                     HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Padding="10,8" Margin="0,0,0,10" MinWidth="0">
@@ -86,7 +90,7 @@
                             </Button>
                             <TextBlock Text="{x:Bind DisplayBody}" Loaded="MessageBody_Loaded" Unloaded="MessageBody_Unloaded" TextWrapping="Wrap" IsTextSelectionEnabled="True"
                                        SelectionChanged="MessageBody_SelectionChanged"
-                                       FontSize="14.5" LineHeight="21" Foreground="{ThemeResource IncomingTextBrush}" />
+                                       FontSize="{StaticResource PPFontSizeBody}" LineHeight="{StaticResource PPLineHeightBody}" Foreground="{ThemeResource IncomingTextBrush}" />
                             <ItemsControl ItemsSource="{x:Bind Attachments}" IsEnabled="{x:Bind CanDownloadAttachments}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate x:DataType="core:MessageAttachment">
@@ -111,13 +115,13 @@
                             </ItemsControl>
                         </StackPanel>
                         <!-- Status chip on the left; the time sits at the bubble's bottom right. -->
-                        <Grid ColumnSpacing="10" Margin="16,0,14,9">
+                        <Grid ColumnSpacing="10" Margin="12,0,12,8">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                             <Border Padding="8,2,8,3" CornerRadius="6" VerticalAlignment="Center" Background="{ThemeResource ChipSurfaceBrush}"
                                     Visibility="{Binding StatusLabel, Converter={StaticResource TextVisibility}}">
                                 <TextBlock Text="{x:Bind StatusLabel}" FontSize="11.5" FontWeight="SemiBold" Foreground="{ThemeResource ChipTextBrush}" />
                             </Border>
-                            <TextBlock Grid.Column="2" Text="{x:Bind FooterTimeLabel}" FontSize="12" VerticalAlignment="Center" Foreground="{ThemeResource IncomingFooterTextBrush}" />
+                            <TextBlock Grid.Column="2" Text="{x:Bind FooterTimeLabel}" FontSize="11.5" VerticalAlignment="Center" Foreground="{ThemeResource IncomingFooterTextBrush}" />
                         </Grid>
                     </StackPanel>
                     <Border.ContextFlyout>
@@ -140,10 +144,10 @@
                 <!-- §14C.7: the bubble, then the action row below and outside it (edit while editable, copy). -->
                 <StackPanel HorizontalAlignment="Right" MaxWidth="620" Margin="64,7,24,7" Spacing="2" Background="Transparent"
                             PointerEntered="MessageStack_PointerEntered" PointerExited="MessageStack_PointerExited" GotFocus="MessageStack_FocusChanged" LostFocus="MessageStack_FocusChanged">
-                <Border CornerRadius="14" HorizontalAlignment="Right" Tag="{x:Bind}" Loaded="MessageAction_Loaded" Unloaded="MessageAction_Unloaded"
+                <Border CornerRadius="{StaticResource PPRadiusBubbleMine}" HorizontalAlignment="Right" Tag="{x:Bind}" Loaded="MessageAction_Loaded" Unloaded="MessageAction_Unloaded"
                         Background="{ThemeResource OutgoingMessageBrush}" BorderBrush="{ThemeResource OutgoingBorderBrush}" BorderThickness="1">
                     <StackPanel>
-                        <StackPanel Padding="16,12,16,8">
+                        <StackPanel Padding="12,8,12,4">
                             <Button Tag="{x:Bind}" Visibility="{x:Bind HasReply}" Loaded="MessageAction_Loaded" Unloaded="MessageAction_Unloaded" Click="ReplyParent_Click"
                                     AutomationProperties.Name="{x:Bind ReplyAccessibility}" ToolTipService.ToolTip="Open quoted message" Style="{StaticResource AttachmentButton}"
                                     HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Padding="10,8" Margin="0,0,0,10" MinWidth="0">
@@ -151,7 +155,7 @@
                             </Button>
                             <TextBlock Text="{x:Bind DisplayBody}" Loaded="MessageBody_Loaded" Unloaded="MessageBody_Unloaded" TextWrapping="Wrap" IsTextSelectionEnabled="True"
                                        SelectionChanged="MessageBody_SelectionChanged"
-                                       FontSize="14.5" LineHeight="21" Foreground="{ThemeResource OutgoingTextBrush}" />
+                                       FontSize="{StaticResource PPFontSizeBody}" LineHeight="{StaticResource PPLineHeightBody}" Foreground="{ThemeResource OutgoingTextBrush}" />
                             <ItemsControl ItemsSource="{x:Bind Attachments}" IsEnabled="{x:Bind CanDownloadAttachments}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate x:DataType="core:MessageAttachment">
@@ -176,22 +180,22 @@
                             </ItemsControl>
                         </StackPanel>
                         <!-- §14C.6: time, then the receipt marks, at the bubble's bottom right. -->
-                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="6" Margin="16,0,12,8">
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="6" Margin="12,0,12,8">
                             <TextBlock Text="{x:Bind StatusLabel}" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="{ThemeResource OutgoingFooterTextBrush}"
                                        Visibility="{Binding StatusLabel, Converter={StaticResource TextVisibility}}" />
-                            <TextBlock Text="{x:Bind FooterTimeLabel}" FontSize="12" VerticalAlignment="Center" Foreground="{ThemeResource OutgoingFooterTextBrush}" />
+                            <TextBlock Text="{x:Bind FooterTimeLabel}" FontSize="11.5" VerticalAlignment="Center" Foreground="{ThemeResource OutgoingFooterTextBrush}" />
                             <Button Tag="{x:Bind}" Visibility="{x:Bind HasReceipt}" Loaded="ReceiptMark_Loaded" Unloaded="MessageControl_Unloaded" Click="ReceiptMark_Click"
                                     Style="{StaticResource ReceiptMarkButton}" AutomationProperties.Name="{x:Bind ReceiptLabel}" AutomationProperties.AutomationId="{x:Bind Id}"
                                     AutomationProperties.HelpText="Show message info" ToolTipService.ToolTip="{x:Bind ReceiptLabel}">
                                 <StackPanel Orientation="Horizontal" Spacing="4">
-                                    <TextBlock Text="✓" Visibility="{x:Bind ShowsSentTick}" FontFamily="Segoe UI Symbol" FontSize="12" Foreground="{ThemeResource OutgoingFooterTextBrush}" AutomationProperties.AccessibilityView="Raw" />
-                                    <TextBlock Text="✓✓" Visibility="{x:Bind ShowsDeliveredTicks}" FontFamily="Segoe UI Symbol" FontSize="12" Foreground="{ThemeResource OutgoingFooterTextBrush}" AutomationProperties.AccessibilityView="Raw" />
+                                    <TextBlock Text="✓" Visibility="{x:Bind ShowsSentTick}" FontFamily="Segoe UI Symbol" FontSize="12" Foreground="{ThemeResource TickSentBrush}" AutomationProperties.AccessibilityView="Raw" />
+                                    <TextBlock Text="✓✓" Visibility="{x:Bind ShowsDeliveredTicks}" FontFamily="Segoe UI Symbol" FontSize="12" Foreground="{ThemeResource TickSentBrush}" AutomationProperties.AccessibilityView="Raw" />
                                     <TextBlock Text="✓✓" Visibility="{x:Bind ShowsSeenTicks}" FontFamily="Segoe UI Symbol" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource TickSeenBrush}" AutomationProperties.AccessibilityView="Raw" />
                                     <StackPanel Orientation="Horizontal" Spacing="4" Visibility="{x:Bind ShowsAgentGear}">
-                                        <FontIcon Glyph="&#xE713;" FontSize="13" Foreground="{ThemeResource TickSeenBrush}" RenderTransformOrigin="0.5,0.5" Loaded="AgentGear_Loaded" Unloaded="AgentGear_Unloaded" AutomationProperties.AccessibilityView="Raw">
+                                        <FontIcon Glyph="&#xE713;" FontSize="13" Foreground="{ThemeResource TickWorkingBrush}" RenderTransformOrigin="0.5,0.5" Loaded="AgentGear_Loaded" Unloaded="AgentGear_Unloaded" AutomationProperties.AccessibilityView="Raw">
                                             <FontIcon.RenderTransform><RotateTransform /></FontIcon.RenderTransform>
                                         </FontIcon>
-                                        <TextBlock Text="Working…" FontSize="11.5" Visibility="Collapsed" Foreground="{ThemeResource TickSeenBrush}" Loaded="AgentGear_Loaded" Unloaded="AgentGear_Unloaded" AutomationProperties.AccessibilityView="Raw" />
+                                        <TextBlock Text="Working…" FontSize="11.5" Visibility="Collapsed" Foreground="{ThemeResource TickWorkingBrush}" Loaded="AgentGear_Loaded" Unloaded="AgentGear_Unloaded" AutomationProperties.AccessibilityView="Raw" />
                                     </StackPanel>
                                     <FontIcon Glyph="&#xE7BA;" FontSize="13" Visibility="{x:Bind ShowsAgentFailed}" Foreground="{ThemeResource TickFailedBrush}" AutomationProperties.AccessibilityView="Raw" />
                                 </StackPanel>
@@ -228,8 +232,8 @@
                             <TextBlock Text="{x:Bind Detail}" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
                         </StackPanel>
                     </Button>
-                    <Border Grid.Column="2" Visibility="{x:Bind IsMissed}" Padding="6,1" CornerRadius="6" VerticalAlignment="Center" Background="#22C42435">
-                        <TextBlock Text="Missed" FontSize="11" FontWeight="SemiBold" Foreground="#C42435" />
+                    <Border Grid.Column="2" Visibility="{x:Bind IsMissed}" Padding="6,1" CornerRadius="6" VerticalAlignment="Center" Background="{ThemeResource DangerFillBrush}">
+                        <TextBlock Text="Missed" FontSize="11" FontWeight="SemiBold" Foreground="{ThemeResource DangerBrush}" />
                     </Border>
                     <TextBlock Grid.Column="3" Text="{x:Bind TimeLabel}" FontSize="11.5" VerticalAlignment="Center" Foreground="{ThemeResource TextTertiaryBrush}" />
                     <StackPanel Grid.Column="4" Orientation="Horizontal" Spacing="4">
@@ -282,7 +286,7 @@
                         <Grid ColumnSpacing="8">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                             <TextBlock Text="{x:Bind Detail}" FontSize="13" TextTrimming="CharacterEllipsis" Foreground="{ThemeResource TextSecondaryBrush}" />
-                            <Border Grid.Column="1" MinWidth="18" Height="18" Padding="5,0" CornerRadius="9" VerticalAlignment="Center" Background="{ThemeResource AccentBrush}" Visibility="{x:Bind HasUnread}">
+                            <Border Grid.Column="1" MinWidth="20" Height="20" Padding="6,0" CornerRadius="10" VerticalAlignment="Center" Background="{ThemeResource AccentFillBrush}" Visibility="{x:Bind HasUnread}">
                                 <TextBlock Text="{x:Bind UnreadLabel}" FontSize="11" FontWeight="SemiBold" TextAlignment="Center" VerticalAlignment="Center" Foreground="{ThemeResource OnAccentBrush}" />
                             </Border>
                         </Grid>
@@ -302,14 +306,14 @@
                     <Border Width="30" Height="30" CornerRadius="15" VerticalAlignment="Top" Background="{ThemeResource AvatarSurfaceBrush}" Tag="{x:Bind SenderKey}" Loaded="Avatar_Loaded" Unloaded="Avatar_Unloaded">
                         <TextBlock Text="{x:Bind Initials}" FontSize="11" FontWeight="Bold" Foreground="{ThemeResource AvatarTextBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False" />
                     </Border>
-                    <Border Grid.Column="1" CornerRadius="14" Padding="14,9,14,10" Tag="{x:Bind}" Background="{ThemeResource IncomingMessageBrush}" BorderBrush="{ThemeResource IncomingBorderBrush}" BorderThickness="1">
+                    <Border Grid.Column="1" CornerRadius="{StaticResource PPRadiusBubbleTheirs}" Padding="12,8,12,8" Tag="{x:Bind}" Background="{ThemeResource IncomingMessageBrush}" BorderBrush="{ThemeResource IncomingBorderBrush}" BorderThickness="1">
                         <StackPanel Spacing="4">
                             <TextBlock Text="{x:Bind Sender}" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource AccentBrush}" />
                             <Button Tag="{x:Bind}" Visibility="{x:Bind HasReply}" Click="GroupQuote_Click" AutomationProperties.Name="{x:Bind ReplyAccessibility}" AutomationProperties.AutomationId="{x:Bind Key}"
                                     ToolTipService.ToolTip="Open quoted message" Style="{StaticResource AttachmentButton}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Padding="10,8" Margin="0,2,0,4" MinWidth="0">
                                 <TextBlock Text="{x:Bind ReplyQuote}" TextWrapping="Wrap" MaxLines="2" TextTrimming="CharacterEllipsis" FontSize="12.5" Foreground="{ThemeResource AccentBrush}" />
                             </Button>
-                            <TextBlock Text="{x:Bind Text}" TextWrapping="Wrap" IsTextSelectionEnabled="True" FontSize="14.5" LineHeight="21" Foreground="{ThemeResource IncomingTextBrush}" />
+                            <TextBlock Text="{x:Bind Text}" TextWrapping="Wrap" IsTextSelectionEnabled="True" FontSize="{StaticResource PPFontSizeBody}" LineHeight="{StaticResource PPLineHeightBody}" Foreground="{ThemeResource IncomingTextBrush}" />
                             <ItemsControl ItemsSource="{x:Bind Files}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate x:DataType="groups:LocalFile">
@@ -347,13 +351,13 @@
             <DataTemplate x:Key="GroupOutgoingLine" x:DataType="groups:GroupLineRow">
                 <StackPanel HorizontalAlignment="Right" Margin="64,5,24,5" MaxWidth="620" Spacing="2" Background="Transparent"
                             PointerEntered="MessageStack_PointerEntered" PointerExited="MessageStack_PointerExited" GotFocus="MessageStack_FocusChanged" LostFocus="MessageStack_FocusChanged">
-                <Border HorizontalAlignment="Right" CornerRadius="14" Padding="14,9,14,10" Tag="{x:Bind}" Background="{ThemeResource OutgoingMessageBrush}" BorderBrush="{ThemeResource OutgoingBorderBrush}" BorderThickness="1">
+                <Border HorizontalAlignment="Right" CornerRadius="{StaticResource PPRadiusBubbleMine}" Padding="12,8,12,8" Tag="{x:Bind}" Background="{ThemeResource OutgoingMessageBrush}" BorderBrush="{ThemeResource OutgoingBorderBrush}" BorderThickness="1">
                     <StackPanel Spacing="4">
                         <Button Tag="{x:Bind}" Visibility="{x:Bind HasReply}" Click="GroupQuote_Click" AutomationProperties.Name="{x:Bind ReplyAccessibility}" AutomationProperties.AutomationId="{x:Bind Key}"
                                 ToolTipService.ToolTip="Open quoted message" Style="{StaticResource AttachmentButton}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Padding="10,8" Margin="0,0,0,4" MinWidth="0">
                             <TextBlock Text="{x:Bind ReplyQuote}" TextWrapping="Wrap" MaxLines="2" TextTrimming="CharacterEllipsis" FontSize="12.5" Foreground="{ThemeResource AccentBrush}" />
                         </Button>
-                        <TextBlock Text="{x:Bind Text}" TextWrapping="Wrap" IsTextSelectionEnabled="True" FontSize="14.5" LineHeight="21" Foreground="{ThemeResource OutgoingTextBrush}" />
+                        <TextBlock Text="{x:Bind Text}" TextWrapping="Wrap" IsTextSelectionEnabled="True" FontSize="{StaticResource PPFontSizeBody}" LineHeight="{StaticResource PPLineHeightBody}" Foreground="{ThemeResource OutgoingTextBrush}" />
                         <ItemsControl ItemsSource="{x:Bind Files}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate x:DataType="groups:LocalFile">
@@ -374,8 +378,8 @@
                                     AutomationProperties.HelpText="Show message info" ToolTipService.ToolTip="{x:Bind ReceiptLabel}">
                                 <StackPanel Orientation="Horizontal" Spacing="4">
                                     <FontIcon Glyph="&#xE823;" FontSize="11" Visibility="{x:Bind ShowsSending}" Foreground="{ThemeResource OutgoingFooterTextBrush}" AutomationProperties.AccessibilityView="Raw" />
-                                    <TextBlock Text="✓" Visibility="{x:Bind ShowsSentTick}" FontFamily="Segoe UI Symbol" FontSize="12" Foreground="{ThemeResource OutgoingFooterTextBrush}" AutomationProperties.AccessibilityView="Raw" />
-                                    <TextBlock Text="✓✓" Visibility="{x:Bind ShowsDeliveredTicks}" FontFamily="Segoe UI Symbol" FontSize="12" Foreground="{ThemeResource OutgoingFooterTextBrush}" AutomationProperties.AccessibilityView="Raw" />
+                                    <TextBlock Text="✓" Visibility="{x:Bind ShowsSentTick}" FontFamily="Segoe UI Symbol" FontSize="12" Foreground="{ThemeResource TickSentBrush}" AutomationProperties.AccessibilityView="Raw" />
+                                    <TextBlock Text="✓✓" Visibility="{x:Bind ShowsDeliveredTicks}" FontFamily="Segoe UI Symbol" FontSize="12" Foreground="{ThemeResource TickSentBrush}" AutomationProperties.AccessibilityView="Raw" />
                                     <TextBlock Text="✓✓" Visibility="{x:Bind ShowsSeenTicks}" FontFamily="Segoe UI Symbol" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource TickSeenBrush}" AutomationProperties.AccessibilityView="Raw" />
                                 </StackPanel>
                             </Button>
@@ -502,7 +506,7 @@
                                         <Grid ColumnSpacing="8">
                                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                             <TextBlock Text="{x:Bind Preview}" FontSize="13" TextTrimming="CharacterEllipsis" Foreground="{ThemeResource TextSecondaryBrush}" />
-                                            <Border Grid.Column="1" MinWidth="18" Height="18" Padding="5,0" CornerRadius="9" VerticalAlignment="Center" Background="{ThemeResource AccentBrush}" Visibility="{Binding HasUnread, Converter={StaticResource BoolVisibility}}">
+                                            <Border Grid.Column="1" MinWidth="20" Height="20" Padding="6,0" CornerRadius="10" VerticalAlignment="Center" Background="{ThemeResource AccentFillBrush}" Visibility="{Binding HasUnread, Converter={StaticResource BoolVisibility}}">
                                                 <TextBlock Text="{x:Bind UnreadLabel}" FontSize="11" FontWeight="SemiBold" TextAlignment="Center" VerticalAlignment="Center" Foreground="{ThemeResource OnAccentBrush}" />
                                             </Border>
                                         </Grid>
@@ -536,7 +540,7 @@
                                 <Grid ColumnSpacing="8">
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                     <TextBlock Text="{x:Bind Name}" TextWrapping="Wrap" FontSize="13.5" FontWeight="Medium" Foreground="{ThemeResource TextPrimaryBrush}" />
-                                    <Border Grid.Column="1" MinWidth="18" Height="18" Padding="5,0" CornerRadius="9" VerticalAlignment="Top" Background="{ThemeResource AccentBrush}" Visibility="{Binding HasUnread, Converter={StaticResource BoolVisibility}}">
+                                    <Border Grid.Column="1" MinWidth="20" Height="20" Padding="6,0" CornerRadius="10" VerticalAlignment="Top" Background="{ThemeResource AccentFillBrush}" Visibility="{Binding HasUnread, Converter={StaticResource BoolVisibility}}">
                                         <TextBlock Text="{x:Bind UnreadLabel}" FontSize="11" FontWeight="SemiBold" TextAlignment="Center" VerticalAlignment="Center" Foreground="{ThemeResource OnAccentBrush}" />
                                     </Border>
                                 </Grid>
@@ -551,7 +555,7 @@
             <Grid x:Name="SidePage" Grid.Column="2" Grid.ColumnSpan="3" Visibility="Collapsed" Background="{ThemeResource ConversationSurfaceBrush}" />
             <Grid x:Name="MessagingArea" Grid.Column="4" Background="{ThemeResource ConversationSurfaceBrush}">
                 <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                <Border BorderBrush="{ThemeResource DividerBrush}" BorderThickness="0,0,0,1" Padding="24,12,20,12">
+                <Border BorderBrush="{ThemeResource DividerBrush}" BorderThickness="0,0,0,1" Padding="24,12,20,12" Background="{ThemeResource HeaderSurfaceBrush}">
                     <Grid RowSpacing="10">
                         <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                         <Grid ColumnSpacing="10">
@@ -678,7 +682,8 @@
                     </Grid>
                 </Border>
                 <Border Padding="24,12,24,18" BorderThickness="0,1,0,0" BorderBrush="{ThemeResource DividerBrush}" Background="{ThemeResource ComposerAreaBrush}">
-                <Border Padding="10,8,12,12" CornerRadius="14" BorderThickness="1" BorderBrush="{ThemeResource ComposerBorderBrush}" Background="{ThemeResource ComposerSurfaceBrush}">
+                <Grid>
+                <Border x:Name="ComposerCard" Padding="12,8,8,8" CornerRadius="{StaticResource PPRadius2xl}" BorderThickness="1" BorderBrush="{ThemeResource ComposerBorderBrush}" Background="{ThemeResource ComposerSurfaceBrush}">
                     <Grid RowSpacing="6">
                         <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                         <ScrollViewer MaxHeight="120" Visibility="{x:Bind ToVisibility(ViewModel.HasDraftAttachments), Mode=OneWay}" HorizontalScrollBarVisibility="Disabled">
@@ -698,8 +703,9 @@
                             </ItemsControl>
                         </ScrollViewer>
                         <TextBox x:Name="Composer" Grid.Row="1" Text="{x:Bind ViewModel.Draft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" PlaceholderText="{x:Bind ViewModel.ComposerPlaceholder, Mode=OneWay}"
-                                 AcceptsReturn="True" TextWrapping="Wrap" MinHeight="56" MaxHeight="144" MaxLength="20000" BorderThickness="0" Background="Transparent" FontSize="14.5" Padding="6,6,6,4"
-                                 IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" AutomationProperties.Name="Message" Paste="Composer_Paste" PreviewKeyDown="Composer_PreviewKeyDown">
+                                 AcceptsReturn="True" TextWrapping="Wrap" MinHeight="56" MaxHeight="144" MaxLength="20000" BorderThickness="0" Background="Transparent" FontSize="{StaticResource PPFontSizeBody}" Padding="6,6,6,4"
+                                 IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" AutomationProperties.Name="Message" Paste="Composer_Paste" PreviewKeyDown="Composer_PreviewKeyDown"
+                                 GotFocus="Composer_FocusChanged" LostFocus="Composer_FocusChanged">
                             <TextBox.Resources>
                                 <!-- The card is the field: keep the inner editor flat in every state. -->
                                 <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="Transparent" />
@@ -718,10 +724,14 @@
                             <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                             <Button Click="Attach_Click" Style="{StaticResource QuietIconButton}" IsEnabled="{x:Bind ViewModel.CanAttachFiles, Mode=OneWay}" AutomationProperties.Name="Attach files…" ToolTipService.ToolTip="Attach files or paste from clipboard"><SymbolIcon Symbol="Attach" /></Button>
                             <TextBlock Grid.Column="1" Text="Ctrl+Enter" FontSize="12" VerticalAlignment="Center" Foreground="{ThemeResource TextTertiaryBrush}" />
-                            <Button Grid.Column="2" Content="{x:Bind ViewModel.SendActionLabel, Mode=OneWay}" Click="Send_Click" Style="{StaticResource PrimaryActionButton}" IsEnabled="{x:Bind ViewModel.CanSendDraft, Mode=OneWay}" />
+                            <Button Grid.Column="2" Content="{x:Bind ViewModel.SendActionLabel, Mode=OneWay}" Click="Send_Click" Style="{StaticResource SendActionButton}" IsEnabled="{x:Bind ViewModel.CanSendDraft, Mode=OneWay}" />
                         </Grid>
                     </Grid>
                 </Border>
+                <!-- Kit composer focus: the box edge turns Signal Blue while the editor has focus. -->
+                <Border x:Name="ComposerFocusRing" CornerRadius="{StaticResource PPRadius2xl}" BorderThickness="1" BorderBrush="{ThemeResource ComposerFocusBorderBrush}"
+                        IsHitTestVisible="False" Visibility="Collapsed" />
+                </Grid>
                 </Border>
                 </StackPanel>
             </Grid>

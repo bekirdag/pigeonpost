@@ -116,7 +116,7 @@
         }),
         r.next_offset != null || st.offset ? el("div", { class: "pm-more" },
           ui.button("Previous", { size: "sm", disabled: st.offset === 0, onclick: () => { st.offset = Math.max(0, st.offset - 25); load(); } }),
-          ui.button("Next", { size: "sm", disabled: r.next_offset == null, onclick: () => { st.offset = r.next_offset; load(); } })) : null);
+          ui.button("Next", { size: "sm", disabled: r.next_offset == null, onclick: () => { st.offset = r.next_offset; load(); } })) : "");
     }
     await load();
   }
@@ -244,7 +244,7 @@
           }) : ui.empty({ icon: "building", title: "No businesses in this state" }),
           r.next_offset != null || offset ? el("div", { class: "pm-more" },
             ui.button("Previous", { size: "sm", disabled: offset === 0, onclick: () => { offset = Math.max(0, offset - 25); load(); } }),
-            ui.button("Next", { size: "sm", disabled: r.next_offset == null, onclick: () => { offset = r.next_offset; load(); } })) : null);
+            ui.button("Next", { size: "sm", disabled: r.next_offset == null, onclick: () => { offset = r.next_offset; load(); } })) : "");
         };
         await load();
       }
