@@ -1,50 +1,53 @@
-// help.pigeonpost.dev articles. Plain text paragraphs and lists only (rendered as text nodes).
-// `steps` is an ordered list; `points` an unordered one; `links` [label, url].
+// help.pigeonpost.dev content: categories, the home page's lists and the contact page. The
+// articles themselves live in articles/<category>.js, each pushing onto PP_HELP.articles.
+//
+// Every statement must come from the product itself (the apps, the platforms, the public pages
+// and docs/). When a fact can't be checked, leave it out rather than guess.
+//
+// Article shape: { slug, cat, title, summary, keywords?, aliases?, related?, body }
+//   body blocks: "paragraph" · ["h", "Section"] · ["steps", …] · ["list", …] ·
+//                ["note" | "tip" | "warn", "Title", "text"] · ["code", "line", …]
+//   inline: **UI label**, `code`, [label](/a/<slug>) or [label](https://…). Text only, never HTML.
 window.PP_HELP = {
-  audiences: [
-    { key: "people", title: "People", text: "Inboxes, handles, Nests, credits and your account.", icon: "people", support: "https://account.pigeonpost.dev/#/support" },
-    { key: "organizations", title: "Organizations", text: "Set up your company, invite people, agents and billing.", icon: "building", support: "https://enterprise.pigeonpost.dev/app#/support" },
-    { key: "partners", title: "Partners", text: "Become a publisher, sell services, pricing and payouts.", icon: "apps", support: "https://partner.pigeonpost.dev/#/support" },
+  tagline: "Guides for people, organizations and partners, on every Pigeonpost app.",
+  categories: [
+    { key: "getting-started", title: "Getting started", icon: "rocket", text: "Addresses, handles, the apps and signing in." },
+    { key: "messaging", title: "Messaging", icon: "message-circle", text: "Conversations, groups, replies, receipts, files and contacts." },
+    { key: "calls", title: "Calls and meetings", icon: "video", text: "Voice and video calls, meeting links, live streams and meeting notes." },
+    { key: "calendar", title: "Calendar", icon: "calendar", text: "Events, guests, invitations and calendar files." },
+    { key: "agents", title: "AI agents", icon: "bot", text: "Inboxes for agents, connector keys, trust, the CLI, agentd and MCP." },
+    { key: "nests", title: "Nests", icon: "egg", text: "Hosted AI agents: packages, files, approvals and privacy." },
+    { key: "marketplace", title: "Marketplace and credits", icon: "store", text: "Running services, credits, holds and refunds." },
+    { key: "account", title: "Account and billing", icon: "wallet", text: "Plans, payment, invoices, cancelling and deleting your account." },
+    { key: "enterprise", title: "Organizations", icon: "building-2", text: "Set up your company, people and roles, agents, rooms and billing." },
+    { key: "partners", title: "Partners and publishers", icon: "briefcase", text: "Apply, publish, set prices and get paid." },
+    { key: "privacy", title: "Privacy and security", icon: "shield-check", text: "Encryption, filtering, blocking and your data." },
+    { key: "troubleshooting", title: "Troubleshooting", icon: "alert-circle", text: "Fixes for each app: sign-in, notifications, calls and updates." },
   ],
-  articles: [
-    { slug: "sign-in", audience: "people", title: "Sign in with an email code", summary: "No password needed: Pigeonpost emails you a six-digit code.",
-      steps: ["Open account.pigeonpost.dev or any Pigeonpost app and choose Sign in.", "Enter your email address and choose Email me a sign-in code.", "Type the six-digit code from the email. It works once, for 10 minutes.", "Didn't get it? Check spam, or choose Send a new code."],
-      points: ["You can also sign in with Apple, Google or GitHub, or with a password if you set one.", "Signing in once signs you in to account, enterprise and partner pages on the same browser."] },
-    { slug: "two-factor", audience: "people", title: "Turn on two-step sign-in", summary: "Add an authenticator app for a second step at sign-in.",
-      steps: ["Open account.pigeonpost.dev → Security.", "Choose Set up two-step sign-in and scan the code with Google Authenticator, Authy or 1Password.", "Enter the six-digit code to confirm."],
-      points: ["Some actions (publishing, prices, staff tools) ask you to confirm it's you with a fresh code even when you are signed in."] },
-    { slug: "handles", audience: "people", title: "Get a handle", summary: "A readable address such as /yourname, bought for a year.",
-      steps: ["Open account.pigeonpost.dev → Handles → Get a handle.", "Search for a name; available names show their yearly price.", "Add billing details if asked, then pay."],
-      points: ["Handles bought in the iPhone, Android or web apps all appear on your account.", "Key addresses (/k/…) and messaging are always free."] },
-    { slug: "inboxes", audience: "people", title: "Inboxes for your AI agents", summary: "Give an agent its own address and a connector key.",
-      steps: ["Open account.pigeonpost.dev → Inboxes & agents.", "Create an inbox and give it a name such as /yourname/assistant.", "Reveal its connector key and paste it into your agent's Pigeonpost settings."],
-      points: ["Revoke a key at any time; the agent stops receiving mail immediately."] },
-    { slug: "credits", audience: "people", title: "Credits and refunds", summary: "Prepaid USD credits pay for marketplace services.",
-      points: ["Packs are $10, $25, $50 and $100. Credits are kept and spent in US dollars whatever currency you pay in.", "Credits do not expire.", "Unspent credit can be refunded within 14 days of purchase from Wallet.", "A service's price is held when you start a job and only taken when the result reaches you; a failed or cancelled job releases the hold.", "Purchases inside the App Store or Google Play include the store's fee."] },
-    { slug: "nests", audience: "people", title: "Nests: hosted AI agents", summary: "A ready agent space with its own inbox, from $10 a month.",
-      steps: ["Open account.pigeonpost.dev → Store → Nests.", "Choose a package. Pigeonpost AI is ready in minutes.", "Talk to your Nest from your inbox like any other contact."] },
-    { slug: "services", audience: "people", title: "Run a marketplace service", summary: "Services from verified partners, paid with credits.",
-      steps: ["Open account.pigeonpost.dev → Store → Services, or browse pigeonpost.dev/marketplace.", "Open a service, fill in its form and start it. The price is held from your credits.", "The result arrives in your inbox and under Purchases & jobs."],
-      points: ["Partners never see who you are.", "Services marked 'Hosted by the publisher' run on the partner's systems; Pigeonpost reviews the partner and the integration."] },
-    { slug: "delete-account", audience: "people", title: "Delete your account", summary: "Remove your account and its data.",
-      steps: ["Open account.pigeonpost.dev → Privacy.", "Choose Delete account and confirm."], points: ["Active subscriptions bought in an app store must be cancelled in that store."] },
-    { slug: "calls", audience: "people", title: "Calls not connecting", summary: "Check permissions and your network.",
-      points: ["Allow the camera and microphone for inbox.pigeonpost.dev or the app.", "Pick the right camera and microphone in the call settings (gear icon).", "On restrictive networks calls relay through Pigeonpost's servers; this can take a few seconds.", "Group calls hold up to 30 people."] },
-    { slug: "org-setup", audience: "organizations", title: "Set up your organization", summary: "Claim your company's namespace and invite your team.",
-      steps: ["Go to enterprise.pigeonpost.dev and choose Start.", "Name the organization and verify your domain if you want addresses at it.", "Pick a package and add billing details.", "Invite people from People; each accepted invitation uses a seat."] },
-    { slug: "org-people", audience: "organizations", title: "People, roles and seats", summary: "Who can do what in your organization.",
-      points: ["Owners and admins manage everything; people admins manage members; agent admins manage agents; billing admins see billing.", "Revoke an invitation to free its seat.", "Add seats from Packages."] },
-    { slug: "org-billing", audience: "organizations", title: "Billing and invoices", summary: "Packages, cards and invoices for your organization.",
-      points: ["Invoices are issued by Piyote Bilişim, the merchant of record.", "Download invoices from Billing.", "If a payment fails the organization becomes read-only until it is sorted out."] },
-    { slug: "become-partner", audience: "partners", title: "Become a Pigeonpost partner", summary: "Apply as an individual or a business to sell services.",
-      steps: ["Open partner.pigeonpost.dev and start your application.", "Choose your account type: individual, sole proprietor or company (Turkey or elsewhere).", "Enter legal details, tax ID, bank account and upload documents (for example vergi levhası and faaliyet belgesi, or a certificate of incorporation and tax ID letter).", "Individuals complete an identity check with Shufti Pro.", "Submit. Pigeonpost staff review it and may ask for more information."],
-      points: ["You can save a draft and come back.", "Turn on two-step sign-in first; submitting requires it."] },
-    { slug: "publish-service", audience: "partners", title: "Publish a service", summary: "From integration to a live listing.",
-      steps: ["After approval, open Apps and submit your integration or build.", "Pigeonpost runs automatic checks (security scans and a test job) and a staff review.", "Create the listing: title, description, logo, category and links.", "Set your price, then publish."],
-      points: ["Every new version is reviewed again."] },
-    { slug: "pricing-payouts", audience: "partners", title: "Pricing, commission and payouts", summary: "How money reaches you.",
-      points: ["Buyers pay with Pigeonpost credits; prices are in US dollars.", "Piyote Bilişim is the merchant of record and keeps a 10% commission.", "Earnings are paid monthly by SWIFT, EFT or havale after your invoice for the month arrives.", "Turkish payees are paid in TRY at the day's exchange rate.", "Where Turkish withholding tax applies, the statement shows it line by line."] },
-    { slug: "partner-analytics", audience: "partners", title: "Analytics", summary: "Usage and earnings for each of your apps.",
-      points: ["Open partner.pigeonpost.dev → Analytics to see jobs, buyers and earnings per app and in total."] },
+  articles: [],
+  popular: ["sign-in", "two-factor", "handles", "inboxes", "credits", "nests"],
+  quick: [
+    { q: "Is Pigeonpost free?", a: "Yes. Key addresses and messaging are free, and a signed-in inbox holds 20 MB. A handle ($8 a year) raises your inbox to 1 GB. See [Inbox storage](/a/inbox-storage)." },
+    { q: "Why can't someone send me a message?", a: "Your inbox may be full: new messages are refused and nothing old is deleted to make room. Your filtering settings may also hold or block them. See [My inbox is full](/a/inbox-full)." },
+    { q: "How many people can join a call?", a: "Up to 30 people with a meeting link. Calls started inside a group hold up to 6. See [Group calls](/a/group-calls)." },
+    { q: "Do marketplace credits expire?", a: "No. Credits are kept in US dollars and don't expire. Unspent credit from a purchase can be refunded within 14 days. See [Credits and refunds](/a/credits)." },
+    { q: "Can my company's admins read my messages?", a: "No. Organization admin roles never include reading anyone's messages. See [Roles in an organization](/a/org-people)." },
   ],
+  contact: {
+    title: "Still need help?",
+    text: "Write to our support team. Partners can talk to us live from the partner console.",
+    lede: "Pick the channel that fits. Each one reaches the Pigeonpost team.",
+    channels: [
+      { icon: "mail", title: "Support", who: "Everyone", text: "Questions about your account, the apps, billing or a problem you've hit. Write to support@pigeonpost.dev.", action: "Write to support", href: "mailto:support@pigeonpost.dev" },
+      { icon: "building-2", title: "Organizations", who: "Admins of a company on Pigeonpost", text: "The **Support** page in your organization's admin app writes to support with your organization named, and we answer within one business day.", action: "Open enterprise support", href: "https://enterprise.pigeonpost.dev/app#/support" },
+      { icon: "briefcase", title: "Partners", who: "Businesses with a partner application", text: "Start a conversation from **Support** in the partner console, even before you're approved. Replies arrive there.", action: "Open partner support", href: "https://partner.pigeonpost.dev/#/support" },
+      { icon: "shield", title: "Privacy and abuse", who: "Data requests and reports", text: "Ask for a copy of your data at privacy@pigeonpost.dev. Report abuse to abuse@pigeonpost.dev.", action: "Write to privacy", href: "mailto:privacy@pigeonpost.dev" },
+    ],
+    tips: [
+      "Check [service status](https://status.pigeonpost.dev/) first: if something is down, it's shown there.",
+      "Say which app and version you use (web, iPhone, iPad, Mac, Android, Windows, Linux or the CLI).",
+      "Include the address involved, such as your handle, and what you expected to happen.",
+      "Never send a password, a sign-in code, a connector key or card details.",
+    ],
+  },
 };
