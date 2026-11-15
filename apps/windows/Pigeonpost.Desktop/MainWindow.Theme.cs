@@ -69,16 +69,21 @@ public sealed partial class MainWindow
             bar.ResetToDefault();
             return;
         }
+        // Design kit roles: --pp-bg, --pp-text, --pp-text-faint, --pp-surface-hover, --pp-surface-selected.
         var dark = Root.ActualTheme == ElementTheme.Dark;
-        var background = dark ? ColorHelper.FromArgb(255, 0x0D, 0x0F, 0x12) : ColorHelper.FromArgb(255, 0xF4, 0xF5, 0xF7);
-        var foreground = dark ? ColorHelper.FromArgb(255, 0xE8, 0xEA, 0xED) : ColorHelper.FromArgb(255, 0x15, 0x18, 0x1D);
-        var muted = ColorHelper.FromArgb(255, 0x7D, 0x85, 0x90);
+        var background = dark ? ColorHelper.FromArgb(255, 0x0B, 0x0E, 0x12) : ColorHelper.FromArgb(255, 0xF4, 0xF6, 0xF8);
+        var foreground = dark ? ColorHelper.FromArgb(255, 0xF2, 0xF4, 0xF7) : ColorHelper.FromArgb(255, 0x12, 0x16, 0x1C);
+        var muted = dark ? ColorHelper.FromArgb(255, 0x8A, 0x93, 0xA0) : ColorHelper.FromArgb(255, 0x63, 0x6C, 0x78);
         bar.BackgroundColor = bar.InactiveBackgroundColor = background;
         bar.ButtonBackgroundColor = bar.ButtonInactiveBackgroundColor = background;
         bar.ForegroundColor = bar.ButtonForegroundColor = foreground;
         bar.InactiveForegroundColor = bar.ButtonInactiveForegroundColor = muted;
-        bar.ButtonHoverBackgroundColor = dark ? ColorHelper.FromArgb(255, 0x1C, 0x21, 0x29) : ColorHelper.FromArgb(255, 0xE4, 0xE9, 0xF1);
-        bar.ButtonPressedBackgroundColor = dark ? ColorHelper.FromArgb(255, 0x25, 0x2B, 0x34) : ColorHelper.FromArgb(255, 0xD8, 0xDF, 0xEA);
+        bar.ButtonHoverBackgroundColor = dark ? ColorHelper.FromArgb(255, 0x1D, 0x23, 0x2D) : ColorHelper.FromArgb(255, 0xEE, 0xF1, 0xF5);
+        bar.ButtonPressedBackgroundColor = dark ? ColorHelper.FromArgb(255, 0x1C, 0x28, 0x40) : ColorHelper.FromArgb(255, 0xE4, 0xEB, 0xF7);
         bar.ButtonHoverForegroundColor = bar.ButtonPressedForegroundColor = foreground;
     }
+
+    // Kit composer: the box edge is Signal Blue while the editor has keyboard or pointer focus.
+    private void Composer_FocusChanged(object sender, RoutedEventArgs e) =>
+        ComposerFocusRing.Visibility = Composer.FocusState == FocusState.Unfocused ? Visibility.Collapsed : Visibility.Visible;
 }
