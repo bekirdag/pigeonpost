@@ -328,6 +328,11 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--pp-accent); }
   .pp-step-title { display: none; }
   .pp-step.is-current .pp-step-title { display: block; position: absolute; top: 40px; left: 0; white-space: nowrap; }
   .pp-stepper:has(.is-current) { padding-bottom: 26px; }
+  /* With a summary (kit: "Step 6 of 8 · Documents") the markers stay and the summary names the step. */
+  .pp-stepper[data-summary] { padding-bottom: 0; flex-wrap: wrap !important; }
+  .pp-stepper[data-summary] > .pp-step { flex: 1 1 28px; }
+  .pp-stepper[data-summary] .pp-step.is-current .pp-step-title { display: none; }
+  .pp-stepper[data-summary]::after { content: attr(data-summary); flex: 1 0 100%; color: var(--pp-text); font-size: var(--pp-fs-body-s); font-weight: var(--pp-weight-semibold); }
   .pp-step-num { width: 26px; height: 26px; font-size: 12px; }
   .pp-step:not(:last-child)::after { top: 12px; left: calc(50% + 17px); right: calc(-50% + 17px); }
 }
