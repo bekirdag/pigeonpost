@@ -186,7 +186,7 @@
     b.textContent = other === "tr" ? "Türkçe" : "English";
     b.setAttribute("aria-label", other === "tr" ? "Türkçe kullan" : "Use English");
     b.addEventListener("click", function () { remember(other); window.location.reload(); });
-    var account = document.getElementById(shell ? "pp-switch" : "ppe-account");
+    var account = document.getElementById(shell ? "pp-user" : "ppe-account");
     if (account && account.parentNode === top) top.insertBefore(b, account); else top.appendChild(b);
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", addSwitch); else addSwitch();
