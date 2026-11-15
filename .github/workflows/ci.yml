@@ -237,6 +237,8 @@ jobs:
           # So does Sign in with Apple's requested-scope enum in the iOS session.
           # site-enterprise/config.js requests the realm's standard address scope by its spec name,
           # because invitation acceptance matches the verified sign-in address (SDS §7.2).
+          # The vendored design-kit libraries (apps/ios/Packages/PigeonpostUI, apps/android/pigeonpost-ui)
+          # carry the kit's sign-in field components, which name the member's sign-in address.
           # The signed-in platforms (site-shared, site-account, site-partner, site-management, the
           # enterprise app) and the help centre name the member's actual sign-in and contact
           # address (OIDC claim, billing contact, sign-in codes sent to that address) — not messaging.
@@ -276,6 +278,8 @@ jobs:
               ':(exclude)site/app-privacy.html' \
               ':(exclude)site/delete-account.html' \
               ':(exclude)site-shared' \
+              ':(exclude)apps/ios/Packages/PigeonpostUI' \
+              ':(exclude)apps/android/pigeonpost-ui' \
               ':(exclude)site-account' \
               ':(exclude)site-partner' \
               ':(exclude)site-management' \
