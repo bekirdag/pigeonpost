@@ -4,26 +4,23 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Pigeonpost status</title>
-<meta name="description" content="Live status of Pigeonpost messaging, sign-in, calls, Nests, payments and websites, checked every minute from two locations.">
+<meta name="description" content="Live status of Pigeonpost messaging, sign-in, calls, payments and websites.">
 <meta name="color-scheme" content="light dark">
-<link rel="icon" type="image/png" href="/kit/brand/logo_only_symbol_trim.png">
-<link rel="stylesheet" href="/kit/pp-ui.min.css">
+<script src="/shared/theme.js"></script>
+<link rel="stylesheet" href="/shared/tokens.css">
+<link rel="stylesheet" href="/shared/platform.css">
 <link rel="stylesheet" href="/status.css">
 </head>
 <body>
-<header class="pp-navbar">
-  <div class="pp-navbar__inner">
-    <a class="pp-brand" href="https://pigeonpost.dev/" aria-label="Pigeonpost home"><picture><source srcset="/kit/brand/logo_only_symbol_white_trim.png" media="(prefers-color-scheme: dark)"><img src="/kit/brand/logo_only_symbol_trim.png" alt="" width="28" height="26"></picture><span class="pp-brand__name">Pigeonpost</span><span class="pp-brand__product">Status</span></a>
-    <div class="pp-navbar__actions">
-      <a class="pp-btn pp-btn--ghost st-hide-s" href="https://pigeonpost.dev/">pigeonpost.dev</a>
-      <a class="pp-btn pp-btn--s" href="https://help.pigeonpost.dev/"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-help-circle"/></svg>Help</a>
-    </div>
-  </div>
-</header>
-<main class="st-page" id="st-root" aria-live="polite">
-  <div class="pp-status-card pp-status-card--hero" data-status="queued" role="status"><span class="pp-status-card__icon"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-loader-circle"/></svg></span><div class="pp-status-card__body"><p class="pp-status-card__title">Checking…</p></div></div>
-</main>
-<footer class="pp-footer pp-footer--app"><div class="pp-footer__inner"><div class="pp-footer__legal"><span>© 2026 Piyote Yazılım A.Ş.</span><ul><li><a href="https://help.pigeonpost.dev/">help.pigeonpost.dev</a></li><li><a href="https://pigeonpost.dev/">pigeonpost.dev</a></li></ul></div></div></footer>
+<div class="st-wrap">
+  <header class="st-head">
+    <a class="pp-brand" href="https://pigeonpost.dev/"><img class="pp-brand-logo" src="/shared/brand/logo-symbol.png" alt="" width="28" height="26"><span class="pp-brand-text"><strong>Pigeonpost</strong><span>Status</span></span></a>
+    <button type="button" class="pp-icon-btn pp-theme" data-theme-toggle></button>
+  </header>
+  <main id="st-root" aria-live="polite"><p class="pp-muted">Checking…</p></main>
+  <footer class="st-foot"><a href="https://help.pigeonpost.dev">Help</a> · <a href="https://pigeonpost.dev/">pigeonpost.dev</a></footer>
+</div>
+<script src="/shared/core.js"></script>
 <script src="/status.js"></script>
 </body>
 </html>
