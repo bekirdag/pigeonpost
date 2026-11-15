@@ -13,10 +13,11 @@
     key: "overview", title: "Overview", group: "", icon: "home", allow: M.allow(M.ROLES),
     render: async (view, ctx) => {
       const me = ctx.me || {};
+      let today = "";
+      try { today = new Date().toLocaleDateString(PP.locale(), { weekday: "long", day: "numeric", month: "long" }); } catch { today = ""; }
       view.append(ui.header({
-        eyebrow: "Pigeonpost management",
-        title: "Overview",
-        text: "The platform at a glance. Counts only — open a queue to see the people behind them.",
+        title: "Back office",
+        text: `${today ? `${today} · ` : ""}the platform at a glance. Counts only — open a queue to see the people behind them.`,
         actions: el("div", { class: "pm-roles" }, (ctx.roles || []).map((r) => ui.badge(r, "info")), me.platform_owner ? ui.badge("platform owner", "success") : null),
       }));
       const alerts = el("div", { class: "pm-alerts" });
@@ -32,25 +33,25 @@
       const can = (key) => PP.shell.state.opts.pages.some((p) => p.key === key && (!p.allow || p.allow(ctx)));
       const href = (key, ...p) => (can(key) ? PP.href(key, ...p) : null);
       const queues = [
-        { label: "Open applications", value: M.num(c.publisher_applications), hint: "Partners waiting for a decision", href: href("applications"), tone: c.publisher_applications ? "warning" : null },
-        { label: "Open reviews", value: M.num(c.open_reviews), hint: "Releases waiting for staff", href: href("reviews"), tone: c.open_reviews ? "warning" : null },
-        { label: "Open reports", value: M.num(c.open_reports), hint: "Buyer reports on listings", href: href("listings"), tone: c.open_reports ? "danger" : null },
-        { label: "Failed hosted jobs", value: M.num(c.hosted_jobs_failed_24h), hint: "Last 24 hours", href: href("jobs"), tone: c.hosted_jobs_failed_24h ? "danger" : null },
+        { icon: "shield-check", label: "Open applications", value: M.num(c.publisher_applications), hint: "Partners waiting for a decision", href: href("applications"), hintTone: c.publisher_applications ? "bad" : "neutral" },
+        { icon: "eye", label: "Open reviews", value: M.num(c.open_reviews), hint: "Releases waiting for staff", href: href("reviews"), hintTone: c.open_reviews ? "bad" : "neutral" },
+        { icon: "flag", label: "Open reports", value: M.num(c.open_reports), hint: "Buyer reports on listings", href: href("listings"), hintTone: c.open_reports ? "bad" : "neutral" },
+        { icon: "alert-triangle", label: "Failed hosted jobs", value: M.num(c.hosted_jobs_failed_24h), hint: "Last 24 hours", href: href("jobs"), hintTone: c.hosted_jobs_failed_24h ? "bad" : "good" },
       ];
       const people = [
-        { label: "Sign-ups today", value: M.num(c.signups_today), hint: `${M.num(c.signups_7d)} in 7 days`, href: href("accounts") },
-        { label: "Accounts", value: M.num(c.accounts), hint: `${M.num(c.active_accounts_30d)} active in 30 days`, href: href("accounts") },
-        { label: "Handles", value: M.num(c.handles), href: href("handles") },
-        { label: "Mailboxes", value: M.num(c.mailboxes), href: href("mailboxes") },
-        { label: "Organizations", value: M.num(c.orgs_active), hint: "active", href: href("enterprises") },
-        { label: "Nests running", value: M.num(c.nests_running) },
+        { icon: "user-plus", label: "Sign-ups today", value: M.num(c.signups_today), hint: `${M.num(c.signups_7d)} in 7 days`, href: href("accounts") },
+        { icon: "users", label: "Accounts", value: M.num(c.accounts), hint: `${M.num(c.active_accounts_30d)} active in 30 days`, href: href("accounts") },
+        { icon: "at-sign", label: "Handles", value: M.num(c.handles), href: href("handles") },
+        { icon: "inbox", label: "Mailboxes", value: M.num(c.mailboxes), href: href("mailboxes") },
+        { icon: "building-2", label: "Organizations", value: M.num(c.orgs_active), hint: "active", href: href("enterprises") },
+        { icon: "egg", label: "Nests running", value: M.num(c.nests_running) },
       ];
       tiles.replaceChildren(
         ui.section({ title: "Queues", text: "What is waiting for staff right now." }, ui.stats(queues)),
         ui.section({ title: "People and usage" }, ui.stats(people)));
       if (M.has(ctx, "finance")) {
-        const money = { label: "Credit sales today", value: "…", hint: "" };
-        const refunds = { label: "Refunds to resolve", value: "…", hint: "uncertain", href: href("credits"), tone: null };
+        const money = { icon: "dollar-sign", label: "Credit sales today", value: "…", hint: "" };
+        const refunds = { icon: "rotate-ccw", label: "Refunds to resolve", value: "…", hint: "uncertain", href: href("credits"), tone: null };
         const host = el("div", {}, ui.stats([money, refunds]));
         tiles.insertBefore(ui.section({ title: "Money today", text: "From the finance service." }, host), tiles.children[1] || null);
         const today = new Date(); today.setUTCHours(0, 0, 0, 0);

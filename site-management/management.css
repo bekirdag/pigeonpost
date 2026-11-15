@@ -149,3 +149,9 @@
 .pp-view-inner, .pm-detail, .pm-tab-panel, .pm-col, .pm-queues { grid-template-columns: minmax(0, 1fr); }
 .pm-form-inline .pp-optional { display: none; }
 .pm-detail > .pp-stats { grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)); }
+
+/* ---- Management template (design kit templates/management.html) ------------------------------- */
+/* Staff tools use the dense table: 40px rows, 44px on touch screens. */
+.pp-view .pp-table td { padding-top: 8px; padding-bottom: 8px; }
+@media (pointer: coarse) { .pp-view .pp-table td { padding-top: 11px; padding-bottom: 11px; } }
+.pm-staff-banner .pp-banner__inner { max-width: none; }

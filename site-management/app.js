@@ -28,6 +28,10 @@
       footnote: "Not staff? Your account lives at account.pigeonpost.dev.",
     },
     noAccess: STAFF_ONLY,
+    // Every page here acts on other people's data (kit: the management template's staff banner).
+    banner: (ctx) => (ctx && (ctx.roles || []).length ? PP.el("div", { class: "pp-banner pp-banner--brand pm-staff-banner", role: "note" },
+      PP.el("div", { class: "pp-banner__inner" }, PP.icon("shield"),
+        PP.el("p", { class: "pp-banner__text" }, PP.el("strong", {}, "Staff view."), "You act as Piyote staff here. What you open and change is recorded in the audit log."))) : null),
     footLinks: [
       { label: "Your account", href: "https://account.pigeonpost.dev/", icon: "external", external: true },
       { label: "Status", href: "https://status.pigeonpost.dev/", icon: "server", external: true },

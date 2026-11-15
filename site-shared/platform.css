@@ -86,6 +86,8 @@ a.pp-navbtn:hover { text-decoration: none; }
 
 .pp-main.pp-shell__content { flex: 1; min-width: 0; display: block; padding: var(--pp-space-6) var(--pp-space-8) var(--pp-space-16); outline: none; }
 .pp-view { width: 100%; max-width: var(--pp-content-max); margin: 0 auto; }
+/* A platform banner above the page (kit: .pp-banner), full width of the content column. */
+.pp-main > .pp-banner { max-width: var(--pp-content-max); margin: 0 auto var(--pp-space-5); border-radius: var(--pp-radius-l); }
 .pp-view-inner { display: grid; gap: var(--pp-space-6); }
 /* One-column grids get an explicit minmax(0, 1fr) track, and grid items min-width 0: otherwise a
    wide child (a stepper, a table, a form) widens the page past a phone's screen instead of
