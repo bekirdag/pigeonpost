@@ -1,31 +1,50 @@
 //! The Pigeonpost email layout shared by every message the postbox renders itself (calendar
 //! invitations, updates, cancellations, reminders and guest codes; organization invitations).
 //!
-//! It mirrors the branded Keycloak email theme (sealunit/su_iam
-//! `keycloak/themes/pigeonpost/email/html/template.ftl`) so a sign-in code and a meeting
-//! invitation look like the same product: the light/dark wordmark above a white card, the same
-//! palette, type stack and footer.
+//! The outer frame is `mail_frame.html`: "Pigeonpost email frame v1", the one skeleton every
+//! Pigeonpost email uses. It is cut from the Keycloak theme (sealunit/su_iam
+//! `keycloak/themes/pigeonpost/email/html/template.ftl`), which renders exactly this, and follows
+//! the design kit's template (design.pigeonpost.dev/templates/email.html): a 560 px column on the
+//! kit ground, the bird symbol beside a live-text wordmark in Pigeon Navy, a white 16 px card, the
+//! kit dark palette, and the footer line "Pigeonpost · Piyote Bilişim · pigeonpost.dev". Sign-in
+//! codes, saas_be receipts, calendar and organization messages therefore share one frame byte for
+//! byte. The frame carries the `pp-email-frame v1` marker, so saas_be passes it through unchanged
+//! instead of wrapping it a second time. The store adapter keeps a copy (its tests compare it).
 //!
-//! Email-client rules: tables for layout, inline styles for anything that must survive Gmail, a
-//! `<style>` block only for dark mode and small screens. No webfonts are fetched. The logos are
-//! absolute URLs on pigeonpost.dev (`site/email/`, versioned file names) and carry no
-//! per-recipient data; there is no tracking pixel.
+//! The card blocks below use the frame's component styles and its class names only (`pp-h`,
+//! `pp-p`, `pp-foot`, `pp-box`, `pp-cell`, `pp-rule`, `pp-a`), so the frame's one `<style>` block
+//! covers their dark mode. Email-client rules: tables for layout, inline styles, no webfont, no
+//! tracking pixel; the logos are absolute, versioned URLs on pigeonpost.dev. Every message also
+//! has a plain-text part, built by the caller.
 
-pub(crate) const LOGO_LIGHT: &str = "https://pigeonpost.dev/email/pigeonpost-logo-light.v1.png";
-pub(crate) const LOGO_DARK: &str = "https://pigeonpost.dev/email/pigeonpost-logo-dark.v1.png";
+/// The shared frame, with `{{PREHEADER}}`, `{{CONTENT}}` and `{{REASON}}` placeholders.
+pub(crate) const FRAME: &str = include_str!("mail_frame.html");
 
+/// The bird symbol for light mode and its white variant for dark mode, as the frame names them
+/// (tests check the frame against these).
+#[cfg(test)]
+pub(crate) const LOGO_LIGHT: &str = "https://pigeonpost.dev/email/pigeonpost-symbol.v1.png";
+#[cfg(test)]
+pub(crate) const LOGO_DARK: &str = "https://pigeonpost.dev/email/pigeonpost-symbol-white.v1.png";
+
+/// The frame's last footer line.
+#[cfg(test)]
+pub(crate) const FOOTER_BRAND: &str = "Pigeonpost · Piyote Bilişim · pigeonpost.dev";
+
+/// The kit's system font stack (no webfont is fetched).
 pub(crate) const FONT: &str =
-    "Geist,'Geist Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
-pub(crate) const MONO: &str =
-    "'Geist Mono',ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace";
+    "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
+const MONO: &str =
+    "ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace";
 
-/// Text colours (light mode; the `<style>` block remaps the classes for dark mode).
-pub(crate) const INK: &str = "#14181f";
-pub(crate) const BODY: &str = "#444c58";
-pub(crate) const MUTED: &str = "#6b7480";
-pub(crate) const RULE: &str = "#e6e9ee";
-pub(crate) const SOFT: &str = "#f7f9fb";
-pub(crate) const ACCENT: &str = "#2563eb";
+// Kit tokens, light (inline); the frame's `<style>` block remaps the classes for dark mode.
+const RULE: &str = "#E1E5EA";
+const RULE_STRONG: &str = "#C9CFD8";
+const SOFT: &str = "#F4F6F8";
+const INK: &str = "#12161C";
+const BODY: &str = "#343C47";
+const MUTED: &str = "#59626E";
+const ACCENT: &str = "#086CFF";
 
 pub(crate) fn escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
@@ -42,118 +61,220 @@ pub(crate) fn escape(s: &str) -> String {
     out
 }
 
-/// A primary (filled) call-to-action button. `href` and `label` are plain text.
-pub(crate) fn button(href: &str, label: &str) -> String {
+// ---- card content blocks (inputs are plain text unless a name says `_html`) --------------------
+
+/// The frame's `h1` component.
+pub(crate) fn heading(text: &str) -> String {
     format!(
-        r#"<a class="pp-btn" href="{href}" style="display:inline-block;background-color:{ACCENT};color:#ffffff;text-decoration:none;font-family:{FONT};font-weight:600;font-size:15px;line-height:20px;padding:12px 22px;border-radius:10px;margin:0 8px 8px 0;">{label}</a>"#,
-        href = escape(href),
-        label = escape(label),
+        "<h1 class=\"pp-h\" style=\"margin:0 0 16px;font-family:{FONT};font-size:22px;line-height:28px;font-weight:700;color:{INK};\">{}</h1>\n",
+        escape(text)
     )
 }
 
-/// A secondary (outlined) button.
-pub(crate) fn ghost(href: &str, label: &str) -> String {
+/// The frame's `p` component. `inner_html` is already escaped.
+pub(crate) fn para_html(inner_html: &str) -> String {
     format!(
-        r#"<a class="pp-ghost" href="{href}" style="display:inline-block;background-color:#ffffff;border:1px solid #d5dae1;color:{INK};text-decoration:none;font-family:{FONT};font-weight:600;font-size:14px;line-height:20px;padding:10px 18px;border-radius:10px;margin:0 8px 8px 0;">{label}</a>"#,
-        href = escape(href),
-        label = escape(label),
+        "<p class=\"pp-p\" style=\"margin:0 0 14px;font-family:{FONT};font-size:15px;line-height:24px;color:{BODY};\">{inner_html}</p>\n"
     )
 }
 
-/// Wraps rendered card content (already-escaped HTML) in the full document.
-///
-/// `preheader` is the inbox preview line (plain text). `footer` is already-escaped HTML shown
-/// under the card in the muted style.
-pub(crate) fn document(
-    lang: &str,
-    title: &str,
-    preheader: &str,
-    card: &str,
-    footer: &str,
-) -> String {
-    let lang = if lang == "tr" { "tr" } else { "en" };
-    let pre = if preheader.is_empty() {
-        String::new()
-    } else {
+/// Strong inline text inside a paragraph (plain text in, escaped HTML out).
+pub(crate) fn strong(text: &str) -> String {
+    format!("<strong>{}</strong>", escape(text))
+}
+
+/// The frame's `small` component (13/24, body colour).
+pub(crate) fn note(text: &str) -> String {
+    format!(
+        "<p class=\"pp-p\" style=\"margin:0 0 14px;font-family:{FONT};font-size:13px;line-height:24px;color:{BODY};\">{}</p>\n",
+        escape(text)
+    )
+}
+
+/// A closing note set off by a rule (13 px, muted).
+pub(crate) fn rule_note(text: &str) -> String {
+    format!(
+        "<p class=\"pp-foot pp-rule\" style=\"margin:20px 0 0;padding-top:16px;border-top:1px solid {RULE};font-family:{FONT};font-size:13px;line-height:20px;color:{MUTED};\">{}</p>\n",
+        escape(text)
+    )
+}
+
+/// A small uppercase label above a value (muted).
+pub(crate) fn label(text: &str) -> String {
+    format!(
+        "<div class=\"pp-foot\" style=\"font-family:{FONT};font-size:12px;line-height:16px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:{MUTED};\">{}</div>",
+        escape(text)
+    )
+}
+
+/// The frame's `box` component (sunken panel). `inner_html` is escaped.
+pub(crate) fn panel_html(inner_html: &str) -> String {
+    format!(
+        "<table role=\"presentation\" class=\"pp-box\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"background:{SOFT};border:1px solid {RULE};border-radius:12px;margin:0 0 14px;\"><tr><td style=\"padding:16px 18px;font-family:{FONT};\">{inner_html}</td></tr></table>\n"
+    )
+}
+
+/// A box of labelled rows `(label, value)`: each label above its value (14/22, body colour).
+pub(crate) fn panel_rows(rows: &[(&str, &str)]) -> String {
+    let inner: String = rows
+        .iter()
+        .enumerate()
+        .map(|(i, (l, value))| {
+            format!(
+                "<div style=\"margin-top:{}px;\">{}<div class=\"pp-p\" style=\"margin-top:2px;font-size:14px;line-height:22px;color:{BODY};\">{}</div></div>",
+                if i == 0 { 0 } else { 12 },
+                label(l),
+                escape(value)
+            )
+        })
+        .collect();
+    panel_html(&inner)
+}
+
+/// Free text shown verbatim in a box: escaped, line breaks kept, and never turned into links by
+/// us (no `href` is ever built from it).
+pub(crate) fn text_panel(label_text: Option<&str>, text: &str) -> String {
+    let head = label_text
+        .map(|l| {
+            format!(
+                "{}<div style=\"height:4px;line-height:4px;font-size:4px;\">&#8202;</div>",
+                label(l)
+            )
+        })
+        .unwrap_or_default();
+    panel_html(&format!(
+        "{head}<div class=\"pp-p\" style=\"white-space:pre-wrap;font-size:14px;line-height:22px;color:{BODY};\">{}</div>",
+        escape(text)
+    ))
+}
+
+/// The tone of a [`badge`] (the kit's status fills in light mode; a neutral box in dark mode,
+/// since the shared frame's style block has no per-tone rules).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Tone {
+    Info,
+    Danger,
+    Warning,
+}
+
+impl Tone {
+    /// (fill, text) in light mode.
+    fn light(self) -> (&'static str, &'static str) {
+        match self {
+            Tone::Info => ("#EDF4FF", "#0B4FB8"),
+            Tone::Warning => ("#FDF3E1", "#8A5208"),
+            Tone::Danger => ("#FDF0EF", "#C42B2B"),
+        }
+    }
+}
+
+/// The kit's status pill (12 px bold on a tinted fill), above the heading.
+pub(crate) fn badge(text: &str, tone: Tone) -> String {
+    let (fill, ink) = tone.light();
+    format!(
+        "<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"margin:0 0 14px;\"><tr><td class=\"pp-box\" style=\"padding:5px 10px;border-radius:999px;background:{fill};border:1px solid {fill};font-family:{FONT};font-size:12px;line-height:14px;font-weight:700;\"><span class=\"pp-h\" style=\"color:{ink};\">{}</span></td></tr></table>\n",
+        escape(text)
+    )
+}
+
+/// One call-to-action. `href` and `label` are plain text.
+pub(crate) struct Button<'a> {
+    pub href: &'a str,
+    pub label: &'a str,
+    /// Signal Blue fill (the frame's `button` component); otherwise an outlined secondary.
+    pub primary: bool,
+}
+
+/// A row of bulletproof buttons in the frame's `button` style. Each is a left-aligned table, so a
+/// row that does not fit wraps on a phone.
+pub(crate) fn buttons(list: &[Button<'_>]) -> String {
+    let mut out = String::from(
+        "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"margin:24px 0 8px;\"><tr><td>",
+    );
+    for b in list {
+        let href = escape(b.href);
+        let label = escape(b.label);
+        if b.primary {
+            out.push_str(&format!(
+                "<table role=\"presentation\" align=\"left\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"margin:0 8px 8px 0;\"><tr><td style=\"border-radius:10px;background:{ACCENT};\"><a href=\"{href}\" style=\"display:inline-block;padding:13px 22px;font-family:{FONT};font-size:15px;font-weight:600;color:#FFFFFF;text-decoration:none;border-radius:10px;\">{label}</a></td></tr></table>"
+            ));
+        } else {
+            out.push_str(&format!(
+                "<table role=\"presentation\" align=\"left\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"margin:0 8px 8px 0;\"><tr><td class=\"pp-box\" style=\"border-radius:10px;background:#FFFFFF;border:1px solid {RULE_STRONG};\"><a class=\"pp-h\" href=\"{href}\" style=\"display:inline-block;padding:12px 21px;font-family:{FONT};font-size:15px;font-weight:600;color:{INK};text-decoration:none;border-radius:10px;\">{label}</a></td></tr></table>"
+            ));
+        }
+    }
+    out.push_str("</td></tr></table>\n");
+    out
+}
+
+/// A one-time code. Six digits use the frame's code cells (6 px spacers, 14 px after the third);
+/// anything else is one monospace cell. The text part always carries the code as typed.
+pub(crate) fn code_block(code: &str) -> String {
+    let digits: Vec<char> = code.chars().collect();
+    let cell = |inner: &str, extra: &str| {
         format!(
-            "<div style=\"display:none;font-size:1px;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;mso-hide:all;\">{}&#8199;&#65279;&#847;&#8199;&#65279;&#847;&#8199;&#65279;&#847;</div>\n",
-            escape(preheader)
+            "<td class=\"pp-cell\" style=\"{extra}border:1px solid {RULE};border-radius:10px;background:{SOFT};font-size:26px;font-weight:700;color:{INK};text-align:center;\">{inner}</td>"
         )
     };
+    if digits.len() == 6 && digits.iter().all(char::is_ascii_digit) {
+        let mut row = String::new();
+        for (i, d) in digits.iter().enumerate() {
+            row.push_str(&cell(
+                &d.to_string(),
+                &format!("width:44px;height:54px;font-family:{FONT};"),
+            ));
+            if i < 5 {
+                row.push_str(if i == 2 {
+                    "<td style=\"width:14px;\"></td>"
+                } else {
+                    "<td style=\"width:6px;\"></td>"
+                });
+            }
+        }
+        format!(
+            "<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"margin:18px 0 20px;\"><tr>{row}</tr></table>\n"
+        )
+    } else {
+        format!(
+            "<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"margin:18px 0 20px;\"><tr>{}</tr></table>\n",
+            cell(
+                &escape(code),
+                &format!("padding:14px 18px;letter-spacing:4px;font-family:{MONO};")
+            )
+        )
+    }
+}
+
+/// A link in the footer (muted, underlined).
+pub(crate) fn footer_link(href: &str, text: &str) -> String {
     format!(
-        r#"<!DOCTYPE html>
-<html lang="{lang}" xmlns="http://www.w3.org/1999/xhtml">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="x-apple-disable-message-reformatting">
-<meta name="format-detection" content="telephone=no, date=no, address=no, email=no, url=no">
-<meta name="color-scheme" content="light dark">
-<meta name="supported-color-schemes" content="light dark">
-<title>{title}</title>
-<style>
-  :root {{ color-scheme: light dark; supported-color-schemes: light dark; }}
-  body {{ margin: 0 !important; padding: 0 !important; width: 100% !important; }}
-  a {{ color: {ACCENT}; text-decoration: none; }}
-  @media (prefers-color-scheme: dark) {{
-    .pp-bg {{ background-color: #0f1216 !important; }}
-    .pp-card {{ background-color: #14181e !important; border-color: #2c313a !important; }}
-    .pp-ink {{ color: #f4f6f9 !important; }}
-    .pp-body {{ color: #c6ccd6 !important; }}
-    .pp-muted, .pp-muted a {{ color: #949ba6 !important; }}
-    .pp-rule {{ border-color: #2c313a !important; }}
-    .pp-code, .pp-soft {{ background-color: #0f1216 !important; border-color: #454c58 !important; color: #f4f6f9 !important; }}
-    .pp-btn {{ background-color: #3b82f6 !important; color: #ffffff !important; }}
-    .pp-ghost {{ background-color: #14181e !important; border-color: #454c58 !important; color: #f4f6f9 !important; }}
-    a.pp-link {{ color: #6c9bff !important; }}
-    .pp-logo-light {{ display: none !important; }}
-    .pp-logo-dark {{ display: block !important; max-height: none !important; overflow: visible !important; }}
-  }}
-  /* Outlook.com dark mode */
-  [data-ogsc] .pp-ink {{ color: #f4f6f9 !important; }}
-  [data-ogsc] .pp-body {{ color: #c6ccd6 !important; }}
-  [data-ogsc] .pp-muted {{ color: #949ba6 !important; }}
-  [data-ogsc] .pp-logo-light {{ display: none !important; }}
-  [data-ogsc] .pp-logo-dark {{ display: block !important; max-height: none !important; overflow: visible !important; }}
-  @media only screen and (max-width: 520px) {{
-    .pp-card-pad {{ padding: 28px 22px !important; }}
-    .pp-code {{ font-size: 34px !important; letter-spacing: 6px !important; padding-left: 18px !important; }}
-  }}
-</style>
-</head>
-<body class="pp-bg" style="margin:0;padding:0;background-color:{SOFT};">
-{pre}<table role="presentation" class="pp-bg" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:{SOFT};">
-  <tr>
-    <td align="center" style="padding:32px 16px;">
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:520px;">
-        <tr>
-          <td style="padding:0 4px 20px;">
-            <img class="pp-logo-light" src="{LOGO_LIGHT}" width="176" height="37" alt="Pigeonpost" style="display:block;border:0;outline:none;width:176px;height:37px;">
-            <!--[if !mso]><!-->
-            <div class="pp-logo-dark" style="display:none;max-height:0;overflow:hidden;mso-hide:all;">
-              <img src="{LOGO_DARK}" width="176" height="37" alt="Pigeonpost" style="display:block;border:0;outline:none;width:176px;height:37px;">
-            </div>
-            <!--<![endif]-->
-          </td>
-        </tr>
-        <tr>
-          <td class="pp-card pp-card-pad pp-body" style="background-color:#ffffff;border:1px solid {RULE};border-radius:12px;padding:32px;font-family:{FONT};font-size:15px;line-height:1.6;color:{BODY};">
-{card}
-          </td>
-        </tr>
-        <tr>
-          <td class="pp-muted" style="padding:20px 4px 0;font-family:{FONT};font-size:12px;line-height:1.6;color:{MUTED};">
-{footer}
-          </td>
-        </tr>
-      </table>
-    </td>
-  </tr>
-</table>
-</body>
-</html>"#,
-        title = escape(title),
+        "<a class=\"pp-foot\" href=\"{}\" style=\"color:{MUTED};text-decoration:underline;\">{}</a>",
+        escape(href),
+        escape(text)
     )
+}
+
+/// The full message: [`FRAME`] with the preheader (plain text), the card (escaped HTML) and the
+/// footer reason (escaped HTML; the frame adds [`FOOTER_BRAND`] under it). Only the `lang`
+/// attribute differs from the shared skeleton.
+pub(crate) fn document(lang: &str, preheader: &str, card: &str, reason: &str) -> String {
+    let lang = if lang == "tr" { "tr" } else { "en" };
+    // Split the frame once at its placeholders, so text that happens to contain a placeholder
+    // can never be substituted again.
+    let (head, rest) = FRAME.split_once("{{PREHEADER}}").expect("frame preheader");
+    let (mid, rest) = rest.split_once("{{CONTENT}}").expect("frame content");
+    let (tail_a, tail_b) = rest.split_once("{{REASON}}").expect("frame reason");
+    let head = head.replacen("<html lang=\"en\"", &format!("<html lang=\"{lang}\""), 1);
+    let mut out = String::with_capacity(FRAME.len() + card.len() + 512);
+    out.push_str(&head);
+    out.push_str(&escape(preheader));
+    out.push_str(mid);
+    out.push_str(card.trim_end_matches('\n'));
+    out.push_str(tail_a);
+    out.push_str(reason);
+    out.push_str(tail_b);
+    out
 }
 
 // ---- who a message is from ----------------------------------------------------------------------
@@ -387,18 +508,132 @@ mod tests {
     use super::*;
 
     #[test]
-    fn layout_uses_the_versioned_logos_and_no_tracking() {
-        let html = document("en", "T <x>", "pre", "<p>card</p>", "foot");
-        assert!(html.contains(LOGO_LIGHT) && html.contains(LOGO_DARK));
-        assert!(html.contains("width=\"176\" height=\"37\""));
-        assert!(!html.contains("pigeonpost.dev/logo.png"));
-        assert!(html.contains("<title>T &lt;x&gt;</title>"));
-        assert!(html.contains("prefers-color-scheme: dark"));
-        // Only the two logos are images: no pixel.
+    fn the_frame_is_the_shared_skeleton_with_its_marker_and_footer() {
+        // Placeholders appear once each; the marker lets saas_be skip a second wrap.
+        for p in ["{{PREHEADER}}", "{{CONTENT}}", "{{REASON}}"] {
+            assert_eq!(FRAME.matches(p).count(), 1, "{p}");
+        }
+        assert!(FRAME.contains("<body class=\"pp-bg\" style=\"margin:0;padding:0;background:#F4F6F8;\">\n<!-- pp-email-frame v1 -->"));
+        assert!(FRAME.contains(&format!("{{{{REASON}}}}<br>{FOOTER_BRAND}</td>")));
+        assert!(FRAME.contains(LOGO_LIGHT) && FRAME.contains(LOGO_DARK));
+        // Kit tokens: ground, card, navy wordmark, 560 px column, dark palette.
+        for token in [
+            "background:#F4F6F8",
+            "border:1px solid #E1E5EA;border-radius:16px",
+            "max-width:560px",
+            "color:#05368B;\">Pigeonpost</td>",
+            "@media (prefers-color-scheme: dark)",
+            "#0B0E12",
+            "#141820",
+            "#8FB4FF",
+        ] {
+            assert!(FRAME.contains(token), "{token}");
+        }
+        // The kit's placeholder street address is never shipped.
+        assert!(!FRAME.contains("Caferağa"));
+    }
+
+    #[test]
+    fn document_fills_the_frame_and_changes_nothing_else() {
+        let html = document("tr", "pre <x>", "<p>card</p>\n", "why");
+        let expected = FRAME
+            .replacen("<html lang=\"en\"", "<html lang=\"tr\"", 1)
+            .replace("{{PREHEADER}}", "pre &lt;x&gt;")
+            .replace("{{CONTENT}}", "<p>card</p>")
+            .replace("{{REASON}}", "why");
+        assert_eq!(html, expected);
+        // Only the two logos are images: no pixel, no script, no webfont.
         assert_eq!(html.matches("<img").count(), 2);
+        for banned in ["@import", "@font-face", "<link", "<script"] {
+            assert!(!html.contains(banned), "{banned}");
+        }
+        // A placeholder inside user text is never substituted again.
+        let sneaky = document("en", "{{CONTENT}}", "c", "{{PREHEADER}}");
+        assert_eq!(sneaky.matches("{{CONTENT}}").count(), 1);
+        assert_eq!(sneaky.matches("{{PREHEADER}}").count(), 1);
+    }
+
+    #[test]
+    fn blocks_use_only_classes_the_frame_styles() {
+        let frame_classes = [
+            "pp-bg",
+            "pp-card",
+            "pp-h",
+            "pp-p",
+            "pp-foot",
+            "pp-word",
+            "pp-box",
+            "pp-cell",
+            "pp-rule",
+            "pp-ok",
+            "pp-a",
+            "pp-light-only",
+            "pp-dark-only",
+            "pp-pad",
+        ];
+        let all = [
+            heading("h"),
+            para_html("p"),
+            note("n"),
+            rule_note("r"),
+            panel_rows(&[("a", "b"), ("c", "d")]),
+            text_panel(Some("l"), "t"),
+            badge("b", Tone::Danger),
+            buttons(&[
+                Button {
+                    href: "h",
+                    label: "l",
+                    primary: true,
+                },
+                Button {
+                    href: "h",
+                    label: "l",
+                    primary: false,
+                },
+            ]),
+            code_block("123456"),
+            code_block("AB"),
+            footer_link("h", "t"),
+        ]
+        .concat();
+        for chunk in all.split("class=\"").skip(1) {
+            for class in chunk[..chunk.find('"').unwrap()].split(' ') {
+                assert!(frame_classes.contains(&class), "{class}");
+                assert!(FRAME.contains(&format!(".{class}")), "{class} not styled");
+            }
+        }
+    }
+
+    #[test]
+    fn buttons_match_the_frame_component_and_escape() {
+        let html = buttons(&[Button {
+            href: "https://x.test/a?b=1&c=\"2\"",
+            label: "Go <now>",
+            primary: true,
+        }]);
+        assert!(html.contains("<td style=\"border-radius:10px;background:#086CFF;\"><a href=\"https://x.test/a?b=1&amp;c=&quot;2&quot;\" style=\"display:inline-block;padding:13px 22px;"));
+        assert!(html.contains(">Go &lt;now&gt;</a>"));
+    }
+
+    #[test]
+    fn code_cells_match_the_frame_and_other_codes_are_one_block() {
+        let html = code_block("470736");
+        assert_eq!(html.matches("class=\"pp-cell\"").count(), 6);
+        assert_eq!(html.matches("<td style=\"width:14px;\"></td>").count(), 1);
+        assert_eq!(html.matches("<td style=\"width:6px;\"></td>").count(), 4);
+        let other = code_block("AB<12>");
+        assert_eq!(other.matches("class=\"pp-cell\"").count(), 1);
+        assert!(other.contains("AB&lt;12&gt;"));
+    }
+
+    #[test]
+    fn text_panels_never_link() {
+        let html = text_panel(Some("Note"), "See https://evil.example/x <b>\nline 2");
+        assert!(!html.contains("href"));
+        assert!(html.contains("https://evil.example/x &lt;b&gt;\nline 2"));
+        assert!(html.contains("white-space:pre-wrap"));
     }
 }
-
 #[cfg(test)]
 mod sender_tests {
     use super::*;

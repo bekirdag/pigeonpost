@@ -1,0 +1,27 @@
+Çağrı Dağ sizi davet etti
+
+Design <review> & "plan"
+
+Ne zaman: 23 Ekim 2026 Cuma, 09:00–10:00 (Europe/Istanbul, UTC+03:00)
+Nerede: Room 2 <b>north</b>
+
+Agenda:
+1. Numbers
+2. See https://evil.example/x?a=1&b=<2>
+
+Pigeonpost ile katıl: https://inbox.pigeonpost.dev/m/ABCDEFGHJK
+Takvime ekle: https://inbox.pigeonpost.dev/m/ABCDEFGHJK#t=tok&a=ics
+
+Evet: https://inbox.pigeonpost.dev/m/ABCDEFGHJK#t=tok&r=yes
+Belki: https://inbox.pigeonpost.dev/m/ABCDEFGHJK#t=tok&r=maybe
+Hayır: https://inbox.pigeonpost.dev/m/ABCDEFGHJK#t=tok&r=no
+
+Yukarıdaki düğmelerle yanıt verin. Takvim uygulamanızın kendi düğmeleriyle verilen yanıtlar Pigeonpost'a ulaşmaz.
+Takvim uygulamanıza ekleyebilmeniz için bir takvim dosyası ektedir.
+
+--
+Bu mesajı, Çağrı Dağ bu adresi Pigeonpost'ta konuk olarak girdiği için aldınız.
+Bu mesaja verilen yanıtlar okunmaz.
+Bu kişiden davet gönderilmesin: https://inbox.pigeonpost.dev/m/u#u=a&s=organizer
+Pigeonpost'taki hiç kimseden davet gönderilmesin: https://inbox.pigeonpost.dev/m/u#u=a&s=all
+Pigeonpost · pigeonpost.dev

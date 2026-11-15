@@ -1,0 +1,13 @@
+Jane <x> Doe invited you to join Acme & Co on Pigeonpost.
+
+Your company address will be /acme/jane.
+
+Accept the invitation: https://enterprise.pigeonpost.dev/invite#tok&x=1
+
+The link works once and expires on 22 Nov 2026 (UTC). It opens enterprise.pigeonpost.dev — if it opens anywhere else, do not use it.
+
+If you were not expecting this, ignore it; nothing happens unless you accept.
+
+--
+Pigeonpost · pigeonpost.dev
+Replies to this message are not read.

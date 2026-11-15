@@ -22,22 +22,100 @@ const ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&
 const esc = (text) => String(text).replace(/[&<>"']/g, (c) => ESCAPES[c]);
 const LABELS = [["name", "Name"], ["company", "Company"], ["contact", "Contact"], ["size", "Seats"], ["message", "Message"]];
 
-/// Subject, HTML and plain text for one lead: plain, escaped, no images, no links but the reply address.
+// "Pigeonpost email frame v1": the one skeleton every Pigeonpost email uses (Keycloak sign-in
+// codes, saas_be receipts, postbox calendar and organization messages), from the design kit's
+// template (design.pigeonpost.dev/templates/email.html). A byte-for-byte copy of
+// crates/pigeonpost-postbox/src/mail_frame.html; test/sales.test.mjs compares the two. It carries
+// the pp-email-frame v1 marker, so saas_be passes it through without wrapping it again.
+const FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
+export const FRAME = `<!DOCTYPE html>
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="x-apple-disable-message-reformatting">
+<meta name="format-detection" content="telephone=no, date=no, address=no, email=no, url=no">
+<meta name="color-scheme" content="light dark">
+<meta name="supported-color-schemes" content="light dark">
+<title>Pigeonpost</title>
+<style>
+  :root { color-scheme: light dark; supported-color-schemes: light dark; }
+  body { margin: 0 !important; padding: 0 !important; width: 100% !important; }
+  a { color: #086CFF; }
+  .pp-dark-only { display: none; }
+  @media (prefers-color-scheme: dark) {
+    .pp-bg { background: #0B0E12 !important; }
+    .pp-card { background: #141820 !important; border-color: #232A35 !important; }
+    .pp-h { color: #F2F4F7 !important; }
+    .pp-p { color: #D3D8E0 !important; }
+    .pp-foot { color: #A3ACB9 !important; }
+    .pp-word { color: #8FB4FF !important; }
+    .pp-box { background: #10141A !important; border-color: #232A35 !important; }
+    .pp-cell { background: #10141A !important; border-color: #232A35 !important; color: #F2F4F7 !important; }
+    .pp-rule { border-color: #232A35 !important; }
+    .pp-ok { color: #4FDB55 !important; }
+    .pp-a { color: #8FB4FF !important; }
+    .pp-light-only { display: none !important; }
+    .pp-dark-only { display: block !important; max-height: none !important; overflow: visible !important; }
+  }
+  [data-ogsc] .pp-h { color: #F2F4F7 !important; }
+  [data-ogsc] .pp-p { color: #D3D8E0 !important; }
+  [data-ogsc] .pp-foot { color: #A3ACB9 !important; }
+  [data-ogsc] .pp-word { color: #8FB4FF !important; }
+  @media only screen and (max-width: 520px) {
+    .pp-pad { padding: 28px 22px 24px !important; }
+  }
+</style>
+</head>
+<body class="pp-bg" style="margin:0;padding:0;background:#F4F6F8;">
+<!-- pp-email-frame v1 -->
+<div style="display:none;max-height:0;overflow:hidden;font-size:1px;line-height:1px;color:#F4F6F8;mso-hide:all;">{{PREHEADER}}&#8199;&#65279;&#847;&#8199;&#65279;&#847;&#8199;&#65279;&#847;&#8199;&#65279;&#847;</div>
+<table role="presentation" class="pp-bg" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F4F6F8;">
+<tr><td align="center" style="padding:32px 16px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;">
+<tr><td style="padding:0 4px 18px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td style="width:30px;"><img class="pp-light-only" src="https://pigeonpost.dev/email/pigeonpost-symbol.v1.png" width="30" height="28" alt="" style="display:block;width:30px;height:28px;border:0;"><!--[if !mso]><!--><div class="pp-dark-only" style="display:none;max-height:0;overflow:hidden;mso-hide:all;"><img src="https://pigeonpost.dev/email/pigeonpost-symbol-white.v1.png" width="30" height="23" alt="" style="display:block;width:30px;height:23px;border:0;"></div><!--<![endif]--></td><td class="pp-word" style="padding-left:8px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:17px;font-weight:700;color:#05368B;">Pigeonpost</td></tr></table></td></tr>
+<tr><td class="pp-card pp-pad" style="background:#FFFFFF;border:1px solid #E1E5EA;border-radius:16px;padding:32px 32px 28px;">
+{{CONTENT}}
+</td></tr>
+<tr><td class="pp-foot" style="padding:18px 8px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:12px;line-height:18px;color:#59626E;">{{REASON}}<br>Pigeonpost · Piyote Bilişim · pigeonpost.dev</td></tr>
+</table>
+</td></tr>
+</table>
+</body>
+</html>
+`;
+export const LOGO_LIGHT = "https://pigeonpost.dev/email/pigeonpost-symbol.v1.png";
+export const LOGO_DARK = "https://pigeonpost.dev/email/pigeonpost-symbol-white.v1.png";
+
+/// The frame filled in: `preheader` is plain text, `card` and `reason` are escaped HTML.
+export function frameDocument({ preheader = "", card, reason }) {
+  const [head, rest] = FRAME.split("{{PREHEADER}}");
+  const [mid, rest2] = rest.split("{{CONTENT}}");
+  const [tailA, tailB] = rest2.split("{{REASON}}");
+  return head + esc(preheader) + mid + card + tailA + reason + tailB;
+}
+
+/// Subject, HTML and plain text for one lead: escaped, in the shared frame, no links (reply to the
+/// contact address directly) and no images but the frame's two static logos.
 export function renderLead(lead) {
   const subject = `Sales request: ${lead.company}${lead.size ? ` (${lead.size} seats)` : ""}`.replace(/[\r\n]+/g, " ").slice(0, 200);
   const rows = LABELS.filter(([key]) => lead[key]);
   const text = `A "Talk to sales" request came in from the enterprise portal at ${lead.at}.\n\n`
     + rows.map(([key, label]) => `${label}: ${lead[key]}`).join("\n")
-    + `\n\nReference: ${lead.id}\nReply to the contact address directly; replies to this message are not read.\n`;
-  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${esc(subject)}</title></head>`
-    + `<body style="margin:0;padding:24px;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#14181f;">`
-    + `<h1 style="font-size:18px;margin:0 0 12px;">New "Talk to sales" request</h1>`
-    + `<p style="margin:0 0 16px;color:#6b7480;font-size:14px;">From the enterprise portal at ${esc(lead.at)}.</p>`
-    + `<table style="border-collapse:collapse;font-size:14px;">`
-    + rows.map(([key, label]) => `<tr><td style="padding:4px 16px 4px 0;color:#6b7480;vertical-align:top;">${esc(label)}</td>`
-      + `<td style="padding:4px 0;white-space:pre-wrap;">${esc(lead[key])}</td></tr>`).join("")
-    + `</table><p style="margin:16px 0 0;color:#6b7480;font-size:13px;">Reference ${esc(lead.id)}. Reply to the contact address directly; replies to this message are not read.</p>`
-    + `</body></html>`;
+    + `\n\nReference: ${lead.id}\nReply to the contact address directly; replies to this message are not read.\n`
+    + `\n--\nPigeonpost · Piyote Bilişim · pigeonpost.dev\n`;
+  const label = (l) => `<div class="pp-foot" style="font-family:${FONT};font-size:12px;line-height:16px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:#59626E;">${esc(l)}</div>`;
+  const box = rows.map(([key, l], i) => `<div style="margin-top:${i ? 12 : 0}px;">${label(l)}`
+    + `<div class="pp-p" style="margin-top:2px;white-space:pre-wrap;font-size:14px;line-height:22px;color:#343C47;">${esc(lead[key])}</div></div>`).join("");
+  const card = `<h1 class="pp-h" style="margin:0 0 16px;font-family:${FONT};font-size:22px;line-height:28px;font-weight:700;color:#12161C;">New "Talk to sales" request</h1>\n`
+    + `<p class="pp-p" style="margin:0 0 14px;font-family:${FONT};font-size:15px;line-height:24px;color:#343C47;">From the enterprise portal at ${esc(lead.at)}.</p>\n`
+    + `<table role="presentation" class="pp-box" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F4F6F8;border:1px solid #E1E5EA;border-radius:12px;margin:0 0 14px;"><tr><td style="padding:16px 18px;font-family:${FONT};">${box}</td></tr></table>\n`
+    + `<p class="pp-foot pp-rule" style="margin:20px 0 0;padding-top:16px;border-top:1px solid #E1E5EA;font-family:${FONT};font-size:13px;line-height:20px;color:#59626E;">Reference ${esc(lead.id)}. Reply to the contact address directly; replies to this message are not read.</p>`;
+  const html = frameDocument({
+    preheader: `${lead.company}${lead.size ? ` · ${lead.size} seats` : ""}`,
+    card,
+    reason: "Sent to the Pigeonpost sales inbox from enterprise.pigeonpost.dev.",
+  });
   return { subject, html, text };
 }
 

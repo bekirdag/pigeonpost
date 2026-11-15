@@ -236,6 +236,9 @@ struct Words {
     verify_title: &'static str,
     add_to_calendar: &'static str,
     message_from: &'static str,
+    badge_updated: &'static str,
+    badge_cancelled: &'static str,
+    badge_reminder: &'static str,
 }
 
 const EN: Words = Words {
@@ -271,6 +274,9 @@ const EN: Words = Words {
     message_from: "Message from the organizer",
     verify_title: "Confirm it's you",
     add_to_calendar: "Add to calendar",
+    badge_updated: "Updated",
+    badge_cancelled: "Cancelled",
+    badge_reminder: "Starting soon",
 };
 
 const TR: Words = Words {
@@ -306,6 +312,9 @@ const TR: Words = Words {
     message_from: "Düzenleyenin mesajı",
     verify_title: "Siz olduğunuzu doğrulayın",
     add_to_calendar: "Takvime ekle",
+    badge_updated: "Güncellendi",
+    badge_cancelled: "İptal edildi",
+    badge_reminder: "Birazdan başlıyor",
 };
 
 fn words(lang: &str) -> &'static Words {
@@ -435,6 +444,7 @@ pub(crate) fn when_dates(
 
 /// Subject, HTML and plain text for one message.
 pub(crate) fn render(kind: Kind, v: &View) -> (String, String, String) {
+    use crate::mail_layout::{self as layout, Button, Tone};
     let w = words(&v.lang);
     let subject = fill(
         match kind {
@@ -451,32 +461,24 @@ pub(crate) fn render(kind: Kind, v: &View) -> (String, String, String) {
         .filter(|c| !c.is_control())
         .take(200)
         .collect();
-    let lead = fill(
-        match kind {
-            // No name to show (a key-only organizer): never print the raw address.
-            Kind::Invite if v.organizer.is_empty() => w.invited_anon,
-            Kind::Update if v.organizer.is_empty() => w.updated_anon,
-            Kind::Cancel if v.organizer.is_empty() => w.cancelled_anon,
-            Kind::Invite => w.invited,
-            Kind::Update => w.updated,
-            Kind::Cancel => w.cancelled,
-            Kind::Reminder => w.reminder,
-            Kind::Verify => w.verify_intro,
-        },
-        v,
-    );
-    use crate::mail_layout::{self as layout, BODY, INK, MONO, MUTED, RULE, SOFT};
-    let e = html_escape;
+    let lead_template = match kind {
+        // No name to show (a key-only organizer): never print the raw address.
+        Kind::Invite if v.organizer.is_empty() => w.invited_anon,
+        Kind::Update if v.organizer.is_empty() => w.updated_anon,
+        Kind::Cancel if v.organizer.is_empty() => w.cancelled_anon,
+        Kind::Invite => w.invited,
+        Kind::Update => w.updated,
+        Kind::Cancel => w.cancelled,
+        Kind::Reminder => w.reminder,
+        Kind::Verify => w.verify_intro,
+    };
+    let lead = fill(lead_template, v);
+    // The same line as HTML, with the organizer's name in bold (as the kit's invitation does).
+    let lead_html = html_escape(lead_template)
+        .replace("{minutes}", &v.minutes.to_string())
+        .replace("{organizer}", &layout::strong(&v.organizer));
     let mut h = String::new();
     let mut t = String::new();
-    let p_body = format!("margin:0 0 14px;color:{BODY};font-size:15px;line-height:1.6;");
-    let p_note = format!("margin:14px 0 0;color:{MUTED};font-size:13px;line-height:1.55;");
-    if kind != Kind::Verify {
-        h.push_str(&format!(
-            "<p class=\"pp-muted\" style=\"margin:0 0 6px;color:{MUTED};font-size:14px;line-height:1.5;\">{}</p>\n",
-            e(&lead)
-        ));
-    }
     t.push_str(&lead);
     t.push_str("\n\n");
     let preheader = if kind == Kind::Verify {
@@ -486,114 +488,94 @@ pub(crate) fn render(kind: Kind, v: &View) -> (String, String, String) {
     };
     if kind == Kind::Verify {
         let code = v.code.clone().unwrap_or_default();
-        h.push_str(&format!(
-            "<h1 class=\"pp-ink\" style=\"margin:0 0 16px;font-size:20px;line-height:1.3;font-weight:700;letter-spacing:-0.01em;color:{INK};\">{}</h1>\n",
-            e(w.verify_title)
-        ));
-        h.push_str(&format!(
-            "<p class=\"pp-body\" style=\"{p_body}margin-bottom:20px;\">{}</p>\n",
-            e(&lead)
-        ));
-        h.push_str(&format!(
-            "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\"><tr><td align=\"center\" class=\"pp-code\" style=\"background-color:{SOFT};border:1px solid {RULE};border-radius:10px;padding:18px 12px 18px 22px;font-family:{MONO};font-size:40px;line-height:1.1;font-weight:700;letter-spacing:10px;color:{INK};-webkit-user-select:all;user-select:all;\">{}</td></tr></table>\n",
-            e(&code)
-        ));
-        h.push_str(&format!(
-            "<p class=\"pp-muted pp-rule\" style=\"{p_note}margin-top:20px;padding-top:16px;border-top:1px solid {RULE};\">{}</p>\n",
-            e(w.verify_note)
-        ));
+        h.push_str(&layout::heading(w.verify_title));
+        h.push_str(&layout::para_html(&lead_html));
+        h.push_str(&layout::code_block(&code));
+        h.push_str(&layout::rule_note(w.verify_note));
         t.push_str(&format!("{code}\n\n{}\n", w.verify_note));
     } else {
-        h.push_str(&format!(
-            "<h1 class=\"pp-ink\" style=\"margin:0 0 18px;font-size:22px;line-height:1.3;font-weight:700;letter-spacing:-0.01em;color:{INK};\">{}</h1>\n",
-            e(&v.title)
-        ));
+        match kind {
+            Kind::Update => h.push_str(&layout::badge(w.badge_updated, Tone::Info)),
+            Kind::Cancel => h.push_str(&layout::badge(w.badge_cancelled, Tone::Danger)),
+            Kind::Reminder => h.push_str(&layout::badge(w.badge_reminder, Tone::Warning)),
+            _ => {}
+        }
+        h.push_str(&layout::heading(&v.title));
+        h.push_str(&layout::para_html(&lead_html));
         t.push_str(&format!("{}\n\n", v.title));
-        let label = |s: &str| {
-            format!(
-                "<span class=\"pp-muted\" style=\"display:block;font-size:12px;line-height:1.4;text-transform:uppercase;letter-spacing:.04em;color:{MUTED};\">{}</span>",
-                e(s)
-            )
-        };
-        h.push_str(&format!(
-            "<p class=\"pp-body\" style=\"{p_body}\">{}{}</p>\n",
-            label(w.when),
-            e(&v.when)
-        ));
+        let mut rows = vec![(w.when, v.when.as_str())];
         t.push_str(&format!("{}: {}\n", w.when, v.when));
         if !v.location.is_empty() {
-            h.push_str(&format!(
-                "<p class=\"pp-body\" style=\"{p_body}\">{}{}</p>\n",
-                label(w.where_),
-                e(&v.location)
-            ));
+            rows.push((w.where_, v.location.as_str()));
             t.push_str(&format!("{}: {}\n", w.where_, v.location));
         }
-        let soft = format!(
-            "white-space:pre-wrap;font-size:14px;line-height:1.55;color:{BODY};background-color:{SOFT};border:1px solid {RULE};border-radius:10px;padding:12px 14px;margin:0 0 14px;"
-        );
+        h.push_str(&layout::panel_rows(&rows));
         if let Some(m) = &v.cancel_message {
-            h.push_str(&format!(
-                "<p class=\"pp-body\" style=\"margin:0 0 6px;\">{}</p><div class=\"pp-soft\" style=\"{soft}\">{}</div>\n",
-                label(w.message_from),
-                e(m)
-            ));
+            h.push_str(&layout::text_panel(Some(w.message_from), m));
             t.push_str(&format!("\n{}:\n{m}\n", w.message_from));
         }
         if !v.description.is_empty() && kind != Kind::Cancel {
             // Shown as text: links in descriptions are never made clickable here.
-            h.push_str(&format!(
-                "<div class=\"pp-soft\" style=\"{soft}\">{}</div>\n",
-                e(&v.description)
-            ));
+            h.push_str(&layout::text_panel(None, &v.description));
             t.push_str(&format!("\n{}\n", v.description));
         }
         if kind != Kind::Cancel {
-            h.push_str("<p style=\"margin:22px 0 6px;\">");
+            let mut list = Vec::new();
             match &v.meeting_url {
                 Some(url) => {
-                    h.push_str(&layout::button(url, w.join));
+                    list.push(Button {
+                        href: url,
+                        label: w.join,
+                        primary: true,
+                    });
                     t.push_str(&format!("\n{}: {url}\n", w.join));
                 }
                 None => {
-                    h.push_str(&layout::button(&v.page_url, w.details));
+                    list.push(Button {
+                        href: &v.page_url,
+                        label: w.details,
+                        primary: true,
+                    });
                     t.push_str(&format!("\n{}: {}\n", w.details, v.page_url));
                 }
             }
             if let Some(ics) = &v.ics_url {
-                h.push_str(&layout::ghost(ics, w.add_to_calendar));
+                list.push(Button {
+                    href: ics,
+                    label: w.add_to_calendar,
+                    primary: false,
+                });
                 t.push_str(&format!("{}: {ics}\n", w.add_to_calendar));
             }
-            h.push_str("</p>\n");
+            h.push_str(&layout::buttons(&list));
         }
         if let (Some([yes, maybe, no]), true) =
             (&v.rsvp_urls, matches!(kind, Kind::Invite | Kind::Update))
         {
             h.push_str(&format!(
-                "<p class=\"pp-body\" style=\"margin:18px 0 8px;\">{}</p><p style=\"margin:0;\">",
-                label(w.going)
+                "<div style=\"margin:6px 0 8px;\">{}</div>\n",
+                layout::label(w.going)
             ));
             t.push('\n');
+            let mut list = Vec::new();
             for (answer, url) in [(w.yes, yes), (w.maybe, maybe), (w.no, no)] {
-                h.push_str(&layout::ghost(url, answer));
+                list.push(Button {
+                    href: url,
+                    label: answer,
+                    primary: false,
+                });
                 t.push_str(&format!("{answer}: {url}\n"));
             }
-            h.push_str("</p>\n");
-            h.push_str(&format!(
-                "<p class=\"pp-muted\" style=\"{p_note}\">{}</p>\n",
-                e(w.authoritative)
-            ));
+            h.push_str(&layout::buttons(&list));
+            h.push_str(&layout::note(w.authoritative));
             t.push_str(&format!("\n{}\n", w.authoritative));
         }
         if matches!(kind, Kind::Invite | Kind::Update | Kind::Cancel) {
-            h.push_str(&format!(
-                "<p class=\"pp-muted pp-rule\" style=\"{p_note}margin-top:20px;padding-top:16px;border-top:1px solid {RULE};\">{}</p>\n",
-                e(w.attached)
-            ));
+            h.push_str(&layout::rule_note(w.attached));
             t.push_str(&format!("{}\n", w.attached));
         }
     }
-    let mut foot = String::from(FOOTER_BRAND);
+    let mut foot = Vec::new();
     t.push_str("\n--\n");
     if kind != Kind::Verify {
         let why = fill(
@@ -604,35 +586,26 @@ pub(crate) fn render(kind: Kind, v: &View) -> (String, String, String) {
             },
             v,
         );
-        foot.push_str(&format!("<br>{}<br>{}", e(&why), e(w.no_reply)));
+        foot.push(html_escape(&why));
+        foot.push(html_escape(w.no_reply));
         t.push_str(&format!("{why}\n{}\n", w.no_reply));
         if let Some(u) = &v.unsubscribe_organizer {
-            let link = |href: &str, label: &str| {
-                format!(
-                    "<a class=\"pp-muted\" href=\"{}\" style=\"color:{MUTED};text-decoration:underline;\">{}</a>",
-                    e(href),
-                    e(label)
-                )
-            };
-            foot.push_str(&format!("<br>{}", link(u, w.stop_from)));
+            let mut links = layout::footer_link(u, w.stop_from);
             t.push_str(&format!("{}: {u}\n", w.stop_from));
             if let Some(a) = &v.unsubscribe_all {
-                foot.push_str(&format!(" · {}", link(a, w.stop_all)));
+                links.push_str(&format!(" · {}", layout::footer_link(a, w.stop_all)));
                 t.push_str(&format!("{}: {a}\n", w.stop_all));
             }
+            foot.push(links);
         }
     } else {
-        foot.push_str(&format!("<br>{}", e(w.no_reply)));
+        foot.push(html_escape(w.no_reply));
         t.push_str(&format!("{}\n", w.no_reply));
     }
     t.push_str("Pigeonpost · pigeonpost.dev\n");
-    let html = layout::document(&v.lang, &subject, &preheader, &h, &foot);
+    let html = layout::document(&v.lang, &preheader, &h, &foot.join("<br>"));
     (subject, html, t)
 }
-
-/// The first footer line, shared with the Keycloak sign-in code theme.
-const FOOTER_BRAND: &str =
-    "Pigeonpost · Private messaging for people and AI agents · pigeonpost.dev";
 
 /// The `From` display name for a calendar message: "<name> via Pigeonpost" when the organizer
 /// has a name (their self-set name or a name-shaped handle; see `worker.rs`), otherwise

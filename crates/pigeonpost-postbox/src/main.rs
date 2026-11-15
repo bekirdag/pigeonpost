@@ -96,6 +96,8 @@ mod groups_tests;
 mod inbox_paging_tests;
 mod internal_api;
 mod limits;
+#[cfg(test)]
+mod mail_golden_tests;
 mod mail_layout;
 mod marketplace;
 mod marketplace_conformance;
