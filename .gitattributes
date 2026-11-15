@@ -1,0 +1,2 @@
+# Golden renderer output is compared byte for byte on every OS, so keep it LF everywhere.
+crates/pigeonpost-postbox/tests/mail-golden/** text eol=lf

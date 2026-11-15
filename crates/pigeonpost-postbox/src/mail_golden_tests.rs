@@ -28,9 +28,12 @@ fn check(name: &str, (subject, html, text): (String, String, String)) {
             std::fs::write(&path, &got).expect("write golden");
             continue;
         }
-        let want = std::fs::read_to_string(&path).unwrap_or_else(|_| {
-            panic!("missing golden {file}; run with UPDATE_MAIL_GOLDEN=1 and review it")
-        });
+        let want = std::fs::read_to_string(&path)
+            .unwrap_or_else(|_| {
+                panic!("missing golden {file}; run with UPDATE_MAIL_GOLDEN=1 and review it")
+            })
+            // `.gitattributes` keeps these LF; tolerate a checkout that converted them anyway.
+            .replace("\r\n", "\n");
         assert!(
             want == got,
             "{file} changed; run with UPDATE_MAIL_GOLDEN=1 and review the diff"
