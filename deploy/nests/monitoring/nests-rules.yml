@@ -70,3 +70,9 @@ groups:
         expr: time() - nests_uptime_probe_seconds > 300 or absent(nests_uptime_probe_seconds)
         for: 5m
         annotations: {summary: "the dependency uptime probe (nests-uptime-probe.timer) has not reported for over 5 minutes"}
+      # status.pigeonpost.dev monitor (deploy/status/): pp-status-outside.timer writes this metric.
+      - alert: PigeonpostStatusStale
+        expr: time() - pp_status_last_run_seconds > 300 or absent(pp_status_last_run_seconds)
+        for: 5m
+        labels: {severity: page}
+        annotations: {summary: "the status.pigeonpost.dev monitor (pp-status-outside.timer) has not run for over 5 minutes"}

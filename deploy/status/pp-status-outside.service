@@ -1,0 +1,25 @@
+[Unit]
+Description=Pigeonpost status: outside checks, merge, status.json and alerts (nests-1)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ppstatus
+Group=ppstatus
+ExecStart=/usr/bin/python3 /usr/local/lib/pp-status/pp-status.py run
+# Liveness metric for the Nests Prometheus (rule PigeonpostStatusStale).
+ExecStartPost=+/usr/bin/install -m 0644 /var/lib/pp-status/pp_status.prom /var/lib/prometheus/node-exporter/pp_status.prom
+EnvironmentFile=/etc/pp-status/pp-status.env
+# Sender mailbox token (/bekir/alerts) and the Postmark server token; never in the repo or logs.
+LoadCredential=alerts.token:/etc/nests/alerts.token
+LoadCredential=postmark.token:/etc/credstore/postmark.token
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ReadWritePaths=/var/lib/pp-status
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+MemoryMax=128M
+TimeoutStartSec=90

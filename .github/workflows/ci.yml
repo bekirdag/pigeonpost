@@ -142,6 +142,8 @@ jobs:
         run: python3 .github/scripts/test_cubemeld_gamecenter.py
       - name: Validate the dedicated ChatGPT OAuth provisioning boundaries
         run: python3 deploy/identity/test-chatgpt.py
+      - name: Test the status monitor's merge, flapping and alert logic
+        run: python3 deploy/status/test_pp_status.py
       - uses: dtolnay/rust-toolchain@8632757d5a758c452f724e9d837848c694a7bb48 # 1.91.1
         with:
           components: rustfmt, clippy
@@ -267,7 +269,7 @@ jobs:
           # native HTML input type; these two files do not redefine Pigeonpost messaging.
           # partner.pigeonpost.dev carries the same application form (page-application.js) and,
           # like site-enterprise/config.js, requests the realm's standard address scope by name.
-          # site/kit and site-developers/kit are the design kit's CSS bundle vendored byte for byte;
+          # site/kit, site-developers/kit and site-status/kit are the design kit's CSS bundle vendored byte for byte;
           # its sign-in button component names a contact-address provider variant by that word.
           if git grep -n -i -w "$forbidden_word" -- . \
               ':(exclude)site/account.js' \
@@ -290,6 +292,7 @@ jobs:
               ':(exclude)site-help' \
               ':(exclude)site/kit' \
               ':(exclude)site-developers/kit' \
+              ':(exclude)site-status/kit' \
               ':(exclude)deploy/account-deletions.py' \
               ':(exclude)deploy/identity/provision-chatgpt.py' \
               ':(exclude)crates/pigeonpost-cli/src/login_cmd.rs' \
