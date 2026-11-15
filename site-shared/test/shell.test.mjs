@@ -245,11 +245,11 @@ test("themePosition left puts the theme switch at the top left; navHeader draws 
   assert.ok(other.w.document.querySelector(".pp-top-actions [data-theme-toggle]"));
 });
 
-test("breadcrumbs hold only the group and the page (no stray text)", async (t) => {
+test("the top bar names the page (no stray text)", async (t) => {
   const { w } = boot(t, { session: jwt() });
   await w.PP.shell.start({ platform: "account", title: "Account", context: async () => ({}), pages: PAGES([]) });
   await tick();
-  assert.equal(w.document.getElementById("pp-crumbs").textContent, "AccountOverview");
+  assert.equal(w.document.getElementById("pp-crumbs").textContent, "Overview");
 });
 
 test("api: the marketplace's nested error shape is read like the flat one; quiet probes never leave; files go up as the body", async (t) => {

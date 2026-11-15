@@ -55,7 +55,6 @@
 .acc-picker { display: grid; gap: 14px; }
 
 /* Wallet packs. */
-.acc-packs { display: grid; gap: var(--pp-space-3); grid-template-columns: repeat(auto-fill, minmax(min(100%, 120px), 1fr)); }
 /* Top-up packs (kit: .pp-pack). */
 .acc-pack {
   position: relative; display: grid; gap: 4px; justify-items: center; text-align: center; padding: var(--pp-space-5) var(--pp-space-3) var(--pp-space-4);
@@ -111,3 +110,74 @@
 
 /* The hosted payment page. */
 .acc-pay-card { width: 100%; max-width: 640px; }
+
+/* ---- Store → Services on the kit's marketplace template (templates/marketplace.html) ---------- */
+/* Search hero (kit: .kt-help-hero with a pill search). */
+.acc-hero {
+  display: grid; gap: var(--pp-space-4); justify-items: center; text-align: center; padding: var(--pp-space-10) var(--pp-space-4) var(--pp-space-8);
+  border-radius: var(--pp-radius-xl); background: radial-gradient(50% 70% at 50% 0%, color-mix(in srgb, var(--pp-accent) 12%, transparent), transparent 70%);
+}
+.acc-hero p { max-width: 640px; }
+.acc-hero-form { width: min(620px, 100%); }
+.acc-hero-wrap.pp-search-wrap { display: block; max-width: none; width: 100%; }
+.acc-hero-search.pp-input { height: var(--pp-control-l); border-radius: var(--pp-radius-full); padding-left: 42px; font-size: 16px; }
+.acc-hero-wrap.pp-search-wrap .ico { left: 15px; width: 20px; height: 20px; }
+/* Featured row (kit: .kt-featured / .kt-feature-card). */
+.acc-featured { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--pp-space-4); }
+@media (max-width: 900px) { .acc-featured { grid-template-columns: minmax(0, 1fr); } }
+.acc-feature-card {
+  position: relative; overflow: hidden; display: grid; gap: var(--pp-space-3); align-content: space-between; min-height: 200px; padding: var(--pp-space-6);
+  border-radius: var(--pp-radius-xl); color: var(--pp-gray-0); background: linear-gradient(150deg, var(--pp-navy-900), var(--pp-navy-600));
+}
+.acc-feature-card:nth-child(2) { background: linear-gradient(150deg, var(--pp-green-900), var(--pp-teal-600)); }
+.acc-feature-card:nth-child(3) { background: linear-gradient(150deg, var(--pp-blue-900), var(--pp-violet-600)); }
+.acc-feature-text { display: grid; gap: var(--pp-space-2); }
+.acc-feature-card .pp-overline { color: inherit; opacity: .8; }
+.acc-feature-card h3 { font-size: var(--pp-fs-h2); line-height: var(--pp-lh-h2); font-weight: var(--pp-weight-semibold); color: var(--pp-gray-0); }
+.acc-feature-card p { color: color-mix(in srgb, var(--pp-gray-0) 82%, transparent); font-size: var(--pp-fs-body-s); line-height: var(--pp-lh-body-s); }
+.acc-feature-card .pp-btn { justify-self: start; background: var(--pp-gray-0); border-color: var(--pp-gray-0); color: var(--pp-navy-800); }
+/* Filters beside the grid (kit: .kt-market). */
+.acc-market { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: var(--pp-space-8); align-items: start; }
+.acc-market-filters { display: grid; gap: var(--pp-space-5); position: sticky; top: calc(var(--pp-topbar-h) + 16px); }
+.acc-market-filters .pp-sidebar__item { height: 34px; }
+.acc-market-title { font-size: var(--pp-fs-h3); line-height: var(--pp-lh-h3); }
+.acc-cat-select { display: none; }
+.acc-catalog { display: grid; gap: var(--pp-space-6); }
+.acc-catalog:empty { display: none; }
+.acc-installed { display: grid; gap: 6px; align-content: start; }
+.pp-listing-card .pp-listing-logo { flex: none; }
+img.pp-listing-logo { object-fit: cover; }
+/* Service detail (kit: .kt-detail): the run or buy card in a sticky 380px column. */
+.acc-detail { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: var(--pp-space-8); align-items: start; }
+.acc-detail-side { position: sticky; top: calc(var(--pp-topbar-h) + 16px); }
+.acc-detail-main > *, .acc-detail-side > * { min-width: 0; }
+.acc-order .acc-run-form { display: grid; gap: var(--pp-space-4); }
+.acc-order .pp-btn--block { width: 100%; }
+.pp-listing-header__meta .ico { width: 15px; height: 15px; }
+.acc-prose { display: grid; gap: var(--pp-space-3); max-width: 680px; font-size: var(--pp-fs-body); line-height: var(--pp-lh-body); }
+.acc-prose h2 { font-size: var(--pp-fs-h3); line-height: var(--pp-lh-h3); }
+@media (max-width: 1100px) {
+  .acc-detail { grid-template-columns: minmax(0, 1fr); }
+  .acc-detail-side { position: static; }
+}
+@media (max-width: 900px) {
+  .acc-market { grid-template-columns: minmax(0, 1fr); gap: var(--pp-space-5); }
+  .acc-market-filters { display: none; }
+  .acc-cat-select { display: block; }
+}
+@media (max-width: 600px) {
+  .acc-hero { padding: var(--pp-space-6) 0; }
+  .acc-hero .pp-display-m { font-size: var(--pp-fs-h1); line-height: var(--pp-lh-h1); }
+}
+
+/* Wallet (kit: account template — .pp-wallet with packs beside the history ledger). */
+.acc-wallet-cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--pp-space-5); align-items: start; }
+.acc-wallet.pp-wallet { max-width: none; }
+.acc-wallet .acc-stack, .acc-wallet form { display: grid; gap: var(--pp-space-4); }
+.acc-wallet .pp-btn--block { width: 100%; }
+.acc-packs.pp-pack-grid { border: 0; margin: 0; padding: 0; min-width: 0; }
+.pp-ledger__amount .acc-minus { color: var(--pp-text); }
+@media (max-width: 1000px) { .acc-wallet-cols { grid-template-columns: minmax(0, 1fr); } }
+/* The Nest card's settings button is an icon button. */
+.pp-nest-card__icon-btn.pp-btn { padding: 0; }
+.pp-nest-card__icon-btn .ico { width: 18px; height: 18px; }

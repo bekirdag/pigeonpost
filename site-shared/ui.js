@@ -27,7 +27,8 @@
   const asNodes = (x) => (x === undefined || x === null || x === false ? [] : Array.isArray(x) ? x : [x]);
 
   ui.button = function (label, { kind = "default", onclick, href, disabled, icon, busy, type = "button", title, size } = {}) {
-    const cls = `pp-btn${kind !== "default" ? ` pp-btn-${kind}` : ""}${size ? ` pp-btn-${size}` : ""}`;
+    const KIT = { primary: "primary", danger: "danger-outline", quiet: "ghost", sm: "s", lg: "l" };
+    const cls = `pp-btn${kind !== "default" ? ` pp-btn-${kind} pp-btn--${KIT[kind] || kind}` : ""}${size ? ` pp-btn-${size} pp-btn--${KIT[size] || size}` : ""}`;
     const inner = [icon ? PP.icon(icon) : null, el("span", {}, label)];
     if (href && !disabled) return el("a", { class: cls, href, title, target: /^https?:/.test(href) && !href.includes(window.location.host) ? "_blank" : null, rel: /^https?:/.test(href) ? "noopener" : null }, inner);
     const b = el("button", { class: cls, type, disabled: disabled || busy ? true : null, title, "aria-busy": busy ? "true" : null }, inner);
@@ -61,29 +62,39 @@
       body);
   };
 
-  ui.card = function ({ title, text, actions, tone, cls } = {}, ...body) {
+  /// A card (kit: .pp-card with __header: optional icon tile, title, subtitle, aside actions).
+  ui.card = function ({ title, text, actions, tone, cls, icon } = {}, ...body) {
     return el("div", { class: `pp-card${tone ? ` pp-card-${tone}` : ""}${cls ? ` ${cls}` : ""}` },
-      title || actions ? el("div", { class: "pp-card-head" },
-        el("div", {}, title ? el("h3", {}, title) : null, text ? el("p", { class: "pp-muted" }, text) : null),
-        actions ? el("div", { class: "pp-card-actions" }, asNodes(actions)) : null) : null,
+      title || actions ? el("div", { class: "pp-card-head pp-card__header" },
+        icon ? el("span", { class: "pp-card__icon" }, PP.icon(icon)) : null,
+        el("div", { class: "pp-card__heading" }, title ? el("h3", { class: "pp-card__title" }, title) : null, text ? el("p", { class: "pp-muted pp-card__subtitle" }, text) : null),
+        actions ? el("div", { class: "pp-card-actions pp-card__aside" }, asNodes(actions)) : null) : null,
       body);
   };
 
   ui.grid = (...cards) => el("div", { class: "pp-grid" }, cards);
 
+  /// Stat tiles (kit: .pp-stat--card). Each: { label, value, unit, hint, icon, href, tone,
+  /// trend: "up"|"down"|"flat", hintTone: "good"|"bad"|"neutral" }.
   ui.stats = function (items) {
     return el("div", { class: "pp-stats" }, items.filter(Boolean).map((s) => {
-      const body = [el("span", { class: "pp-stat-label" }, s.label), el("strong", { class: "pp-stat-value" }, s.value === undefined || s.value === null ? "—" : String(s.value)), s.hint ? el("span", { class: "pp-stat-hint" }, s.hint) : null];
-      return s.href ? el("a", { class: `pp-stat${s.tone ? ` pp-tone-${s.tone}` : ""}`, href: s.href }, body) : el("div", { class: `pp-stat${s.tone ? ` pp-tone-${s.tone}` : ""}` }, body);
+      const body = [
+        el("span", { class: "pp-stat-label pp-stat__label" }, s.icon ? PP.icon(s.icon) : null, s.label),
+        el("strong", { class: "pp-stat-value pp-stat__value" }, s.value === undefined || s.value === null ? "—" : String(s.value), s.unit ? el("span", { class: "pp-stat__unit" }, s.unit) : null),
+        s.hint ? el("span", { class: "pp-stat-hint pp-stat__delta", "data-trend": s.trend || "flat", "data-tone": s.hintTone || "neutral" }, s.hint) : null];
+      const cls = `pp-stat pp-stat--card${s.tone ? ` pp-tone-${s.tone}` : ""}`;
+      return s.href ? el("a", { class: cls, href: s.href }, body) : el("div", { class: cls }, body);
     }));
   };
 
-  ui.badge = (text, tone = "neutral") => el("span", { class: `pp-badge pp-tone-${tone}` }, text);
+  /// A badge (kit: .pp-badge + tone); `dot` adds the kit's leading status dot.
+  ui.badge = (text, tone = "neutral", { dot = false } = {}) =>
+    el("span", { class: `pp-badge pp-tone-${tone}${tone !== "neutral" ? ` pp-badge--${tone}` : ""}${dot ? " pp-badge--dot" : ""}` }, text);
 
   /// A state badge from a map { state: [label, tone] }; unknown states show as neutral text.
   ui.status = function (value, map) {
     const m = (map && map[value]) || [String(value || "—").replace(/_/g, " "), "neutral"];
-    return ui.badge(m[0], m[1]);
+    return ui.badge(m[0], m[1], { dot: true });
   };
 
   ui.kv = function (pairs) {
@@ -92,10 +103,10 @@
 
   ui.empty = function ({ icon = "info", title, text, action } = {}) {
     return el("div", { class: "pp-empty" },
-      el("span", { class: "pp-empty-icon" }, PP.icon(icon)),
-      title ? el("h3", {}, title) : null,
-      text ? el("p", { class: "pp-muted" }, text) : null,
-      action ? el("div", { class: "pp-empty-action" }, action instanceof window.Node ? action : ui.button(action.label, { kind: "primary", ...action })) : null);
+      el("span", { class: "pp-empty-icon pp-empty__icon" }, PP.icon(icon)),
+      title ? el("h3", { class: "pp-empty__title" }, title) : null,
+      text ? el("p", { class: "pp-muted pp-empty__text" }, text) : null,
+      action ? el("div", { class: "pp-empty-action pp-empty__actions" }, action instanceof window.Node ? action : ui.button(action.label, { kind: "primary", ...action })) : null);
   };
 
   ui.errorState = function (e, retry) {
@@ -185,12 +196,15 @@
 
   /// A data table with optional search, filter chips, sortable columns, paging and a row action.
   /// columns: [{ key, label, render(row), sort: true | (row) => value, num, mono, width }]
-  ui.table = function ({ columns, rows, empty, onRow, rowHref, search, filters, pageSize = 25, sort, caption, dense } = {}) {
+  /// The kit's table frame: an optional toolbar (title, search, filters, actions) above the table
+  /// and a footer with the count and paging, all inside one bordered surface.
+  ui.table = function ({ columns, rows, empty, onRow, rowHref, search, filters, pageSize = 25, sort, caption, dense, title, actions, noun } = {}) {
     const st = { q: "", filter: {}, sort: sort || null, page: 0 };
-    const wrap = el("div", { class: "pp-table-wrap" });
-    const tools = el("div", { class: "pp-table-tools" });
+    const wrap = el("div", { class: "pp-table-wrap pp-table-frame" });
+    const tools = el("div", { class: "pp-table-tools pp-table-toolbar" });
     const host = el("div", { class: "pp-table-host" });
-    const pager = el("div", { class: "pp-pager" });
+    const pager = el("div", { class: "pp-pager pp-table-footer" });
+    if (title) tools.append(el("span", { class: "pp-table-toolbar__title" }, title));
     if (search) {
       const input = el("input", { class: "pp-input pp-search", type: "search", placeholder: typeof search === "string" ? search : "Search", "aria-label": typeof search === "string" ? search : "Search" });
       input.addEventListener("input", () => { st.q = input.value.trim().toLowerCase(); st.page = 0; draw(); });
@@ -201,6 +215,7 @@
       sel.addEventListener("change", () => { st.filter[f.key] = sel.value; st.page = 0; draw(); });
       tools.append(sel);
     }
+    for (const a of asNodes(actions)) tools.append(a);
     if (tools.childNodes.length) wrap.append(tools);
     wrap.append(host, pager);
 
@@ -258,15 +273,15 @@
         }
         return tr;
       });
-      host.replaceChildren(el("table", { class: `pp-table${dense ? " pp-table-dense" : ""}` }, caption ? el("caption", { class: "pp-sr" }, caption) : null, el("thead", {}, head), el("tbody", {}, body)));
+      host.replaceChildren(el("table", { class: `pp-table${dense ? " pp-table-dense pp-table--dense" : ""}` }, caption ? el("caption", { class: "pp-sr" }, caption) : null, el("thead", {}, head), el("tbody", {}, body)));
       pager.replaceChildren();
       if (pages > 1) {
         pager.append(
           el("span", { class: "pp-muted" }, `${st.page * pageSize + 1}–${Math.min(all.length, (st.page + 1) * pageSize)} of ${all.length}`),
           ui.button("Previous", { size: "sm", disabled: st.page === 0, onclick: () => { st.page--; draw(); } }),
           ui.button("Next", { size: "sm", disabled: st.page >= pages - 1, onclick: () => { st.page++; draw(); } }));
-      } else if (all.length > 5) {
-        pager.append(el("span", { class: "pp-muted" }, `${all.length} items`));
+      } else if (all.length > 5 || noun) {
+        pager.append(el("span", { class: "pp-muted" }, `${all.length} ${noun ? (all.length === 1 ? noun[0] : noun[1]) : "items"}`));
       }
     }
     draw();
@@ -361,6 +376,6 @@
     return el("ul", { class: "pp-checklist" }, items.map((i) => el("li", { class: i.done ? "is-done" : null },
       el("span", { class: "pp-check-dot" }, i.done ? PP.icon("check") : null),
       el("div", {}, el("strong", {}, i.title), i.text ? el("p", { class: "pp-muted" }, i.text) : null),
-      !i.done && i.action ? (i.action instanceof window.Node ? i.action : ui.button(i.action.label, { size: "sm", ...i.action })) : null)));
+      !i.done && i.action ? (i.action instanceof window.Node ? i.action : ui.button(i.action.label, { size: "sm", ...i.action })) : i.done ? el("span", { class: "pp-caption" }, "Done") : null)));
   };
 })();

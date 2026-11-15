@@ -81,10 +81,10 @@ test("buying hands a pending checkout to /billing/checkout: plan, Nest package, 
   assert.equal(pending().plan_code, "cloud-1names-yearly-usd");
   assert.equal(pending().billing_profile_id, "bp_1");
   assert.match(pending().intent_id, /^[a-f0-9]{32}$/);
-  await a.go("#/nests");
+  await a.go("#/nests"); await tick();
   a.$("[data-buy]").click(); await tick();
   assert.deepEqual([pending().kind, pending().plan_code], ["nest", "nest-pp_ai-monthly-usd"]);
-  await a.go("#/store/services/lst_tr");
+  await a.go("#/store/services/lst_tr"); await tick();
   a.$("#mp-buy-go").click(); await tick();
   assert.equal(pending().kind, "marketplace");
   assert.deepEqual(JSON.parse(JSON.stringify(pending().owner)), { kind: "account" });

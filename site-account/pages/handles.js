@@ -120,7 +120,7 @@
   }
 
   ACC.page({
-    key: "handles", title: "Handles", group: "Messaging", icon: "at",
+    key: "handles", title: "Handles", group: "", icon: "at",
     async render(view, ctx, params) {
       const tab = params[0] === "get" ? "get" : "owned";
       const ov = await ACC.overview(tab === "owned");

@@ -44,12 +44,13 @@
     const st = { pack: packs.some((p) => p.pack_id === "usd_25") ? "usd_25" : (packs[0] || {}).pack_id, currency: currencies.includes(ACC.currency()) ? ACC.currency() : currencies[0], quote: null, gen: 0 };
     const quote = el("p", { class: "pp-muted", id: "cr-quote", role: "status", "aria-live": "polite" });
     const status = ACC.statusLine();
-    const go = ACC.btn("Buy credits", { kind: "primary", type: "submit", id: "cr-buy-go", disabled: true });
-    const choices = el("div", { class: "acc-packs", role: "radiogroup", "aria-label": "Choose a pack" }, packs.map((p) => {
+    const go = ACC.btn("Buy credits", { kind: "primary", size: "lg", type: "submit", id: "cr-buy-go", disabled: true });
+    go.classList.add("pp-btn--block");
+    const choices = el("fieldset", { class: "pp-pack-grid acc-packs", "aria-label": "Choose a pack" }, el("legend", {}, "Top up"), packs.map((p) => {
       const id = `cr-pack-${p.pack_id}`;
-      const input = el("input", { type: "radio", name: "cr-pack", id, value: p.pack_id, checked: p.pack_id === st.pack ? true : null, class: "pp-sr" });
+      const input = el("input", { type: "radio", name: "cr-pack", id, value: p.pack_id, checked: p.pack_id === st.pack ? true : null, class: "pp-pack__input" });
       input.addEventListener("change", () => { st.pack = p.pack_id; requote(); });
-      return el("label", { class: "acc-pack", for: id }, input, el("strong", {}, ACC.usd(p.amount_cents)), el("span", {}, "of credit"));
+      return el("label", { class: "pp-pack", for: id }, input, el("span", { class: "pp-pack__amount" }, ACC.usd(p.amount_cents)), el("span", { class: "pp-pack__meta" }, "of credit"));
     }));
     const cur = ACC.select(currencies.map((c) => [c, ACC.CURRENCY_NAMES[c] || c]), st.currency, { id: "cr-currency" });
     cur.addEventListener("change", () => { st.currency = cur.value; ACC.setCurrency(cur.value); requote(); });
@@ -87,41 +88,53 @@
         status.say(why(err), "error");
         if (ACC.code(err) === "quote_expired") requote(); else go.disabled = false;
       }
-    } }, choices, el("div", { class: "pp-form" }, ACC.field("Pay in", cur)), quote, status,
-    el("div", { class: "pp-form-actions" }, go),
-    el("p", { class: "pp-hint" }, "You pay on iyzico's secure page and come back here. The price includes any tax."));
+    } }, choices, el("div", { class: "pp-form" }, ACC.field("Pay in", cur)), quote, status, go,
+    el("p", { class: "pp-caption" }, "You pay on iyzico's secure page and come back here. The price includes any tax."));
     if (packs.length && ov.billing.has) requote();
-    return PP.ui.card({ title: "Add credit", text: "Credits pay for services other publishers run on Pigeonpost. They are kept in US dollars and don't expire." },
-      ACC.billingGate(ov, form));
+    return ACC.billingGate(ov, form);
+  }
+
+  /// The kit's wallet card: the balance, what is held for runs, and the top-up packs.
+  function walletCard(bal, buy) {
+    return el("section", { class: "pp-wallet acc-wallet", "aria-label": "Credit" },
+      el("div", { class: "pp-wallet__top" },
+        el("div", {},
+          el("p", { class: "pp-wallet__label" }, PP.icon("wallet"), "Available credit"),
+          el("p", { class: "pp-wallet__amount", id: "cr-available" }, bal ? ACC.usd(bal.available_cents) : "—", el("small", {}, "USD")),
+          el("p", { class: "pp-wallet__held" }, bal ? (bal.held_cents > 0 ? `${ACC.usd(bal.held_cents)} reserved for runs in progress` : "Nothing reserved for runs") : "Your balance could not be loaded.")),
+        el("div", { class: "pp-wallet__actions" }, ACC.btn("History", { size: "sm", onclick: () => { const h = document.getElementById("cr-history"); if (h) h.scrollIntoView({ behavior: "smooth", block: "start" }); } }))),
+      el("p", { class: "pp-body-s pp-muted" }, "Credits pay for services other publishers run on Pigeonpost. They are kept in US dollars and don't expire."),
+      buy);
   }
 
   function history(first) {
     let rows = first.entries || [];
     let next = first.next_cursor || null;
-    const host = el("div", {});
-    const draw = () => host.replaceChildren(PP.ui.table({
-      caption: "Credit history",
-      columns: [
-        { key: "created_at", label: "Date", render: (h) => ACC.date(h.created_at) },
-        { key: "kind", label: "What", render: (h) => el("div", { class: "acc-cell-stack" }, KIND[h.kind] || h.kind, h.description ? el("span", { class: "pp-faint" }, h.description) : null) },
-        { key: "amount_cents", label: "Amount", num: true, render: (h) => {
-          const spend = h.amount_cents < 0 || SPENDS.has(h.kind);
-          return el("span", { class: spend ? "acc-minus" : "acc-plus" }, `${spend ? "−" : "+"}${ACC.usd(Math.abs(h.amount_cents))}`, h.charge ? el("span", { class: "pp-faint" }, ` (paid ${money(h.charge.amount_minor, h.charge.currency)})`) : null);
-        } },
-      ],
-      rows,
-      pageSize: 50,
-      empty: { icon: "wallet", title: "No credit bought or spent yet", text: "Your purchases and runs will show here." },
-    }), next ? ACC.btn("Show more", { size: "sm", id: "cr-more", onclick: async () => {
+    const host = el("div", { class: "acc-stack" });
+    const ICON = { purchase: "plus", hold: "clock", release: "rotate-ccw", sale: "bot", capture: "bot", refund: "rotate-ccw", adjustment: "sliders-horizontal", promo_grant: "gift", chargeback: "alert" };
+    const ROW = { purchase: "in", hold: "held", release: "refund", refund: "refund", promo_grant: "in" };
+    const row = (h) => {
+      const spend = h.amount_cents < 0 || SPENDS.has(h.kind);
+      const meta = [h.description, h.charge ? `paid ${money(h.charge.amount_minor, h.charge.currency)}` : "", ACC.date(h.created_at)].filter(Boolean).join(" · ");
+      return el("li", { class: `pp-ledger__row${ROW[h.kind] ? ` pp-ledger__row--${ROW[h.kind]}` : ""}` },
+        el("span", { class: "pp-ledger__icon" }, PP.icon(ICON[h.kind] || "wallet")),
+        el("span", { class: "pp-ledger__main" }, el("span", { class: "pp-ledger__title" }, KIND[h.kind] || h.kind), el("span", { class: "pp-ledger__meta" }, meta)),
+        el("span", { class: "pp-ledger__amount" }, el("span", { class: spend ? "acc-minus" : "acc-plus" }, `${spend ? "−" : "+"}${ACC.usd(Math.abs(h.amount_cents))}`)));
+    };
+    const draw = () => host.replaceChildren(rows.length
+      ? el("ul", { class: "pp-ledger", "aria-label": "Credit history" }, el("li", { class: "pp-ledger__head" }, el("span", {}, "Entry"), el("span", {}, "Amount")), rows.map(row))
+      : PP.ui.empty({ icon: "wallet", title: "No credit bought or spent yet", text: "Your purchases and runs will show here." }),
+    next ? ACC.btn("Show more", { size: "sm", id: "cr-more", onclick: async () => {
       const p = await ACC.bridgeGet(`/v1/credits/history?limit=20&cursor=${encodeURIComponent(next)}`);
       rows = rows.concat(p.entries || []); next = p.next_cursor || null; draw();
-    } }) : null);
+    } }) : "");
     draw();
     return host;
   }
 
   ACC.page({
-    key: "wallet", title: "Wallet", group: "Billing", icon: "wallet",
+    key: "wallet", title: "Wallet", group: "Billing", icon: "wallet", countTone: "neutral",
+    count: (ctx) => (ctx && ctx.credit && ACC.feature(ctx, "marketplace") ? ACC.usd(ctx.credit.available_cents) : null),
     async render(view, ctx) {
       const banner = ACC.statusLine();
       view.append(PP.ui.header({ title: "Wallet", text: "Credit for marketplace services, in US dollars." }), banner);
@@ -136,17 +149,15 @@
         ACC.bridgeGet("/v1/credits/history?limit=20").catch(() => null),
         ACC.overview(),
       ]);
-      view.append(PP.ui.stats([
-        { label: "Available", value: bal ? ACC.usd(bal.available_cents) : "—", hint: bal ? "Ready to spend" : "Could not be loaded" },
-        { label: "Reserved", value: bal ? ACC.usd(bal.held_cents) : "—", hint: "Held for runs in progress" },
-      ]));
-      const left = packs.error ? PP.ui.card({ title: "Add credit" }, el("p", { class: "pp-muted" }, why(packs.error)))
+      const buy = packs.error ? el("p", { class: "pp-muted" }, why(packs.error))
         : buyCard(packs.packs || [], packs.currencies && packs.currencies.length ? packs.currencies : ["USD"], ov);
-      view.append(el("div", { class: "pp-cols" }, left,
-        PP.ui.card({ title: "Refunds", text: "Unspent credit from a purchase can be refunded within 14 days of buying it." },
+      const hcard = PP.ui.card({ title: "History", icon: "history", text: "Credit bought, reserved, spent and returned." },
+        hist ? history(hist) : PP.ui.errorState(new Error("Your history could not be loaded."), () => PP.shell.refresh()));
+      hcard.id = "cr-history";
+      view.append(el("div", { class: "acc-wallet-cols" }, walletCard(bal, buy), el("div", { class: "acc-stack" }, hcard,
+        PP.ui.card({ title: "Refunds", icon: "rotate-ccw", text: "Unspent credit from a purchase can be refunded within 14 days of buying it." },
           el("p", { class: "pp-muted" }, "Credit already spent on runs is not refundable; a run that fails or runs out of time returns its credit automatically."),
-          ACC.btn("Ask for a refund", { href: PP.href("support"), icon: "support" }))));
-      view.append(PP.ui.section({ title: "History" }, hist ? history(hist) : PP.ui.errorState(new Error("Your history could not be loaded."), () => PP.shell.refresh())));
+          ACC.btn("Ask for a refund", { href: PP.href("support"), icon: "support" })))));
     },
   });
 })();
