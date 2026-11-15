@@ -1,21 +1,17 @@
-.st-wrap { max-width: 880px; margin: 0 auto; padding: 24px 16px 48px; display: grid; gap: 22px; }
-.st-head { display: flex; justify-content: space-between; align-items: center; min-height: 64px; border-bottom: 1px solid var(--pp-border); }
-#st-root { display: grid; gap: 26px; }
-.st-banner { padding: 22px 24px; border-radius: var(--pp-radius-l); border: 1px solid; display: grid; gap: 4px; }
-.st-banner h1 { color: inherit; font-size: var(--pp-fs-h2); line-height: var(--pp-lh-h2); }
-.st-banner p { color: var(--pp-text-body); font-size: var(--pp-fs-body-s); }
-.st-group { display: grid; gap: 10px; }
-.st-group h2 { font-size: var(--pp-fs-overline); line-height: var(--pp-lh-overline); font-weight: var(--pp-weight-semibold); color: var(--pp-text-faint); text-transform: uppercase; letter-spacing: var(--pp-tracking-wide); }
-.st-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
-.st-item { padding: 16px 18px; border-radius: var(--pp-radius-l); background: var(--pp-surface); border: 1px solid var(--pp-border); display: grid; gap: 10px; }
-.st-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
-.st-row strong { color: var(--pp-text); }
-.st-bars { display: grid; grid-template-columns: repeat(90, 1fr); gap: 2px; height: 30px; }
-.st-bar { border-radius: var(--pp-radius-xs); background: var(--pp-surface-sunken); }
-.st-ok { background: var(--pp-success-solid); }
-.st-warn { background: var(--pp-warning-solid); }
-.st-bad { background: var(--pp-danger-solid); }
-.st-meta { display: flex; justify-content: space-between; gap: 8px; }
-.st-incidents { display: grid; gap: 10px; }
-.st-foot { padding-top: var(--pp-space-6); border-top: 1px solid var(--pp-border-subtle); text-align: center; font-size: 13px; color: var(--pp-text-muted); }
-@media (max-width: 560px) { .st-bars { grid-template-columns: repeat(45, 1fr); } .st-bars .st-bar:nth-child(-n+45) { display: none; } }
+/* status.pigeonpost.dev on the design kit's status template (templates/status-help.html): one
+   880px column with the kit's navbar, status cards, status list and uptime bars (kit.css). */
+body { background: var(--pp-bg); }
+.st-inner { max-width: 880px; }
+.st-page { max-width: 880px; margin: 0 auto; padding: var(--pp-space-10) var(--pp-space-6) var(--pp-space-16); display: grid; gap: var(--pp-space-8); }
+.st-section { display: grid; gap: var(--pp-space-3); }
+.st-section-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--pp-space-4); flex-wrap: wrap; }
+.pp-status-card--hero h1.pp-status-card__title { margin: 0; }
+.pp-status-card__icon .pp-icon { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.pp-status-row__foot { gap: var(--pp-space-3); }
+.st-facts { flex: 1; min-width: 0; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.st-incident { gap: var(--pp-space-3); }
+.st-foot .pp-footer__inner { max-width: 880px; }
+@media (max-width: 600px) {
+  .st-page { padding: var(--pp-space-6) var(--pp-space-4) var(--pp-space-10); gap: var(--pp-space-6); }
+  .st-facts { display: none; }
+}
