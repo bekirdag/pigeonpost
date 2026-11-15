@@ -31,6 +31,15 @@
 .brand-name { font-size: 17px; font-weight: 650; letter-spacing: -0.01em; }
 .brand-row .icon-btn { width: 38px; height: 38px; border-radius: var(--pp-radius-m); color: var(--pp-text-muted); }
 .brand-row .icon-btn:hover { background: var(--pp-surface-hover); color: var(--pp-text); }
+/* groups.js adds New group after New conversation: an icon button here too, its word kept as its name. */
+.brand-row .new-group-btn {
+  width: 38px; height: 38px; padding: 0; justify-content: center; border: 0; border-radius: var(--pp-radius-m);
+  background: transparent; color: var(--pp-text-muted);
+}
+.brand-row .new-group-btn:hover { background: var(--pp-surface-hover); color: var(--pp-text); }
+.brand-row .new-group-btn:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--pp-focus-ring); }
+.brand-row .new-group-btn svg { width: 20px; height: 20px; }
+.brand-row .new-group-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 /* The mailbox switcher (kit: mailbox-switcher). */
 .me { padding: 0 12px 4px; }
