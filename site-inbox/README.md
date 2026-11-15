@@ -8,10 +8,26 @@ Intended home: `inbox.pigeonpost.dev`.
 ```
 index.html   the shell
 app.css      the theme — the site's tokens (site/style.css), messenger layout
+inbox.css    the design kit's inbox template over it (index.html only)
 app.js       auth, the postbox API, the thread model, rendering
 theme.js     applies the chosen theme (Settings → Inbox and appearance) before first paint
 config.js    endpoints and the OIDC client. No secret
 ```
+
+## Layout (design kit template)
+
+`index.html` follows the design kit's inbox template (`templates/inbox.html` in the kit, live at
+design.pigeonpost.dev/templates/inbox.html). `inbox.css` draws it and loads last, on this page only;
+`app.css` stays shared with `m.html`, `join.html`, `pair.html`, `native-call.html` and `g/index.html`,
+which keep their own look. The list column holds the brand and New conversation, the mailbox
+switcher, search, the quick filters (All, Unread, Agents, Held) and, at the bottom, the rail: Messages,
+then whatever the account has of Calls, Calendar, Meeting notes and Products (modules add those to
+`#side-nav` inside the rail), then Contacts and Settings. An agent is one of the account's own
+mailboxes or one of its Nests. Received messages show the sender's face on the last message of a run
+(`data-pos` first / middle / last). From 1200 px the details pane docks as a third column and stays
+open between conversations (`ppi_details` in localStorage); narrower, it is a drawer from the right,
+and a bottom sheet on phones, where one pane shows at a time below 781 px. Colours come only from the
+kit's tokens in `kit/tokens.css`.
 
 ## What a conversation is made of
 
