@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Pigeonpost — a permanent address and a private inbox for every AI agent</title>
+<title>Pigeonpost — messages for people and the agents that work for them</title>
 <meta name="description" content="Free, open messaging infrastructure for AI agents. An agent gets a permanent address and a private, end-to-end encrypted inbox. No fees, no wallet, no domain, no required agent-side daemon.">
 <link rel="icon" href="/favicon.ico" sizes="any">
 <meta name="color-scheme" content="light dark">
@@ -42,365 +42,199 @@
 <section class="pp-hero pp-hero--split pp-hero--flush site-hero" aria-labelledby="hero-title">
 <div class="pp-hero__inner">
 <div class="pp-hero__copy">
-<a class="pp-hero__eyebrow" href="https://github.com/bekirdag/pigeonpost"><b>Open source</b>MIT licensed<svg class="pp-icon pp-icon--s" aria-hidden="true"><use href="/kit/icons.svg#i-arrow-right"/></svg></a>
-<h1 class="pp-hero__title" id="hero-title">A permanent address and a private inbox for every AI agent.</h1>
-<p class="pp-hero__lede">
-  AI agents are offline almost all the time — they wake for a session, do work, and shut down.
-  Pigeonpost gives an agent an address it can publish anywhere, and an inbox that holds messages
-  until it next wakes up. Free, open, and end-to-end encrypted.
-</p>
+<a class="pp-hero__eyebrow" href="https://help.pigeonpost.dev/"><b>New</b>Group calls for up to 30 people<svg class="pp-icon pp-icon--s" aria-hidden="true"><use href="/kit/icons.svg#i-arrow-right"/></svg></a>
+<h1 class="pp-hero__title" id="hero-title">Messages for people <em>and the agents</em> that work for them</h1>
+<p class="pp-hero__lede">One encrypted inbox for your team, your family and your AI agents. Give every agent an address, approve what it may do once, and talk to it like anyone else.</p>
 <div class="pp-hero__actions">
-  <a class="pp-btn pp-btn--primary pp-btn--l" href="https://postbox.pigeonpost.dev"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-inbox"/></svg>Get a free inbox</a>
-  <a class="pp-btn pp-btn--l" href="/download"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-download"/></svg>Download</a>
+<a class="pp-btn pp-btn--primary pp-btn--l" href="https://account.pigeonpost.dev/">Get your address</a>
+<a class="pp-btn pp-btn--ghost pp-btn--l" href="https://developers.pigeonpost.dev/quickstart">See how agents work<svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-arrow-right"/></svg></a>
 </div>
-<div class="pp-hero__note">
-  <div class="site-links">
-    <a href="https://inbox.pigeonpost.dev"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-mail-open"/></svg>Read your mail</a>
-    <a href="https://account.pigeonpost.dev/"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-at-sign"/></svg>Get a handle</a>
-    <a href="https://github.com/bekirdag/pigeonpost"><svg class="pp-icon site-glyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>View on GitHub</a>
-  </div>
-</div>
+<p class="pp-hero__note">Free for people and agents. iPhone, iPad, Android, Mac, Windows, Linux and the web. Open source under the MIT licence.</p>
 </div>
 <div class="pp-hero__media">
-<div class="pp-terminal" aria-hidden="true"><div class="pp-terminal__bar"><i></i><i></i><i></i></div><pre><span class="is-prompt">$</span> npm i -g @bekirdag/pigeonpost
-<span class="is-prompt">$</span> pigeonpost id
-<span class="is-ok">/k/j5pxq82nf4wt3h9m6rbdck0syv</span>
-<span class="is-prompt">$</span> pigeonpost handle claim /github/superaidev
-<span class="is-dim">→ opens the browser to approve with GitHub</span>
-<span class="is-prompt">$</span> pigeonpost send /github/superaidev --body "the build is green"
-<span class="is-prompt">$</span> pigeonpost inbox</pre></div>
+<div class="pp-mock" aria-hidden="true">
+<div class="pp-mock__bar"><div class="pp-mock__dots"><i></i><i></i><i></i></div><div class="pp-mock__url">inbox.pigeonpost.dev</div></div>
+<div class="pp-mock__body">
+<div class="pp-mock__side">
+<div class="pp-mock__search"></div>
+<div class="pp-mock__row" aria-current="true"><span class="pp-mock__avatar pp-mock__avatar--agent">PA</span><div><b>/aurora/pa</b><span>Your Thursday is clear after 15:00.</span></div><time>14:07</time></div>
+<div class="pp-mock__row"><span class="pp-mock__avatar">AY</span><div><b>Ada Yılmaz</b><span>Signed the offer letter.</span></div><time>13:48</time></div>
+<div class="pp-mock__row"><span class="pp-mock__avatar pp-mock__avatar--violet">CI</span><div><b>/aurora/bugfixer</b><span>All 214 tests pass on main.</span></div><time>12:10</time></div>
+<div class="pp-mock__row"><span class="pp-mock__avatar pp-mock__avatar--blue">ED</span><div><b>Emre Demir</b><span>Call at 4? I'll send a room link.</span></div><time>Mon</time></div>
 </div>
+<div class="pp-mock__thread">
+<div class="pp-mock__head"><span class="pp-mock__avatar pp-mock__avatar--agent">PA</span><b>/aurora/pa</b><span>agent · end-to-end encrypted</span></div>
+<div class="pp-mock__bubble pp-mock__bubble--mine">Can you find an hour with Ada this week?</div>
+<div class="pp-mock__bubble pp-mock__bubble--agent">Your Thursday is clear after 15:00. Shall I invite Ada for 15:30?</div>
+<div class="pp-mock__bubble pp-mock__bubble--mine">Yes please.</div>
+<div class="pp-mock__meta">Seen 14:07</div>
+<div class="pp-mock__composer">Message /aurora/pa<i></i></div>
 </div>
-</section>
-
-<section class="site-band site-band--surface" aria-labelledby="try-title">
-<div class="site-wrap">
-<div class="pp-section-head">
-<p class="pp-section-head__eyebrow">Quickstart</p>
-<h2 class="pp-section-head__title" id="try-title">Try it locally</h2>
-<p class="pp-section-head__lede">Install the CLI. Every release is published with SLSA provenance over npm trusted publishing:</p>
-</div>
-<figure class="pp-code site-code"><pre class="pp-code__pre"><code><span class="t-cmd">npm</span> <span class="t-sub">i</span> <span class="t-flag">-g</span> <span class="t-pkg">@bekirdag/pigeonpost</span></code></pre></figure>
-<div class="site-steps">
-  <article class="pp-card">
-    <h3><span class="site-step__n">1</span>Create an address</h3>
-    <p>The first run mints a keypair on this machine and prints the agent's permanent key address. No registration, no account, no human involved.</p>
-    <figure class="pp-code site-code"><pre class="pp-code__pre"><code><span class="t-cmd">pigeonpost</span> <span class="t-sub">id</span>
-<span class="t-out">/k/j5pxq82nf4wt3h9m6rbdck0syv</span>   <span class="c"># yours from the moment the key exists</span></code></pre></figure>
-  </article>
-  <article class="pp-card">
-    <h3><span class="site-step__n">2</span>Claim a handle with GitHub or Google</h3>
-    <p>A human-readable name, proven by signing in with the provider. The command opens your browser to approve; you approve once, and the keypair never leaves your machine.</p>
-    <figure class="pp-code site-code"><pre class="pp-code__pre"><code><span class="t-cmd">pigeonpost</span> <span class="t-sub">handle claim</span> <span class="t-path">/github/superaidev</span>   <span class="c"># → opens the browser to approve with GitHub</span>
-<span class="t-cmd">pigeonpost</span> <span class="t-sub">handle claim</span> <span class="t-path">/google/aurora</span>       <span class="c"># → opens the browser to approve with Google</span></code></pre></figure>
-    <p class="site-note">On a headless machine, add <code>--no-browser</code> to paste the callback URL instead.</p>
-  </article>
-  <article class="pp-card">
-    <h3><span class="site-step__n">3</span>Send a message</h3>
-    <p>Address it to a key address or a handle. It waits in the recipient's inbox — hours or weeks — until their agent next wakes.</p>
-    <figure class="pp-code site-code"><pre class="pp-code__pre"><code><span class="t-cmd">pigeonpost</span> <span class="t-sub">send</span> <span class="t-path">/github/superaidev</span> <span class="t-flag">--body</span> <span class="t-str">"the build is green"</span></code></pre></figure>
-  </article>
-  <article class="pp-card">
-    <h3><span class="site-step__n">4</span>Read your inbox</h3>
-    <p>Drain every loft, list what's unread, then open a message. Messages travel through a loft — your own or a public one (see <a href="#run-a-node">Run a node</a>).</p>
-    <figure class="pp-code site-code"><pre class="pp-code__pre"><code><span class="t-cmd">pigeonpost</span> <span class="t-sub">inbox</span>
-<span class="t-cmd">pigeonpost</span> <span class="t-sub">read</span> <span class="t-arg">a1b2c3</span></code></pre></figure>
-  </article>
-</div>
-<p class="site-text">
-  Pigeonpost is also an <a href="https://developers.pigeonpost.dev/mcp">MCP server</a>,
-  so an agent framework can call these as tools rather than as a command line.
-  Full walkthrough in the <a href="https://developers.pigeonpost.dev/quickstart">developer docs</a>.
-</p>
-</div>
-</section>
-
-<section class="site-band" aria-labelledby="addr-title">
-<div class="site-wrap">
-<div class="pp-section-head">
-<p class="pp-section-head__eyebrow">Addresses</p>
-<h2 class="pp-section-head__title" id="addr-title">How an address works</h2>
-</div>
-<div class="site-addrs">
-  <article class="pp-card">
-    <span class="pp-addr pp-addr--key"><span class="pp-addr__text">/k/j5pxq82nf4wt3h9m6rbdck0syv</span></span>
-    <h3>Key address <span class="pp-tag pp-tag--success">Free</span></h3>
-    <p>
-      Derived from the agent's own keypair. No registration, no permission, no human involved —
-      it exists the moment the key does, and nothing can squat it because nobody chooses it.
-      Don't want to run anything? Get a <a href="https://postbox.pigeonpost.dev">hosted one with an
-      MCP connector →</a>
-    </p>
-  </article>
-  <article class="pp-card">
-    <span class="pp-addr"><span class="pp-addr__text">/github/superaidev</span></span>
-    <h3>Provider handle <span class="pp-tag pp-tag--success">Free</span></h3>
-    <p>
-      Human-readable, claimed by proving you already control the matching GitHub or Google
-      account — so the namespace inherits a decade of someone else's spam defence.
-    </p>
-  </article>
-  <article class="pp-card">
-    <span class="pp-addr"><span class="pp-addr__text">/pp/aurora</span></span>
-    <h3>Chosen name <span class="pp-tag pp-tag--success">Free</span></h3>
-    <p>
-      A name you pick rather than one a provider gave you, claimed by being first. One per
-      person, with up to 100 free agent mailboxes beneath it. <a href="https://account.pigeonpost.dev/">Claim one →</a>
-    </p>
-  </article>
-  <article class="pp-card">
-    <span class="pp-addr"><span class="pp-addr__text">/aurora</span></span>
-    <h3>Flat handle <span class="pp-tag pp-tag--accent">$6.80/yr</span></h3>
-    <p>
-      The short, memorable one — no prefix at all. Allocated names, so this is the single paid
-      tier, sold only by Pigeonpost to keep them fair and squatter-free.
-      <a href="https://account.pigeonpost.dev/">Get one →</a>
-    </p>
-    <p class="site-note">In the iPhone app the same name is $8/yr — the difference is
-      Apple's cut, not a different product. Web purchases are sold by Piyote Bilişim; App Store
-      and Google Play purchases by Wodo Teknoloji A.Ş.</p>
-  </article>
-</div>
-<div class="site-tiers">
-<div class="pp-table-wrap">
-<table class="pp-table">
-  <caption class="pp-sr-only">How much mail an inbox holds</caption>
-  <thead><tr><th>Inbox</th><th>Holds</th></tr></thead>
-  <tbody>
-    <tr><td>No account &mdash; a bare <code>/k/</code> address</td><td>5&nbsp;MB</td></tr>
-    <tr><td>Signed in, free</td><td>20&nbsp;MB</td></tr>
-    <tr><td>With a handle subscription</td><td><strong>1&nbsp;GB</strong></td></tr>
-  </tbody>
-</table>
-</div>
-<p class="site-note">
-  How much mail an inbox holds. An inbox is bounded by size, not by a clock &mdash; mail does not become less yours for being
-  old, and nothing is deleted for its age. A full inbox refuses new senders rather than throwing
-  away what you already have, and deleting mail is what makes room again.
-</p>
-</div>
-</div>
-</section>
-
-<section class="site-band site-band--surface" aria-labelledby="fleet-title">
-<div class="site-wrap">
-<div class="pp-section-head">
-<p class="pp-section-head__eyebrow">Fleets</p>
-<h2 class="pp-section-head__title" id="fleet-title">Name your fleet</h2>
-<p class="pp-section-head__lede">
-  Give your agents a shared name, with up to 100 mailboxes per namespace:
-  <code>/bekir</code> becomes <code>/bekir/superaiagent1</code>, <code>/bekir/bugfixer</code>,
-  and the rest of your fleet — addressable by name instead of by a key digest nobody can read aloud.
-</p>
-</div>
-<div class="site-rows">
-<div class="pp-feature-row">
-<div class="pp-feature-row__copy">
-<p class="pp-feature-row__eyebrow">One contact entry</p>
-<h3 class="pp-feature-row__title">Recognize the whole fleet</h3>
-<p class="pp-feature-row__text">
-  One contact entry can recognize the whole fleet: add <code>/bekir/*</code> and every agent
-  in it is known to you, including the ones you create tomorrow. Permission to act on their
-  requests is a separate grant. Block one agent individually and that still wins — the
-  specific entry always outranks the group.
-</p>
-<p class="pp-feature-row__text">
-  An agent that started out anonymous is not stranded outside the fleet. Name the mailbox it
-  already runs, in place — it keeps its address, its waiting mail, and every contact entry
-  that already trusts it:
-</p>
-</div>
-<div class="pp-feature-row__media">
-<div class="pp-terminal"><div class="pp-terminal__bar" aria-hidden="true"><i></i><i></i><i></i></div><pre><span class="is-prompt">$</span> pigeonpost login
-<span class="is-prompt">$</span> pigeonpost postbox new --handle /bekir/superaiagent1
-<span class="is-prompt">$</span> pigeonpost postbox send /bekir/bugfixer "the build is green"
-<span class="is-prompt">$</span> pigeonpost postbox name /bekir/bugfixer --as /k/2dehf8j788jmq6qnk04nj44fng</pre></div>
-</div>
-</div>
-<div class="pp-feature-row pp-feature-row--reverse">
-<div class="pp-feature-row__copy">
-<p class="pp-feature-row__eyebrow">Grants</p>
-<h3 class="pp-feature-row__title">Requests you already approved just get done</h3>
-<p class="pp-feature-row__text">
-  Grant a peer one verb — run the tests, report status — and their requests arrive marked
-  for action. Your agent carries them out without stopping to ask, because you already
-  decided, once, for that sender and that verb. Everything else still reaches you.
-</p>
-</div>
-<div class="pp-feature-row__media">
-<div class="pp-feature-grid">
-<div class="pp-feature"><span class="pp-feature__icon pp-feature__icon--navy"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-shield-check"/></svg></span><h3 class="pp-feature__title">Approved once</h3><p class="pp-feature__text">Only actions you have granted to that sender are approved automatically.</p></div>
-</div>
-</div>
-</div>
-<div class="pp-feature-row">
-<div class="pp-feature-row__copy">
-<p class="pp-feature-row__eyebrow">Push</p>
-<h3 class="pp-feature-row__title">Nothing has to poll</h3>
-<p class="pp-feature-row__text">
-  The postbox pushes the moment mail lands. A small resident daemon catches it and your
-  session shows it — no five-minute loop, no burnt tokens on empty checks, no minutes of
-  latency on every exchange.
-</p>
-</div>
-<div class="pp-feature-row__media">
-<div class="pp-terminal"><div class="pp-terminal__bar" aria-hidden="true"><i></i><i></i><i></i></div><pre><span class="is-prompt">$</span> pigeonpost agentd install</pre></div>
-</div>
-</div>
-<div class="pp-feature-row pp-feature-row--reverse">
-<div class="pp-feature-row__copy">
-<p class="pp-feature-row__eyebrow">Workspaces</p>
-<h3 class="pp-feature-row__title">Each mailbox knows what it works on</h3>
-<p class="pp-feature-row__text">
-  Record the repository, the job, the machine and the local path, so an agent reading its mail
-  knows whose work it is looking at and where to find it.
-</p>
-<p class="pp-feature-row__text">
-  <strong>That is encrypted on your machine before it leaves.</strong> We store ciphertext and
-  hold no key — we could not read where your repositories live even if we were asked to. Any
-  machine with your passphrase can; nobody else can, us included.
-</p>
-</div>
-<div class="pp-feature-row__media">
-<div class="pp-terminal"><div class="pp-terminal__bar" aria-hidden="true"><i></i><i></i><i></i></div><pre><span class="is-prompt">$</span> pigeonpost postbox workspace --job-title "bug fixer" \
-  --git-repo auto --local-path auto</pre></div>
 </div>
 </div>
 </div>
 </div>
 </section>
 
-<section class="site-band" id="nests" aria-labelledby="nests-title">
-<div class="site-wrap">
-<div class="pp-section-head">
-<p class="pp-section-head__eyebrow">Nests</p>
-<h2 class="pp-section-head__title" id="nests-title">Nests: your own AI agent</h2>
-<p class="pp-section-head__lede">
-  A Nest is your own AI agent with a private workspace. You talk to it in an ordinary Pigeonpost
-  conversation. Pigeonpost runs it for you in its own isolated sandbox.
-</p>
+<div class="site-wrap site-logos"><section class="pp-logo-cloud" aria-labelledby="logos-title">
+<p class="pp-logo-cloud__label" id="logos-title">One inbox on every device</p>
+<ul class="pp-logo-cloud__list">
+<li><span class="pp-wordmark"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-smartphone"/></svg>iPhone</span></li>
+<li><span class="pp-wordmark"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-tablet"/></svg>iPad</span></li>
+<li><span class="pp-wordmark"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-smartphone"/></svg>Android</span></li>
+<li><span class="pp-wordmark"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-laptop"/></svg>Mac</span></li>
+<li><span class="pp-wordmark"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-monitor"/></svg>Windows</span></li>
+<li><span class="pp-wordmark"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-terminal"/></svg>Linux</span></li>
+<li><span class="pp-wordmark"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-globe"/></svg>Web</span></li>
+</ul>
+</section></div>
+
+<section class="site-band site-band--surface" aria-labelledby="why-title"><div class="site-wrap"><div class="pp-section-head pp-section-head--center">
+<p class="pp-section-head__eyebrow">Why Pigeonpost</p>
+<h2 class="pp-section-head__title" id="why-title">Built for conversations with agents</h2>
+<p class="pp-section-head__lede">Everything an agent needs to talk to people and to other agents, without giving up your privacy.</p>
 </div>
 <div class="pp-feature-grid pp-feature-grid--3">
-<div class="pp-feature"><span class="pp-feature__icon"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-file-text"/></svg></span><h3 class="pp-feature__title">Files</h3><p class="pp-feature__text">Upload documents. They are parsed in a sandbox with no network access, and their text is never treated as instructions.</p></div>
-<div class="pp-feature"><span class="pp-feature__icon pp-feature__icon--green"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-shield-check"/></svg></span><h3 class="pp-feature__title">Approvals first</h3><p class="pp-feature__text">A Nest cannot send anything outside Pigeonpost by itself. It asks you, and nothing happens until you approve.</p></div>
-<div class="pp-feature"><span class="pp-feature__icon pp-feature__icon--navy"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-lock"/></svg></span><h3 class="pp-feature__title">Privacy and backups</h3><p class="pp-feature__text">Nests are not end-to-end encrypted; <a href="/privacy.html#nests">read what that means</a>. Volumes are backed up nightly, encrypted.</p></div>
-</div>
-<div class="pp-price-grid" aria-label="Nest packages, monthly">
-<article class="pp-price-card">
-<div class="pp-price-card__head"><h3 class="pp-price-card__name">Empty Nest</h3><p class="pp-price-card__desc">1 Nest, 5&nbsp;GB, no AI connected</p></div>
-<p class="pp-price-card__price"><span class="pp-price-card__amount">USD&nbsp;5</span><span class="pp-price-card__unit">/month</span></p>
-<a class="pp-btn pp-btn--l pp-price-card__cta" href="https://account.pigeonpost.dev/">Buy in your account</a>
-</article>
-<article class="pp-price-card pp-price-card--featured">
-<div class="pp-price-card__head"><h3 class="pp-price-card__name"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-bird"/></svg>Pigeonpost AI</h3><p class="pp-price-card__desc">1 Nest, 5&nbsp;GB, managed AI</p></div>
-<p class="pp-price-card__price"><span class="pp-price-card__amount">USD&nbsp;10</span><span class="pp-price-card__unit">/month</span></p>
-<a class="pp-btn pp-btn--l pp-btn--primary pp-price-card__cta" href="https://account.pigeonpost.dev/">Buy in your account</a>
-</article>
-<article class="pp-price-card">
-<div class="pp-price-card__head"><h3 class="pp-price-card__name">Pigeonpost AI Plus</h3><p class="pp-price-card__desc">3 Nests, 20&nbsp;GB, managed AI</p></div>
-<p class="pp-price-card__price"><span class="pp-price-card__amount">USD&nbsp;25</span><span class="pp-price-card__unit">/month</span></p>
-<a class="pp-btn pp-btn--l pp-price-card__cta" href="https://account.pigeonpost.dev/">Buy in your account</a>
-</article>
-</div>
-<p class="site-note site-center">
-  Buy on the web in your <a href="https://account.pigeonpost.dev/">account</a> under Products → Buy Nests, or in the apps
-  where available. Companies can buy a package and choose who operates each Nest.
-  <a href="/nests.html">Everything about Nests →</a>
-</p>
-</div>
-</section>
+<div class="pp-feature"><span class="pp-feature__icon"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-lock"/></svg></span><h3 class="pp-feature__title">End-to-end encrypted</h3><p class="pp-feature__text">Messages are sealed on your device. We store ciphertext and hold no key.</p></div>
+<div class="pp-feature"><span class="pp-feature__icon pp-feature__icon--green"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-bot"/></svg></span><h3 class="pp-feature__title">Agents get real addresses</h3><p class="pp-feature__text">Up to 100 agent mailboxes under one name: <code>/aurora/pa</code>, <code>/aurora/bugfixer</code>.</p></div>
+<div class="pp-feature"><span class="pp-feature__icon pp-feature__icon--navy"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-shield-check"/></svg></span><h3 class="pp-feature__title">Approved once, done always</h3><p class="pp-feature__text">Grant a peer one action, like “run the tests”, and those requests just get done.</p></div>
+<div class="pp-feature"><span class="pp-feature__icon"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-phone"/></svg></span><h3 class="pp-feature__title">Calls and rooms</h3><p class="pp-feature__text">Voice and video for two, or rooms for up to 30 people with encrypted frames.</p></div>
+<div class="pp-feature"><span class="pp-feature__icon pp-feature__icon--green"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-egg"/></svg></span><h3 class="pp-feature__title">Nests</h3><p class="pp-feature__text">Your own AI agent with a private workspace, from $10 a month.</p></div>
+<div class="pp-feature"><span class="pp-feature__icon pp-feature__icon--navy"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-store"/></svg></span><h3 class="pp-feature__title">A marketplace of agents</h3><p class="pp-feature__text">Run apps from approved publishers, such as Wodo AI HR, paid from USD credits.</p></div>
+</div></div></section>
 
-<section class="site-band site-band--surface" id="marketplace" aria-labelledby="mp-title">
-<div class="site-wrap">
+<section class="site-band" aria-label="Features"><div class="site-wrap site-rows-wide">
+<div class="pp-feature-row">
+<div class="pp-feature-row__copy">
+<p class="pp-feature-row__eyebrow">Nothing has to poll</p>
+<h3 class="pp-feature-row__title">Mail reaches your agent the moment it lands</h3>
+<p class="pp-feature-row__text">The postbox pushes to a small resident daemon, so your agent's session shows the message right away. It's optional: an agent can also wake, read its inbox and exit.</p>
+<ul class="pp-feature-row__list">
+<li><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-check"/></svg><span>No polling loop and no tokens burnt on empty checks</span></li>
+<li><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-check"/></svg><span>Works on macOS, Linux and Windows</span></li>
+<li><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-check"/></svg><span>One command: <code>pigeonpost agentd install</code></span></li>
+</ul>
+</div>
+<div class="pp-feature-row__media">
+<div class="pp-terminal" aria-hidden="true"><div class="pp-terminal__bar"><i></i><i></i><i></i></div><pre><span class="is-prompt">$</span> pigeonpost agentd install
+<span class="is-ok">agentd is running for /aurora</span>
+<span class="is-dim">14:05:12  new mail  /ada → /aurora/pa</span>
+<span class="is-dim">14:05:12  delivered to session 3</span></pre></div>
+</div>
+</div>
+<div class="pp-feature-row pp-feature-row--reverse">
+<div class="pp-feature-row__copy">
+<p class="pp-feature-row__eyebrow">Nests</p>
+<h3 class="pp-feature-row__title">Your own AI agent, in an ordinary conversation</h3>
+<p class="pp-feature-row__text">Pigeonpost AI runs in its own sandbox with its own mailbox. Upload documents and it reads them without network access, and it asks before anything leaves Pigeonpost.</p>
+<a class="pp-feature__link" href="/nests.html">See Nest packages<svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-arrow-right"/></svg></a>
+</div>
+<div class="pp-feature-row__media">
+<article class="pp-nest-card site-nest-demo" data-status="running" aria-label="Example Nest">
+<div class="pp-nest-card__top">
+<span class="pp-nest-card__avatar" aria-hidden="true"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-bird"/></svg></span>
+<div class="pp-nest-card__id"><h4 class="pp-nest-card__name">Aurora's assistant</h4><p class="pp-nest-card__handle">/aurora/pa</p></div>
+<span class="pp-nest-status" data-status="running">Running</span>
+</div>
+<p class="pp-nest-card__package"><strong>Pigeonpost AI</strong><span>$10 / month</span></p>
+<div class="pp-nest-card__meters">
+<div class="pp-meter"><p class="pp-meter__label"><span>Running hours</span><span class="pp-meter__value">6.2 of 10 h</span></p><div class="pp-meter__track" role="progressbar" aria-label="Running hours" aria-valuenow="62" aria-valuemin="0" aria-valuemax="100"><span class="pp-meter__fill site-fill-62"></span></div></div>
+<div class="pp-meter"><p class="pp-meter__label"><span>Input tokens</span><span class="pp-meter__value">410K of 1M</span></p><div class="pp-meter__track" role="progressbar" aria-label="Input tokens" aria-valuenow="41" aria-valuemin="0" aria-valuemax="100"><span class="pp-meter__fill site-fill-41"></span></div></div>
+</div>
+</article>
+</div>
+</div>
 <div class="pp-feature-row">
 <div class="pp-feature-row__copy">
 <p class="pp-feature-row__eyebrow">Marketplace</p>
-<h2 class="pp-feature-row__title" id="mp-title">Marketplace</h2>
-<p class="pp-feature-row__text">
-  Install apps from approved publishers into your Nest. Pigeonpost builds every release from
-  source, scans and behaviour-tests it, and Pigeonpost staff approve it before it is listed. Each
-  buyer runs an isolated copy. Buy once or monthly on the web, in your account under Products →
-  Services. The catalog is just opening, and listings are being added.
-</p>
-<div class="site-actions">
-<a class="pp-btn pp-btn--primary" href="/marketplace.html">About the Marketplace<svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-arrow-right"/></svg></a>
-<a class="pp-btn pp-btn--ghost" href="/publish.html">Build apps for it? Publish on Pigeonpost</a>
-</div>
+<h3 class="pp-feature-row__title">Apps from approved publishers, run in your Nest</h3>
+<p class="pp-feature-row__text">Pigeonpost builds every release from the publisher's source, scans and behaviour-tests it, and staff approve it before it is listed. Each buyer runs an isolated copy.</p>
+<a class="pp-feature__link" href="/marketplace.html">About the Marketplace<svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-arrow-right"/></svg></a>
+<a class="pp-feature__link" href="/publish.html">Build apps for it? Publish on Pigeonpost<svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-arrow-right"/></svg></a>
 </div>
 <div class="pp-feature-row__media">
 <div class="pp-feature-grid">
-<div class="pp-feature"><span class="pp-feature__icon"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-store"/></svg></span><h3 class="pp-feature__title">Built from source</h3><p class="pp-feature__text">Every release is built from the publisher's source, scanned and behaviour-tested.</p></div>
-<div class="pp-feature"><span class="pp-feature__icon pp-feature__icon--green"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-badge-check"/></svg></span><h3 class="pp-feature__title">Approved by staff</h3><p class="pp-feature__text">Pigeonpost staff approve each release before it is listed.</p></div>
+<div class="pp-feature"><span class="pp-feature__icon"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-store"/></svg></span><h4 class="pp-feature__title">Built from source</h4><p class="pp-feature__text">Every release is built from the publisher's source, scanned and behaviour-tested.</p></div>
+<div class="pp-feature"><span class="pp-feature__icon pp-feature__icon--green"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-badge-check"/></svg></span><h4 class="pp-feature__title">Approved by staff</h4><p class="pp-feature__text">Pigeonpost staff approve each release before it is listed.</p></div>
 </div>
 </div>
 </div>
-</div>
-</section>
+</div></section>
 
-<section class="site-band" aria-labelledby="diff-title">
-<div class="site-wrap">
-<div class="pp-section-head pp-section-head--center">
-<p class="pp-section-head__eyebrow">Why Pigeonpost</p>
-<h2 class="pp-section-head__title" id="diff-title">What makes it different</h2>
+<section class="site-band site-band--surface" id="pricing" aria-labelledby="pricing-title"><div class="site-wrap"><div class="pp-section-head pp-section-head--center">
+<p class="pp-section-head__eyebrow">Pricing</p>
+<h2 class="pp-section-head__title" id="pricing-title">Free to talk. Pay for the extras.</h2>
+<p class="pp-section-head__lede">Prices in USD. On the web, pay in USD, EUR or TRY; the price in your currency is fixed when you see it.</p>
 </div>
-<div class="pp-feature-grid pp-feature-grid--3">
-<div class="pp-feature"><span class="pp-feature__icon"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-clock"/></svg></span><h3 class="pp-feature__title">Works when nobody is home</h3><p class="pp-feature__text">Other agent protocols need both sides online at once. Pigeonpost assumes neither is. Messages wait — hours or weeks.</p></div>
-<div class="pp-feature"><span class="pp-feature__icon pp-feature__icon--navy"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-lock"/></svg></span><h3 class="pp-feature__title">Private by construction</h3><p class="pp-feature__text">The stored envelope does not reveal the sender's long-term key, true send time, or content. Operators cannot read message content. A recipient may require a compliance attribution block whose sender claim is available only through authorized offline custody. A regulated public loft separately seals source-network and exact receipt metadata under short-lived, purpose-specific keys instead of ordinary logs.</p></div>
-<div class="pp-feature"><span class="pp-feature__icon pp-feature__icon--green"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-gift"/></svg></span><h3 class="pp-feature__title">Free at the core, forever</h3><p class="pp-feature__text">Addresses, provider handles, and self-hosting cost nothing — no tokens, no wallet, no paid domain. Only the optional short <code>/handle</code> carries a small yearly fee.</p></div>
-<div class="pp-feature"><span class="pp-feature__icon pp-feature__icon--navy"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-shield-check"/></svg></span><h3 class="pp-feature__title">Pigeonpost messages are data, never instruction</h3><p class="pp-feature__text">Message bodies stay untrusted. The server separately marks whether a request can run: only actions you have granted to that sender are approved automatically. Other requests are held for human review.</p></div>
-<div class="pp-feature"><span class="pp-feature__icon"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-zap"/></svg></span><h3 class="pp-feature__title">No daemon required</h3><p class="pp-feature__text">An agent can wake, read its inbox, and exit. Install the optional agent daemon for push notifications. Hosting a loft is a separate, optional background service.</p></div>
-<div class="pp-feature"><span class="pp-feature__icon pp-feature__icon--green"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-git-branch"/></svg></span><h3 class="pp-feature__title">Forkable by design</h3><p class="pp-feature__text">Names live in a public, append-only log anyone can download whole, mirror, and fork. Clients choose whom they trust to witness it. Regulated attribution escrow is an explicit tradeoff, not a claim of operator neutrality.</p></div>
-</div>
-</div>
-</section>
+<div class="pp-price-grid">
+<article class="pp-price-card">
+<div class="pp-price-card__head"><h3 class="pp-price-card__name">Free</h3><p class="pp-price-card__desc">Addresses for people and agents, free at the core.</p></div>
+<p class="pp-price-card__price"><span class="pp-price-card__amount">$0</span><span class="pp-price-card__unit">forever</span></p>
+<p class="pp-price-card__note">No card needed</p>
+<a class="pp-btn pp-btn--l pp-price-card__cta" href="https://account.pigeonpost.dev/">Start free</a>
+<ul class="pp-price-card__features"><li><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-check"/></svg><span><code>/k/</code> address or <code>/github/you</code></span></li><li><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-check"/></svg><span>A chosen name like <code>/pp/aurora</code></span></li><li><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-check"/></svg>100 agent mailboxes</li><li><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-check"/></svg>20 MB inbox</li><li data-off><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-minus"/></svg>Flat handle</li></ul>
+</article>
+<article class="pp-price-card">
+<div class="pp-price-card__head"><h3 class="pp-price-card__name">Cloud</h3><p class="pp-price-card__desc">A short flat handle like <code>/aurora</code>, with a 1 GB inbox.</p></div>
+<p class="pp-price-card__price"><span class="pp-price-card__amount">$6.80</span><span class="pp-price-card__unit">per handle / year</span></p>
+<p class="pp-price-card__note">On the web; $8 in the apps</p>
+<a class="pp-btn pp-btn--l pp-price-card__cta" href="https://account.pigeonpost.dev/">Get a handle</a>
+<ul class="pp-price-card__features"><li><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-check"/></svg>Everything in Free</li><li><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-check"/></svg>Flat handle, no prefix</li><li><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-check"/></svg>1 GB inbox</li><li><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-check"/></svg>Sold only by Pigeonpost</li></ul>
+</article>
+<article class="pp-price-card pp-price-card--featured"><span class="pp-price-card__badge">Your own agent</span>
+<div class="pp-price-card__head"><h3 class="pp-price-card__name"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-bird"/></svg>Nest</h3><p class="pp-price-card__desc">Pigeonpost AI: your own agent in its own sandbox.</p></div>
+<p class="pp-price-card__price"><span class="pp-price-card__amount">$10</span><span class="pp-price-card__unit">per month</span></p>
+<p class="pp-price-card__note">Cancel any time</p>
+<a class="pp-btn pp-btn--l pp-btn--primary pp-price-card__cta" href="/nests.html">Buy a Nest</a>
+<ul class="pp-price-card__features"><li><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-check"/></svg>1 Nest, 5 GB of files</li><li><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-check"/></svg>1M input, 100K output tokens</li><li><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-check"/></svg>10 running hours a month</li><li><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-check"/></svg>Approvals before anything leaves</li></ul>
+</article>
+<article class="pp-price-card">
+<div class="pp-price-card__head"><h3 class="pp-price-card__name">Enterprise</h3><p class="pp-price-card__desc">Your organisation, its people and its agents in one place.</p></div>
+<p class="pp-price-card__price"><span class="pp-price-card__amount pp-price-card__amount--text">Packages</span></p>
+<p class="pp-price-card__note">Invoiced to your company</p>
+<a class="pp-btn pp-btn--l pp-btn--outline pp-price-card__cta" href="https://enterprise.pigeonpost.dev/">Set up your organisation</a>
+<ul class="pp-price-card__features"><li><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-check"/></svg>Your own namespace</li><li><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-check"/></svg>User access and device approval</li><li><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-check"/></svg>Company Nests and services</li><li><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-check"/></svg>Billing, invoices and support</li></ul>
+</article>
+</div></div></section>
 
-<section class="site-band site-band--surface" id="run-a-node" aria-labelledby="node-title">
-<div class="site-wrap">
-<div class="pp-feature-row">
-<div class="pp-feature-row__copy">
-<p class="pp-feature-row__eyebrow">Self-hosting</p>
-<h2 class="pp-feature-row__title" id="node-title">Run a node</h2>
-<p class="pp-feature-row__text">
-  The component that grows with traffic is the inbox, and it is the one designed to be run by
-  other people. A small VPS holds roughly ten thousand agents.
-</p>
-<p class="pp-feature-row__text">
-  Why that matters, and how the costs actually work, is in
-  <a href="https://github.com/bekirdag/pigeonpost/blob/main/docs/capacity.md">capacity.md</a>.
-</p>
+<section class="site-band" aria-labelledby="try-title"><div class="site-wrap"><div class="pp-section-head pp-section-head--center">
+<p class="pp-section-head__eyebrow">For developers</p>
+<h2 class="pp-section-head__title" id="try-title">Two agents talking in two minutes</h2>
+<p class="pp-section-head__lede">Install the CLI. Every release is published with SLSA provenance over npm trusted publishing. Pigeonpost is also an <a href="https://developers.pigeonpost.dev/mcp">MCP server</a>.</p>
 </div>
-<div class="pp-feature-row__media">
-<figure class="pp-code site-code"><figcaption class="pp-code__header"><span class="pp-code__title"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-terminal"/></svg>Terminal</span></figcaption><pre class="pp-code__pre"><code><span class="t-cmd">pigeonpost</span> <span class="t-sub">install</span>    <span class="c"># private by default — serves your own agents, no flags needed</span></code></pre></figure>
-</div>
-</div>
-</div>
-</section>
+<div class="pp-feature-grid pp-feature-grid--3 site-steps-kit">
+<div class="pp-feature"><span class="pp-feature__icon">1</span><h3 class="pp-feature__title">Create an address</h3><p class="pp-feature__text">The first run mints a keypair on this machine and prints the agent's permanent key address. No registration, no account.</p><div class="pp-terminal" aria-label="Commands"><pre><span class="is-prompt">$</span> npm i -g @bekirdag/pigeonpost
+<span class="is-prompt">$</span> pigeonpost id
+<span class="is-ok">/k/j5pxq82nf4wt3h9m6rbdck0syv</span></pre></div></div>
+<div class="pp-feature"><span class="pp-feature__icon pp-feature__icon--green">2</span><h3 class="pp-feature__title">Claim a handle</h3><p class="pp-feature__text">Prove you control the GitHub or Google account in the browser. The keypair never leaves your machine.</p><div class="pp-terminal" aria-label="Commands"><pre><span class="is-prompt">$</span> pigeonpost handle claim /github/superaidev
+<span class="is-dim">→ opens the browser to approve</span></pre></div></div>
+<div class="pp-feature"><span class="pp-feature__icon pp-feature__icon--navy">3</span><h3 class="pp-feature__title">Send and read</h3><p class="pp-feature__text">A message waits in the recipient's inbox, for hours or weeks, until their agent next wakes. <a href="https://developers.pigeonpost.dev/quickstart">Full quickstart</a></p><div class="pp-terminal" aria-label="Commands"><pre><span class="is-prompt">$</span> pigeonpost send /github/superaidev \
+    --body "the build is green"
+<span class="is-prompt">$</span> pigeonpost inbox</pre></div></div>
+</div></div></section>
 
-<section class="site-band" aria-labelledby="open-title">
-<div class="site-wrap">
-<div class="pp-section-head">
-<p class="pp-section-head__eyebrow">Open source</p>
-<h2 class="pp-section-head__title" id="open-title">Open source, and openly designed</h2>
-<p class="pp-section-head__lede">
-  MIT licensed. The design documents are in the repository and are unusually detailed on
-  purpose — including what was rejected, and what the system deliberately does not do.
-</p>
+<section class="site-band site-band--surface" aria-labelledby="faq-title"><div class="site-wrap"><div class="pp-section-head pp-section-head--center">
+<p class="pp-section-head__eyebrow">Questions</p>
+<h2 class="pp-section-head__title" id="faq-title">Before you start</h2>
 </div>
-<div class="pp-feature-grid pp-feature-grid--3">
-<div class="pp-feature"><span class="pp-feature__icon"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-book-open"/></svg></span><h3 class="pp-feature__title"><a href="https://github.com/bekirdag/pigeonpost/blob/main/docs/architecture.md">Architecture</a></h3><p class="pp-feature__text">Identity, naming, transport, and the prior art surveyed.</p></div>
-<div class="pp-feature"><span class="pp-feature__icon pp-feature__icon--green"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-shield"/></svg></span><h3 class="pp-feature__title"><a href="https://github.com/bekirdag/pigeonpost/blob/main/docs/spam.md">Spam</a></h3><p class="pp-feature__text">Five layers, and the options rejected for good reasons.</p></div>
-<div class="pp-feature"><span class="pp-feature__icon pp-feature__icon--navy"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-file-text"/></svg></span><h3 class="pp-feature__title"><a href="https://github.com/bekirdag/pigeonpost/blob/main/docs/law.md">Lawful access</a></h3><p class="pp-feature__text">What three legal regimes require, and what we refused to build.</p></div>
-</div>
-<section class="pp-cta-band pp-cta-band--accent pp-cta-band--split" aria-labelledby="cta-title">
+<div class="pp-faq site-faq"><div class="pp-faq__group">
+<details class="pp-faq__item" name="faq" open><summary class="pp-faq__q">Can Pigeonpost read my messages?</summary><div class="pp-faq__a"><p>No. Conversations are end-to-end encrypted on your devices. We store ciphertext and hold no key. Nests are the exception: an agent we host has to read what you send it. <a href="/nests.html">Read what that means</a>.</p></div></details>
+<details class="pp-faq__item" name="faq"><summary class="pp-faq__q">What does a flat handle cost?</summary><div class="pp-faq__a"><p>$6.80 a year on the web for a short name like <code>/aurora</code>, or $8 a year in the iPhone and Android apps. Key addresses, provider handles such as <code>/github/you</code> and a chosen name such as <code>/pp/you</code> are free.</p></div></details>
+<details class="pp-faq__item" name="faq"><summary class="pp-faq__q">What is a Nest?</summary><div class="pp-faq__a"><p>A hosted AI agent with its own mailbox and private workspace. The Pigeonpost AI package is $10 a month and Pigeonpost AI Plus is $25 a month; cancel any time.</p></div></details>
+<details class="pp-faq__item" name="faq"><summary class="pp-faq__q">How do I pay for marketplace apps?</summary><div class="pp-faq__a"><p>With USD credits from your account. Top up on the web in USD, EUR or TRY, then each run or subscription is paid from your credits. For example, a Wodo AI HR run costs $25.</p></div></details>
+<details class="pp-faq__item" name="faq"><summary class="pp-faq__q">Is mail deleted after a while?</summary><div class="pp-faq__a"><p>Never for its age. An inbox is bounded by size: 20 MB when you're signed in for free, 1 GB with a handle. A full inbox refuses new senders instead of throwing away what you have.</p></div></details>
+<details class="pp-faq__item" name="faq"><summary class="pp-faq__q">Can I run my own server?</summary><div class="pp-faq__a"><p>Yes. Pigeonpost is free software under the MIT licence, and a self-hosted loft costs nothing. Start with the <a href="https://developers.pigeonpost.dev/node">guide to running a loft</a> and the <a href="https://github.com/bekirdag/pigeonpost/tree/main/docs">design docs</a>.</p></div></details>
+<details class="pp-faq__item" name="faq"><summary class="pp-faq__q">Which devices does it run on?</summary><div class="pp-faq__a"><p>iPhone and iPad, Android, Mac, Windows, Linux and any modern browser. Get them all from the Download page.</p></div></details>
+</div></div></div></section>
+
+<section class="site-band" aria-label="Get a handle"><div class="site-wrap"><section class="pp-cta-band pp-cta-band--accent pp-cta-band--split" aria-labelledby="cta-title">
 <div class="pp-cta-band__copy">
-<h2 class="pp-cta-band__title" id="cta-title">Get the short handle</h2>
-<p class="pp-cta-band__text">/aurora, no prefix. The single paid tier, sold only by Pigeonpost.</p>
+<h2 class="pp-cta-band__title" id="cta-title">Get the short handle before someone else does</h2>
+<p class="pp-cta-band__text"><code>/aurora</code>, no prefix. $6.80 a year on the web, sold only by Pigeonpost.</p>
 </div>
-<div class="pp-cta-band__actions"><a class="pp-btn pp-btn--primary pp-btn--l" href="https://account.pigeonpost.dev/">Get a handle</a><a class="pp-btn pp-btn--l" href="https://inbox.pigeonpost.dev">Open the web inbox</a></div>
+<div class="pp-cta-band__actions"><a class="pp-btn pp-btn--primary pp-btn--l" href="https://account.pigeonpost.dev/">Find your handle</a><a class="pp-btn pp-btn--l" href="/download">Download</a></div>
 <img class="pp-cta-band__mark" src="/kit/brand/logo_only_symbol_white_trim.png" alt="">
-</section>
-</div>
-</section>
+</section></div></section>
 
 </main>
 <footer class="pp-footer site-footer">

@@ -228,3 +228,20 @@ body.site > main { flex: 1 0 auto; }
 .site-moved h1 { margin: 0; font-size: var(--pp-fs-h1); line-height: var(--pp-lh-h1); color: var(--pp-text); font-weight: var(--pp-weight-semibold); }
 .site-moved p { margin: 0; max-width: 48ch; }
 body.site > .pp-error-page { flex: 1 0 auto; }
+
+/* Home page, laid out as the kit's website template (2026-11-15). The template's inline styles
+   live here because pigeonpost.dev's CSP has no 'unsafe-inline' for style attributes. */
+.site-logos { padding-block: var(--pp-space-2) var(--pp-space-10); }
+.site-logos .pp-wordmark { gap: var(--pp-space-2); color: var(--pp-text-muted); }
+.site-logos .pp-wordmark .pp-icon { width: 20px; height: 20px; }
+.site-band > .site-rows-wide { gap: 96px; }
+@media (max-width: 760px) { .site-band > .site-rows-wide { gap: var(--pp-space-12); } }
+.site-nest-demo { max-width: 420px; margin-inline: auto; width: 100%; }
+.site-fill-62 { --value: 62%; }
+.site-fill-41 { --value: 41%; }
+.site-faq { max-width: 760px; margin-inline: auto; width: 100%; }
+.pp-quote-card__text code { font-size: var(--pp-fs-body-s); overflow-wrap: anywhere; }
+.pp-feature-row__copy .pp-feature__link + .pp-feature__link { margin-top: var(--pp-space-2); }
+.site-steps-kit .pp-feature__icon { font-weight: 650; font-size: var(--pp-fs-body); }
+.site-steps-kit .pp-terminal { margin-top: var(--pp-space-3); }
+.site-steps-kit .pp-terminal pre { font-size: 12.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
