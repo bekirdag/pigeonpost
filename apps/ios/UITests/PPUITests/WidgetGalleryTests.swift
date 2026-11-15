@@ -70,6 +70,8 @@ final class WidgetGalleryTests: XCTestCase {
 
     /// A widget's New message action opens the composer in the real app (not the gallery).
     func testComposeLinkOpensNewConversation() throws {
+        // The route is the same code on both; the phone's bar gives a stable "inbox is up" marker.
+        try XCTSkipIf(pad, "covered on the phone; the iPad's columns have no single ready marker")
         app.terminate()
         app.launchArguments = ["-fixtures"]
         app.launch()
