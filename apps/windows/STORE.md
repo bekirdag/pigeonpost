@@ -8,8 +8,8 @@ Product: **Pigeonpost Desktop** (the shorter Pigeonpost name was unavailable).
 - Publisher display name: `Wodo Teknoloji A.Ş.`
 - Package family: `WodoTeknolojiA.PigeonpostDesktop_80zy2mk5xaxza`
 - First submission: `1152921505702010327`
-- Previous packages: `1.0.11.0` (Submission 10), `1.0.12.0` (Submission 11, `1152921505702264712`).
-  Next: `1.0.13.0` (Submission 12, November 4, 2026), Windows 11, x64 and ARM64.
+- Previous packages: `1.0.11.0` (Submission 10), `1.0.12.0` (Submission 11, `1152921505702264712`), `1.0.13.0` (Submission 12, November 4, 2026).
+  Next: `1.0.14.0` (Submission 13, November 15, 2026), Windows 11, x64 and ARM64: the Pigeonpost Design Kit look.
 
 ## Listing copy
 
