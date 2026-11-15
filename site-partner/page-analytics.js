@@ -136,13 +136,13 @@
       })));
 
       if (available && currencies.length) {
-        view.append(ui.section({ title: "Earnings by currency", text: "Net is after Pigeonpost's commission and reversals, before payout withholding. Currencies are never added together." },
+        view.append(ui.section({ title: "Earnings by currency", text: "Net is after Piyote's commission and reversals, before payout withholding. Currencies are never added together." },
           ui.table({
             caption: "Earnings by currency",
             columns: [
               { key: "currency", label: "Currency" },
               { key: "sales", label: "Sales", num: true, render: (r) => PPP.count(r.sales) },
-              ...[["gross_minor", "Gross"], ["tax_minor", "Tax"], ["commission_minor", "Pigeonpost 10%"], ["reversed_publisher_minor", "Refunds"], ["net_publisher_minor", "Net"]].map(([k, label]) => ({ key: k, label, num: true, render: (r) => ui.money(r[k], r.currency) })),
+              ...[["gross_minor", "Gross"], ["tax_minor", "Tax"], ["commission_minor", "Piyote 10%"], ["reversed_publisher_minor", "Refunds"], ["net_publisher_minor", "Net"]].map(([k, label]) => ({ key: k, label, num: true, render: (r) => ui.money(r[k], r.currency) })),
             ],
             rows: currencies,
           })));

@@ -126,7 +126,7 @@ PP_HELP.articles.push(
     keywords: ["billing", "invoice", "cancel", "payment due", "read-only", "suspended", "failed payment", "credits"],
     related: ["org-packages", "invoices"],
     body: [
-      "**Billing** has four tabs: **Plan**, **Details**, **Credits** and **Invoices**. Web purchases are sold by Piyote Bilişim.",
+      "**Billing** has four tabs: **Plan**, **Details**, **Credits** and **Invoices**. Web purchases are sold by Piyote Bilişim Ltd. Şti.",
       ["list",
         "To change the billing period, the currency or the invoice details, write to support@pigeonpost.dev.",
         "If you cancel, the plan stays active until the end of the period you paid for and doesn't renew.",

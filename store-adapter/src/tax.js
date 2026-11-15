@@ -1,6 +1,6 @@
 // Where a web buyer is, and which VAT treatment their purchase gets (docs/billing-tax.md).
 //
-// The seller, Piyote Bilişim, is a Turkish company with no EU or UK establishment. For services
+// The seller, Piyote Bilişim Ltd. Şti., is a Turkish company with no EU or UK establishment. For services
 // supplied electronically to consumers, EU and UK VAT is due in the buyer's country from the first
 // sale (Directive 2006/112/EC Art. 58; UK: no threshold for non-established sellers). Until Piyote
 // is registered for the EU non-Union OSS scheme and for UK VAT, the web does not sell to EU/UK

@@ -12,7 +12,7 @@
   PPP.page({
     key: "earnings", title: "Earnings & payouts", group: "Performance", icon: "money", order: 6,
     async render(view, ctx) {
-      view.append(ui.header({ title: "Earnings & payouts", text: "Monthly statements, what Pigeonpost keeps, withholding and what is paid to you.", actions: PPP.picker(ctx) }));
+      view.append(ui.header({ title: "Earnings & payouts", text: "Monthly statements, what Piyote keeps, withholding and what is paid to you.", actions: PPP.picker(ctx) }));
       if (!ctx.pub) { view.append(PPP.noPublisher(ctx, "Earnings and payouts")); return; }
       let balances = null, finance = null;
       if (PPP.approved(ctx)) {
@@ -37,7 +37,7 @@
           el("p", { class: "pp-eyebrow" }, "Each statement shows"),
           ui.kv([
             ["Gross sales", "What buyers paid for your apps"],
-            ["Pigeonpost 10%", "Piyote's commission as merchant of record"],
+            ["Piyote 10%", "Piyote's commission as merchant of record"],
             ["Refunds", "Refunds and chargebacks for those sales"],
             ["Withholding", "Stopaj, where it applies to you"],
             ["Net payout", "What is paid to you"],

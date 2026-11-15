@@ -238,7 +238,7 @@
           plan ? el("button", { type: "button", class: "btn btn-primary", "data-buy": plan.code, "aria-label": `Buy ${p.name}`, onclick: () => buy(plan.code, orgId) }, "Buy") : null));
       }
       box.append(cards);
-      box.append(el("p", { class: "ac-note", text: "Sold by Piyote Bilişim and billed monthly through iyzico. Cancel any time; your Nests keep running until the end of the paid month, then you have 30 days to export before they are deleted." }));
+      box.append(el("p", { class: "ac-note", text: "Sold by Piyote Bilişim Ltd. Şti. and billed monthly through iyzico. Cancel any time; your Nests keep running until the end of the paid month, then you have 30 days to export before they are deleted." }));
       return box;
     }
 

@@ -82,7 +82,7 @@
 
   function integrationsTab(ctx, d, admin) {
     const out = [ui.section({ title: "Hosted integrations", text: "A publisher-hosted app runs on your own servers. Jobs reach your service mailbox as Pigeonpost messages and results come back as PDFs. Pigeonpost reviews the integration (address and operations), not your code." },
-      ui.card({ tone: "accent" }, el("p", {}, "Each operation is priced per job in US dollars and paid from the buyer's credit; Pigeonpost keeps 10%. A new address or operation is a new version and a new review."),
+      ui.card({ tone: "accent" }, el("p", {}, "Each operation is priced per job in US dollars and paid from the buyer's credit; Piyote keeps 10%. A new address or operation is a new version and a new review."),
         el("p", {}, el("a", { href: "https://developers.pigeonpost.dev/nest-hosted.html", target: "_blank", rel: "noopener" }, "How publisher-hosted apps work →"))))];
     if (!admin) return out;
     if (!d.templates.length) { out.push(ui.gate({ tone: "info", text: "Create a template first.", action: { label: "Templates", href: PP.href("apps", "templates") } })); return out; }

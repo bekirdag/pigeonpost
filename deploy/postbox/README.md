@@ -465,7 +465,7 @@ Caddy issues TLS for both names once DNS is live. Verify:
 
 ```sh
 curl -s https://postbox.pigeonpost.dev/health        # {"status":"ok",...,"stage":"scaffold"}
-curl -s -o /dev/null -w '%{http_code}\n' -X POST https://mcp.pigeonpost.dev/mcp   # 501 (scaffold)
+curl -s -X POST -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"initialize"}' https://mcp.pigeonpost.dev/mcp   # 200, serverInfo pigeonpost-postbox
 ```
 
 Supervise across reboots with a `pigeonpost-postbox.service` systemd unit that runs

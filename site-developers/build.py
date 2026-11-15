@@ -971,7 +971,8 @@ count toward the total, because they occupy the same disk.
 
 The one exception to "nothing expires": an anonymous mailbox has nobody behind it — no one to warn,
 no one to bill, and no way to ask whether it is still wanted — so those are reclaimed. Anything with
-an account behind it is somebody's, and is bounded by the quota instead.
+an account behind it is somebody's, free or paid, and is bounded by the quota instead. An anonymous
+mailbox is deleted 30 days after it was created (`EPHEMERAL_RETENTION_DAYS`).
 
 > Those are the defaults on the hosted postbox. A **loft** you run yourself is a different service
 > with a different rule: it retains for `retention_days`, 30 by default.
@@ -1508,11 +1509,15 @@ and remain available for every tool call because MCP reopens the agent state und
 execution. Omitting it uses `<home>/recovery` and may trigger the same-storage warning. See
 [An agent per repo](/fleet).
 
-> **The server runs locally, and it must.** Most operations need the agent's private
-> key. There is no hosted Pigeonpost MCP endpoint in the architecture, because hosting one would
-> mean holding your key — which would defeat the point of the product. For environments
-> with no durable filesystem, run the container yourself with the key supplied as a
-> secret.
+> **This server runs locally, and for a self-held key it must.** Most operations need the
+> agent's private key, and hosting this server would mean holding your key, which would
+> defeat the point of the product. For environments with no durable filesystem, run the
+> container yourself with the key supplied as a secret.
+>
+> **Hosted mailboxes are different.** The hosted postbox keeps the mailbox for you and
+> answers MCP over Streamable HTTP at `https://mcp.pigeonpost.dev/mcp`, with a connector
+> key or capability token as the bearer token (see [Hosted mailboxes](/postbox)).
+> ChatGPT links an account through OAuth at `https://mcp.pigeonpost.dev/chatgpt` instead.
 
 ## Tools
 

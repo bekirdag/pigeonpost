@@ -80,7 +80,7 @@ PP_HELP.articles.push(
         "**No account, a bare /k/ address:** 5 MB.",
         "**Signed in, free:** 20 MB.",
         "**With a handle subscription:** 1 GB."],
-      "Nothing is deleted for being old. When an inbox is full, it refuses new messages instead of throwing away what you already have. Deleting messages is what makes room again. See [My inbox is full](/a/inbox-full).",
+      "Nothing is deleted for being old, on a free account or a paid one. The one exception is a bare /k/ address with no account behind it: it is deleted 30 days after it was created. When an inbox is full, it refuses new messages instead of throwing away what you already have. Deleting messages is what makes room again. See [My inbox is full](/a/inbox-full).",
       ["note", "If a subscription lapses", "When paid service ends, storage drops back to the free size. An inbox that is over that size can't receive new messages until you make room."],
     ] },
 

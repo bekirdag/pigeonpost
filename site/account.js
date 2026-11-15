@@ -1466,7 +1466,7 @@
           <label>Currency <select id="ac-plan-currency">
             ${open.map((c) => `<option value="${c}"${c === currency ? " selected" : ""}>${esc(CURRENCY_NAMES[c] || c)}</option>`).join("")}
           </select></label>
-          <p class="ac-note">Sold by Piyote Bilişim and billed yearly through iyzico. Cards issued in Türkiye pay in TRY.
+          <p class="ac-note">Sold by Piyote Bilişim Ltd. Şti. and billed yearly through iyzico. Cards issued in Türkiye pay in TRY.
             Consumers in the EU and UK: buy in the Pigeonpost iOS or Android app. EU and UK businesses buy here with a VAT number (reverse charge).
             TRY prices are fixed for ${esc(cloudCfg().pricingYear || "")}. Cancel any time; your names keep working until the end of the paid year.</p>
           <div class="ac-actions ac-left">

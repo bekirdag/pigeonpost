@@ -81,7 +81,7 @@ PP_HELP.articles.push(
         "Upload your invoice for the net amount. Invoice upload opens with your first statement.",
         "The payout follows by SWIFT, EFT or havale, in the payout currency you chose. Turkish payees can be paid in TRY."],
       ["h", "What a statement shows"],
-      ["list", "**Gross sales**", "**Pigeonpost 10%**", "**Refunds**", "**Withholding**, where it applies to you", "**Net payout**"],
+      ["list", "**Gross sales**", "**Piyote 10%**", "**Refunds**", "**Withholding**, where it applies to you", "**Net payout**"],
     ] },
 
   { slug: "partner-analytics", cat: "partners", title: "Analytics", summary: "Usage and earnings for each of your apps.",

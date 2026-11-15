@@ -174,7 +174,7 @@ Owner decisions from 2026-11-09. These are not to be reopened.
 1. **Host isolation**: Uses nests-1 only. No KVM, no Firecracker. Marketplace code runs under gVisor as a separate pool behind the Sandbox trait. One sandbox per buyer context. No shared mounts between contexts. Network access is limited to the broker. The plan (R-51, R-66, section 9) called for Firecracker on a KVM host. gVisor is a weaker boundary, as stated in phase-a-plan.md.
 2. **Payments**: No wallet or stored credit balance. Per-purchase payment is used instead. CreditsTopUp, CreateSpendMandate, RevokeSpendMandate, ConsumeSpendMandate, and Requirement::MandateHolder are not added. NestMarketplacePurchase (for a person) replaces them. The proposed /v1/nest-payment-authorizations operation still describes wallets and mandates but is not implemented; it will be reworked with payments in M3.
 3. **Reviewer roles**: The owner is the only reviewer. Staff remains a principal kind, but review does not require two named people. The separate preparer/approver rule for payouts stays in the design but is not in M0 code.
-4. **Seller of record**: Piyote Bilişim Ltd. Commission, reserve, and payout values never appear in tracked files.
+4. **Seller of record**: Piyote Bilişim Ltd. Şti. Commission, reserve, and payout values never appear in tracked files.
 5. **Infrastructure**: The nestd ledger stays on SQLite instead of the plan's PostgreSQL. OpenBao and SeaweedFS are skipped for now (one host).
 6. **Models**: Self-hosted only. No third-party model route is added for marketplace work.
 7. **Flag name**: Uses `marketplace` per account, instead of this README's earlier `nests_marketplace`.

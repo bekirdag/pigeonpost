@@ -107,7 +107,7 @@
           [["form", "Apply", "Business type, legal and tax details, bank account, documents."],
             ["security", "Get verified", "Pigeonpost reviews every publisher, usually within a few working days."],
             ["apps", "Publish", "Submit apps, list them, set per-job or card prices."],
-            ["money", "Get paid", "Monthly statements and payouts, Pigeonpost keeps 10%."]].map(([icon, title, text]) =>
+            ["money", "Get paid", "Monthly statements and payouts, Piyote keeps 10%."]].map(([icon, title, text]) =>
             el("li", {}, el("span", { class: "ppp-start-icon" }, PP.icon(icon)), el("div", {}, el("strong", {}, title), el("p", { class: "pp-muted" }, text)))))),
     ];
   }

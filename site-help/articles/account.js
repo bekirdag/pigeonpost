@@ -55,7 +55,7 @@ PP_HELP.articles.push(
     related: ["billing-details", "store-purchases"],
     body: [
       ["list",
-        "Web purchases are sold by Piyote Bilişim and paid by card through iyzico. Your card details go to iyzico, never to Pigeonpost.",
+        "Web purchases are sold by Piyote Bilişim Ltd. Şti. and paid by card through iyzico. Your card details go to iyzico, never to Pigeonpost.",
         "You can pay in US dollars, euros or Turkish lira. Cards issued in Türkiye pay in Turkish lira.",
         "Prices include any tax."],
       ["h", "In the EU or the UK"],
