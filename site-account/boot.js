@@ -4,7 +4,8 @@
 // platform switcher instead.
 (function () {
   "use strict";
-  const ORDER = ["overview", "inboxes", "handles", "nests", "store", "purchases", "wallet", "plan", "billing", "invoices", "security", "privacy", "support"];
+  // Navigation order and groups follow the kit's account template: the everyday pages, Billing, Account.
+  const ORDER = ["overview", "handles", "inboxes", "nests", "store", "wallet", "purchases", "invoices", "plan", "billing", "security", "privacy", "support"];
   // The org roles that make someone an Enterprise admin (site-enterprise/app.js ADMIN).
   const ORG_ADMIN = ["owner", "admin", "people_admin", "agent_admin", "billing_admin"];
 
@@ -77,7 +78,7 @@
     if (notice) { PP.store.del("pp_checkout_notice"); PP.toast(notice, "info"); }
     if (PP.durable.get("pp_postaction") === "totp") { PP.durable.del("pp_postaction"); PP.toast("Two-factor authentication is set up.", "success"); }
     const probe = (path) => PP.postbox(path, { keepSession: true });
-    const [caps, pubs, orgs, staff, creds] = await Promise.allSettled([probe("/v1/capabilities"), probe("/v1/publishers"), probe("/v1/orgs"), probe("/v1/staff/me"), authenticatorCount()]);
+    const [caps, pubs, orgs, staff, creds, bal] = await Promise.allSettled([probe("/v1/capabilities"), probe("/v1/publishers"), probe("/v1/orgs"), probe("/v1/staff/me"), authenticatorCount(), PP.bridge("/v1/credits/balance", { keepSession: true })]);
     const ok = (r) => (r.status === "fulfilled" ? r.value : null);
     const features = new Set(((ok(caps) || {}).features || []).map(String));
     const platforms = [];
@@ -92,10 +93,21 @@
     // API), whatever this particular sign-in did; the token's acr stays the fallback.
     const otp = ok(creds);
     if (typeof otp === "number") me.twoStep = otp > 0 || me.twoStep;
-    return { ...me, features, platforms, orgs: orgList };
+    // The credit balance for the top bar's chip and the Wallet entry (absent when it can't be read).
+    const credit = ok(bal);
+    return { ...me, features, platforms, orgs: orgList, credit: credit && Number.isFinite(Number(credit.available_cents)) ? credit : null };
   };
 
   ACC.pagesInOrder = () => ORDER.map((k) => ACC.registry[k]).filter(Boolean);
+
+  /// The kit's credit chip in the top bar: the balance, and a plus that opens the Wallet to top up.
+  ACC.creditChip = function (ctx) {
+    if (!ctx || !ctx.credit || !ACC.feature(ctx, "marketplace")) return null;
+    const cents = Number(ctx.credit.available_cents);
+    const amount = ACC.usd(cents);
+    return PP.el("a", { class: `pp-credit-chip${cents <= 0 ? " pp-credit-chip--empty" : cents < 500 ? " pp-credit-chip--low" : ""}`, href: PP.href("wallet"), "aria-label": `Credits: ${amount}. Top up`, id: "acc-credit-chip" },
+      PP.icon("wallet"), amount, PP.el("span", { class: "pp-credit-chip__add" }, PP.icon("plus")));
+  };
 
   ACC.start = function () {
     const deleting = /^#(delete-account|\/privacy\/delete)$/.test(window.location.hash);
@@ -107,6 +119,7 @@
         : { heading: "Your Pigeonpost account", text: "Your inboxes, handles, Nests and purchases in one place.", points: ["Hosted inboxes for your AI agents", "Handles from every store, with renewals", "Nests, services and credits", "Plan, billing details and invoices"] },
       context: ACC.context,
       pages: ACC.pagesInOrder(),
+      topActions: ACC.creditChip,
       userLinks: [{ label: "Become a partner", href: "https://partner.pigeonpost.dev/", icon: "building" }],
       footLinks: [
         { label: "Developer docs", href: "https://developers.pigeonpost.dev", external: true, icon: "docs" },

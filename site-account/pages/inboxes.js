@@ -161,7 +161,7 @@
   }
 
   ACC.page({
-    key: "inboxes", title: "Inboxes & agents", group: "Messaging", icon: "agents",
+    key: "inboxes", title: "Inboxes & agents", group: "", icon: "agents",
     async render(view, ctx, params) {
       const tab = params[0] === "keys" ? "keys" : "inboxes";
       view.append(

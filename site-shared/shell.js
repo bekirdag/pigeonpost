@@ -82,13 +82,33 @@
     alert: ["M12 4 2.5 20h19Z", "M12 10v4M12 17h.01"],
     info: ["M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z", "M12 11v5M12 8h.01"],
   };
+  // The platforms' own icon names → the design kit's Lucide icons (icons.js, PP_ICONS). Any kit
+  // icon name works too (PP.icon("badge-check")). Without icons.js the paths above are drawn.
+  const KIT_ICON = {
+    home: "layout-dashboard", user: "user", down: "chevron-down", inbox: "inbox", at: "at-sign", nest: "egg", store: "store",
+    jobs: "shopping-bag", wallet: "wallet", plan: "credit-card", billing: "contact", invoice: "receipt", security: "shield-check",
+    privacy: "lock", support: "message-square", people: "users", agents: "bot", rooms: "messages-square", rules: "sliders-horizontal",
+    key: "key-round", webhook: "webhook", building: "building-2", apps: "layout-grid", tag: "tag", chart: "bar-chart",
+    money: "dollar-sign", form: "file-text", docs: "book-open", review: "eye", flag: "flag", server: "server", audit: "history",
+    grid: "layout-grid", menu: "menu", close: "x", out: "log-out", search: "search", plus: "plus", chevron: "chevron-right",
+    external: "external-link", copy: "copy", check: "check", alert: "alert-triangle", info: "info", help: "help-circle",
+  };
   PP.icon = function (name, cls) {
     const NS = "http://www.w3.org/2000/svg";
     const svg = document.createElementNS(NS, "svg");
-    svg.setAttribute("class", cls ? `ico ${cls}` : "ico");
+    svg.setAttribute("class", cls ? `ico pp-icon ${cls}` : "ico pp-icon");
     svg.setAttribute("viewBox", "0 0 24 24");
     svg.setAttribute("aria-hidden", "true");
     svg.setAttribute("focusable", "false");
+    const kit = window.PP_ICONS && (window.PP_ICONS[KIT_ICON[name] || name] || (!ICONS[name] && window.PP_ICONS["layout-grid"]));
+    if (kit) {
+      for (const [tag, attrs] of kit) {
+        const n = document.createElementNS(NS, tag);
+        for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+        svg.append(n);
+      }
+      return svg;
+    }
     for (const d of ICONS[name] || ICONS.grid) {
       const p = document.createElementNS(NS, "path");
       p.setAttribute("d", d);
@@ -102,9 +122,15 @@
   function logo() {
     return el("img", { class: "pp-brand-logo", src: "/shared/brand/logo-symbol.png", alt: "", width: "28", height: "26" });
   }
-  function tile(key) {
-    return el("span", { class: "pp-platform-tile", "data-platform": key, "aria-hidden": "true" }, PP.icon(PLATFORM_ICONS[key] || "grid"));
+  function tile(key, small) {
+    return el("span", { class: `pp-platform-tile pp-platform__icon${small ? " pp-platform__icon--s" : ""}`, "data-platform": key, "aria-hidden": "true" }, PP.icon(PLATFORM_ICONS[key] || "grid"));
   }
+  /// Two initials for the avatar ("Bekir Dağ" → "BD"; an address → its first letter).
+  PP.initials = function (name) {
+    const words = String(name || "").replace(/@.*/, "").trim().split(/[\s._-]+/).filter(Boolean);
+    const first = (w) => (w ? Array.from(w)[0] : "");
+    return ((words.length > 1 ? first(words[0]) + first(words[words.length - 1]) : first(words[0])) || "?").toLocaleUpperCase();
+  };
 
   // ---- routing -------------------------------------------------------------------------------
 
@@ -143,34 +169,42 @@
 
   function frame() {
     const o = state.opts;
-    const nav = el("nav", { class: "pp-nav", id: "pp-nav", "aria-label": `${o.title} sections` });
+    // The kit's app shell (templates/account.html): sidebar with the platform's name, grouped
+    // navigation and the signed-in person at the foot; a top bar with the menu button (phones),
+    // the platform switcher, the page title, the platform's own actions, help, theme and the user menu.
+    const nav = el("nav", { class: "pp-nav pp-sidebar__scroll", id: "pp-nav", "aria-label": `${o.title} sections` });
     const brand = el("a", { class: "pp-brand", href: PP.href(""), "aria-label": `Pigeonpost ${o.title}` },
       logo(),
-      el("span", { class: "pp-brand-text" }, el("strong", {}, "Pigeonpost"), el("span", {}, o.title)));
-    const side = el("aside", { class: "pp-side", id: "pp-side" },
-      el("div", { class: "pp-side-head" }, brand,
-        el("button", { class: "pp-icon-btn pp-side-close", type: "button", "aria-label": "Close menu", onclick: () => setDrawer(false) }, PP.icon("close"))),
+      el("span", { class: "pp-brand-text pp-brand__name" }, o.title));
+    const side = el("aside", { class: "pp-side pp-sidebar", id: "pp-side", "aria-label": o.title },
+      el("div", { class: "pp-side-head pp-sidebar__head" }, brand,
+        el("button", { class: "pp-icon-btn pp-navbtn pp-side-close", type: "button", "aria-label": "Close menu", onclick: () => setDrawer(false) }, PP.icon("close"))),
       nav,
-      el("div", { class: "pp-side-foot", id: "pp-side-foot" }));
+      el("div", { class: "pp-side-foot pp-sidebar__foot", id: "pp-side-foot" }));
     const left = o.themePosition === "left";
-    const theme = () => el("button", { type: "button", class: `pp-icon-btn pp-theme${left ? " pp-theme-left" : ""}`, "data-theme-toggle": "" });
-    const top = el("header", { class: "pp-top" },
-      el("button", { class: "pp-icon-btn pp-menu-btn", type: "button", "aria-label": "Open menu", "aria-controls": "pp-side", onclick: () => setDrawer(true) }, PP.icon("menu")),
+    const theme = () => el("button", { type: "button", class: `pp-icon-btn pp-navbtn pp-theme${left ? " pp-theme-left" : ""}`, "data-theme-toggle": "" });
+    const top = el("header", { class: "pp-top pp-topbar" },
       left ? theme() : null,
-      el("div", { class: "pp-switch", id: "pp-switch" }),
-      el("div", { class: "pp-crumbs", id: "pp-crumbs" }),
-      el("div", { class: "pp-top-actions" },
+      el("div", { class: "pp-topbar__lead" },
+        el("button", { class: "pp-icon-btn pp-navbtn pp-menu-btn pp-shell__menu", type: "button", "aria-label": "Open menu", "aria-controls": "pp-side", onclick: () => setDrawer(true) }, PP.icon("menu")),
+        el("div", { class: "pp-switch pp-platforms", id: "pp-switch" }),
+        el("div", { class: "pp-crumbs pp-topbar__title", id: "pp-crumbs" })),
+      el("div", { class: "pp-top-actions pp-topbar__actions" },
+        el("div", { class: "pp-top-extra", id: "pp-top-extra" }),
+        el("a", { class: "pp-icon-btn pp-navbtn pp-top-help", href: o.helpUrl || "https://help.pigeonpost.dev", "aria-label": "Help", title: "Help" }, PP.icon("help")),
         left ? null : theme(),
-        el("div", { class: "pp-user", id: "pp-user" })));
-    const main = el("main", { class: "pp-main", id: "pp-main", tabindex: "-1" });
+        el("div", { class: "pp-user pp-usermenu", id: "pp-user" })));
+    const main = el("main", { class: "pp-main pp-shell__content", id: "pp-main", tabindex: "-1" });
     const scrim = el("div", { class: "pp-drawer-scrim", onclick: () => setDrawer(false) });
-    const app = el("div", { class: "pp-app" }, side, scrim, el("div", { class: "pp-body" }, top, main));
+    const app = el("div", { class: "pp-app pp-shell", "data-platform": o.platform }, side, scrim, el("div", { class: "pp-body pp-shell__main" }, top, main));
     document.body.replaceChildren(app);
     if (window.PPTheme && window.PPTheme.refresh) window.PPTheme.refresh();
   }
 
   function setDrawer(open) {
     document.body.classList.toggle("pp-drawer-open", Boolean(open));
+    const shell = document.querySelector(".pp-shell");
+    if (shell) shell.setAttribute("data-drawer", open ? "open" : "closed");
     if (open) { const first = document.querySelector("#pp-nav a"); if (first) first.focus(); }
   }
 
@@ -197,20 +231,17 @@
       for (const p of pages) {
         let count = null;
         try { count = p.count ? p.count(state.ctx) : null; } catch { count = null; }
+        // A number is work waiting (accent fill); text such as a balance, or a page's own
+        // `countTone` ("warn", "neutral"), shows the kit's quieter counts.
+        const tone = p.countTone || (typeof count === "number" ? "alert" : "");
+        const shown = typeof count === "number" ? String(count > 99 ? "99+" : count) : count;
         list.append(el("li", {},
-          el("a", { class: "pp-nav-item", href: PP.href(p.key), "data-page": p.key },
-            PP.icon(p.icon || "grid"), el("span", { class: "pp-nav-label" }, p.title),
+          el("a", { class: "pp-nav-item pp-sidebar__item", href: PP.href(p.key), "data-page": p.key, "data-count": count ? "" : null },
+            PP.icon(p.icon || "grid"), el("span", { class: "pp-nav-label pp-sidebar__label" }, p.title),
             p.tag ? el("span", { class: "pp-nav-tag" }, p.tag) : null,
-            count ? el("span", { class: "pp-nav-count", "aria-label": `${count} waiting` }, String(count > 99 ? "99+" : count)) : null)));
+            count ? el("span", { class: `pp-nav-count pp-sidebar__count${tone && tone !== "neutral" ? ` pp-sidebar__count--${tone}` : ""}`, "aria-label": typeof count === "number" ? `${count} waiting` : null }, shown) : null)));
       }
-      nav.append(el("div", { class: "pp-nav-group" }, g ? el("p", { class: "pp-nav-heading" }, g) : null, list));
-    }
-    const foot = document.getElementById("pp-side-foot");
-    if (foot) {
-      foot.replaceChildren();
-      for (const link of state.opts.footLinks || []) {
-        foot.append(el("a", { class: "pp-foot-link", href: link.href, target: link.external ? "_blank" : null, rel: link.external ? "noopener" : null }, PP.icon(link.icon || "external"), link.label));
-      }
+      nav.append(el("div", { class: "pp-nav-group pp-sidebar__group" }, g ? el("p", { class: "pp-nav-heading pp-sidebar__heading" }, g) : null, list));
     }
     markActive();
   }
@@ -229,6 +260,28 @@
     return PLATFORMS.filter((p) => keys.has(p.key));
   }
 
+  /// The user menu's rows: the platform's links, the inbox, help, its foot links, Sign out.
+  function userMenu(id, who, name, cls) {
+    const o = state.opts;
+    const row = (href, icon, label, external) => el("a", { class: "pp-pop-item pp-pop-row pp-navmenu__item", href, role: "menuitem", target: external ? "_blank" : null, rel: external ? "noopener" : null }, PP.icon(icon), label);
+    const foot = o.footLinks || [];
+    return el("div", { class: `pp-pop pp-navmenu pp-usermenu__panel ${cls}`, id, hidden: true, role: "menu" },
+      el("div", { class: "pp-user-id pp-usermenu__who", translate: "no" },
+        el("span", { class: "pp-initials", "data-tone": "navy", "aria-hidden": "true" }, PP.initials(name)),
+        el("div", {}, el("strong", {}, name), who.email && who.email !== name ? el("span", {}, who.email) : (who.username && who.username !== name ? el("span", {}, who.username) : null))),
+      // On phones the top bar has no room for the switcher, so the other platforms are listed here.
+      myPlatforms().length > 1 ? el("div", { class: "pp-pop-platforms" },
+        myPlatforms().filter((p) => p.key !== o.platform).map((p) => el("a", { class: "pp-pop-item pp-pop-row pp-navmenu__item", href: p.url, role: "menuitem" }, tile(p.key, true), `Open ${p.name}`)),
+        el("hr", { class: "pp-navmenu__sep" })) : null,
+      (o.userLinks || []).map((l) => row(l.href, l.icon || "external", l.label)),
+      row("https://inbox.pigeonpost.dev", "inbox", "Open your inbox"),
+      row(o.helpUrl || "https://help.pigeonpost.dev", "help", "Help"),
+      foot.length ? el("hr", { class: "pp-navmenu__sep" }) : null,
+      foot.map((l) => row(l.href, l.icon || "external", l.label, l.external)),
+      el("hr", { class: "pp-navmenu__sep" }),
+      el("button", { class: "pp-pop-item pp-pop-row pp-navmenu__item", type: "button", role: "menuitem", onclick: () => PP.signOut() }, PP.icon("out"), "Sign out"));
+  }
+
   function drawUser() {
     const slot = document.getElementById("pp-user");
     const sw = document.getElementById("pp-switch");
@@ -237,32 +290,54 @@
     sw.replaceChildren();
     const who = (state.ctx && state.ctx.user) || PP.whoami();
     const name = who.name || who.username || who.email || "Signed in";
-    const initial = (name.trim().charAt(0) || "?").toUpperCase();
 
+    // Platform switcher (kit: .pp-platforms). Someone with one platform sees its name only.
     const platforms = myPlatforms();
     if (platforms.length > 1) {
-      const list = el("div", { class: "pp-pop", id: "pp-switch-pop", hidden: true, role: "menu" },
-        el("p", { class: "pp-pop-heading" }, "Switch to"),
-        platforms.map((p) => el("a", { class: "pp-pop-item" + (p.key === state.opts.platform ? " is-current" : ""), href: p.url, role: "menuitem", "aria-current": p.key === state.opts.platform ? "true" : null },
-          tile(p.key), el("span", { class: "pp-pop-text" }, el("strong", {}, p.name), el("span", {}, p.text)), PP.icon("check", "pp-pop-check"))));
-      const btn = el("button", { class: "pp-switch-btn", type: "button", "aria-haspopup": "true", "aria-expanded": "false", "aria-controls": "pp-switch-pop" },
-        tile(state.opts.platform), el("span", {}, state.opts.title), PP.icon("down"));
+      const list = el("div", { class: "pp-pop pp-navmenu pp-navmenu--left pp-platforms__panel", id: "pp-switch-pop", hidden: true, role: "menu" },
+        el("p", { class: "pp-pop-heading pp-platforms__heading" }, "Switch to"),
+        platforms.map((p) => el("a", { class: "pp-pop-item pp-platform" + (p.key === state.opts.platform ? " is-current" : ""), href: p.url, role: "menuitem", "aria-current": p.key === state.opts.platform ? "true" : null },
+          tile(p.key), el("span", { class: "pp-pop-text pp-platform__text" }, el("strong", { class: "pp-platform__name" }, p.name), el("span", { class: "pp-platform__desc" }, p.text)), PP.icon("check", "pp-pop-check pp-icon--check"))));
+      const btn = el("button", { class: "pp-switch-btn pp-platforms__trigger", type: "button", "aria-haspopup": "menu", "aria-expanded": "false", "aria-controls": "pp-switch-pop" },
+        tile(state.opts.platform, true), el("span", {}, state.opts.title), PP.icon("down"));
       btn.addEventListener("click", (e) => { e.stopPropagation(); togglePop("pp-switch-pop", btn); });
       sw.append(btn, list);
+    } else {
+      sw.append(el("span", { class: "pp-platforms__trigger pp-platforms__static" }, tile(state.opts.platform, true), el("span", {}, state.opts.title)));
     }
 
-    const menu = el("div", { class: "pp-pop pp-pop-right", id: "pp-user-pop", hidden: true, role: "menu" },
-      el("div", { class: "pp-user-id", translate: "no" }, el("strong", {}, name), who.email && who.email !== name ? el("span", {}, who.email) : (who.username && who.username !== name ? el("span", {}, who.username) : null)),
-      (state.opts.userLinks || []).map((l) => el("a", { class: "pp-pop-item pp-pop-row", href: l.href, role: "menuitem" }, PP.icon(l.icon || "external"), l.label)),
-      el("a", { class: "pp-pop-item pp-pop-row", href: "https://inbox.pigeonpost.dev", role: "menuitem" }, PP.icon("inbox"), "Open your inbox"),
-      el("a", { class: "pp-pop-item pp-pop-row", href: "https://help.pigeonpost.dev", role: "menuitem" }, PP.icon("support"), "Help"),
-      el("button", { class: "pp-pop-item pp-pop-row", type: "button", role: "menuitem", onclick: () => PP.signOut() }, PP.icon("out"), "Sign out"));
-    const btn = el("button", { class: "pp-user-btn", type: "button", "aria-haspopup": "true", "aria-expanded": "false", "aria-controls": "pp-user-pop" },
-      el("span", { class: "pp-avatar", "aria-hidden": "true", translate: "no" }, initial),
-      el("span", { class: "pp-user-name", translate: "no" }, name));
+    // User menu in the top bar (kit: .pp-usermenu) …
+    const btn = el("button", { class: "pp-user-btn pp-usermenu__trigger", type: "button", "aria-haspopup": "menu", "aria-expanded": "false", "aria-controls": "pp-user-pop", "aria-label": `Account menu for ${name}` },
+      el("span", { class: "pp-avatar pp-initials pp-initials--s", "data-tone": "navy", "aria-hidden": "true", translate: "no" }, PP.initials(name)),
+      el("span", { class: "pp-user-name pp-usermenu__name", translate: "no" }, name),
+      PP.icon("down"));
     btn.addEventListener("click", (e) => { e.stopPropagation(); togglePop("pp-user-pop", btn); });
-    slot.append(btn, menu);
+    slot.append(btn, userMenu("pp-user-pop", who, name, "pp-pop-right"));
+
+    // … and the same person at the foot of the sidebar (kit: .pp-sidebar__user), opening upwards.
+    const foot = document.getElementById("pp-side-foot");
+    if (foot) {
+      const fb = el("button", { class: "pp-sidebar__user", type: "button", "aria-haspopup": "menu", "aria-expanded": "false", "aria-controls": "pp-foot-pop" },
+        el("span", { class: "pp-initials pp-initials--s", "data-tone": "navy", "aria-hidden": "true", translate: "no" }, PP.initials(name)),
+        el("span", { class: "pp-sidebar__user-text", translate: "no" }, el("strong", {}, name), who.email && who.email !== name ? el("span", {}, who.email) : (who.username && who.username !== name ? el("span", {}, `/${who.username}`) : null)),
+        PP.icon("chevron-up"));
+      fb.addEventListener("click", (e) => { e.stopPropagation(); togglePop("pp-foot-pop", fb); });
+      foot.replaceChildren(el("div", { class: "pp-foot-user" }, userMenu("pp-foot-pop", who, name, "pp-pop-up"), fb));
+    }
+    drawTop();
   }
+
+  /// The platform's own top-bar actions (e.g. account's credit chip). Redrawn with the context.
+  function drawTop() {
+    const slot = document.getElementById("pp-top-extra");
+    if (!slot) return;
+    slot.replaceChildren();
+    if (!state.opts.topActions) return;
+    let nodes = null;
+    try { nodes = state.opts.topActions(state.ctx); } catch { nodes = null; }
+    for (const n of [].concat(nodes || [])) if (n) slot.append(n);
+  }
+  PP.shell.redrawTop = drawTop;
 
   function togglePop(id, btn) {
     const pop = document.getElementById(id);
@@ -277,13 +352,13 @@
     for (const b of document.querySelectorAll("[aria-controls^='pp-'][aria-expanded]")) b.setAttribute("aria-expanded", "false");
   }
 
+  /// The top bar names the page (kit: .pp-topbar__title); a detail page adds its own name after it.
   function crumbs(page, extra) {
     const c = document.getElementById("pp-crumbs");
     if (!c) return;
     // replaceChildren() would print a null as text, so only nodes go in.
-    c.replaceChildren(el("span", { class: "pp-crumb-group" }, page.group || state.opts.title),
-      PP.icon("chevron", "pp-crumb-sep"),
-      extra ? el("a", { href: PP.href(page.key) }, page.title) : el("span", { class: "pp-crumb-here" }, page.title),
+    c.replaceChildren(
+      extra ? el("a", { class: "pp-crumb-up", href: PP.href(page.key) }, page.title) : el("span", { class: "pp-crumb-here" }, page.title),
       ...(extra ? [PP.icon("chevron", "pp-crumb-sep"), el("span", { class: "pp-crumb-here" }, extra)] : []));
   }
   /// A detail page names itself in the breadcrumbs (e.g. the listing being edited).
@@ -363,7 +438,7 @@
   /// a pending step-up resume, the signed-out screen and the router.
   PP.shell.start = async function (opts) {
     state.opts = opts;
-    document.addEventListener("click", (e) => { if (!e.target.closest || !e.target.closest(".pp-pop, .pp-switch-btn, .pp-user-btn")) closePops(); });
+    document.addEventListener("click", (e) => { if (!e.target.closest || !e.target.closest(".pp-pop, .pp-switch-btn, .pp-user-btn, .pp-sidebar__user")) closePops(); });
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") { closePops(); setDrawer(false); } });
     const params = new URLSearchParams(window.location.search);
     if (params.get("code") || params.get("error")) {

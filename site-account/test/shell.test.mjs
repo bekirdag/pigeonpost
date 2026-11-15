@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { boot, tick, fixtures, jwt } from "./helpers.mjs";
 
-const NAV = ["overview", "inboxes", "handles", "nests", "store", "purchases", "wallet", "plan", "billing", "invoices", "security", "privacy", "support"];
+const NAV = ["overview", "handles", "inboxes", "nests", "store", "wallet", "purchases", "invoices", "plan", "billing", "security", "privacy", "support"];
 
 test("signed out: the sign-in screen; a #delete-account link explains why to sign in", async (t) => {
   const a = boot(t, { session: null });
@@ -22,7 +22,7 @@ test("navigation: the end-user pages in groups, nothing partner or staff, the re
   const a = boot(t);
   await a.started; await tick();
   assert.deepEqual(a.$$(".pp-nav-item").map((n) => n.getAttribute("data-page")), NAV);
-  assert.deepEqual(a.$$(".pp-nav-heading").map((n) => n.textContent), ["Messaging", "Nests & services", "Billing", "Account"]);
+  assert.deepEqual(a.$$(".pp-nav-heading").map((n) => n.textContent), ["Billing", "Account"]);
   const nav = a.$("#pp-side").textContent;
   for (const gone of ["My business", "My apps", "My analytics", "Back office", "Staff", "Partner support"]) assert.ok(!nav.includes(gone), gone);
   assert.ok(!a.document.querySelector('a[href="/staff"]'));
@@ -91,7 +91,7 @@ const CONTENT = {
   "store/nests": [/Pigeonpost AI/, /\$10\.00 a month/],
   "store/services": [/Find a service/, /Wodo AI HR/, /Translator/, /Featured/, /Coming from Pigeonpost/],
   "store/services/lst_tr": [/Translator/, /\$5\.00 a month/, /Buy ·/],
-  "store/services/lst_hr": [/Hosted by the publisher/, /Price\$25\.00 per run/, /Your credit: \$25\.00/],
+  "store/services/lst_hr": [/Hosted by the publisher/, /Price\$25\.00 per run/, /Your credit\$25\.00/],
   purchases: [/Wodo AI HR/, /report\.pdf/, /\$25\.00 paid/],
   "purchases/installed": [/No services installed/],
   "purchases/licences": [/No paid services/],
@@ -139,7 +139,7 @@ test("empty account: every list explains itself and offers the next step", async
     assert.match(a.text(), want, route);
   }
   await a.go("#/overview");
-  assert.match(a.text(), /3 of 3 steps left/);
+  assert.match(a.text(), /0 of 3 done/);
   await a.go("#/billing");
   assert.match(a.text(), /Add billing details/);
   assert.ok(a.$("#acc-billing-form"), "no profile: the form, straight away");

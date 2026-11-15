@@ -14,7 +14,7 @@
   }
 
   ACC.page({
-    key: "purchases", title: "Purchases & jobs", group: "Nests & services", icon: "jobs",
+    key: "purchases", title: "Purchases & jobs", group: "Billing", icon: "jobs",
     async render(view, ctx, params) {
       view.append(PP.ui.header({ title: "Purchases & jobs", text: "What you have run, installed and bought from the marketplace." }));
       if (!ACC.feature(ctx, "marketplace")) {

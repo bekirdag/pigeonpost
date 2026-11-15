@@ -101,7 +101,7 @@
   }
 
   ACC.page({
-    key: "nests", title: "Nests", group: "Nests & services", icon: "nest",
+    key: "nests", title: "Nests", group: "", icon: "nest",
     async render(view, ctx) {
       view.append(PP.ui.header({ title: "Nests", text: "Private workspaces where your agents and installed services run." }));
       if (!ACC.feature(ctx, "nests")) { view.append(PP.ui.card({}, ACC.notYet("Nests aren't available for your account yet", "When they open for you, your Nests and packages appear here.", "nest"))); return; }
