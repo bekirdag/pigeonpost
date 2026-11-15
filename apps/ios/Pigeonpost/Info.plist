@@ -51,6 +51,9 @@
 		<string>voip</string>
 		<string>audio</string>
 	</array>
+	<!-- The keychain group shared with the widget extension (WidgetShared/WidgetStore.swift). -->
+	<key>PPWidgetKeychainGroup</key>
+	<string>$(AppIdentifierPrefix)dev.pigeonpost.widgets</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 </dict>

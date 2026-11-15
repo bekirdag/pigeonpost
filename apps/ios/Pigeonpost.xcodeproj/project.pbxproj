@@ -7,10 +7,12 @@
 	objects = {
 
 /* Begin PBXTargetDependency section */
+		PP000000000000000001AE /* PBXTargetDependency PigeonpostWidgets */ = {isa = PBXTargetDependency; target = PP000000000000000001A4; targetProxy = PP000000000000000001AD; };
 		PP000000000000000000B7 = {isa = PBXTargetDependency; target = PP0000000000000000000F; targetProxy = PP000000000000000000B6; };
 /* End PBXTargetDependency section */
 
 /* Begin PBXContainerItemProxy section */
+		PP000000000000000001AD = {isa = PBXContainerItemProxy; containerPortal = PP00000000000000000013; proxyType = 1; remoteGlobalIDString = PP000000000000000001A4; remoteInfo = PigeonpostWidgets; };
 		PP000000000000000000B6 = {isa = PBXContainerItemProxy; containerPortal = PP00000000000000000013; proxyType = 1; remoteGlobalIDString = PP0000000000000000000F; remoteInfo = Pigeonpost; };
 /* End PBXContainerItemProxy section */
 
@@ -25,6 +27,14 @@
 		PP000000000000000000D5 = {isa = PBXBuildFile; fileRef = PP000000000000000000D6; };
 		PP000000000000000000F1 /* PigeonpostUI in Frameworks (iOS) */ = {isa = PBXBuildFile; productRef = PP000000000000000000F3; };
 		PP000000000000000000F2 /* PigeonpostUI in Frameworks (Mac) */ = {isa = PBXBuildFile; productRef = PP000000000000000000F4; };
+		PP000000000000000001AC /* PigeonpostUI in Frameworks (widgets) */ = {isa = PBXBuildFile; productRef = PP000000000000000001AB; };
+		PP000000000000000001B0 /* PigeonpostWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = PP000000000000000001A3; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		PP000000000000000001D0 /* Geist-Regular.ttf in Resources (widgets) */ = {isa = PBXBuildFile; fileRef = PP000000000000000001C0; };
+		PP000000000000000001D1 /* Geist-Medium.ttf in Resources (widgets) */ = {isa = PBXBuildFile; fileRef = PP000000000000000001C1; };
+		PP000000000000000001D2 /* Geist-SemiBold.ttf in Resources (widgets) */ = {isa = PBXBuildFile; fileRef = PP000000000000000001C2; };
+		PP000000000000000001D3 /* Geist-Bold.ttf in Resources (widgets) */ = {isa = PBXBuildFile; fileRef = PP000000000000000001C3; };
+		PP000000000000000001D4 /* GeistMono-Regular.ttf in Resources (widgets) */ = {isa = PBXBuildFile; fileRef = PP000000000000000001C4; };
+		PP000000000000000001D5 /* GeistMono-Medium.ttf in Resources (widgets) */ = {isa = PBXBuildFile; fileRef = PP000000000000000001C5; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -41,6 +51,13 @@
 				Info.plist,
 			);
 			target = PP0000000000000000006F /* PigeonpostMac */;
+		};
+		PP000000000000000001A2 /* Exceptions for "PigeonpostWidgets" folder in "PigeonpostWidgets" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = PP000000000000000001A4 /* PigeonpostWidgets */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
@@ -66,6 +83,19 @@
 			path = PigeonpostMac;
 			sourceTree = "<group>";
 		};
+		PP000000000000000001A0 /* WidgetShared */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = WidgetShared;
+			sourceTree = "<group>";
+		};
+		PP000000000000000001A1 /* PigeonpostWidgets */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				PP000000000000000001A2 /* Exceptions for "PigeonpostWidgets" folder in "PigeonpostWidgets" target */,
+			);
+			path = PigeonpostWidgets;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFileReference section */
@@ -77,6 +107,13 @@
 		PP000000000000000000C1 /* PigeonpostGroupCrypto.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PigeonpostGroupCrypto.swift; path = ../../crates/pigeonpost-groupcrypto/bindings/swift/PigeonpostGroupCrypto.swift; sourceTree = SOURCE_ROOT; };
 		PP000000000000000000C6 /* build-groupcrypto.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = scripts/build-groupcrypto.sh; sourceTree = SOURCE_ROOT; };
 		PP000000000000000000D6 = {isa = PBXFileReference; lastKnownFileType = text.xml; path = Pigeonpost/PrivacyInfo.xcprivacy; sourceTree = SOURCE_ROOT; };
+		PP000000000000000001A3 /* PigeonpostWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = PigeonpostWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		PP000000000000000001C0 /* Geist-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = Shared/Fonts/Geist-Regular.ttf; sourceTree = SOURCE_ROOT; };
+		PP000000000000000001C1 /* Geist-Medium.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = Shared/Fonts/Geist-Medium.ttf; sourceTree = SOURCE_ROOT; };
+		PP000000000000000001C2 /* Geist-SemiBold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = Shared/Fonts/Geist-SemiBold.ttf; sourceTree = SOURCE_ROOT; };
+		PP000000000000000001C3 /* Geist-Bold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = Shared/Fonts/Geist-Bold.ttf; sourceTree = SOURCE_ROOT; };
+		PP000000000000000001C4 /* GeistMono-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = Shared/Fonts/GeistMono-Regular.ttf; sourceTree = SOURCE_ROOT; };
+		PP000000000000000001C5 /* GeistMono-Medium.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = Shared/Fonts/GeistMono-Medium.ttf; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -100,6 +137,7 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		PP000000000000000000BA = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		PP000000000000000001A9 /* Frameworks (widgets) */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (PP000000000000000001AC); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -109,6 +147,9 @@
 				PP0000000000000000000A /* Pigeonpost */,
 				PP0000000000000000005A /* Shared */,
 				PP0000000000000000006A /* PigeonpostMac */,
+				PP000000000000000001A0 /* WidgetShared */,
+				PP000000000000000001A1 /* PigeonpostWidgets */,
+				PP000000000000000001C9 /* Widget fonts */,
 				PP000000000000000000B2 /* NativeHandleStoreKitTests.swift */,
 				PP000000000000000000B4 /* HandleSubscriptions.storekit */,
 				PP000000000000000000C7 /* GroupCrypto */,
@@ -122,6 +163,7 @@
 				PP0000000000000000000B /* Pigeonpost.app */,
 				PP0000000000000000006B /* Pigeonpost Desktop.app */,
 				PP000000000000000000B5 /* HandleStoreKitTests.xctest */,
+				PP000000000000000001A3 /* PigeonpostWidgets.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -135,6 +177,19 @@
 			name = GroupCrypto;
 			sourceTree = "<group>";
 		};
+		PP000000000000000001C9 /* Widget fonts */ = {
+			isa = PBXGroup;
+			children = (
+				PP000000000000000001C0 /* Geist-Regular.ttf */,
+				PP000000000000000001C1 /* Geist-Medium.ttf */,
+				PP000000000000000001C2 /* Geist-SemiBold.ttf */,
+				PP000000000000000001C3 /* Geist-Bold.ttf */,
+				PP000000000000000001C4 /* GeistMono-Regular.ttf */,
+				PP000000000000000001C5 /* GeistMono-Medium.ttf */,
+			);
+			name = "Widget fonts";
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -146,14 +201,17 @@
 				PP00000000000000000011 /* Sources */,
 				PP0000000000000000000C /* Frameworks */,
 				PP00000000000000000012 /* Resources */,
+				PP000000000000000001AF /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				PP000000000000000001AE /* PBXTargetDependency PigeonpostWidgets */,
 			);
 			fileSystemSynchronizedGroups = (
 				PP0000000000000000000A /* Pigeonpost */,
 				PP0000000000000000005A /* Shared */,
+				PP000000000000000001A0 /* WidgetShared */,
 			);
 			name = Pigeonpost;
             packageProductDependencies = (PP000000000000000000D3, PP000000000000000000E3, PP000000000000000000F3);
@@ -195,6 +253,28 @@
 			productReference = PP000000000000000000B5;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		PP000000000000000001A4 /* PigeonpostWidgets */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = PP000000000000000001A5 /* Build configuration list for PBXNativeTarget "PigeonpostWidgets" */;
+			buildPhases = (
+				PP000000000000000001A8 /* Sources */,
+				PP000000000000000001A9 /* Frameworks */,
+				PP000000000000000001AA /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				PP000000000000000001A1 /* PigeonpostWidgets */,
+				PP000000000000000001A0 /* WidgetShared */,
+			);
+			name = PigeonpostWidgets;
+			packageProductDependencies = (PP000000000000000001AB);
+			productName = PigeonpostWidgets;
+			productReference = PP000000000000000001A3 /* PigeonpostWidgets.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin XCRemoteSwiftPackageReference section */
@@ -210,6 +290,7 @@
         PP000000000000000000E3 = {isa = XCSwiftPackageProductDependency; package = PP000000000000000000E0; productName = WebRTC; };
         PP000000000000000000F3 = {isa = XCSwiftPackageProductDependency; package = PP000000000000000000F0; productName = PigeonpostUI; };
         PP000000000000000000F4 = {isa = XCSwiftPackageProductDependency; package = PP000000000000000000F0; productName = PigeonpostUI; };
+        PP000000000000000001AB = {isa = XCSwiftPackageProductDependency; package = PP000000000000000000F0; productName = PigeonpostUI; };
 /* End XCSwiftPackageProductDependency section */
 
 /* Begin PBXProject section */
@@ -224,6 +305,9 @@
 						CreatedOnToolsVersion = 16.2;
 					};
 					PP0000000000000000006F = {
+						CreatedOnToolsVersion = 16.2;
+					};
+					PP000000000000000001A4 = {
 						CreatedOnToolsVersion = 16.2;
 					};
 				};
@@ -246,6 +330,7 @@
 				PP0000000000000000000F /* Pigeonpost */,
 				PP0000000000000000006F /* PigeonpostMac */,
 				PP000000000000000000BB /* HandleStoreKitTests */,
+				PP000000000000000001A4 /* PigeonpostWidgets */,
 			);
 		};
 /* End PBXProject section */
@@ -267,7 +352,22 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		PP000000000000000000B9 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (PP000000000000000000B3); runOnlyForDeploymentPostprocessing = 0; };
+		PP000000000000000001AA /* Resources (widgets) */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (PP000000000000000001D0, PP000000000000000001D1, PP000000000000000001D2, PP000000000000000001D3, PP000000000000000001D4, PP000000000000000001D5); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		PP000000000000000001AF /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				PP000000000000000001B0 /* PigeonpostWidgets.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
 		PP000000000000000000C4 /* Group crypto (Rust) */ = {
@@ -332,6 +432,7 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		PP000000000000000000B8 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (PP000000000000000000B1); runOnlyForDeploymentPostprocessing = 0; };
+		PP000000000000000001A8 /* Sources (widgets) */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
@@ -571,6 +672,64 @@
 			};
 			name = Debug;
 		};
+		PP000000000000000001A6 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = PigeonpostWidgets/PigeonpostWidgets.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 51;
+				DEVELOPMENT_TEAM = AH277897AV;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = PigeonpostWidgets/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Pigeonpost;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.3;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.pigeonpost.inbox.widgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		PP000000000000000001A7 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = PigeonpostWidgets/PigeonpostWidgets.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 51;
+				DEVELOPMENT_TEAM = AH277897AV;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = PigeonpostWidgets/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Pigeonpost;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.3;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.pigeonpost.inbox.widgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -602,6 +761,7 @@
 			defaultConfigurationName = Release;
 		};
 		PP000000000000000000BC = {isa = XCConfigurationList; buildConfigurations = (PP000000000000000000BD); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug; };
+		PP000000000000000001A5 /* Build configuration list for PBXNativeTarget "PigeonpostWidgets" */ = {isa = XCConfigurationList; buildConfigurations = (PP000000000000000001A6, PP000000000000000001A7); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
 /* End XCConfigurationList section */
 	};
 	rootObject = PP00000000000000000013 /* Project object */;

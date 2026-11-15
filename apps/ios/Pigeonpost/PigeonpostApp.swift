@@ -17,6 +17,7 @@ struct PigeonpostApp: App {
     @State private var calendar: CalendarStore
     @State private var calendarLinks = CalendarLinkRouter()
     @State private var deviceApprovals = DeviceApprovalRouter()
+    @State private var widgetRoutes = WidgetRouter()
 
     init() {
         let session = Session()
@@ -60,6 +61,8 @@ struct PigeonpostApp: App {
     }
 
     private func openJoinLink(_ url: URL) {
+        // A tapped widget. Checked first: its links are the app's own scheme and nothing else claims them.
+        if widgetRoutes.receive(url) { return }
         if let code = DevicePairingLink.code(in: url) { deviceApprovals.receive(code) }
         else if let link = GroupStore.JoinLink(url: url) { groups.pendingJoin = link }
         else if let link = CalendarLink(url: url) { calendarLinks.receive(link, signedIn: session.status == .signedIn) }
@@ -67,7 +70,22 @@ struct PigeonpostApp: App {
 
     var body: some Scene {
         WindowGroup {
+            #if DEBUG
+            if WidgetGallery.enabled {
+                WidgetGallery()
+            } else {
+                root
+            }
+            #else
+            root
+            #endif
+        }
+    }
+
+    private var root: some View {
             RootView()
+                // Before the environment below, so it can read the session, inbox and calendar.
+                .widgetSnapshots()
                 .calendarLifecycle()
                 .peopleLifecycle()
                 .signedOutCalendarGuests()
@@ -84,6 +102,7 @@ struct PigeonpostApp: App {
                 .environment(calendar)
                 .environment(calendarLinks)
                 .environment(deviceApprovals)
+                .environment(widgetRoutes)
                 .environment(\.avatarLookup, avatars.lookup)
                 .appliesAppearanceChoice()
                 .environment(\.openURL, OpenURLAction { url in
@@ -112,6 +131,5 @@ struct PigeonpostApp: App {
                     DeviceApprovalFixtures.stage(router: deviceApprovals)
                     #endif
                 }
-        }
     }
 }

@@ -5,6 +5,7 @@
 //  and resolves every role. The app shows what it was told.
 
 import Foundation
+import Observation
 
 struct NestPackage: Decodable, Equatable, Identifiable, Sendable {
     let code: String
@@ -269,4 +270,21 @@ enum NestWords {
     static func bytes(_ value: Int64) -> String {
         ByteCountFormatter.string(fromByteCount: value, countStyle: .binary)
     }
+}
+
+/// Each Nest's usage as last read from its page (`GET /v1/nests/{nest}/usage`), kept so the Home
+/// Screen widget can draw the running-hours meter without a request of its own. In memory only, and
+/// emptied with the Nests themselves when the account changes (`NestStore.reset`).
+@MainActor
+@Observable
+final class NestUsageLedger {
+    static let shared = NestUsageLedger()
+    private(set) var usage: [String: NestUsage] = [:]
+
+    func record(_ value: NestUsage?, for nest: String) {
+        guard let value, usage[nest] != value else { return }
+        usage[nest] = value
+    }
+
+    func reset() { if !usage.isEmpty { usage = [:] } }
 }

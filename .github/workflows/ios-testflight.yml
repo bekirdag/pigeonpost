@@ -123,11 +123,13 @@ jobs:
           P12: ${{ secrets.APPLE_DIST_P12 }}
           P12_PASSWORD: ${{ secrets.APPLE_DIST_P12_PASSWORD }}
           PROFILE: ${{ secrets.APPLE_PROFILE }}
+          # The widget extension (dev.pigeonpost.inbox.widgets) has its own App Store profile.
+          WIDGETS_PROFILE: ${{ secrets.APPLE_WIDGETS_PROFILE }}
         run: |
           set -euo pipefail
-          for name in P12 P12_PASSWORD PROFILE; do
+          for name in P12 P12_PASSWORD PROFILE WIDGETS_PROFILE; do
             if [ -z "${!name:-}" ]; then
-              echo "::error::APPLE_DIST_$name is not set. See apps/ios/APP-STORE.md."
+              echo "::error::The signing secret for $name is not set. See apps/ios/APP-STORE.md."
               exit 1
             fi
           done
@@ -149,6 +151,20 @@ jobs:
           profiles=~/Library/MobileDevice/Provisioning\ Profiles
           mkdir -p "$profiles"
           printf '%s' "$PROFILE" | base64 --decode > "$profiles/pigeonpost.mobileprovision"
+          printf '%s' "$WIDGETS_PROFILE" | base64 --decode > "$profiles/pigeonpost-widgets.mobileprovision"
+          # Both profiles must let their target into the keychain group the app and the widgets share
+          # (<team>.dev.pigeonpost.widgets), or the archive fails late with a signing error that does
+          # not name it. The team wildcard covers it.
+          for file in pigeonpost pigeonpost-widgets; do
+            security cms -D -i "$profiles/$file.mobileprovision" > "$RUNNER_TEMP/$file.plist"
+            name=$(/usr/libexec/PlistBuddy -c 'Print :Name' "$RUNNER_TEMP/$file.plist")
+            groups=$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:keychain-access-groups' "$RUNNER_TEMP/$file.plist" 2>/dev/null || true)
+            if ! printf '%s\n' "$groups" | grep -q -x '[[:space:]]*AH277897AV\.\*'; then
+              echo "::error::Profile '$name' does not grant the team keychain groups. Reissue it (apps/ios/APP-STORE.md)."
+              exit 1
+            fi
+            echo "profile '$name': team keychain groups granted"
+          done
 
           echo "identities available to codesign:"
           security find-identity -v -p codesigning "$keychain" | sed 's/[0-9A-F]\{40\}/<hash>/'
@@ -187,28 +203,33 @@ jobs:
           case "$BUILD_NUMBER" in
             ''|*[!0-9]*) echo "::error::build_number must be a whole number; got '$BUILD_NUMBER'." ; exit 1 ;;
           esac
-          # Manual signing on the app target alone. As xcodebuild settings these would reach every
-          # target, and a Swift package's resource bundle refuses a provisioning profile.
+          # Manual signing on the app target and its widget extension only. As xcodebuild settings
+          # these would reach every target, and a Swift package's resource bundle refuses a
+          # provisioning profile.
           python3 - <<'PATCH'
           import re
           path = "Pigeonpost.xcodeproj/project.pbxproj"
           text = open(path, encoding="utf-8").read()
           block = re.compile(r"(isa = XCBuildConfiguration;\s*buildSettings = \{)((?:(?!\n\s*\};\s*name = ).)*)(\n\s*\};\s*name = Release;)", re.S)
-          app = re.compile(r'PRODUCT_BUNDLE_IDENTIFIER = "?dev\.pigeonpost\.inbox"?;')
-          count = 0
+          targets = {
+              "dev.pigeonpost.inbox": "Pigeonpost Inbox App Store",
+              "dev.pigeonpost.inbox.widgets": "Pigeonpost Widgets App Store",
+          }
+          count = {bundle: 0 for bundle in targets}
           def sign(match):
-              global count
               body = match.group(2)
-              if not app.search(body) or "SDKROOT = macosx" in body:
+              found = re.search(r'PRODUCT_BUNDLE_IDENTIFIER = "?([\w.]+)"?;', body)
+              bundle = found.group(1) if found else None
+              if bundle not in targets or "SDKROOT = macosx" in body:
                   return match.group(0)
-              count += 1
+              count[bundle] += 1
               body = re.sub(r"\n\s*CODE_SIGN_STYLE = \w+;", "", body)
               body = re.sub(r"\n\s*(\"?CODE_SIGN_IDENTITY[^=]*\"?|PROVISIONING_PROFILE_SPECIFIER) = [^;]*;", "", body)
-              extra = ['CODE_SIGN_STYLE = Manual;', '"CODE_SIGN_IDENTITY" = "Apple Distribution";', 'PROVISIONING_PROFILE_SPECIFIER = "Pigeonpost Inbox App Store";']
+              extra = ['CODE_SIGN_STYLE = Manual;', '"CODE_SIGN_IDENTITY" = "Apple Distribution";', f'PROVISIONING_PROFILE_SPECIFIER = "{targets[bundle]}";']
               return match.group(1) + "".join("\n\t\t\t\t" + line for line in extra) + body + match.group(3)
           text = block.sub(sign, text)
-          if count != 1:
-              raise SystemExit(f"expected one Release configuration for the app target, found {count}")
+          if any(n != 1 for n in count.values()):
+              raise SystemExit(f"expected one iOS Release configuration per signed target, found {count}")
           open(path, "w", encoding="utf-8").write(text)
           PATCH
           xcodebuild \
@@ -230,6 +251,19 @@ jobs:
           for key in CFBundleIdentifier CFBundleShortVersionString CFBundleVersion MinimumOSVersion DTSDKName; do
             printf '%s = %s\n' "$key" "$(plutil -extract "$key" raw -o - "$plist")"
           done
+          # The widget extension rides inside the app and must carry the same version and build.
+          app="$RUNNER_TEMP/Pigeonpost.xcarchive/Products/Applications/Pigeonpost.app"
+          appex="$app/PlugIns/PigeonpostWidgets.appex"
+          test -d "$appex" || { echo "::error::The archive has no widget extension."; exit 1; }
+          for key in CFBundleIdentifier CFBundleShortVersionString CFBundleVersion; do
+            app_value=$(plutil -extract "$key" raw -o - "$plist")
+            ext_value=$(plutil -extract "$key" raw -o - "$appex/Info.plist")
+            printf 'widgets %s = %s\n' "$key" "$ext_value"
+            if [ "$key" != CFBundleIdentifier ] && [ "$app_value" != "$ext_value" ]; then
+              echo "::error::The widget extension's $key ($ext_value) differs from the app's ($app_value)."
+              exit 1
+            fi
+          done
 
       - name: Export and upload
         working-directory: apps/ios
@@ -243,7 +277,8 @@ jobs:
           cp ExportOptions.plist "$options"
           plutil -replace signingStyle -string manual "$options"
           plutil -replace signingCertificate -string "Apple Distribution" "$options"
-          plutil -insert provisioningProfiles -json '{"dev.pigeonpost.inbox":"Pigeonpost Inbox App Store"}' "$options" 2>/dev/null || true
+          plutil -insert provisioningProfiles -json '{"dev.pigeonpost.inbox":"Pigeonpost Inbox App Store","dev.pigeonpost.inbox.widgets":"Pigeonpost Widgets App Store"}' "$options" 2>/dev/null \
+            || plutil -replace provisioningProfiles -json '{"dev.pigeonpost.inbox":"Pigeonpost Inbox App Store","dev.pigeonpost.inbox.widgets":"Pigeonpost Widgets App Store"}' "$options"
           if [ "$UPLOAD" != 'true' ]; then
             # Same signing, same package, stopping short of App Store Connect.
             plutil -replace destination -string export "$options"
