@@ -41,7 +41,7 @@ public sealed partial class MainWindow
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         var badge = new Border
         {
-            Background = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(0xFF, 0xD7, 0x26, 0x3D)), CornerRadius = new CornerRadius(4),
+            Background = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(0xFF, 0xC4, 0x2B, 0x2B)), CornerRadius = new CornerRadius(4),
             Padding = new Thickness(6, 2, 6, 2), VerticalAlignment = VerticalAlignment.Center,
             Child = new TextBlock { Text = "LIVE", FontSize = 11, FontWeight = Microsoft.UI.Text.FontWeights.Bold, Foreground = new SolidColorBrush(Microsoft.UI.Colors.White) },
         };
@@ -58,8 +58,8 @@ public sealed partial class MainWindow
         groupLiveBanner = new Border
         {
             Child = grid, CornerRadius = new CornerRadius(8), BorderThickness = new Thickness(1), Visibility = Visibility.Collapsed,
-            BorderBrush = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(0x99, 0xD7, 0x26, 0x3D)),
-            Background = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(0x1F, 0xD7, 0x26, 0x3D)),
+            BorderBrush = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(0x99, 0xC4, 0x2B, 0x2B)),
+            Background = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(0x1F, 0xC4, 0x2B, 0x2B)),
         };
         AutomationProperties.SetName(groupLiveBanner, "Live stream");
         banners.Children.Insert(0, groupLiveBanner);
@@ -131,7 +131,7 @@ public sealed partial class MainWindow
             AutomationProperties.SetName(camera, "Show my camera");
             var screen = new CheckBox { Content = "Screen", IsChecked = false };
             AutomationProperties.SetName(screen, "Share my screen");
-            var problem = new TextBlock { Foreground = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(0xFF, 0xC4, 0x2B, 0x1C)), TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
+            var problem = new TextBlock { Foreground = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(0xFF, 0xC4, 0x2B, 0x2B)), TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
             var panel = new StackPanel { Spacing = 12, MinWidth = 360, MaxWidth = 460 };
             panel.Children.Add(title);
             panel.Children.Add(new TextBlock { Text = "Show", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });

@@ -3,38 +3,38 @@
    tinted for the ground in each appearance. */
 
 :root {
-  --cal-blue: #2563eb;   --cal-blue-bg: #e3ecfd;   --cal-blue-ink: #173b8f;
-  --cal-green: #16803d;  --cal-green-bg: #dff3e6;  --cal-green-ink: #0f5a2b;
-  --cal-orange: #c2570c; --cal-orange-bg: #fdecdc; --cal-orange-ink: #7c3606;
-  --cal-red: #c8243b;    --cal-red-bg: #fbe2e6;    --cal-red-ink: #861628;
-  --cal-purple: #7c3aed; --cal-purple-bg: #ede5fd; --cal-purple-ink: #4c1d95;
-  --cal-teal: #0d8a7e;   --cal-teal-bg: #d9f2ef;   --cal-teal-ink: #0b5952;
-  --cal-gray: #5f6876;   --cal-gray-bg: #e9ecf0;   --cal-gray-ink: #313843;
-  --cal-now: #dc2626;
+  --cal-blue: #086cff;   --cal-blue-bg: #edf4ff;   --cal-blue-ink: #0d418f;
+  --cal-green: #15801d;  --cal-green-bg: #ecfbee;  --cal-green-ink: #114f16;
+  --cal-orange: #b45309; --cal-orange-bg: #fdf3e1; --cal-orange-ink: #8a5208;
+  --cal-red: #c42b2b;    --cal-red-bg: #fdf0ef;    --cal-red-ink: #a3243f;
+  --cal-purple: #5735b0; --cal-purple-bg: #f1eefd; --cal-purple-ink: #3f2585;
+  --cal-teal: #0d6458;   --cal-teal-bg: #e6f7f4;   --cal-teal-ink: #0a4a41;
+  --cal-gray: #6b7482;   --cal-gray-bg: #eceff3;   --cal-gray-ink: #343c47;
+  --cal-now: #c42b2b;
   --cal-hour-line: var(--card-rule);
   --cal-today: var(--accent-fill);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --cal-blue: #7aa7ff;   --cal-blue-bg: #1c2b4a;   --cal-blue-ink: #d4e2ff;
-    --cal-green: #5fd38a;  --cal-green-bg: #173726;  --cal-green-ink: #cdf3db;
-    --cal-orange: #f6a05a; --cal-orange-bg: #3d2817; --cal-orange-ink: #fde0c6;
-    --cal-red: #f27b8c;    --cal-red-bg: #3f1d24;    --cal-red-ink: #fdd5db;
-    --cal-purple: #b394fb; --cal-purple-bg: #2d2247; --cal-purple-ink: #e6dcfe;
-    --cal-teal: #4fd1c1;   --cal-teal-bg: #133a36;   --cal-teal-ink: #c9f3ee;
-    --cal-gray: #a3acb9;   --cal-gray-bg: #2a2f37;   --cal-gray-ink: #e1e5eb;
-    --cal-now: #f87171;
+    --cal-blue: #4a90ff;   --cal-blue-bg: #13233f;   --cal-blue-ink: #d8e7ff;
+    --cal-green: #4fdb55;  --cal-green-bg: #10261a;  --cal-green-ink: #d1f5d4;
+    --cal-orange: #f5b547; --cal-orange-bg: #2a2010; --cal-orange-ink: #fdf3e1;
+    --cal-red: #ff6b6b;    --cal-red-bg: #2b1416;    --cal-red-ink: #fdf0ef;
+    --cal-purple: #9a85f2; --cal-purple-bg: #241f42; --cal-purple-ink: #f1eefd;
+    --cal-teal: #3fc7b4;   --cal-teal-bg: #12302d;   --cal-teal-ink: #e6f7f4;
+    --cal-gray: #a3acb9;   --cal-gray-bg: #1d232d;   --cal-gray-ink: #d3d8e0;
+    --cal-now: #ff6b6b;
   }
 }
 :root[data-theme="dark"] {
-  --cal-blue: #7aa7ff;   --cal-blue-bg: #1c2b4a;   --cal-blue-ink: #d4e2ff;
-  --cal-green: #5fd38a;  --cal-green-bg: #173726;  --cal-green-ink: #cdf3db;
-  --cal-orange: #f6a05a; --cal-orange-bg: #3d2817; --cal-orange-ink: #fde0c6;
-  --cal-red: #f27b8c;    --cal-red-bg: #3f1d24;    --cal-red-ink: #fdd5db;
-  --cal-purple: #b394fb; --cal-purple-bg: #2d2247; --cal-purple-ink: #e6dcfe;
-  --cal-teal: #4fd1c1;   --cal-teal-bg: #133a36;   --cal-teal-ink: #c9f3ee;
-  --cal-gray: #a3acb9;   --cal-gray-bg: #2a2f37;   --cal-gray-ink: #e1e5eb;
-  --cal-now: #f87171;
+  --cal-blue: #4a90ff;   --cal-blue-bg: #13233f;   --cal-blue-ink: #d8e7ff;
+  --cal-green: #4fdb55;  --cal-green-bg: #10261a;  --cal-green-ink: #d1f5d4;
+  --cal-orange: #f5b547; --cal-orange-bg: #2a2010; --cal-orange-ink: #fdf3e1;
+  --cal-red: #ff6b6b;    --cal-red-bg: #2b1416;    --cal-red-ink: #fdf0ef;
+  --cal-purple: #9a85f2; --cal-purple-bg: #241f42; --cal-purple-ink: #f1eefd;
+  --cal-teal: #3fc7b4;   --cal-teal-bg: #12302d;   --cal-teal-ink: #e6f7f4;
+  --cal-gray: #a3acb9;   --cal-gray-bg: #1d232d;   --cal-gray-ink: #d3d8e0;
+  --cal-now: #ff6b6b;
 }
 
 [data-color="blue"]   { --ev: var(--cal-blue);   --ev-bg: var(--cal-blue-bg);   --ev-ink: var(--cal-blue-ink); }
@@ -257,7 +257,7 @@
 .cs-feed select { height: 30px; border: 1px solid var(--edge); border-radius: 7px; background: var(--field-deep); color: var(--ink); font: inherit; }
 .cs-import-list { list-style: none; margin: 8px 0; padding: 0; }
 
-.cal-toast { position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 90; display: flex; align-items: center; gap: 10px; max-width: min(92vw, 520px); padding: 10px 10px 10px 16px; border-radius: 12px; background: var(--toast-fill); color: #fff; box-shadow: 0 10px 30px var(--shadow-toast); font-size: 13.5px; }
+.cal-toast { position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 90; display: flex; align-items: center; gap: 10px; max-width: min(92vw, 520px); padding: 10px 10px 10px 16px; border-radius: var(--pp-radius-l); background: var(--toast-fill); color: var(--toast-text); border: 1px solid var(--pp-border); box-shadow: var(--pp-shadow-3); font-size: var(--pp-fs-body-s); }
 .cal-toast[hidden] { display: none; }
 .cal-toast .icon-btn { color: #fff; }
 .cal-toast .icon-btn svg { width: 16px; height: 16px; }

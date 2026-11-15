@@ -19,7 +19,7 @@ mkdirSync(out, { recursive: true });
 const root = mkdtempSync(join(tmpdir(), "pm-site-"));
 for (const f of readdirSync(here)) if (!["test", "node_modules", "package.json", "package-lock.json"].includes(f)) cpSync(join(here, f), join(root, f), { recursive: true });
 mkdirSync(join(root, "shared"));
-for (const f of readdirSync(shared)) if (/\.(js|css)$/.test(f) || f === "fonts") cpSync(join(shared, f), join(root, "shared", f), { recursive: true });
+for (const f of readdirSync(shared)) if (/\.(js|css)$/.test(f) || f === "fonts" || f === "brand") cpSync(join(shared, f), join(root, "shared", f), { recursive: true });
 
 // ---- the test-only harness ---------------------------------------------------------------------
 const harness = String.raw`
