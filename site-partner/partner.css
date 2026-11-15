@@ -218,3 +218,19 @@
   .ppp-step-actions { justify-content: stretch; }
   .ppp-step-actions .pp-btn { flex: 1; }
 }
+
+/* ---- Partner template (design kit templates/partner.html) ------------------------------------ */
+.ppp-stepper-card { padding: var(--pp-space-4) var(--pp-space-5); }
+.ppp-stepper-card .ppp-stepper-wrap { padding-bottom: 0; }
+.ppp-step-desc { font-size: var(--pp-fs-body-s); line-height: var(--pp-lh-body-s); }
+.ppp-step-main { display: grid; gap: 18px; min-width: 0; }
+/* From 1100px the step's heading sits in a left column beside its fields (kit: pp-form__section--split). */
+@media (min-width: 1100px) {
+  .ppp-step-card { max-width: none; grid-template-columns: minmax(200px, 260px) minmax(0, 1fr); column-gap: var(--pp-space-8); }
+  .ppp-step-card > .ppp-step-head { align-self: start; position: sticky; top: calc(var(--pp-topbar-h) + 16px); }
+  .ppp-step-card > .ppp-step-actions, .ppp-step-card > .pp-form-status { grid-column: 1 / -1; }
+}
+.ppp-pricing-kinds { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; font-size: var(--pp-fs-body-s); line-height: var(--pp-lh-body-s); }
+.ppp-pricing-kinds li { display: flex; gap: 10px; align-items: flex-start; }
+.ppp-pricing-kinds .ico { width: 18px; height: 18px; color: var(--pp-text-link); flex: none; margin-top: 1px; }
+.ppp-app-cell .pp-table__sub { white-space: normal; }

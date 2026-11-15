@@ -149,7 +149,8 @@
   /// Steps of a multi-step form. `steps`: [{ key, title, done }]; clicking a reachable step calls onStep.
   ui.stepper = function (steps, current, onStep) {
     const idx = steps.findIndex((s) => s.key === current);
-    return el("ol", { class: "pp-stepper" }, steps.map((s, i) => {
+    const summary = idx >= 0 ? `Step ${idx + 1} of ${steps.length} · ${steps[idx].title}` : null;
+    return el("ol", { class: "pp-stepper", "data-summary": summary }, steps.map((s, i) => {
       const cls = `pp-step${i === idx ? " is-current" : ""}${s.done ? " is-done" : ""}`;
       const reachable = onStep && (s.done || i <= idx + (steps[idx] && steps[idx].done ? 1 : 0));
       const label = [el("span", { class: "pp-step-num" }, s.done && i !== idx ? PP.icon("check") : String(i + 1)), el("span", { class: "pp-step-title" }, s.title)];

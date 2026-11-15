@@ -373,7 +373,8 @@
     const firstOpen = () => (PPP.allMissing(app)[0] || ["review"])[0];
     let current = keys.includes(params[0]) ? params[0] : firstOpen();
     const holder = el("div", { class: "ppp-app" });
-    view.append(ui.header({ eyebrow: ctx.pub.display_name, title: "Your application", text: "Eight short steps. Every step is saved, so you can stop and come back at any time.", actions: PPP.stateBadge(PPP.stateOf(ctx)) }));
+    view.append(ui.header({ eyebrow: ctx.pub.display_name, title: "Your application", text: "Eight short steps. Every step is saved, so you can stop and come back at any time.",
+      actions: [PPP.stateBadge(PPP.stateOf(ctx)), ui.button("Ask a question", { kind: "quiet", icon: "support", href: PP.href("support") })] }));
     const banner = requestBanner(ctx.app);
     if (banner) view.append(banner);
     view.append(holder);
@@ -412,12 +413,15 @@
             await PP.shell.reload();
           }) }));
       holder.replaceChildren(
-        el("div", { class: "ppp-stepper-wrap" }, ui.stepper(steps, current, (k) => run(() => go(k))())),
+        ui.card({ cls: "ppp-stepper-card" }, el("div", { class: "ppp-stepper-wrap" }, ui.stepper(steps, current, (k) => run(() => go(k))()))),
         ui.card({ cls: "ppp-step-card" },
-          el("div", { class: "ppp-step-head" }, el("p", { class: "pp-eyebrow" }, `Step ${idx + 1} of ${keys.length}`), el("h2", {}, STEPS[idx][1])),
-          missingHere.length ? el("p", { class: "ppp-missing" }, `To complete this step: ${missingHere.join(", ")}.`) : null,
-          current === "review" && all.length ? el("p", { class: "ppp-missing", id: "ppp-submit-blocked" }, `Submit opens when every step is complete. Still to do: ${all.map(([, t]) => t).join(", ")}.`) : null,
-          stepBody(current, ctx, app, draw), actions, status));
+          el("div", { class: "ppp-step-head" }, el("p", { class: "pp-eyebrow" }, `Step ${idx + 1} of ${keys.length}`), el("h2", {}, STEPS[idx][1]),
+            el("p", { class: "pp-muted ppp-step-desc" }, "Saved as a draft as you go. Piyote staff review it once you submit.")),
+          el("div", { class: "ppp-step-main" },
+            missingHere.length ? el("p", { class: "ppp-missing" }, `To complete this step: ${missingHere.join(", ")}.`) : null,
+            current === "review" && all.length ? el("p", { class: "ppp-missing", id: "ppp-submit-blocked" }, `Submit opens when every step is complete. Still to do: ${all.map(([, t]) => t).join(", ")}.`) : null,
+            stepBody(current, ctx, app, draw)),
+          actions, status));
       // On a phone the steps scroll sideways: keep the current one in view.
       window.setTimeout(() => {
         const on = holder.querySelector(".pp-step.is-current");

@@ -18,18 +18,47 @@
   const STATUS = { draft: ["Draft", "neutral"], published: ["Published", "success"], withdrawn: ["Withdrawn", "neutral"], suspended: ["Suspended by Pigeonpost", "danger"] };
   const VISIBILITY = [["public", "Public — in the Services catalog"], ["unlisted", "Unlisted — only people with the link"], ["private", "Private — only your team"]];
 
+  const CATEGORY = Object.fromEntries(PPP.CATEGORIES);
+
+  /// What the last 30 days earned, from the analytics finance figures (kit: the template's payout
+  /// preview). Per currency; never added across currencies.
+  function earningsCard(ctx) {
+    const box = ui.card({ title: "Earnings · last 30 days", icon: "banknote", text: "Net is after Pigeonpost's 10% and refunds, before payout withholding." }, ui.loading(2));
+    box.id = "ppp-earnings-preview";
+    const day = (d) => new Date(Date.now() + d * 86400000).toISOString().slice(0, 10) + "T00:00:00Z";
+    PP.postbox(`${PPP.base(ctx)}/analytics?${new URLSearchParams({ from: day(-29), to: day(1) })}`).then((r) => {
+      const fin = r && r.data && r.data.finance;
+      const rows = fin && fin.status === "available" ? (fin.currencies || []) : [];
+      const head = box.querySelector(".pp-card-head");
+      box.replaceChildren(head);
+      if (!rows.length) { box.append(el("p", { class: "pp-muted" }, fin && fin.status !== "available" ? "Earnings figures aren't available right now." : "No sales in the last 30 days.")); return; }
+      for (const c of rows) {
+        box.append(ui.kv([
+          ["Gross sales", ui.money(c.gross_minor, c.currency)],
+          ["Pigeonpost 10%", `−${ui.money(c.commission_minor, c.currency)}`],
+          ["Tax", `−${ui.money(c.tax_minor, c.currency)}`],
+          ["Refunds", `−${ui.money(c.reversed_publisher_minor, c.currency)}`],
+          ["Net", el("strong", {}, ui.money(c.net_publisher_minor, c.currency))],
+        ]));
+      }
+      box.append(el("div", { class: "pp-card-actions" }, ui.button("Earnings & payouts", { size: "sm", href: PP.href("earnings") })));
+    }).catch((e) => { if (!(e instanceof PP.Redirecting)) box.replaceChildren(box.querySelector(".pp-card-head"), el("p", { class: "pp-muted" }, "Earnings could not be loaded.")); });
+    return box;
+  }
+
   function list(view, ctx, rows, approvedReviews, admin) {
-    view.append(ui.header({ title: "Listings & pricing", text: "Your apps in the Services catalog: their page, logo, category and price.",
+    view.append(ui.header({ title: "Listings & pricing", text: "What buyers see in the Services catalog. Pigeonpost keeps 10% of each sale.",
       actions: admin && approvedReviews.length ? ui.button("New listing", { kind: "primary", icon: "plus", href: PP.href("listings", "new") }) : null }));
     if (!admin) view.append(ui.gate({ tone: "info", text: "Your role can read listings but not change them." }));
     view.append(ui.table({
-      caption: "Listings", search: "Search listings",
+      caption: "Listings", search: "Search listings", title: `${rows.length} ${rows.length === 1 ? "listing" : "listings"}`,
       filters: [{ key: "status", label: "Status", options: Object.entries(STATUS).map(([k, v]) => [k, v[0]]) }],
       columns: [
-        { key: "title", label: "App", sort: true, render: (l) => el("span", { class: "ppp-app-cell" }, PPP.logo(l, 40), el("span", {}, el("strong", {}, l.title), el("span", { class: "pp-muted" }, l.summary || ""))) },
+        { key: "title", label: "Listing", sort: true, render: (l) => el("span", { class: "ppp-app-cell" }, PPP.logo(l, 40), el("span", {}, el("strong", { class: "pp-table__primary" }, l.title), el("span", { class: "pp-table__sub" }, l.summary || ""))) },
+        { key: "category", label: "Category", render: (l) => CATEGORY[(l.storefront && l.storefront.category) || l.category] || "—" },
+        { key: "price", label: "Price", num: true, render: (l) => PPP.priceText(l) },
         { key: "status", label: "Status", render: (l) => ui.status(l.status, STATUS) },
         { key: "visibility", label: "Visibility", render: (l) => String(l.visibility || "").replace(/_/g, " ") },
-        { key: "price", label: "Price", render: (l) => PPP.priceText(l) },
         { key: "version", label: "Version", mono: true },
       ],
       rows, rowHref: (l) => PP.href("listings", l.id),
@@ -217,6 +246,10 @@
         return;
       }
       list(view, ctx, rows, approvedReviews, admin);
+      view.append(el("div", { class: "pp-cols" }, earningsCard(ctx), ui.card({ title: "Pricing", icon: "tag", text: "Open a listing to set its price. Changes apply to new purchases and runs only." },
+        el("ul", { class: "ppp-pricing-kinds" },
+          el("li", {}, PP.icon("zap"), el("span", {}, el("strong", {}, "Per run"), " — for apps you host: buyers pay from their credits each time a job finishes.")),
+          el("li", {}, PP.icon("calendar"), el("span", {}, el("strong", {}, "Monthly or one-off"), " — for apps that run in the buyer's Nest, billed through iyzico."))))));
     },
   });
 })();
