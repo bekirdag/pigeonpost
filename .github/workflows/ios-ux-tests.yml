@@ -11,6 +11,8 @@ on:
     paths:
       - 'apps/ios/Pigeonpost/**'
       - 'apps/ios/Shared/**'
+      - 'apps/ios/WidgetShared/**'
+      - 'apps/ios/PigeonpostWidgets/**'
       - 'apps/ios/Tests/**'
       - 'apps/ios/UITests/**'
       - 'apps/ios/scripts/**'
@@ -95,7 +97,7 @@ jobs:
       - name: Native history, mailbox, purchase and composer regressions
         run: |
           case "${{ matrix.suite }}" in
-            messaging) selected_tests=(-only-testing:PPUITests/IOSUXTests -only-testing:PPUITests/ComposerTests -only-testing:PPUITests/GroupTests) ;;
+            messaging) selected_tests=(-only-testing:PPUITests/IOSUXTests -only-testing:PPUITests/ComposerTests -only-testing:PPUITests/GroupTests -only-testing:PPUITests/WidgetGalleryTests) ;;
             calendar) selected_tests=(-only-testing:PPUITests/CalendarUITests -only-testing:PPUITests/OrganizationRoomUITests) ;;
             account) selected_tests=(-only-testing:PPUITests/HandlePurchaseTests -only-testing:PPUITests/Phase1bTests -only-testing:PPUITests/DeviceApprovalUITests -only-testing:PPUITests/PeopleUITests) ;;
             *) exit 1 ;;
@@ -170,7 +172,7 @@ jobs:
       - name: iPad layout and calendar regressions
         run: |
           selected_tests=(-only-testing:PPUITests/IPadLayoutTests -only-testing:PPUITests/CalendarUITests -only-testing:PPUITests/DeviceApprovalUITests
-            -only-testing:PPUITests/OrganizationRoomUITests -only-testing:PPUITests/PeopleUITests)
+            -only-testing:PPUITests/OrganizationRoomUITests -only-testing:PPUITests/PeopleUITests -only-testing:PPUITests/WidgetGalleryTests)
           if [[ "$CALENDAR_FILES_ONLY" == true ]]; then
             selected_tests=(-only-testing:PPUITests/CalendarUITests/testLocalCalendarFileCanBeSelectedAndPreviewed
               -only-testing:PPUITests/CalendarUITests/testCalendarFilePickerOpensAndCancels

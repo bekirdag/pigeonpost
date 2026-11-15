@@ -124,3 +124,9 @@ swiftc -O $kit -o "$out/phase1b" Tests/phase1b/main.swift \
   Shared/Model/Conversation.swift Shared/Design/PeerFace.swift Shared/Design/Theme.swift Shared/Design/Time.swift \
   Shared/Views/Markdown.swift Shared/Views/SelectableText.swift
 "$out/phase1b"
+swiftc -O -parse-as-library $kit -o "$out/widget-snapshot" Tests/WidgetSnapshotTests.swift \
+  WidgetShared/WidgetSnapshot.swift WidgetShared/WidgetStore.swift WidgetShared/WidgetLink.swift WidgetShared/WidgetFixtures.swift \
+  Pigeonpost/Widgets/WidgetSnapshotBuilder.swift Shared/API/Models.swift Shared/API/APIError.swift \
+  Shared/Model/Conversation.swift Shared/Design/PeerFace.swift Shared/Design/Theme.swift \
+  Shared/Views/Markdown.swift Shared/Views/SelectableText.swift Shared/Nests/NestModels.swift Shared/Calendar/CalendarModels.swift
+"$out/widget-snapshot"

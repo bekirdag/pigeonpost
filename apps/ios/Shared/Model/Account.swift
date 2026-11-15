@@ -309,6 +309,9 @@ final class Account {
     weak var push: PushService?
     /// Likewise for groups: signing out revokes this device's group keys and erases them here.
     weak var groups: GroupStore?
+    /// Told whenever this account's local state is forgotten — signing out or the session expiring —
+    /// so what the iPhone's widgets were showing goes with it. Never set on a Mac.
+    @ObservationIgnored var onForget: (() -> Void)?
 
     /// Somebody chose to sign out. Ends the session at the realm too — see `Session.signOut`.
     func signOut() async {
@@ -352,5 +355,6 @@ final class Account {
         retiringAuthorization = nil
         retireActor()
         defaults.removeObject(forKey: rememberedKey)
+        onForget?()
     }
 }

@@ -70,6 +70,11 @@ struct SettingsSheet: View {
         }
     }
     @State private var confirmSignOut = false
+    #if os(iOS)
+    /// Off by default: conversations are end-to-end encrypted, and a Home or Lock Screen widget is
+    /// readable by anybody holding the phone. See Pigeonpost/Widgets/WidgetSync.swift.
+    @AppStorage(WidgetSync.previewsKey) private var widgetPreviews = false
+    #endif
     @State private var path: [Page] = []
     /// A page to open on, as `-sheet=` names it (`plans` for the Pigeonpost Cloud page).
     private let openOn: String?
@@ -125,6 +130,16 @@ struct SettingsSheet: View {
                 } header: {
                     Text("Appearance")
                 }
+                #if os(iOS)
+                Section {
+                    Toggle("Show message previews in widgets", isOn: $widgetPreviews)
+                        .accessibilityIdentifier("widget-previews")
+                } header: {
+                    Text("Widgets")
+                } footer: {
+                    Text("Off: widgets show who wrote and “New message”. On: the start of the latest message, which anyone who can see your Home Screen or Lock Screen can read.")
+                }
+                #endif
                 Section {
                     destination(.help, icon: "questionmark.circle", detail: "Support, privacy and app information")
                 }

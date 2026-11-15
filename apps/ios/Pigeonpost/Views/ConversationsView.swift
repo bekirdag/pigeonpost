@@ -22,6 +22,7 @@ struct ConversationsView: View {
     @Environment(CalendarStore.self) private var calendar: CalendarStore?
     @Environment(CalendarLinkRouter.self) private var calendarLinks: CalendarLinkRouter?
     @Environment(DeviceApprovalRouter.self) private var deviceApprovals: DeviceApprovalRouter?
+    @Environment(WidgetRouter.self) private var widgetRoutes: WidgetRouter?
 
     @Environment(\.horizontalSizeClass) private var sizeClass
 
@@ -42,10 +43,12 @@ struct ConversationsView: View {
     /// is nothing left to race.
     @State private var sheet: Sheet?
     @State private var didStageFixtures = false
+    /// The search field is open — a widget's Search action asks for it.
+    @State private var searching = false
 
     private enum Sheet: Identifiable {
         case freeName
-        case identities, settings, plans, new, scanner, newGroup, joinLink, calls, filtered, calendar, organizationRooms, meetingNotes
+        case identities, settings, plans, products, new, scanner, newGroup, joinLink, calls, filtered, calendar, organizationRooms, meetingNotes
         case peer(Conversation)
         case join(GroupStore.JoinLink)
         case meetingLink(CalendarLinkRequest)
@@ -73,6 +76,7 @@ struct ConversationsView: View {
             case .identities: return "identities"
             case .settings: return "settings"
             case .plans: return "plans"
+            case .products: return "products"
             case .freeName: return "free-name"
             case .new: return "new"
             case .scanner: return "scanner"
@@ -172,6 +176,13 @@ struct ConversationsView: View {
             selection = peer
             push.pendingPeer = nil
         }
+        // A tapped widget, including one tapped before this list was on screen (signed out, or
+        // still loading the mailbox).
+        .onChange(of: widgetRoutes?.pending, initial: true) { _, route in
+            guard let route, account.me != nil else { return }
+            widgetRoutes?.pending = nil
+            openWidget(route)
+        }
         .calendarNotices(canPresent: sheet == nil || sheet?.id == "calendar", open: { sheet = .calendar }, visit: visit)
         .calendarMeetingLinks(canPresent: sheet == nil) { sheet = .meetingLink($0) }
         .deviceApprovalLinks(canPresent: sheet == nil) { sheet = .deviceApproval($0) }
@@ -187,6 +198,7 @@ struct ConversationsView: View {
                 IdentityPickerSheet { mailbox in visit(mailbox) }
             case .settings: SettingsSheet()
             case .plans: SettingsSheet(openOn: "plans")
+            case .products: SettingsSheet(openOn: "products")
             case .deviceApproval(let request):
                 if account.features.orgs { DeviceApprovalScreen(session: account.session, code: request.code).id(request.id) }
             case .calendar:
@@ -272,6 +284,44 @@ struct ConversationsView: View {
         }
     }
 
+    /// Where a widget tap goes. A conversation opens only in the mailbox the widget showed it for;
+    /// a mailbox this account no longer has opens the inbox instead.
+    private func openWidget(_ route: WidgetRoute) {
+        switch route {
+        case .inbox:
+            sheet = nil
+            inbox.viewingArchive = false
+            selection = nil
+            subthread = nil
+        case let .conversation(mailbox, peer):
+            sheet = nil
+            if mailbox != account.me?.address, let owned = account.mailboxes.first(where: { $0.address == mailbox }) {
+                visit(owned)
+            }
+            inbox.viewingArchive = false
+            subthread = nil
+            selection = account.me?.address == mailbox ? peer : nil
+        case .compose:
+            newContact = nil
+            sheet = .new
+        case .search:
+            sheet = nil
+            selection = nil
+            inbox.viewingArchive = false
+            searching = true
+        case .nests, .getNest:
+            sheet = account.features.nests ? .products : .settings
+        case .calendar:
+            if calendar != nil, account.features.calendar { sheet = .calendar }
+        case let .event(mailbox, eventId, occurrenceId):
+            guard let calendar, account.features.calendar else { return }
+            if mailbox == account.me?.address {
+                calendar.pendingNavigation = CalendarEventKey(eventId: eventId, occurrenceId: occurrenceId)
+            }
+            sheet = .calendar
+        }
+    }
+
     /// Reading as another of this account's mailboxes. Whatever was open belongs to the old one.
     private func visit(_ mailbox: Mailbox) {
         guard mailbox.address != account.me?.address else { return }
@@ -322,7 +372,7 @@ struct ConversationsView: View {
                 }
                 .navigationTitle(inbox.viewingArchive ? "Archive" : "Inbox")
                 .navigationBarTitleDisplayMode(.inline)
-                .searchable(text: $inbox.filter, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search")
+                .searchable(text: $inbox.filter, isPresented: $searching, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search")
                 .toolbar { toolbar }
                 .toolbarBackground(Theme.sidebar, for: .navigationBar)
                 .toolbarBackground(.visible, for: .navigationBar)

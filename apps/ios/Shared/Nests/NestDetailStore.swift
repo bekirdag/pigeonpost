@@ -83,6 +83,7 @@ final class NestDetailStore {
         do { files = try await services.files() } catch { message = NestWords.refusal(error) }
         // The Nests host may be down; the rest of the page still works without its numbers.
         usage = try? await services.usage()
+        NestUsageLedger.shared.record(usage, for: nest.nestId)
     }
 
     func decide(_ card: NestApproval, approve: Bool) async {

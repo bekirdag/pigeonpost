@@ -19,5 +19,14 @@
 	<array>
 		<string>Default</string>
 	</array>
+	<!-- Keychain groups. The first is the app's own default group, the same one it always used (its
+	     application identifier), so its tokens stay where they are and new items go there too. The
+	     second is shared with the widget extension and holds only the widget snapshot
+	     (WidgetShared/WidgetStore.swift). iPhone and iPad only; the Mac app's entitlements are unchanged. -->
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)dev.pigeonpost.inbox</string>
+		<string>$(AppIdentifierPrefix)dev.pigeonpost.widgets</string>
+	</array>
 </dict>
 </plist>

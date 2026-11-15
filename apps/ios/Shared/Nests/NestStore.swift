@@ -75,6 +75,7 @@ final class NestStore {
     func reset() {
         catalog = nil; snapshot = nil; products = [:]; message = nil; subject = nil; awaitingClaim = false
         orgDirectory = []; directoryAt = nil
+        NestUsageLedger.shared.reset()
     }
 
     private func syncSubject() {
