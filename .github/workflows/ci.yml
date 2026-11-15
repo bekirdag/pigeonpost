@@ -54,6 +54,9 @@ jobs:
       - name: Enterprise portal (jsdom)
         working-directory: site-enterprise
         run: npm ci --ignore-scripts && npm test
+      - name: Help centre (jsdom; every article renders, every internal link resolves)
+        working-directory: site-help
+        run: npm ci --ignore-scripts && npm test
       - name: Enterprise portal end to end (headless Chrome, mock postbox, bridge and realm)
         working-directory: site-enterprise
         timeout-minutes: 4
