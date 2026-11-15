@@ -226,7 +226,7 @@ struct SettingsSheet: View {
             Section {
                 Button("Sign out", role: .destructive) { confirmSignOut = true }
                 Link("Delete account", destination: URL(string: "https://pigeonpost.dev/account#delete-account")!)
-                    .foregroundStyle(.red).accessibilityIdentifier("deleteAccount")
+                    .foregroundStyle(Theme.danger).accessibilityIdentifier("deleteAccount")
             }
         case .handles:
             Section {

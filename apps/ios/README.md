@@ -22,6 +22,20 @@ is in the target the moment it exists. `Info.plist` is the one exception, listed
 synchronized group would otherwise copy it into the bundle as a resource *and* process it as the
 Info.plist, and the build fails with "Multiple commands produce".
 
+## The design kit — `Packages/PigeonpostUI`
+
+Colours, radii, spacing and the message shapes come from the Pigeonpost design kit
+(design.pigeonpost.dev). Its SwiftUI package is copied into `Packages/PigeonpostUI` — first-party,
+no dependencies of its own — so the app builds from this repository alone, and both app targets
+link it as a local Swift package. Copied from the kit repository's `kits/native/ios/PigeonpostUI`
+at kit commit `0b790ef` (PigeonpostUI 1.0.0). To update it, copy the folder over again (without
+`.build`) and rebuild; do not edit it here.
+
+`Shared/Design/Theme.swift` keeps the app's own names (`Theme.ink`, `Theme.ground`, `Theme.Mine`…)
+and maps each one onto a kit role (`PP.Colors.text`, `.surface`, `.bubbleMine`…), so a token change
+in the kit reaches every screen. The swiftc test scripts build the kit's generated token files as a
+tiny `PigeonpostUI` module first (`Tests/kit-tokens.sh`), so they compile `Theme.swift` unchanged.
+
 ## The realm client — done, 2026-08-20
 
 The app has its own realm client — deliberately not the browser's `pigeonpost-web`, since a native

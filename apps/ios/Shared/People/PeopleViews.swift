@@ -63,7 +63,7 @@ struct PhoneNumbersPage: View {
                 }
                 if people.state.phones.isEmpty { Text("No verified numbers yet.").foregroundStyle(.secondary) }
             }
-            Section { if let localError { Text(localError).foregroundStyle(.red) }; PeopleNotice() }
+            Section { if let localError { Text(localError).foregroundStyle(Theme.danger) }; PeopleNotice() }
         }.sheetSurface().task(id: scope) { await people.loadPhones(scope) }
             .confirmationDialog("Unlink this number?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }), titleVisibility: .visible) {
                 if let number = removing { Button("Unlink number", role: .destructive) { removing = nil; Task { await people.unlink(scope, phone: number) } } }
@@ -108,7 +108,7 @@ struct FindPeoplePage: View {
                 }
                 if importing { ProgressView("Reading shared contacts…") }
                 if let localNotice { Text(localNotice).foregroundStyle(.secondary) }
-                if let localError { Text(localError).foregroundStyle(.red) }
+                if let localError { Text(localError).foregroundStyle(Theme.danger) }
             }
             if !people.state.contacts.isEmpty {
                 Section {

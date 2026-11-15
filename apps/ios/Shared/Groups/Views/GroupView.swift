@@ -415,8 +415,9 @@ private struct GroupConversation: View {
                     Image(systemName: editing ? "checkmark" : "arrow.up")
                         .font(.geist(15, .bold))
                         .foregroundStyle(sendable ? Theme.onAccent : Theme.muted)
-                        .frame(width: 34, height: 34)
-                        .background(sendable ? Theme.accent : Theme.chip, in: RoundedRectangle(cornerRadius: 9))
+                        .frame(width: 40, height: 40)
+                        .background(sendable ? Theme.accent : Theme.field, in: Circle())
+                        .overlay(Circle().strokeBorder(sendable ? Color.clear : Theme.stroke, lineWidth: 1))
                 }
                 .buttonStyle(.plain)
                 .disabled(!sendable)
@@ -424,8 +425,8 @@ private struct GroupConversation: View {
                 .accessibilityIdentifier("groupSend")
             }
             .padding(6)
-            .background(Theme.composer, in: RoundedRectangle(cornerRadius: 14))
-            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.strokeStrong, lineWidth: 1))
+            .background(Theme.composer, in: RoundedRectangle(cornerRadius: Theme.Radius.xxl, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.xxl, style: .continuous).stroke(Theme.stroke, lineWidth: 1))
             .frame(maxWidth: 860)
             .padding(.horizontal, 12)
         }
@@ -457,7 +458,7 @@ private struct GroupConversation: View {
             Image(systemName: "paperclip")
                 .font(.geist(17, .medium))
                 .foregroundStyle(Theme.secondary)
-                .frame(width: 34, height: 34)
+                .frame(width: 40, height: 40)
                 .contentShape(Rectangle())
         }
         .accessibilityLabel("Attach")
@@ -769,8 +770,8 @@ struct GroupBubble: View {
             .font(.geist(15))
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            .background(mine ? Theme.Mine.fill : Theme.ground, in: RoundedRectangle(cornerRadius: 14))
-            .overlay(RoundedRectangle(cornerRadius: 14).stroke(highlighted ? Theme.accent : (mine ? Theme.Mine.stroke : Theme.stroke), lineWidth: highlighted ? 2 : 1))
+            .background(mine ? Theme.Mine.fill : Theme.ground, in: BubbleShape(mine: mine))
+            .overlay(BubbleShape(mine: mine).stroke(highlighted ? Theme.accent : (mine ? Theme.Mine.stroke : Theme.stroke), lineWidth: highlighted ? 2 : 1))
             .frame(maxWidth: 560, alignment: mine ? .trailing : .leading)
             .contextMenu {
                 if replyable { Button(action: onReply) { Label("Reply", systemImage: "arrowshape.turn.up.left") }.disabled(busy) }

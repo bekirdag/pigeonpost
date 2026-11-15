@@ -45,7 +45,7 @@ struct DeviceApprovalScreen: View {
                     Button("Review request", action: resolve)
                         .disabled(store.busy || input.isEmpty || (store.retryAt.map { $0 > Date() } ?? false))
                         .accessibilityIdentifier("device-approval-review")
-                    if let inputProblem { Text(inputProblem).foregroundStyle(.red) }
+                    if let inputProblem { Text(inputProblem).foregroundStyle(Theme.danger) }
                 } header: { Text("Code from your machine") }
                 if let preview = store.preview { details(preview) }
                 if store.busy {

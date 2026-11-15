@@ -530,30 +530,34 @@ struct ConversationRow: View {
     var isSelected: Bool = false
 
     var body: some View {
+        // The kit's thread row (`PPThreadRow`, mobile/inbox.html): a 44pt face, the name in Geist
+        // semibold, the time in Signal Blue while something is unread, the preview a step bolder.
+        let unread = conversation.unread > 0
         HStack(alignment: .center, spacing: 12) {
-            Avatar(peer: conversation.peer, size: 40, name: conversation.name)
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Avatar(peer: conversation.peer, size: 44, name: conversation.name)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
                     ContactTitle(peer: conversation.peer, fallback: conversation.name, legacyName: conversation.peopleLegacyName)
-                        .font(.geistMono(14.5, .semibold))
+                        .font(.geist(15, .semibold))
                         .foregroundStyle(Theme.ink)
                         .lineLimit(1)
-                    Spacer(minLength: 0)
+                    Spacer(minLength: 4)
                     if conversation.last > 0 {
                         Text(Time.listTime(conversation.last))
-                            .font(.geist(11.5))
-                            .foregroundStyle(Theme.muted)
+                            .font(.geist(12, unread ? .semibold : .regular))
+                            .monospacedDigit()
+                            .foregroundStyle(unread ? Theme.link : Theme.muted)
                     }
                 }
-                HStack(alignment: .center, spacing: 8) {
+                HStack(alignment: .center, spacing: 6) {
                     Text(preview)
-                        .font(.geist(13.5))
-                        .foregroundStyle(Theme.secondary)
+                        .font(.geist(13.5, unread ? .medium : .regular))
+                        .foregroundStyle(unread ? Theme.body : Theme.secondary)
                         .lineLimit(1)
-                    Spacer(minLength: 0)
+                    Spacer(minLength: 4)
                     if conversation.held > 0 { PillView(text: "held", kind: .held) }
                     if conversation.isBlocked { PillView(text: "blocked", kind: .blocked) }
-                    if conversation.unread > 0 {
+                    if unread {
                         UnreadBadge(count: conversation.unread, inverted: isSelected)
                     }
                 }

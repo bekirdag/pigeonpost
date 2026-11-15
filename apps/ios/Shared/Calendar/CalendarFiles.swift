@@ -33,7 +33,7 @@ struct CalendarImportScreen: View {
     var body: some View {
         NavigationStack {
             Form {
-                if let error = problem ?? store.lastError { Text(error).foregroundStyle(Color.red).accessibilityIdentifier("calendar-import-error") }
+                if let error = problem ?? store.lastError { Text(error).foregroundStyle(Theme.danger).accessibilityIdentifier("calendar-import-error") }
                 if let result {
                     Section {
                         Label("Imported \(result.created?.count ?? 0) events", systemImage: "checkmark.circle")
@@ -187,7 +187,7 @@ struct CalendarFeedScreen: View {
     private var busy: Bool { store.busy("feed:" + folder.id) }
     var body: some View {
         Form {
-            if let error = store.lastError { Text(error).foregroundStyle(Color.red) }
+            if let error = store.lastError { Text(error).foregroundStyle(Theme.danger) }
             Section(folder.name ?? "Calendar") {
                 if let status {
                     Label(status.enabled == true ? "Subscription enabled" : "Subscription off", systemImage: status.enabled == true ? "link" : "link.badge.plus")

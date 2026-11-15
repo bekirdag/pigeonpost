@@ -6,7 +6,8 @@
 set -e
 cd "$(dirname "$0")/.."
 out=$(mktemp -d)
+. Tests/kit-tokens.sh
 trap 'rm -rf "$out"' EXIT
-swiftc -parse-as-library -o "$out/mac-selection" Tests/MacSelectionTests.swift \
+swiftc -parse-as-library $kit -o "$out/mac-selection" Tests/MacSelectionTests.swift \
   Shared/Design/Theme.swift Shared/Views/Markdown.swift Shared/Views/SelectableText.swift
 "$out/mac-selection" "$@"

@@ -5,6 +5,7 @@
 set -e
 cd "$(dirname "$0")/.."
 out=$(mktemp -d)
+. Tests/kit-tokens.sh
 trap 'rm -rf "$out"' EXIT
 swiftc -O -parse-as-library -o "$out/authorization-lease" Tests/AuthorizationLeaseTests.swift Shared/Auth/AuthorizationLease.swift
 "$out/authorization-lease"
@@ -52,7 +53,7 @@ cp Tests/NativeCallProtocolTests.swift "$out/main.swift"
 swiftc -O -o "$out/native-call-protocol" "$out/main.swift" Pigeonpost/Calls/NativeCallProtocol.swift
 rm "$out/main.swift"
 "$out/native-call-protocol"
-swiftc -O -o "$out/thread-model" \
+swiftc -O $kit -o "$out/thread-model" \
   Tests/main.swift \
   Shared/API/Models.swift \
   Shared/Model/Conversation.swift \
@@ -70,7 +71,7 @@ swiftc -O -parse-as-library -o "$out/nests" Tests/NestStoreTests.swift Shared/AP
 swiftc -O -parse-as-library -o "$out/nest-detail" Tests/NestDetailStoreTests.swift Shared/API/APIError.swift \
   Shared/Nests/NestModels.swift Shared/Nests/NestDetailStore.swift
 "$out/nest-detail"
-swiftc -O -parse-as-library -o "$out/inbox-loading" \
+swiftc -O -parse-as-library $kit -o "$out/inbox-loading" \
   Tests/InboxLoadingTests.swift Shared/Config.swift \
   Shared/Auth/AuthorizationLease.swift \
   Shared/API/Models.swift Shared/API/APIError.swift Shared/API/PostboxClient.swift \
@@ -118,7 +119,7 @@ swiftc -O -parse-as-library -o "$out/calendar-store" Tests/CalendarStoreTests.sw
   Shared/Calendar/CalendarModels.swift Shared/Calendar/CalendarTime.swift \
   Shared/Calendar/CalendarAPI.swift Shared/Calendar/CalendarStore.swift
 "$out/calendar-store"
-swiftc -O -o "$out/phase1b" Tests/phase1b/main.swift \
+swiftc -O $kit -o "$out/phase1b" Tests/phase1b/main.swift \
   Shared/API/Models.swift Shared/API/Phase1bModels.swift Shared/Model/Blocking.swift Shared/Model/AvatarCrop.swift \
   Shared/Model/Conversation.swift Shared/Design/PeerFace.swift Shared/Design/Theme.swift Shared/Design/Time.swift \
   Shared/Views/Markdown.swift Shared/Views/SelectableText.swift

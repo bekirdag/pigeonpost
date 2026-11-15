@@ -3,7 +3,7 @@ import SwiftUI
 struct PeopleNotice: View {
     @Environment(PeopleStore.self) private var people
     var body: some View {
-        if let error = people.state.error { Text(error).foregroundStyle(.red).accessibilityIdentifier("people-error") }
+        if let error = people.state.error { Text(error).foregroundStyle(Theme.danger).accessibilityIdentifier("people-error") }
         if let notice = people.state.notice { Text(notice).foregroundStyle(.secondary).accessibilityIdentifier("people-notice") }
         if people.state.busy { ProgressView().accessibilityLabel("Updating people") }
     }

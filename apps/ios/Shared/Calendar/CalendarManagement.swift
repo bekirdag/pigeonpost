@@ -15,7 +15,7 @@ struct CalendarInvitationsScreen: View {
                     Text("Filtered invitations stay off your agenda and send no reminders until you respond. A response does not add a contact.")
                         .font(.geist(12)).foregroundStyle(Theme.secondary)
                 }
-                if let error = store.lastError { Text(error).foregroundStyle(Color.red) }
+                if let error = store.lastError { Text(error).foregroundStyle(Theme.danger) }
                 let items = filtered ? store.filteredInvitations : store.invitations
                 if items.isEmpty { Text(filtered ? "No filtered invitations." : "No pending invitations.").foregroundStyle(Theme.secondary) }
                 ForEach(items) { item in
@@ -55,7 +55,7 @@ struct CalendarFoldersScreen: View {
     var body: some View {
         NavigationStack {
             Form {
-                if let error = store.lastError { Text(error).foregroundStyle(Color.red) }
+                if let error = store.lastError { Text(error).foregroundStyle(Theme.danger) }
                 Section("Your calendars") {
                     if store.folders.isEmpty { Text("Your default calendar is created when you first save an event.").foregroundStyle(Theme.secondary) }
                     ForEach(store.folders) { folder in
@@ -104,7 +104,7 @@ private struct CalendarFolderEditor: View {
     }
     var body: some View {
         Form {
-            if let error = store.lastError { Text(error).foregroundStyle(Color.red) }
+            if let error = store.lastError { Text(error).foregroundStyle(Theme.danger) }
             TextField("Name", text: $name)
             Picker("Color", selection: $color) { ForEach(CalendarFoldersScreen.colors, id: \.self) { Text($0.capitalized).tag($0) } }
             if folder.isDefault != true { Toggle("Make this the default calendar", isOn: $makeDefault) }
@@ -175,7 +175,7 @@ struct CalendarSettingsScreen: View {
     var body: some View {
         NavigationStack {
             Form {
-                if let error = problem ?? store.lastError { Text(error).foregroundStyle(Color.red) }
+                if let error = problem ?? store.lastError { Text(error).foregroundStyle(Theme.danger) }
                 Section("Privacy") {
                     Toggle("Event titles in reminder notifications", isOn: $previews).accessibilityIdentifier("calendar-notification-previews")
                     Text("When off, notifications say “Event starting soon”. Calendar data is readable by the service.").font(.geist(12)).foregroundStyle(Theme.secondary)

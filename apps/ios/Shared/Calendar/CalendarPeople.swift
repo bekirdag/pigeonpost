@@ -60,7 +60,7 @@ struct CalendarAttendeesScreen: View {
     var body: some View {
         NavigationStack {
             Form {
-                if let error = problem ?? store.lastError { Text(error).foregroundStyle(Color.red).accessibilityIdentifier("calendar-people-error") }
+                if let error = problem ?? store.lastError { Text(error).foregroundStyle(Theme.danger).accessibilityIdentifier("calendar-people-error") }
                 if store.revisionConflict {
                     Button("Reload current participants") { confirmReload = true }.accessibilityIdentifier("calendar-people-reload")
                 }
@@ -86,7 +86,7 @@ struct CalendarAttendeesScreen: View {
                             Spacer()
                             Button(removing.contains(person.id) ? "Keep" : "Remove") {
                                 if removing.contains(person.id) { removing.remove(person.id) } else { removing.insert(person.id) }
-                            }.buttonStyle(.bordered).tint(removing.contains(person.id) ? Theme.navy : Color.red)
+                            }.buttonStyle(.bordered).tint(removing.contains(person.id) ? Theme.navy : Theme.danger)
                                 .accessibilityIdentifier("calendar-remove-attendee:" + person.id)
                         }
                     }
@@ -161,7 +161,7 @@ struct CalendarLinkedGroupScreen: View {
     var body: some View {
         NavigationStack {
             Form {
-                if let error = store.lastError { Text(error).foregroundStyle(Color.red) }
+                if let error = store.lastError { Text(error).foregroundStyle(Theme.danger) }
                 Picker("Group", selection: $selected) {
                     Text("No linked group").tag("")
                     ForEach(available) { Text($0.name).tag($0.id) }
@@ -208,7 +208,7 @@ struct CalendarPlacementScreen: View {
     var body: some View {
         NavigationStack {
             Form {
-                if let error = store.lastError { Text(error).foregroundStyle(Color.red) }
+                if let error = store.lastError { Text(error).foregroundStyle(Theme.danger) }
                 Picker("Your calendar", selection: $selected) { ForEach(store.folders) { Text($0.name ?? "Calendar").tag($0.id) } }
                     .accessibilityIdentifier("calendar-placement-picker")
                 Text("This changes where the invitation appears for you. It does not move the organizer's event or change your response.")

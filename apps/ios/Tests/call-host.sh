@@ -2,9 +2,10 @@
 set -eu
 cd "$(dirname "$0")/.."
 out=$(mktemp -d)
+. Tests/kit-tokens.sh
 pid=""
 trap '[ -z "$pid" ] || kill "$pid" 2>/dev/null; rm -rf "$out"' EXIT
-swiftc -O -parse-as-library -D DEBUG -o "$out/call-host" \
+swiftc -O -parse-as-library -D DEBUG $kit -o "$out/call-host" \
   Tests/CallHostTests.swift Shared/API/Models.swift Shared/Design/Theme.swift Shared/Calls/CallHost.swift
 python3 Tests/call-host-page.py "$out/port" &
 pid=$!

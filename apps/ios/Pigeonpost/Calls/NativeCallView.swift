@@ -108,7 +108,7 @@ private struct NativeCallScreen: View {
                     .font(.title3)
                     .foregroundStyle(.white)
                     .frame(width: 60, height: 60)
-                    .background(Circle().fill(.red))
+                    .background(Circle().fill(Theme.dangerSolid))
             }
             .accessibilityLabel("End call")
         }
@@ -119,9 +119,11 @@ private struct NativeCallScreen: View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.title3)
-                .foregroundStyle(on ? .black : .white)
+                // The kit's call controls on dark glass (PPCallButton): a translucent disc, and a
+                // near-white one with dark ink for a control that is switched on.
+                .foregroundStyle(on ? Color(hex: 0x12161C) : .white)
                 .frame(width: 54, height: 54)
-                .background(Circle().fill(on ? Color.white : Color.white.opacity(0.22)))
+                .background(Circle().fill(on ? Color(hex: 0xF2F4F7) : Color.white.opacity(0.14)))
         }
         .accessibilityLabel(label)
     }

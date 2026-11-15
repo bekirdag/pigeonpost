@@ -45,7 +45,7 @@ struct CalendarDetail: View {
             .safeAreaInset(edge: .top, spacing: 0) {
                 if problem != nil || store.lastError != nil || notice != nil {
                     VStack(alignment: .leading, spacing: 8) {
-                        if let message = problem ?? store.lastError { Text(message).foregroundStyle(Color.red).accessibilityIdentifier("calendar-detail-error") }
+                        if let message = problem ?? store.lastError { Text(message).foregroundStyle(Theme.danger).accessibilityIdentifier("calendar-detail-error") }
                         if let notice { Text(notice).foregroundStyle(Theme.secondary) }
                         if store.revisionConflict {
                             Button("Load current event") {
@@ -133,7 +133,7 @@ struct CalendarDetail: View {
         return List {
             Section {
                 Text(occurrence?.title ?? event.title ?? "Event").font(.geist(23, .bold)).textSelection(.enabled)
-                if event.status == "cancelled" || occurrence?.status == "cancelled" { Label("Cancelled", systemImage: "xmark.circle").foregroundStyle(Color.red) }
+                if event.status == "cancelled" || occurrence?.status == "cancelled" { Label("Cancelled", systemImage: "xmark.circle").foregroundStyle(Theme.danger) }
                 if occurrence?.allDay ?? event.allDay ?? false {
                     Text("All day · " + (occurrence?.startDate ?? event.startDate ?? ""))
                     if let end = occurrence?.endDate ?? event.endDate, let day = try? CalendarDay(end) { Text("Through " + CalendarPresentation.day(day.adding(days: -1))) }
@@ -237,7 +237,7 @@ struct CalendarDetail: View {
                         }
                         Button(recurring ? "Cancel whole series" : "Cancel event", role: .destructive) { stageCancellation(event, .all) }
                     } label: { Label("Cancel event", systemImage: "calendar.badge.minus") }
-                    .foregroundStyle(Color.red).disabled(busy).accessibilityIdentifier("calendar-cancel-event")
+                    .foregroundStyle(Theme.danger).disabled(busy).accessibilityIdentifier("calendar-cancel-event")
                 }
             }
         }

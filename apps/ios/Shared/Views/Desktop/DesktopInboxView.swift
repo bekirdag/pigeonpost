@@ -817,26 +817,28 @@ private struct DesktopConversationRow: View {
         // The spacers live *inside* the two rows, never beside the column that holds them. Put one
         // next to the column and it takes the width instead: the name and preview collapse to two
         // characters and an ellipsis while the sidebar sits there half empty.
+        let unread = conversation.unread > 0
         HStack(alignment: .center, spacing: 11) {
             Avatar(peer: conversation.peer, size: 38, name: conversation.name)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     ContactTitle(peer: conversation.peer, fallback: conversation.name, legacyName: conversation.peopleLegacyName)
-                        .font(.geistMono(13, .semibold))
+                        .font(.geist(13.5, .semibold))
                         .foregroundStyle(Theme.ink)
                         .lineLimit(1)
                     Spacer(minLength: 0)
                     if conversation.last > 0 {
                         Text(Time.listTime(conversation.last))
-                            .font(.geist(11.5))
-                            .foregroundStyle(Theme.muted)
+                            .font(.geist(11.5, unread ? .semibold : .regular))
+                            .monospacedDigit()
+                            .foregroundStyle(unread ? Theme.link : Theme.muted)
                             .fixedSize()
                     }
                 }
                 HStack(alignment: .center, spacing: 8) {
                     Text(conversation.messages.last.map(ConversationBuilder.preview) ?? "")
-                        .font(.geist(13))
-                        .foregroundStyle(Theme.secondary)
+                        .font(.geist(13, unread ? .medium : .regular))
+                        .foregroundStyle(unread ? Theme.body : Theme.secondary)
                         .lineLimit(1)
                     Spacer(minLength: 0)
                     // The accessories are rigid and the text beside them is what gives way. Say it

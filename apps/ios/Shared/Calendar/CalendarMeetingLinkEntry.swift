@@ -74,7 +74,7 @@ private struct CalendarMemberMeeting: View {
                         }.disabled(calls?.mode != .hidden || calls?.preparingScheduled == true)
                     }
                     if let error = preparationError ?? lookup.error {
-                        Section { Label(error, systemImage: "exclamationmark.circle").foregroundStyle(Color.red) }
+                        Section { Label(error, systemImage: "exclamationmark.circle").foregroundStyle(Theme.danger) }
                     } else if lookup.loading || lookup.information == nil || preview != context {
                         Section { ProgressView("Loading meeting…") }
                     } else if choices.isEmpty {

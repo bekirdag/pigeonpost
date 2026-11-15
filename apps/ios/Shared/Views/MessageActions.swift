@@ -92,7 +92,7 @@ struct MessageReceiptMark: View {
                 if state != "sent" { Image(systemName: "checkmark") }
             }
             .font(.geist(11, .semibold))
-            .foregroundStyle(state == "seen" ? Theme.green : Theme.secondary)
+            .foregroundStyle(state == "seen" ? Theme.Tick.seen : Theme.Tick.sent)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(label(state))
             .help(label(state))

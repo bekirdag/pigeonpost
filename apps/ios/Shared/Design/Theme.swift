@@ -1,17 +1,21 @@
-//  The palette and the type.
+//  The palette and the type — the Pigeonpost design kit's, not the app's own.
 //
-//  Dark is the conversation design's own values, exactly: a near-black ground in three steps
-//  (sidebar, subjects, conversation), raised cards a step lighter with a hairline border, a soft
-//  blue accent, and amber and green used only for what the server decided. Light is the same design
-//  language re-derived for paper — the greys keep their order and their spacing, the tinted cards
-//  keep their hue, and the accent deepens until it reads on white.
+//  Every colour here is a role from the kit's tokens (`PP.Colors`, generated from the design kit's
+//  `css/tokens.css` into `Packages/PigeonpostUI`). The names below are the app's older vocabulary,
+//  kept so the screens did not have to be rewritten to adopt the kit: `ink` is the kit's `text`,
+//  `ground` its `surface`, `Mine` its `bubbleMine…`, and so on. Where the kit has no role of the
+//  same meaning (the search hit, the code block, the toast) the value is built from the kit's brand
+//  scales rather than invented.
 //
 //  Every token is adaptive. A phone turns the surfaces it owns — the list, the sheets, the
 //  navigation bar — dark on its own, and a palette of fixed values then paints near-black text onto
 //  them, which is what shipped in 1.0 (1). So each colour is asked which appearance it is being drawn
-//  into, at draw time.
+//  into, at draw time — the kit's tokens are built that way too.
 
 import SwiftUI
+#if canImport(PigeonpostUI)
+import PigeonpostUI
+#endif
 #if canImport(UIKit)
 import UIKit
 #elseif canImport(AppKit)
@@ -19,139 +23,187 @@ import AppKit
 #endif
 
 enum Theme {
+    private typealias K = PP.Colors
+
     // ---- accent ---------------------------------------------------------------------------------
 
-    /// The accent: links, the send button, the tint on every control, the unread count.
-    static let accent = adaptive(light: 0x2F6BE0, dark: 0x8AB4FF)
+    /// The accent: the send button, the tint on every control, the unread count. Signal Blue.
+    static let accent = K.accent
     /// What is written on an accent fill.
-    static let onAccent = adaptive(light: 0xFFFFFF, dark: 0x0D0F12)
+    static let onAccent = K.onAccent
+    /// An accent used as text — a link, a tappable word. Signal Blue deepened (light) or lifted
+    /// (dark) until it passes 4.5:1 on the ground it sits on.
+    static let link = K.textLink
+    /// Pigeon Navy, for the brand mark only.
+    static let brand = K.brand
     /// The older name for the accent, kept because "navy" is what every control's tint was called.
     static let navy = accent
     /// A dot that says "unread", beside a subject.
     static let blue = accent
-    /// The one search result you are standing on. Purple rather than the app's own blue, so a hit
+    /// The one search result you are standing on. Violet rather than the app's own blue, so a hit
     /// is never mistaken for a selection or for a message of your own — both of which are blue.
-    static let found = adaptive(light: 0x7C3AED, dark: 0xA78BFA)
-    static let green = adaptive(light: 0x1E8A50, dark: 0x7DD3A0)
-    static let amber = adaptive(light: 0xA35F00, dark: 0xF0B860)
+    static let found = adaptive(light: 0x5735B0, dark: 0x9A85F2)
+    static let green = K.success
+    static let amber = K.warning
+    static let danger = K.danger
+    /// A solid red fill with white on it: the LIVE badge, a destructive button.
+    static let dangerSolid = K.dangerSolid
 
     // ---- text -----------------------------------------------------------------------------------
 
     /// A name, a heading, anything that must be read first.
-    static let ink = adaptive(light: 0x14181F, dark: 0xE8EAED)
+    static let ink = K.text
     /// What was said, in a message.
-    static let body = adaptive(light: 0x2E353F, dark: 0xD7DCE3)
+    static let body = K.textBody
     /// A preview, a caption, an inactive control.
-    static let secondary = adaptive(light: 0x5B6470, dark: 0x9AA3AE)
+    static let secondary = K.textMuted
     /// When it was said.
-    static let muted = adaptive(light: 0x737C88, dark: 0x7D8590)
+    static let muted = K.textFaint
     /// The quiet name over a column, the address under a title.
-    static let quiet = adaptive(light: 0x3E4651, dark: 0xC3C9D1)
+    static let quiet = K.textBody
 
     // ---- surfaces, back to front ----------------------------------------------------------------
 
     /// The window behind everything, and the sign-in screen.
-    static let app = adaptive(light: 0xF3F4F6, dark: 0x0D0F12)
+    static let app = K.bg
     /// The conversations column.
-    static let sidebar = adaptive(light: 0xF7F8FA, dark: 0x111419)
+    static let sidebar = K.bgSubtle
     /// The subjects column.
-    static let column = adaptive(light: 0xF4F5F8, dark: 0x13161B)
+    static let column = K.surfaceSunken
     /// The recessed ground a conversation sits on.
-    static let wash = adaptive(light: 0xFAFBFC, dark: 0x0F1216)
+    static let wash = K.bgSubtle
     /// The raised surfaces: a received message, a dialog, a sheet.
-    static let ground = adaptive(light: 0xFFFFFF, dark: 0x171B21)
+    static let ground = K.surface
     /// A field to type in, and the switcher's card.
-    static let field = adaptive(light: 0xECEEF2, dark: 0x171B21)
+    static let field = K.surfaceSunken
     /// The composer's card.
-    static let composer = adaptive(light: 0xFFFFFF, dark: 0x151920)
+    static let composer = K.surface
     /// A row the pointer is resting on or that is chosen.
-    static let selected = adaptive(light: 0xE6EAF0, dark: 0x1C2129)
+    static let selected = K.surfaceSelected
     /// The chosen segment of a segmented strip, and a disabled button's fill.
-    static let chip = adaptive(light: 0xDFE3EA, dark: 0x252B34)
+    static let chip = adaptive(light: 0xDFE3E9, dark: 0x1F252E)
     /// A small square tile behind an icon.
-    static let tile = adaptive(light: 0xE9ECF1, dark: 0x22272F)
+    static let tile = K.surfaceHover
 
     /// The hairline between columns and under a header.
-    static let rule = adaptive(light: 0xE3E6EB, dark: 0x1F242B)
+    static let rule = K.borderSubtle
     /// The border of a card.
-    static let stroke = adaptive(light: 0xDFE3E8, dark: 0x262B33)
+    static let stroke = K.border
     /// The border of a field or a button that is only an outline.
-    static let strokeStrong = adaptive(light: 0xD3D8DF, dark: 0x2A3039)
+    static let strokeStrong = K.borderStrong
 
-    /// Your own message: the accent's hue at card strength, rather than a solid fill.
+    /// Your own message: the kit's `bubbleMine` — Signal Blue at card strength, not a solid fill.
     enum Mine {
-        static let fill = adaptive(light: 0xEDF3FF, dark: 0x131C2E)
-        static let stroke = adaptive(light: 0xC9D8F6, dark: 0x263556)
-        static let rule = adaptive(light: 0xD9E4F8, dark: 0x1F2C47)
-        static let text = adaptive(light: 0x14213D, dark: 0xE6ECF8)
-        static let secondary = adaptive(light: 0x3A4A6B, dark: 0xC5D0E6)
-        static let header = adaptive(light: 0x4A5B80, dark: 0xA9B6D3)
-        static let meta = adaptive(light: 0x5B6B8E, dark: 0x8C9AB8)
-        static let panel = adaptive(light: 0xDDE7FA, dark: 0x1B2740)
-        static let panelText = adaptive(light: 0x2F4470, dark: 0xB9C8E8)
+        static let fill = K.bubbleMine
+        static let stroke = K.bubbleMineBorder
+        static let rule = K.bubbleMineBorder
+        static let text = K.bubbleMineText
+        static let secondary = adaptive(light: 0x2C3E66, dark: 0xC8D9FA)
+        static let header = adaptive(light: 0x3E5486, dark: 0xB3D0FF)
+        static let meta = adaptive(light: 0x4F6391, dark: 0x9DB9EA)
+        static let panel = adaptive(light: 0xD8E7FF, dark: 0x0E3570)
+        static let panelText = adaptive(light: 0x0D418F, dark: 0xD8E7FF)
+    }
+
+    /// Someone else's message: the kit's `bubbleTheirs`.
+    enum Theirs {
+        static let fill = K.bubbleTheirs
+        static let stroke = K.bubbleTheirsBorder
+        static let text = K.bubbleTheirsText
+        /// The green rail down the side of an agent's message.
+        static let agentRail = K.bubbleAgentRail
+    }
+
+    /// Delivery ticks: grey until read, green once seen, the kit's `tick*` roles.
+    enum Tick {
+        static let sent = K.tickSent
+        static let seen = K.tickSeen
+        static let working = K.tickWorking
     }
 
     /// Inline and fenced code.
     enum Code {
-        static let fill = adaptive(light: 0xF0F2F5, dark: 0x1E232B)
-        static let stroke = adaptive(light: 0xDDE1E7, dark: 0x2A3039)
-        static let text = adaptive(light: 0x2E353F, dark: 0xD7DCE3)
+        static let fill = adaptive(light: 0xF0F2F5, dark: 0x1F252E)
+        static let stroke = K.border
+        static let text = K.textBody
     }
 
     /// The toast carries white text in both appearances, so its fill cannot be `ink` — in the dark
     /// that token is nearly white, and white on white is a message nobody reads.
-    static let toastFill = adaptive(light: 0x14181F, dark: 0x2A3039)
+    static let toastFill = adaptive(light: 0x1A1F27, dark: 0x343C47)
 
     /// The layer over the chat doodle, and the one number worth touching. The artwork has no opacity
     /// of its own, so this alpha is its strength: in the dark it is all but the conversation ground
     /// itself, so the pattern is a texture you notice only if you look for it.
-    static let doodleVeil = adaptive(light: 0xFAFBFC, dark: 0x0F1216)
-        .opacity(doodleVeilAlpha)
+    static let doodleVeil = K.bgSubtle.opacity(doodleVeilAlpha)
 
     private static let doodleVeilAlpha = 0.9
 
     /// The six avatar tones, in the order the web app's `data-tone` uses them: navy, blue, teal,
-    /// purple, amber, rose. Each is a tinted disc with its initials in the same hue, lighter — the
-    /// conversation design's faces — so a peer keeps one colour everywhere, which is the whole point
-    /// of the tone hash.
+    /// violet, amber, red — the kit's `PPTone.forPeer` order, with the kit's disc and ink colours,
+    /// so a peer keeps one colour everywhere, which is the whole point of the tone hash.
     static let tones: [Color] = [
-        adaptive(light: 0xE4E9F2, dark: 0x232A3A),
-        adaptive(light: 0xE0EBFD, dark: 0x17263F),
-        adaptive(light: 0xDAF2EC, dark: 0x12302D),
-        adaptive(light: 0xECE6FD, dark: 0x2A2142),
-        adaptive(light: 0xFBEDD3, dark: 0x33280F),
-        adaptive(light: 0xFCE4EA, dark: 0x3A1A22),
+        K.brand,
+        K.accentSubtle,
+        adaptive(light: 0xD9F4F0, dark: 0x1D3B3E),
+        adaptive(light: 0xEBE7FC, dark: 0x2F2E4A),
+        K.warningFill,
+        K.dangerFill,
     ]
     static let toneInk: [Color] = [
-        adaptive(light: 0x3A4A6B, dark: 0xA9B8D6),
-        adaptive(light: 0x2457B8, dark: 0x8DB4F5),
-        adaptive(light: 0x12756A, dark: 0x6FD6C4),
-        adaptive(light: 0x6340C0, dark: 0xB9A2FF),
-        adaptive(light: 0x985A06, dark: 0xF0B860),
-        adaptive(light: 0xAE2A4B, dark: 0xF29AAE),
+        K.surface,
+        K.textLink,
+        adaptive(light: 0x0E5049, dark: 0x6FD6C4),
+        adaptive(light: 0x422C84, dark: 0xB9A2FF),
+        K.warning,
+        K.danger,
     ]
 
-    /// The server's decisions, shown as chips, and the card a held request sits in.
+    /// The server's decisions, shown as chips, and the card a held request sits in — the kit's
+    /// warning, success and danger roles.
     enum Pill {
-        static let heldText = adaptive(light: 0xA35F00, dark: 0xF0B860)
-        static let heldFill = adaptive(light: 0xFCEFD3, dark: 0x2A2213)
-        static let heldStroke = adaptive(light: 0xF4DDAE, dark: 0x45361A)
-        static let autoText = adaptive(light: 0x1E7A47, dark: 0x7DD3A0)
-        static let autoFill = adaptive(light: 0xE2F4E9, dark: 0x142A1F)
-        static let autoStroke = adaptive(light: 0xC4E8D2, dark: 0x1F4030)
-        static let blockedText = adaptive(light: 0xB0284B, dark: 0xF29AAE)
-        static let blockedFill = adaptive(light: 0xFDE8EE, dark: 0x3A1A22)
-        static let blockedStroke = adaptive(light: 0xF6C9D5, dark: 0x5A2633)
+        static let heldText = K.warning
+        static let heldFill = K.warningFill
+        static let heldStroke = K.warningBorder
+        static let autoText = K.success
+        static let autoFill = K.successFill
+        static let autoStroke = K.successBorder
+        static let blockedText = K.danger
+        static let blockedFill = K.dangerFill
+        static let blockedStroke = K.dangerBorder
     }
 
     /// A request that is waiting on you: amber, at card strength.
     enum Held {
-        static let fill = adaptive(light: 0xFFF8EA, dark: 0x1C1810)
-        static let stroke = adaptive(light: 0xF1D9A6, dark: 0x45361A)
-        static let title = adaptive(light: 0x7A4A06, dark: 0xF6D9A6)
-        static let text = adaptive(light: 0x7D6334, dark: 0xC9B48F)
-        static let panel = adaptive(light: 0xFCEFD3, dark: 0x2E2715)
-        static let panelText = adaptive(light: 0x7A4A06, dark: 0xE9CF9C)
+        static let fill = K.warningFill
+        static let stroke = K.warningBorder
+        static let title = adaptive(light: 0x6E4106, dark: 0xF6D9A6)
+        static let text = K.warning
+        static let panel = adaptive(light: 0xFAE8C6, dark: 0x352812)
+        static let panelText = adaptive(light: 0x6E4106, dark: 0xF0D6A4)
+    }
+
+    /// The kit's radii (`--pp-radius-*`). A message is `bubble` with a `bubbleTail` corner.
+    enum Radius {
+        static let xs = PP.Radius.xs
+        static let s = PP.Radius.s
+        static let m = PP.Radius.m
+        static let l = PP.Radius.l
+        static let xl = PP.Radius.xl
+        static let xxl = PP.Radius.x2xl
+        static let bubble = PP.Radius.bubble
+        static let bubbleTail = PP.Radius.bubbletail
+    }
+
+    /// The kit's spacing scale (`--pp-space-*`).
+    enum Space {
+        static let s1 = PP.Space.s1
+        static let s2 = PP.Space.s2
+        static let s3 = PP.Space.s3
+        static let s4 = PP.Space.s4
+        static let s5 = PP.Space.s5
+        static let s6 = PP.Space.s6
+        static let s8 = PP.Space.s8
     }
 
     /// One token, two values, resolved at draw time rather than read once at launch — so the app
