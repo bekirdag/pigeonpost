@@ -30,7 +30,7 @@
       cur.addEventListener("change", () => { currency = cur.value; ACC.setCurrency(currency); draw(); });
       box.replaceChildren(
         el("div", { class: "pp-form" }, ACC.field("Plan", names), ACC.field("Currency", cur)),
-        el("p", { class: "pp-hint" }, `Sold by Piyote Bilişim and billed yearly through iyzico. Cards issued in Türkiye pay in TRY. Consumers in the EU and UK: buy in the Pigeonpost iOS or Android app; EU and UK businesses buy here with a VAT number (reverse charge). TRY prices are fixed for ${cloud().pricingYear}. Cancel any time; your names keep working until the end of the paid year.`),
+        el("p", { class: "pp-hint" }, `Sold by Piyote Bilişim Ltd. Şti. and billed yearly through iyzico. Cards issued in Türkiye pay in TRY. Consumers in the EU and UK: buy in the Pigeonpost iOS or Android app; EU and UK businesses buy here with a VAT number (reverse charge). TRY prices are fixed for ${cloud().pricingYear}. Cancel any time; your names keep working until the end of the paid year.`),
         el("div", { class: "pp-form-actions" },
           onCancel ? ACC.btn("Cancel", { onclick: onCancel }) : null,
           ACC.btn("Continue to secure payment", { kind: "primary", id: "acc-plan-go", onclick: () => {

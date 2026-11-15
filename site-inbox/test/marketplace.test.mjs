@@ -1069,7 +1069,7 @@ test("a publisher prices each operation of a publisher-hosted listing per job, i
   p.$('[data-price="lst_1"]').click();
   await tick();
   assert.equal(p.$("#mp-price-lst_1"), null, "no one-off or monthly price for a publisher-hosted listing");
-  assert.match(p.$("#mp-jobprice-lst_1").textContent, /Pigeonpost keeps 10% of each job/);
+  assert.match(p.$("#mp-jobprice-lst_1").textContent, /Piyote keeps 10% of each job/);
   assert.match(p.$("#mp-jobprice-lst_1-0").textContent, /HR research: price per job.*Now: Free/s);
   p.$("#mp-jobprice-lst_1-0-amount").value = "25";
   p.submit(p.$("#mp-jobprice-lst_1-0"));

@@ -390,8 +390,8 @@
       return el("div", { class: "mp-price", id: "mp-price" },
         el("p", { class: "pp-price", text: MP.priceText(l.price) }),
         el("p", { class: "ac-note", text: l.price.term === "monthly"
-          ? "Sold by Piyote Bilişim on behalf of the publisher and billed monthly through iyzico. Cancel any time; it keeps working until the end of the paid month."
-          : "Sold by Piyote Bilişim on behalf of the publisher. A one-off purchase through iyzico; the price includes tax." }),
+          ? "Sold by Piyote Bilişim Ltd. Şti. on behalf of the publisher and billed monthly through iyzico. Cancel any time; it keeps working until the end of the paid month."
+          : "Sold by Piyote Bilişim Ltd. Şti. on behalf of the publisher. A one-off purchase through iyzico; the price includes tax." }),
         l.price.on_sale ? null : el("p", { class: "muted", text: "Not on sale right now. Check back soon." }));
     }
 

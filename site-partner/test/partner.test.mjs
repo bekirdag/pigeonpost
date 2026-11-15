@@ -272,7 +272,7 @@ test("analytics: totals, per-app rows and charts; the empty state without apps",
 test("earnings: the first-statement state, balances and the payout account", async (t) => {
   const env = await boot(t, { hash: "#/earnings", routes: postbox({ pub: publisher("approved"), app: dossier({ state: "approved", details: COMPLETE }) }) });
   assert.match(env.text(), /Your first statement arrives on December 1, 2026/);
-  assert.match(env.text(), /Pigeonpost 10%/);
+  assert.match(env.text(), /Piyote 10%/);
   assert.match(env.text(), /Withholding/);
   assert.match(env.text(), /\$350/);
   assert.match(env.text(), /Invoice upload opens with your first statement/);

@@ -702,7 +702,7 @@
           plan ? el("span", { class: "pp-price" }, `${PPE.money(plan.amount, plan.currency)} ${T("per month")}`) : el("span", { class: "pp-muted" }, "Not available to buy here yet."),
           plan ? ui.button("Buy for the company", { kind: "primary", size: "sm", "aria-label": `Buy ${p.name}`, onclick: () => buyNest(plan.code, profile) }) : null));
     }));
-    const box = ui.section({ title: "Buy a Nest package for the company", text: "Sold by Piyote Bilişim and billed monthly through iyzico. Cancel any time; the Nests keep running until the end of the paid month." },
+    const box = ui.section({ title: "Buy a Nest package for the company", text: "Sold by Piyote Bilişim Ltd. Şti. and billed monthly through iyzico. Cancel any time; the Nests keep running until the end of the paid month." },
       profile ? tiles : ui.gate({ text: "Add billing details first, then buy a Nest package.", action: { label: "Add billing details", href: PPE.href("billing", "details") } }, tiles));
     return box;
   }

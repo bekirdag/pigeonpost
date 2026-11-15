@@ -136,7 +136,7 @@
             entity ? ["Tax ID", [p.tax_id, p.tax_office].filter(Boolean).join(" · ")] : ["TCKN", p.identity_number ? "On file" : null],
           ])),
         PP.ui.card({ title: "How billing works" }, el("ul", { class: "acc-ticks" },
-          ["Sold by Piyote Bilişim; payments go through iyzico", "Your card details go to iyzico, never to us", "EU and UK businesses buy without VAT with a verified VAT number", "Every web purchase gets an invoice in Invoices"].map((t) => el("li", {}, PP.icon("check"), t))))));
+          ["Sold by Piyote Bilişim Ltd. Şti.; payments go through iyzico", "Your card details go to iyzico, never to us", "EU and UK businesses buy without VAT with a verified VAT number", "Every web purchase gets an invoice in Invoices"].map((t) => el("li", {}, PP.icon("check"), t))))));
     },
   });
 

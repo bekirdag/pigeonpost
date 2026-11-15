@@ -66,7 +66,7 @@
           } }), { "aria-label": `Buy ${p.name}`, "data-buy": plan.code }) : null));
     }));
     return ACC.billingGate(ov, pick ? el("div", { class: "acc-toolbar" }, ACC.field("Currency", pick)) : null, tiles,
-      el("p", { class: "pp-hint" }, "Sold by Piyote Bilişim and billed monthly through iyzico. Cancel any time; your Nests keep running until the end of the paid month, then you have 30 days to export before they are deleted."));
+      el("p", { class: "pp-hint" }, "Sold by Piyote Bilişim Ltd. Şti. and billed monthly through iyzico. Cancel any time; your Nests keep running until the end of the paid month, then you have 30 days to export before they are deleted."));
   };
 
   function nestTable(list) {

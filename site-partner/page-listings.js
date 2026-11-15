@@ -190,7 +190,7 @@
         ui.card({ title: "Storefront", text: "Category and the links buyers use for help and privacy." }, storeForm)),
       el("div", { class: "pp-view-inner" },
         ui.card({ title: "Logo" }, logo),
-        ui.card({ title: hosted ? "Price per job" : "Price", text: hosted ? "Each operation is priced per job in US dollars and paid from the buyer's credit. Pigeonpost keeps 10% of each job." : "Prices include tax. Piyote sells as merchant of record and keeps 10%." },
+        ui.card({ title: hosted ? "Price per job" : "Price", text: hosted ? "Each operation is priced per job in US dollars and paid from the buyer's credit. Piyote keeps 10% of each job." : "Prices include tax. Piyote sells as merchant of record and keeps 10%." },
           hosted ? hostedPrices(ctx, l, lpath, admin) : cardPrice(ctx, l, lpath, admin)),
         ui.card({ title: "Facts" }, ui.kv([["Version", l.version], ["Runs", hosted ? "On your servers (publisher-hosted)" : "In the buyer's Nest"], ["Address", l.address || l.service_address], ["Published", ui.when(l.published_at)], ["Updated", ui.when(l.updated_at)]])))));
   }

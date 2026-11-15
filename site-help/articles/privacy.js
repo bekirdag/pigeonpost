@@ -74,7 +74,7 @@ PP_HELP.articles.push(
     related: ["export-data", "delete-account", "encryption"],
     body: [
       ["list",
-        "Your account, contacts, messages and attachments are kept until you remove them or delete your account.",
+        "Your account, contacts, messages and attachments are kept until you remove them or delete your account, on free and paid plans alike. A bare /k/ address with no account behind it is deleted 30 days after it was created.",
         "Deleting a message removes your copy. It doesn't recall a copy already delivered to someone else.",
         "Call history follows your **Keep call history** setting (180 days by default).",
         "Pigeonpost doesn't sell personal information, show ads or track you across apps.",

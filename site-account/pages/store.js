@@ -411,8 +411,8 @@
         el("span", { class: "pp-order__item-text" }, el("strong", {}, l.title), el("span", {}, l.price.term === "monthly" ? "Monthly licence · runs in your Nest" : "One-off licence · runs in your Nest")),
         el("span", { class: "pp-order__item-price" }, priceText(l.price))),
       el("p", { class: "pp-caption" }, l.price.term === "monthly"
-        ? "Sold by Piyote Bilişim on behalf of the publisher and billed monthly through iyzico. Cancel any time; it keeps working until the end of the paid month."
-        : "Sold by Piyote Bilişim on behalf of the publisher. A one-off purchase through iyzico; the price includes tax."),
+        ? "Sold by Piyote Bilişim Ltd. Şti. on behalf of the publisher and billed monthly through iyzico. Cancel any time; it keeps working until the end of the paid month."
+        : "Sold by Piyote Bilişim Ltd. Şti. on behalf of the publisher. A one-off purchase through iyzico; the price includes tax."),
       on ? ACC.billingGate(ov, button) : el("p", { class: "pp-muted" }, "Not on sale right now. Check back soon."));
   }
 

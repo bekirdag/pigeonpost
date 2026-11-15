@@ -350,7 +350,7 @@
     function jobPriceForm(l, lpath) {
       const p = `mp-jobprice-${l.id}`;
       const box = el("div", { class: "mp-edit", id: p },
-        el("p", { class: "muted", text: "Each operation is priced per job in US dollars and paid from the buyer's credit. Pigeonpost keeps 10% of each job; the rest is paid to you. Changing a price asks you to confirm it's you." }));
+        el("p", { class: "muted", text: "Each operation is priced per job in US dollars and paid from the buyer's credit. Piyote keeps 10% of each job; the rest is paid to you. Changing a price asks you to confirm it's you." }));
       if (!st.jobOps || st.jobOps.id !== l.id) {
         st.jobOps = { id: l.id, ops: null };
         deps.pb(`/v1/marketplace/listings/${encodeURIComponent(l.id)}`)
