@@ -132,6 +132,7 @@
     checks: '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12.5l4 4 8-9M10 16.5l1 1 8-10"/></svg>',
     clock: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 4.8V8l2.2 1.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
     gear: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M8.6 2.5h2.8l.4 2a5.6 5.6 0 011.5.9l1.9-.7 1.4 2.4-1.5 1.3a5.6 5.6 0 010 1.7l1.5 1.3-1.4 2.4-1.9-.7a5.6 5.6 0 01-1.5.9l-.4 2H8.6l-.4-2a5.6 5.6 0 01-1.5-.9l-1.9.7-1.4-2.4 1.5-1.3a5.6 5.6 0 010-1.7L3.4 7.1l1.4-2.4 1.9.7a5.6 5.6 0 011.5-.9z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><circle cx="10" cy="10" r="2.2" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>',
+    bot: '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>',
     warn: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3l7.5 13h-15z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M10 8v3.5M10 13.8v.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
   };
 
@@ -1081,6 +1082,7 @@
       openThread: null,  // thread id within that peer, or null while it has only the default one
       serverThreads: [], // /v1/threads, so a thread opened with nothing said in it still shows
       filter: "",
+      listFilter: "all", // the quick filters above the list: all | unread | agents | held
       showInfo: false,
       senderAction: null,
       contactsReady: false,
@@ -1559,7 +1561,7 @@
       ? "Nothing archived."
       : "No mail yet. When an agent writes to this mailbox, it appears here.";
     const needle = state.filter.trim().toLowerCase();
-    const shown = needle
+    const searched = needle
       ? threads.filter((t) => {
           const c = t.contact;
           const hay = [t.peer, threadName(t), c && c.alias, t.identity && t.identity.label,
@@ -1568,10 +1570,14 @@
           return hay.includes(needle);
         })
       : threads;
+    syncListFilters(threads);
+    const quick = state.listFilter;
+    const shown = quick === "all" ? searched : searched.filter((t) => listFilterMatches(t, quick));
 
     list.textContent = "";
     $("threads-empty").hidden = shown.length > 0 || state.loading || Boolean(state.loadError) || state.offline;
     if (needle && !shown.length) $("threads-empty").textContent = "No matching conversations. Try another name or address.";
+    else if (quick !== "all" && !shown.length) $("threads-empty").textContent = LIST_FILTER_EMPTY[quick];
 
     // Your own agents sit at the top under their own heading — the ones you have actually
     // corresponded with. A namespace owner's own fleet is who they most want to find, and burying
@@ -1587,6 +1593,35 @@
       if (mine.length) list.append(groupHeading("Conversations"));
       for (const t of others) list.append(threadRow(t));
     }
+  }
+
+  // The quick filters (the kit template's All · Unread · Agents · Held). An agent is a mailbox the
+  // account itself holds, or one of its Nests: the only ones this page knows to be software.
+  const LIST_FILTER_EMPTY = {
+    unread: "Nothing unread.",
+    agents: "No conversations with your agents yet.",
+    held: "Nothing is held for review.",
+  };
+  const isAgentThread = (t) => Boolean(t && (t.mine || window.PigeonpostNests?.isNest(t.peer)));
+  function listFilterMatches(t, filter) {
+    if (filter === "unread") return t.unread > 0;
+    if (filter === "agents") return isAgentThread(t);
+    if (filter === "held") return Boolean(t.held);
+    return true;
+  }
+  function syncListFilters(threads) {
+    const held = threads.filter((t) => t.held).length;
+    $("held-count").hidden = !held;
+    $("held-count").textContent = String(held);
+    for (const b of document.querySelectorAll("#list-filters [data-filter]")) {
+      b.setAttribute("aria-pressed", String(b.dataset.filter === state.listFilter));
+    }
+    // Groups are listed by groups.js above these rows; the stylesheet narrows them by the same key.
+    $("pane-list").dataset.filter = state.listFilter;
+  }
+  function setListFilter(filter) {
+    state.listFilter = Object.hasOwn(LIST_FILTER_EMPTY, filter) ? filter : "all";
+    renderThreadList();
   }
 
   function groupHeading(label) {
@@ -1621,7 +1656,16 @@
     const time = document.createElement("span");
     time.className = "tr-time";
     time.textContent = t.last ? listTime(t.last) : "";
-    top.append(name, time);
+    top.append(name);
+    if (isAgentThread(t)) {
+      const flag = document.createElement("span");
+      flag.className = "tr-agent";
+      flag.title = "Agent";
+      flag.innerHTML = ICONS.bot;
+      top.append(flag);
+    }
+    top.append(time);
+    if (t.unread) row.dataset.unread = "true";
 
     const bottom = document.createElement("div");
     bottom.className = "tr-bottom";
@@ -1733,12 +1777,14 @@
     markDisplayName($("peer-name"), threadNameInfo(thread));
     $("peer-name-btn").setAttribute("aria-label", "About " + threadName(thread));
     $("peer-sub").textContent = thread.mine ? thread.peer + " · your mailbox" : thread.peer;
+    $("peer-agent").hidden = !isAgentThread(thread);
     paintAvatar($("peer-avatar"), thread.peer, threadName(thread));
     window.PigeonpostNests?.renderHead(thread.peer); // Nests B3: status header for a Nest
     $("delete-thread-btn").hidden = !showing?.id;
     renderMessages(thread.messages, showing?.id || "");
 
     if (state.showInfo) renderPeerInfo(conversation);
+    syncDetailsDock();
 
   }
 
@@ -1897,6 +1943,7 @@
       // Rows leaving the window go first: inserting in front of one that is about to go would move
       // every row after it, and moving a node drops a text selection inside it. A followed
       // conversation slides its window by one on every arrival, so this is the common case.
+      markRuns(rows);
       const keep = new Set(rows);
       for (const child of [...list.children]) if (!keep.has(child)) child.remove();
       rows.forEach((row, index) => { if (list.children[index] !== row) list.insertBefore(row, list.children[index] || null); });
@@ -1911,6 +1958,23 @@
       queueMicrotask(() => { if (context.current() && conversationView === view) ackVisible(); });
     }
     $("jump-latest").hidden = view.follow && !view.endId;
+  }
+
+  // Consecutive messages from one side form a run (the kit's data-pos first | middle | last; none
+  // when alone): the corners toward the sender tighten and only the last shows the face. An
+  // attribute on the reused row, so marking never rebuilds a bubble or drops a selection.
+  function markRuns(rows) {
+    const side = (row) => (row.dataset.messageId && !row.classList.contains("sep") && !row.classList.contains("system-line")
+      ? (row.classList.contains("mine") ? "mine" : "theirs") : null);
+    for (let i = 0; i < rows.length; i++) {
+      const here = side(rows[i]);
+      if (!here) continue;
+      const before = i > 0 && side(rows[i - 1]) === here, after = i < rows.length - 1 && side(rows[i + 1]) === here;
+      const pos = before && after ? "middle" : before ? "last" : after ? "first" : "";
+      if ((rows[i].dataset.pos || "") !== pos) {
+        if (pos) rows[i].dataset.pos = pos; else delete rows[i].dataset.pos;
+      }
+    }
   }
 
   function loadOlderMessages() {
@@ -2272,6 +2336,15 @@
     // The menu opens from the bubble or its action row: right-click, long-press, or the keyboard's
     // menu key / Shift+F10 on a focused action button — so Block and Report need no icon in the bubble.
     bindMessageMenu(stack, (e) => openMessageMenu(e, m));
+    // Received: the sender's face beside the last message of a run, as in the kit template. The
+    // stylesheet shows it only on the run's last row (`data-pos`, set in renderMessages).
+    if (m.kind !== "out" && state.openPeer) {
+      const face = document.createElement("span");
+      face.className = "avatar msg-avatar";
+      face.setAttribute("aria-hidden", "true");
+      paintAvatar(face, state.openPeer, $("peer-name").textContent);
+      li.append(face);
+    }
     li.append(stack);
     return li;
   }
@@ -2825,6 +2898,8 @@
     $("peer-alias-section").hidden = Boolean(thread.mine) || !aliasStore();
     $("peer-alias-remove").hidden = !aliasStore()?.get(thread.peer);
     paintAvatar($("peer-info-avatar"), thread.peer);
+    $("peer-info-agent").hidden = !isAgentThread(thread);
+    renderPeerFiles(thread);
     add(addresses, "Address", thread.identity?.address || lastIn?.address || thread.peer, true);
     if (thread.peer.startsWith("/") && !thread.peer.startsWith("/k/")) add(addresses, "Handle", thread.peer, true);
     if (thread.mine) add(addresses, "Mailbox", "yours — on this account");
@@ -2882,14 +2957,84 @@
     $("peer-block-confirm").textContent = busy ? "Blocking…" : "Block";
   }
 
+  // The details pane's file list (kit template: "Files · 3"): names and sizes only, newest first.
+  // A file is opened where it was sent, so the viewer, the download and their checks stay in one place.
+  const PEER_FILES_MAX = 8;
+  function renderPeerFiles(thread) {
+    const files = [];
+    for (const m of [...thread.messages].reverse()) {
+      if (!Array.isArray(m.attachments)) continue;
+      for (const file of m.attachments) files.push({ m, file });
+    }
+    $("peer-files-section").hidden = !files.length;
+    $("peer-files-title").textContent = "Files · " + files.length;
+    const list = $("peer-files");
+    list.textContent = "";
+    for (const { m, file } of files.slice(0, PEER_FILES_MAX)) {
+      const li = document.createElement("li");
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "peer-file";
+      const name = document.createElement("span");
+      name.className = "peer-file-name";
+      name.textContent = file.filename || "attachment";
+      const meta = document.createElement("span");
+      meta.className = "peer-file-meta";
+      meta.textContent = [readableBytes(file.bytes), m.at ? dayLabel(m.at) : ""].filter(Boolean).join(" · ");
+      button.append(name, meta);
+      button.setAttribute("aria-label", "Show " + name.textContent + " in the conversation");
+      button.onclick = () => jumpToMessage(m.msg_ref, m.id);
+      li.append(button);
+      list.append(li);
+    }
+  }
+
   function openPeerInfo(trigger) {
     if (!state.openPeer) return;
     peerInfoTrigger = trigger;
+    // From 1200 px the kit template keeps the details as a third pane beside the conversation, not
+    // a dialog over it: the info button toggles it, and it stays open as you move between people.
+    if (detailsDocked()) {
+      if (state.showInfo && $("peer-info-sheet").dataset.docked) { setDetailsPinned(false); closeSheet("peer-info-sheet"); return; }
+      setDetailsPinned(true);
+      state.showInfo = true;
+      renderThread();
+      resetAliasEditor(state.openPeer);
+      $("peer-info-close").focus();
+      return;
+    }
     state.showInfo = true;
     renderThread();
     resetAliasEditor(state.openPeer);
     openSheet("peer-info-sheet");
     $("peer-info-close").focus();
+  }
+
+  // The docked details pane. The width is the layout viewport's, the same one the stylesheet's
+  // 1200 px breakpoint reads. The choice to keep it open is remembered on this device.
+  const DETAILS_KEY = "ppi_details";
+  const detailsDocked = () => window.innerWidth >= 1200;
+  function detailsPinned() {
+    try { return LS.getItem(DETAILS_KEY) === "open"; } catch (_) { return false; }
+  }
+  function setDetailsPinned(on) {
+    try { if (on) LS.setItem(DETAILS_KEY, "open"); else LS.removeItem(DETAILS_KEY); } catch (_) { /* storage blocked */ }
+  }
+  const keepDetailsDocked = () => detailsDocked() && detailsPinned() && !sheetStack.length;
+  // Shown beside the conversation, outside the dialog stack: the conversation stays usable.
+  function syncDetailsDock() {
+    const sheet = $("peer-info-sheet");
+    const docked = Boolean(state.showInfo && state.openPeer && detailsDocked() && !sheetStack.includes("peer-info-sheet"));
+    if (docked) {
+      sheet.hidden = false;
+      sheet.dataset.docked = "true";
+      $("app").dataset.details = "open";
+    } else if (sheet.dataset.docked) {
+      delete sheet.dataset.docked;
+      delete $("app").dataset.details;
+      if (!sheetStack.includes("peer-info-sheet")) sheet.hidden = true;
+    }
+    sheet.inert = docked && sheetStack.length > 0;
   }
 
   // These shortcuts write an exact sender row, never the namespace rule that may cover them.
@@ -3024,7 +3169,7 @@
   function openSubthread(id) {
     stashDraft();
     state.openThread = id;
-    state.showInfo = false;
+    state.showInfo = keepDetailsDocked();
     if (onPhone()) history.replaceState({ thread: state.openPeer, sub: id }, "");
     render();
     restoreDraft();
@@ -3092,7 +3237,8 @@
     stashDraft();
     const wasClosed = !state.openPeer;
     state.openPeer = peer;
-    state.showInfo = false;
+    // A docked details pane stays open from one conversation to the next; a dialog does not.
+    state.showInfo = keepDetailsDocked();
     // A peer with one conversation opens straight into it, exactly as before threads existed. With
     // more than one, the phone stops at the list of them and waits to be told which; a wide screen
     // shows the list and the most recent at the same time, so nothing is a dead end.
@@ -3109,6 +3255,7 @@
       else history.replaceState({ thread: peer }, "");
     }
     render();
+    if (state.showInfo) resetAliasEditor(peer);
     restoreDraft();
     // Desktop only. On a phone, focusing the composer raises the keyboard over the thread you just
     // opened — you came to read it, and typing is a second decision you make by tapping the box.
@@ -3852,6 +3999,8 @@
       $(id).inert = id !== sheetStack.at(-1);
       $(id).style.zIndex = String(40 + sheetStack.indexOf(id));
     }
+    // The docked details pane is part of the page, not a dialog: it goes inert with the page.
+    if ($("peer-info-sheet").dataset.docked) $("peer-info-sheet").inert = sheetStack.length > 0;
   }
   function closeSheet(id) {
     $(id).hidden = true;
@@ -3860,6 +4009,7 @@
     syncSheetFocus();
     if (id === "settings-sheet") $("settings-btn").focus();
     if (id === "peer-info-sheet") {
+      if ($(id).dataset.docked) { delete $(id).dataset.docked; delete $("app").dataset.details; $(id).inert = false; }
       if (!$("peer-block-sheet").hidden) closeSheet("peer-block-sheet");
       if (!$("contact-sheet").hidden) closeSheet("contact-sheet");
       state.showInfo = false;
@@ -4240,12 +4390,12 @@
     let saved = {};
     try { saved = JSON.parse(LS.getItem("ppi_columns") || "{}"); } catch (_) { /* use defaults */ }
     const columns = [
-      { id: "list-resizer", name: "list", initial: 320, min: 240, max: 480 },
+      { id: "list-resizer", name: "list", initial: 340, min: 240, max: 480 },
       { id: "subs-resizer", name: "subs", initial: 240, min: 180, max: 360 },
     ];
     const widths = {};
     const apply = (column, value, persist = false) => {
-      const other = column.name === "list" ? (widths.subs || 240) : (widths.list || 320);
+      const other = column.name === "list" ? (widths.subs || 240) : (widths.list || 340);
       const max = Math.max(column.min, Math.min(column.max, window.innerWidth - other - 340));
       const width = Math.min(max, Math.max(column.min, Number(value) || column.initial));
       widths[column.name] = width;
@@ -4307,6 +4457,15 @@
     wireSheet("new-sheet");
 
     $("settings-btn").onclick = () => openSettings();
+    // The rail (kit template): Messages goes back to the conversation list from Calls or Calendar;
+    // Contacts opens the contacts page of Settings, where the address book already lives.
+    $("messages-btn").onclick = () => {
+      if (window.PigeonpostCalendar?.isOpen()) window.PigeonpostCalendar.close();
+      if (state.viewingArchive) showArchive(false);
+      setLeftView("inbox");
+    };
+    $("contacts-btn").onclick = () => { openSettings(); showSettingsPage("contacts"); };
+    for (const b of document.querySelectorAll("#list-filters [data-filter]")) b.onclick = () => setListFilter(b.dataset.filter);
     document.querySelectorAll("[data-settings-open]").forEach(el => { el.onclick = () => showSettingsPage(el.dataset.settingsOpen); });
     $("settings-back").onclick = () => showSettingsPage("root");
     $("settings-signout").onclick = () => { window.PigeonpostContacts?.clearAllAliases(); signOut(); };
@@ -4459,7 +4618,15 @@
     });
 
     for (const id of ["peer-name-btn", "peer-info-btn"]) $(id).onclick = () => openPeerInfo($(id));
-    for (const id of ["peer-info-close", "peer-info-done"]) $(id).onclick = () => closeSheet("peer-info-sheet");
+    for (const id of ["peer-info-close", "peer-info-done"]) $(id).onclick = () => {
+      if ($("peer-info-sheet").dataset.docked) setDetailsPinned(false);
+      closeSheet("peer-info-sheet");
+    };
+    // Narrowed below the docked width: the pane closes rather than turning into a dialog nobody
+    // opened. The choice to keep it open is kept for when the window is wide again.
+    window.addEventListener("resize", () => {
+      if ($("peer-info-sheet").dataset.docked && !detailsDocked()) closeSheet("peer-info-sheet");
+    });
     wireSheet("peer-info-sheet");
     wireSheet("peer-block-sheet");
     $("peer-known").onchange = () => updateSender(state.openPeer, $("peer-known").checked ? "known" : "forget");
@@ -5378,6 +5545,10 @@
     $("calls-badge").textContent = unseen > 99 ? "99+" : String(unseen);
     $("calls-btn").setAttribute("aria-pressed", String(state.leftView === "calls"));
     $("calls-btn").setAttribute("aria-label", unseen ? `Calls, ${unseen} missed` : "Calls");
+    // The rail shows these as icons: each keeps its word as its name and as a tooltip.
+    for (const b of $("side-nav").querySelectorAll(".side-nav-btn")) if (!b.title) b.title = b.textContent.trim();
+    const calendarOpen = Boolean(window.PigeonpostCalendar?.isOpen());
+    $("messages-btn").setAttribute("aria-pressed", String(state.leftView === "inbox" && !calendarOpen));
   }
 
   // Returns true when a side view, not the conversation list, owns the left pane.
@@ -5392,6 +5563,7 @@
     $("filtered-view").hidden = view !== "filtered";
     const search = $("search").closest(".search");
     if (search) search.hidden = !inbox;
+    $("list-filters").hidden = !inbox;
     const groups = has("message_filtering") ? filteredGroups() : [];
     $("filtered-entry").hidden = !(inbox && !state.viewingArchive && groups.length);
     $("filtered-count").textContent = groups.length ? " (" + groups.length + ")" : "";

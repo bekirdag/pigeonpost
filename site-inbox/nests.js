@@ -96,7 +96,9 @@
     if (!nav) return;
     let link = $("products-link");
     if (enabled() && !link) {
-      link = el("a", { id: "products-link", class: "side-nav-btn", href: PRODUCTS_URL, target: "_blank", rel: "noopener" }, el("span", { text: "Products" }));
+      link = el("a", { id: "products-link", class: "side-nav-btn", href: PRODUCTS_URL, target: "_blank", rel: "noopener", title: "Products" }, el("span", { text: "Products" }));
+      // The rail shows icons; the word stays as the link's name. A fixed string, never data.
+      link.insertAdjacentHTML("afterbegin", '<svg class="lu" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>');
       nav.append(link);
       nav.hidden = false;
     }

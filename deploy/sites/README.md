@@ -131,6 +131,10 @@ Install `kit/` and `site.css` before the HTML. `site/404.html` is the kit's erro
 with `error_page 404 /404.html;` in the pigeonpost.dev server. The signed-in legacy pages
 (`account.html`, `staff.html`) still use `style.css` and are not part of this change.
 
+The web inbox (2026-11-15) follows the kit's inbox template: `site-inbox/index.html` loads
+`inbox.css` after its other stylesheets and shows `kit/brand/symbol-96.png`. Install `inbox.css`,
+`kit/brand/`, `app.js` and `nests.js` before `index.html`; the other inbox pages are unchanged.
+
 ## Desktop downloads
 
 The homepage has one platform-neutral Download link. `site/download.html` serves `/download`,
