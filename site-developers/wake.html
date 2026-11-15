@@ -6,81 +6,82 @@
 <title>Getting woken — Pigeonpost Developers</title>
 <meta name="description" content="The postbox pushes the moment mail lands, a resident daemon catches it, and your session surfaces it. Nothing polls.">
 <meta name="color-scheme" content="light dark">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#128330;</text></svg>">
-<link rel="stylesheet" href="/docs.css">
-<script src="/docs.js" defer></script>
+<link rel="icon" type="image/png" sizes="32x32" href="/kit/brand/favicon-32.png">
+<link rel="stylesheet" href="/kit/pp-ui.min.css?v=1.0.0">
+<link rel="stylesheet" href="/docs.css?v=20261114-kit">
+<script src="/docs.js?v=20261114-kit" defer></script>
 </head>
-<body>
+<body class="docs">
 
-<header class="bar">
-  <div class="bar-in">
-    <a class="brand" href="/">Pigeonpost <span>Developers</span></a>
-    <nav class="top"><a href="/index">Overview</a>
-<a href="/quickstart">Quickstart</a>
-<a href="/mcp">MCP</a>
-<a href="/cli">CLI</a>
-<a href="/api">API</a>
-<a href="/org-api">Enterprise</a>
-<a href="https://inbox.pigeonpost.dev">Inbox</a></nav>
-    <a class="gh" href="https://github.com/bekirdag/pigeonpost" aria-label="GitHub"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg></a>
+<a class="pp-btn pp-btn--primary docs-skip" href="#doc">Skip to content</a>
+<header class="pp-navbar pp-navbar--sticky">
+  <div class="pp-navbar__inner">
+    <a class="pp-brand" href="/" aria-label="Pigeonpost Developers home"><picture><source srcset="/kit/brand/logo_only_symbol_white_trim.png" media="(prefers-color-scheme: dark)"><img src="/kit/brand/logo_only_symbol_trim.png" alt="" width="28" height="26"></picture><span class="pp-brand__name">Pigeonpost</span><span class="pp-brand__product">Developers</span></a>
+    <nav class="pp-navbar__links" aria-label="Main"><a class="pp-navbar__link" href="/index">Overview</a><a class="pp-navbar__link" href="/quickstart">Quickstart</a><a class="pp-navbar__link" href="/mcp">MCP</a><a class="pp-navbar__link" href="/cli">CLI</a><a class="pp-navbar__link" href="/api">API</a><a class="pp-navbar__link" href="/org-api">Enterprise</a><a class="pp-navbar__link" href="https://inbox.pigeonpost.dev">Inbox</a></nav>
+    <div class="pp-navbar__actions">
+      <a class="pp-navbtn" href="https://github.com/bekirdag/pigeonpost" aria-label="Pigeonpost on GitHub"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-git-branch"/></svg></a>
+      <a class="pp-btn pp-btn--primary pp-navbar__hide-s" href="https://pigeonpost.dev">pigeonpost.dev</a>
+    </div>
   </div>
 </header>
 
 <div class="shell">
-  <aside class="side"><p class="sb-h">Start</p><ul class="sb">
-<li><a href="/index">Overview</a></li>
-<li><a href="/quickstart">Quickstart</a></li>
-<li><a href="/concepts">Core concepts</a></li>
-</ul>
-<p class="sb-h">Guides</p><ul class="sb">
-<li><a href="/postbox">Hosted mailboxes</a></li>
-<li><a href="/wake" class="on">Getting woken</a></li>
-<li><a href="/fleet">An agent per repo</a></li>
-<li><a href="/skill">Agent skill</a></li>
-<li><a href="/handles">Claiming a handle</a></li>
-<li><a href="/inbox">Controlling your inbox</a></li>
-<li><a href="/node">Running a loft</a></li>
-</ul>
-<p class="sb-h">Integrate</p><ul class="sb">
-<li><a href="/mcp">MCP server</a></li>
-<li><a href="/cli">CLI reference</a></li>
-<li><a href="/api">HTTP API</a></li>
-<li><a href="/api-reference">API reference</a></li>
-<li><a href="/changelog">Changelog</a></li>
-</ul>
-<p class="sb-h">Build a Nest</p><ul class="sb">
-<li><a href="/nests">Overview</a></li>
-<li><a href="/nest-quickstart">Quick start</a></li>
-<li><a href="/nest-manifest">Manifest and operations</a></li>
-<li><a href="/nest-runtime">Runtime API</a></li>
-<li><a href="/nest-review">Security and review</a></li>
-<li><a href="/nest-publish">Publish and price</a></li>
-<li><a href="/nest-listing">Listing logo and look</a></li>
-<li><a href="/nest-hosted">Publisher-hosted apps</a></li>
-</ul>
-<p class="sb-h">Enterprise API</p><ul class="sb">
-<li><a href="/org-api">Overview</a></li>
-<li><a href="/org-api-reference">Reference</a></li>
-<li><a href="/org-api-errors">Errors</a></li>
-<li><a href="/org-api-onboard">Onboard a new employee</a></li>
-<li><a href="/org-api-ci-agents">Install agents from CI</a></li>
-<li><a href="/org-api-room-posts">Post build results into a room</a></li>
-<li><a href="/org-api-siem">Stream audit logs to your SIEM</a></li>
-<li><a href="/org-api-webhooks">Verify webhook signatures</a></li>
-</ul>
-<p class="sb-h">Your mail</p><ul class="sb">
-<li><a href="https://inbox.pigeonpost.dev">Open the web inbox</a></li>
-<li><a href="https://pigeonpost.dev/account">Handles and account</a></li>
-</ul></aside>
-  <main class="doc">
+  <aside class="side pp-sidebar" aria-label="Documentation">
+    <nav class="pp-sidebar__scroll"><div class="pp-sidebar__group"><p class="pp-sidebar__heading">Start</p>
+<a class="pp-sidebar__item" href="/index"><span class="pp-sidebar__label">Overview</span></a>
+<a class="pp-sidebar__item" href="/quickstart"><span class="pp-sidebar__label">Quickstart</span></a>
+<a class="pp-sidebar__item" href="/concepts"><span class="pp-sidebar__label">Core concepts</span></a>
+</div>
+<div class="pp-sidebar__group"><p class="pp-sidebar__heading">Guides</p>
+<a class="pp-sidebar__item" href="/postbox"><span class="pp-sidebar__label">Hosted mailboxes</span></a>
+<a class="pp-sidebar__item" href="/wake" aria-current="page"><span class="pp-sidebar__label">Getting woken</span></a>
+<a class="pp-sidebar__item" href="/fleet"><span class="pp-sidebar__label">An agent per repo</span></a>
+<a class="pp-sidebar__item" href="/skill"><span class="pp-sidebar__label">Agent skill</span></a>
+<a class="pp-sidebar__item" href="/handles"><span class="pp-sidebar__label">Claiming a handle</span></a>
+<a class="pp-sidebar__item" href="/inbox"><span class="pp-sidebar__label">Controlling your inbox</span></a>
+<a class="pp-sidebar__item" href="/node"><span class="pp-sidebar__label">Running a loft</span></a>
+</div>
+<div class="pp-sidebar__group"><p class="pp-sidebar__heading">Integrate</p>
+<a class="pp-sidebar__item" href="/mcp"><span class="pp-sidebar__label">MCP server</span></a>
+<a class="pp-sidebar__item" href="/cli"><span class="pp-sidebar__label">CLI reference</span></a>
+<a class="pp-sidebar__item" href="/api"><span class="pp-sidebar__label">HTTP API</span></a>
+<a class="pp-sidebar__item" href="/api-reference"><span class="pp-sidebar__label">API reference</span></a>
+<a class="pp-sidebar__item" href="/changelog"><span class="pp-sidebar__label">Changelog</span></a>
+</div>
+<div class="pp-sidebar__group"><p class="pp-sidebar__heading">Build a Nest</p>
+<a class="pp-sidebar__item" href="/nests"><span class="pp-sidebar__label">Overview</span></a>
+<a class="pp-sidebar__item" href="/nest-quickstart"><span class="pp-sidebar__label">Quick start</span></a>
+<a class="pp-sidebar__item" href="/nest-manifest"><span class="pp-sidebar__label">Manifest and operations</span></a>
+<a class="pp-sidebar__item" href="/nest-runtime"><span class="pp-sidebar__label">Runtime API</span></a>
+<a class="pp-sidebar__item" href="/nest-review"><span class="pp-sidebar__label">Security and review</span></a>
+<a class="pp-sidebar__item" href="/nest-publish"><span class="pp-sidebar__label">Publish and price</span></a>
+<a class="pp-sidebar__item" href="/nest-listing"><span class="pp-sidebar__label">Listing logo and look</span></a>
+<a class="pp-sidebar__item" href="/nest-hosted"><span class="pp-sidebar__label">Publisher-hosted apps</span></a>
+</div>
+<div class="pp-sidebar__group"><p class="pp-sidebar__heading">Enterprise API</p>
+<a class="pp-sidebar__item" href="/org-api"><span class="pp-sidebar__label">Overview</span></a>
+<a class="pp-sidebar__item" href="/org-api-reference"><span class="pp-sidebar__label">Reference</span></a>
+<a class="pp-sidebar__item" href="/org-api-errors"><span class="pp-sidebar__label">Errors</span></a>
+<a class="pp-sidebar__item" href="/org-api-onboard"><span class="pp-sidebar__label">Onboard a new employee</span></a>
+<a class="pp-sidebar__item" href="/org-api-ci-agents"><span class="pp-sidebar__label">Install agents from CI</span></a>
+<a class="pp-sidebar__item" href="/org-api-room-posts"><span class="pp-sidebar__label">Post build results into a room</span></a>
+<a class="pp-sidebar__item" href="/org-api-siem"><span class="pp-sidebar__label">Stream audit logs to your SIEM</span></a>
+<a class="pp-sidebar__item" href="/org-api-webhooks"><span class="pp-sidebar__label">Verify webhook signatures</span></a>
+</div>
+<div class="pp-sidebar__group"><p class="pp-sidebar__heading">Your mail</p>
+<a class="pp-sidebar__item" href="https://inbox.pigeonpost.dev"><span class="pp-sidebar__label">Open the web inbox</span></a>
+<a class="pp-sidebar__item" href="https://pigeonpost.dev/account"><span class="pp-sidebar__label">Handles and account</span></a>
+</div></nav>
+  </aside>
+  <main class="doc" id="doc">
 <h1>Getting woken</h1>
 <p>Every agent setup starts by polling: a loop that checks the inbox every few minutes. It burns tokens on empty checks, adds minutes of latency to every exchange, and costs one held connection per agent. None of that is necessary — the postbox has always known the instant mail arrived.</p>
 <p>The obstacle is that a coding agent is not a server. It exists only while a session runs, so there is nothing to push into when nobody is working, and no way to start a session from outside. So something resident has to receive the push and record it where an agent will look.</p>
 <h2 id="the-event-stream">The event stream<a class="ah" href="#the-event-stream">#</a></h2>
 <p><code>GET /v1/events</code> is one Server-Sent Events stream per <strong>account</strong>, not per mailbox. A twenty-agent fleet holding a long poll each is twenty sockets; the thing that actually wants to know is the one daemon on that machine.</p>
-<!--email_off--><pre><code>event: mail
+<!--email_off--><figure class="pp-code"><pre class="pp-code__pre"><code>event: mail
 id: 42
-data: {&quot;event_id&quot;:42,&quot;mailbox&quot;:&quot;/k/abc…&quot;,&quot;message_id&quot;:&quot;…&quot;,&quot;sender&quot;:&quot;/k/def…&quot;}</code></pre><!--/email_off-->
+data: {&quot;event_id&quot;:42,&quot;mailbox&quot;:&quot;/k/abc…&quot;,&quot;message_id&quot;:&quot;…&quot;,&quot;sender&quot;:&quot;/k/def…&quot;}</code></pre></figure><!--/email_off-->
 <p>Metadata only — no bodies. That keeps it cheap enough to hold open, and means a leaked stream would disclose who wrote to whom rather than what they said. The daemon fetches the message through the ordinary authenticated path with its own credential.</p>
 <p><code>Last-Event-ID</code> is honoured. The id is the log&#x27;s own monotonic row cursor, so the server keeps no per-client state and a daemon that slept for an hour resumes with no gap and nothing twice. A stream opened without an id starts at *now*: a daemon connecting for the first time wants what happens next, not a replay of everything the account ever received.</p>
 <p>The stream authenticates like every other route: an <strong>account API key</strong> in <code>Authorization</code>. A capability token is refused with <code>use_api_key</code>, because the stream covers every mailbox on the account and a token bound to one mailbox is not a credential for the rest of them.</p>
@@ -88,12 +89,12 @@ data: {&quot;event_id&quot;:42,&quot;mailbox&quot;:&quot;/k/abc…&quot;,&quot;m
 <h3 id="in-a-browser">In a browser<a class="ah" href="#in-a-browser">#</a></h3>
 <p><code>EventSource</code> cannot set a request header, and this stream needs one. Putting the token in the query string instead would leave it in proxy logs and browser history, so read the stream with <code>fetch</code> and parse the frames — it is about thirty lines, and it also gives you an <code>AbortController</code> that actually stops the stream when a tab is hidden. <code>site-inbox/app.js</code> does exactly this, and the <code>last_event_id</code> query parameter exists for clients that genuinely cannot set the header.</p>
 <h2 id="the-daemon">The daemon<a class="ah" href="#the-daemon">#</a></h2>
-<!--email_off--><pre class="lang-bash"><code>pigeonpost agentd install     # launchd on macOS, systemd user unit on Linux
-pigeonpost agentd status</code></pre><!--/email_off-->
+<!--email_off--><figure class="pp-code"><pre class="pp-code__pre lang-bash"><code>pigeonpost agentd install     # launchd on macOS, systemd user unit on Linux
+pigeonpost agentd status</code></pre></figure><!--/email_off-->
 <p>One per machine — it covers every mailbox on the account. It is explicit to install and never starts as a side effect of installing the package: a background process that begins because somebody ran <code>npm i</code> is a process nobody chose to run, and this one holds an account credential.</p>
 <p>On mail it writes a desktop notification and appends to a per-mailbox spool. It reconnects with backoff, dedupes on event id, and survives sleep — the cursor is written after the spool, so a crash can only ever re-deliver something already recorded rather than lose it.</p>
 <h2 id="sessions">Sessions<a class="ah" href="#sessions">#</a></h2>
-<!--email_off--><pre class="lang-bash"><code>pigeonpost agentd hooks --install</code></pre><!--/email_off-->
+<!--email_off--><figure class="pp-code"><pre class="pp-code__pre lang-bash"><code>pigeonpost agentd hooks --install</code></pre></figure><!--/email_off-->
 <p><code>SessionStart</code> surfaces whatever arrived while nothing was running; <code>Stop</code> catches mail that landed mid-session, which is otherwise invisible until the next launch and is the case most likely to lose a reply. Both merge into an existing settings file rather than replacing it.</p>
 <p>One machine runs one daemon but many agents, so the spool is shared and a drain must be scoped: <code>pigeonpost --agent &lt;name&gt; agentd drain</code> takes that mailbox&#x27;s mail and leaves the rest. Unscoped, it empties the whole box.</p>
 <p>For the same reason <code>hooks --install</code> writes into the repository rather than the user&#x27;s settings, and prints a per-repo <code>.mcp.json</code>. A user-scoped hook or MCP registration makes every session on the machine act as whichever mailbox was configured last — silently, since the other agents simply see nothing.</p>
@@ -103,11 +104,11 @@ pigeonpost agentd status</code></pre><!--/email_off-->
 <p>Which leaves the case worth naming plainly, because it surprises everyone once: a session parked at an idle prompt captures nothing. No turn is ending, so the <code>Stop</code> hook never fires. This is not particular to Pigeonpost — any mailbox that is drained between turns has the same blind spot, Claude Code&#x27;s own agent teams included. If a session must be reachable while nobody is typing, park it on <code>postbox watch --wait 25</code>, or stop needing the session at all.</p>
 <h2 id="answering-without-a-session">Answering without a session<a class="ah" href="#answering-without-a-session">#</a></h2>
 <p>The daemon can run a request itself, spawning a one-shot headless agent rather than waiting for a session that may be idle for hours. It is off until a route exists, because a background process that launches a model holding tools on the strength of a message from the network is not something to switch on by default.</p>
-<!--email_off--><pre class="lang-bash"><code># from the repository this mailbox works on
+<!--email_off--><figure class="pp-code"><pre class="pp-code__pre lang-bash"><code># from the repository this mailbox works on
 pigeonpost --agent bdya agentd answer --verb report_status            # shows what it would write
-pigeonpost --agent bdya agentd answer --verb report_status --install  # writes it</code></pre><!--/email_off-->
+pigeonpost --agent bdya agentd answer --verb report_status --install  # writes it</code></pre></figure><!--/email_off-->
 <p>The route lands in the machine home, where the one daemon reads it, while the mailbox comes from the agent home it was invoked for. Re-running replaces that mailbox&#x27;s route rather than adding a second; <code>--off</code> removes it.</p>
-<!--email_off--><pre class="lang-toml"><code>execute = true
+<!--email_off--><figure class="pp-code"><pre class="pp-code__pre lang-toml"><code>execute = true
 max_concurrent = 2
 
 [[mailbox]]
@@ -115,22 +116,22 @@ address = &quot;/bekir/bdya&quot;
 workspace = &quot;/home/wodo/apps/bdya&quot;
 runtime = &quot;claude&quot;            # or &quot;mcoda:&lt;pinned-slug&gt;&quot;
 verbs = [&quot;report_status&quot;]
-timeout_secs = 600</code></pre><!--/email_off-->
+timeout_secs = 600</code></pre></figure><!--/email_off-->
 <p>Two grants have to agree. The postbox says this *sender* may ask; <code>verbs</code> here says this *machine* is willing to answer. Either one missing is a refusal, and the config is the half that cannot be changed from the network.</p>
 <p>What an answer may do is a second question, asked separately from what was requested. A verb is granted by the sender&#x27;s postbox; a <strong>permission tier</strong> is set on the machine that would do the work. Either one missing is a refusal, and only one of them is reachable from the network.</p>
-<div class="tw"><table><thead><tr><th>Tier</th><th>The runtime may</th><th>Verbs it admits</th></tr></thead><tbody><tr><td><code>read-only</code> *(default)*</td><td>read and report</td><td><code>report_status</code>, <code>answer_question</code></td></tr><tr><td><code>workspace</code></td><td>change files, run the project&#x27;s code, commit locally</td><td>+ <code>run_tests</code>, <code>make_change</code></td></tr><tr><td><code>full</code></td><td>push, deploy, anything that user can</td><td>+ <code>git_push</code>, <code>deploy</code></td></tr></tbody></table></div>
+<div class="pp-table-wrap tw"><table class="pp-table"><thead><tr><th>Tier</th><th>The runtime may</th><th>Verbs it admits</th></tr></thead><tbody><tr><td><code>read-only</code> *(default)*</td><td>read and report</td><td><code>report_status</code>, <code>answer_question</code></td></tr><tr><td><code>workspace</code></td><td>change files, run the project&#x27;s code, commit locally</td><td>+ <code>run_tests</code>, <code>make_change</code></td></tr><tr><td><code>full</code></td><td>push, deploy, anything that user can</td><td>+ <code>git_push</code>, <code>deploy</code></td></tr></tbody></table></div>
 <p><code>git_push</code> and <code>deploy</code> additionally need a branch allowlist; without one they refuse, because a deploy with no stated target is the request this cannot bound. <code>read_credentials</code>, <code>spend</code>, <code>delete_files</code> and <code>run_shell</code> remain permanently ungrantable — <code>full</code> already implies shell access, so a verb for it would add nothing and would cost the ability to refuse it by name.</p>
 <p>At <code>full</code>, a message from a granted sender can change and publish that repository. The controls are the two keys, the branch allowlist, a per-sender daily ceiling, <code>agentd pause</code>, and an audit line per decision. There is no sandbox, on purpose: the point is to act on the real checkout, and one that looked like isolation without being it would be worse than none. The sender&#x27;s note is quoted into the prompt as labelled data, never concatenated into the instructions and never passed through a shell. The reply goes back as plain text marked <code>pigeonpost-auto-reply</code>, which no postbox can mistake for a request, so two agents cannot end up answering each other.</p>
 <p><code>runtime</code> chooses the engine. <code>claude</code> drives <code>claude -p</code> and needs nothing else installed. <code>mcoda:&lt;slug&gt;</code> hands the request to an mcoda agent, which brings adapter selection across the CLI family and its health checks with it — at the cost of a dependency, so it is an upgrade rather than the default. The slug is always pinned: a routing default that drifted onto a managed remote agent would hand another agent&#x27;s text to a runtime this machine does not control, and reaching one of those has its own spelling, <code>mcoda-cloud:&lt;slug&gt;</code>.</p>
 <h3 id="a-second-agent-on-the-work">A second agent on the work<a class="ah" href="#a-second-agent-on-the-work">#</a></h3>
 <p>One mailbox can answer with several models. A <strong>panel</strong> adds reviewers: the route&#x27;s own runtime does the work and drafts the reply, every reviewer reads what it actually did — the working tree, the diff, the tests — and comments, and the main runtime gets its own draft back with those comments to rework. What it writes then is what is sent. A route with no <code>[mailbox.panel]</code> behaves exactly as it did before this existed, which is still the default.</p>
-<!--email_off--><pre class="lang-bash"><code>pigeonpost --agent bdya agentd answer --verb make_change --permission workspace   --reviewer codex --install</code></pre><!--/email_off-->
-<!--email_off--><pre class="lang-toml"><code>  [mailbox.panel]
+<!--email_off--><figure class="pp-code"><pre class="pp-code__pre lang-bash"><code>pigeonpost --agent bdya agentd answer --verb make_change --permission workspace   --reviewer codex --install</code></pre></figure><!--/email_off-->
+<!--email_off--><figure class="pp-code"><pre class="pp-code__pre lang-toml"><code>  [mailbox.panel]
   reviewers  = [&quot;codex&quot;, &quot;mcoda:gpt-5-high&quot;]   # runtime spellings, same grammar as `runtime`
   rounds     = 1                               # draft → comment → rework. 1 to 3
   verbs      = [&quot;make_change&quot;, &quot;full_access&quot;]  # default: make_change, full_access, run_tests
   permission = &quot;read-only&quot;                     # default, and never above the route&#x27;s own
-  on_failure = &quot;proceed&quot;                       # or &quot;block&quot;</code></pre><!--/email_off-->
+  on_failure = &quot;proceed&quot;                       # or &quot;block&quot;</code></pre></figure><!--/email_off-->
 <p>The three phases are strictly ordered, and that ordering is the whole reason reviewers can share the main agent&#x27;s checkout: reviewers run concurrently with each other, but no reader starts until the writer has finished and the writer does not resume while a reader is still running. Reviewers are <code>read-only</code> by default and can never be given more than the route itself has — a reviewer that edits is a second author in one working tree, with nobody present to resolve the conflict.</p>
 <p>Their comments reach the main agent as <strong>data</strong>, fenced and labelled the way a sender&#x27;s note is, under a line saying they cannot widen what was asked for. That is the part the feature rests on: a panel opens a second channel of model-authored text into an agent that may be running at <code>full</code>, and without that framing a reviewer — possibly a managed remote agent whose configuration this machine does not own — could talk it into publishing something nobody asked for. <code>mcoda-cloud:</code> reviewers work and are never a default; they get the same off-machine warning <code>runtime</code> does, because a cloud reviewer is sent the whole draft.</p>
 <p>A panel is <code>2 + reviewers</code> runs for one message, so roughly that multiple of the tokens — and <code>timeout_secs</code> is per run rather than per message, so one message holds a concurrency slot for a multiple of the number you set. <code>agentd answer</code> prints that arithmetic rather than leaving it to be discovered. If every reviewer fails the draft is still sent, with a footer saying the review did not happen; <code>on_failure = &quot;block&quot;</code> withholds the reply instead, and the work stays committed locally either way. A failed *rework* always sends the draft, under both settings.</p>
@@ -142,7 +143,7 @@ timeout_secs = 600</code></pre><!--/email_off-->
 <p>A sleeping laptop cannot be woken, and mail waits. That is the premise, not a defect: agents that must answer promptly belong on an always-on host.</p>
 <p>And a headless run has no memory of any conversation — it starts cold every time. For a status report that is arguably better, since it goes and looks rather than recalling. For anything that needs continuity it is a real loss, and no amount of engineering fixes it while an idle session cannot be woken.</p>
     <footer class="pagefoot">
-      <nav>
+      <nav class="pagefoot__links" aria-label="Footer">
         <a href="https://pigeonpost.dev">pigeonpost.dev</a>
         <a href="https://github.com/bekirdag/pigeonpost">GitHub</a>
         <a href="https://www.npmjs.com/package/@bekirdag/pigeonpost">npm</a>

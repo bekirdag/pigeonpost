@@ -1,0 +1,230 @@
+/* pigeonpost.dev — the marketing site's page layer over the Pigeonpost Design Kit.
+
+   Components, tokens, type and both themes come from /kit/pp-ui.min.css (kit 1.0.0, vendored in
+   kit/). This file adds only what the kit leaves to each product: the page column and bands (the
+   kit's website template calls them kt-wrap / kt-band), the long-form prose of the legal and
+   product pages, the CSS-only mobile menu (most of this site is served with `script-src 'none'`),
+   and a few page-specific layouts. Colours, radii, spacing and type come only from --pp-* tokens.
+
+   The account and staff pages (style.css, account.css) are separate and do not load this file. */
+
+/* ---- page ------------------------------------------------------------------------------------- */
+html { scroll-padding-top: 80px; }
+body.site { min-height: 100vh; display: flex; flex-direction: column; background: var(--pp-bg); overflow-x: clip; }
+body.site > main { flex: 1 0 auto; }
+.site-wrap { width: 100%; max-width: 1180px; margin: 0 auto; padding: 0 var(--pp-space-8); }
+.site-band { padding: var(--pp-space-20) 0; }
+.site-band--tight { padding: var(--pp-space-12) 0; }
+.site-band--surface { background: var(--pp-surface); border-block: 1px solid var(--pp-border-subtle); }
+.site-band > .site-wrap { display: grid; gap: var(--pp-space-12); }
+.site-skip { position: absolute; left: var(--pp-space-4); top: -100px; z-index: var(--pp-z-tooltip); }
+.site-skip:focus { top: var(--pp-space-3); }
+@media (max-width: 600px) {
+  .site-wrap { padding: 0 var(--pp-space-5); }
+  .site-band { padding: var(--pp-space-12) 0; }
+  .site-band > .site-wrap { gap: var(--pp-space-8); }
+}
+
+/* ---- header: the kit navbar with a CSS-only menu (details/summary) ----------------------------- */
+.pp-brand picture, .pp-error-page__logo picture { display: contents; }
+.site-menu > summary { list-style: none; position: absolute; top: 11px; right: var(--pp-space-4); }
+.site-menu > summary::-webkit-details-marker { display: none; }
+.site-menu[open] > summary { background: var(--pp-surface-selected); color: var(--pp-text); }
+.site-menu[open] > summary .pp-navbar__open { display: none; }
+.site-menu[open] > summary .pp-navbar__close { display: block; }
+.site-menu .pp-navbar__menu-actions { display: grid; gap: var(--pp-space-2); margin-top: var(--pp-space-3); }
+@container (max-width: 860px) {
+  .site-navbar:has(.site-menu) .pp-navbar__actions { margin-right: 46px; }
+}
+
+/* ---- footer ----------------------------------------------------------------------------------- */
+.site-footer { margin-top: auto; }
+.site-footer__note { max-width: 36ch; }
+
+/* ---- shared bits ------------------------------------------------------------------------------ */
+.site-glyph { fill: currentColor; stroke: none; }
+.site-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--pp-space-3); }
+.site-links { display: flex; flex-wrap: wrap; align-items: center; gap: var(--pp-space-1) var(--pp-space-5); font-size: var(--pp-fs-body-s); }
+.site-links .pp-icon { width: 16px; height: 16px; margin-right: 4px; vertical-align: -3px; }
+.site-note { color: var(--pp-text-muted); font-size: var(--pp-fs-body-s); line-height: var(--pp-lh-body-s); }
+.site-text { max-width: 68ch; font-size: var(--pp-fs-body-l); line-height: var(--pp-lh-body-l); }
+.site-text > * + * { margin-top: var(--pp-space-4); }
+.site-text code, .site-note code, .pp-feature__text code, .pp-feature-row__text code, .pp-section-head__lede code, .pp-card :not(pre) > code, .pp-table code, .site-prose :not(pre) > code {
+  font-family: var(--pp-font-mono); font-size: .86em; padding: 1px 5px; border-radius: var(--pp-radius-xs);
+  background: var(--pp-surface-sunken); border: 1px solid var(--pp-border-subtle); color: var(--pp-text); overflow-wrap: anywhere;
+}
+.site-center { text-align: center; justify-self: center; }
+
+/* Cards laid out by this site carry their own padding (the kit pads only __header/__body). */
+.site-steps > .pp-card, .site-addrs > .pp-card, .download-option, .download-help > .pp-card, .download-feature, .site-checkout .pp-card { padding: var(--_p, var(--pp-space-5)); }
+
+/* Command samples: the kit's code block, with the site's shell colouring. */
+.site-code { margin: 0; }
+.site-code .pp-code__pre > code { min-width: 0; }
+.site-code .pp-code__pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.t-cmd { color: var(--pp-text-link); font-weight: var(--pp-weight-semibold); }
+.t-sub { color: var(--pp-text); }
+.t-flag, .t-arg { color: var(--pp-warning); }
+.t-path, .t-pkg { color: var(--pp-info); }
+.t-str { color: var(--pp-success); }
+.t-out { color: var(--pp-text-muted); }
+.pp-code .c { color: var(--pp-text-faint); font-style: italic; }
+
+/* ---- page head for inner pages ---------------------------------------------------------------- */
+.site-pagehead { position: relative; isolation: isolate; padding: var(--pp-space-16) 0 var(--pp-space-10); border-bottom: 1px solid var(--pp-border-subtle); }
+.site-pagehead::before {
+  content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  background: radial-gradient(55% 80% at 20% 0%, color-mix(in srgb, var(--pp-accent) 10%, transparent), transparent 70%);
+}
+.site-pagehead .site-wrap { display: grid; gap: var(--pp-space-3); max-width: calc(var(--pp-reading-max) + 2 * var(--pp-space-8)); }
+.site-pagehead__eyebrow { margin: 0; }
+.site-pagehead h1 { margin: 0; font-size: var(--pp-fs-display-m); line-height: var(--pp-lh-display-m); font-weight: var(--pp-weight-semibold); letter-spacing: var(--pp-tracking-tight); color: var(--pp-text); text-wrap: balance; }
+.site-pagehead__lede { margin: 0; color: var(--pp-text-muted); font-size: var(--pp-fs-body-l); line-height: var(--pp-lh-body-l); }
+@media (max-width: 600px) {
+  .site-pagehead { padding: var(--pp-space-10) 0 var(--pp-space-8); }
+  .site-pagehead .site-wrap { padding: 0 var(--pp-space-5); }
+  .site-pagehead h1 { font-size: var(--pp-fs-h1); line-height: var(--pp-lh-h1); }
+}
+
+/* ---- long-form prose (legal, Nests, Marketplace, Publish) ------------------------------------- */
+.site-prose { width: 100%; max-width: calc(var(--pp-reading-max) + 2 * var(--pp-space-8)); margin: 0 auto; padding: var(--pp-space-10) var(--pp-space-8) var(--pp-space-20); color: var(--pp-text-body); font-size: var(--pp-fs-body-l); line-height: 1.7; }
+@media (max-width: 600px) { .site-prose { padding: var(--pp-space-8) var(--pp-space-5) var(--pp-space-12); font-size: var(--pp-fs-body); } }
+.site-prose > :first-child { margin-top: 0; }
+.site-prose h1 { margin: 0 0 var(--pp-space-3); font-size: var(--pp-fs-display-m); line-height: var(--pp-lh-display-m); font-weight: var(--pp-weight-semibold); letter-spacing: var(--pp-tracking-tight); color: var(--pp-text); }
+.site-prose h2 { margin: var(--pp-space-12) 0 var(--pp-space-3); font-size: var(--pp-fs-h2); line-height: var(--pp-lh-h2); font-weight: var(--pp-weight-semibold); letter-spacing: -0.01em; color: var(--pp-text); }
+.site-prose h3 { margin: var(--pp-space-8) 0 var(--pp-space-2); font-size: var(--pp-fs-h3); line-height: var(--pp-lh-h3); font-weight: var(--pp-weight-semibold); color: var(--pp-text); }
+.site-prose h4 { margin: var(--pp-space-6) 0 var(--pp-space-2); font-size: var(--pp-fs-h4); line-height: var(--pp-lh-h4); font-weight: var(--pp-weight-semibold); color: var(--pp-text); }
+.site-prose p, .site-prose ul, .site-prose ol, .site-prose dl, .site-prose blockquote { margin: 0 0 var(--pp-space-4); }
+.site-prose ul, .site-prose ol { padding-left: 1.4em; }
+.site-prose li { margin-bottom: var(--pp-space-2); }
+.site-prose li > ul, .site-prose li > ol { margin: var(--pp-space-2) 0 0; }
+.site-prose strong { color: var(--pp-text); font-weight: var(--pp-weight-semibold); }
+.site-prose a { text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--pp-text-link) 35%, transparent); }
+.site-prose a:hover { text-decoration-color: currentColor; }
+.site-prose hr { border: 0; border-top: 1px solid var(--pp-border); margin: var(--pp-space-10) 0; }
+.site-prose .updated { color: var(--pp-text-muted); font-size: var(--pp-fs-body-s); }
+.site-prose .muted { color: var(--pp-text-muted); }
+/* Callouts: the kit's info alert look, kept on the existing .note markup. */
+.site-prose .note {
+  padding: var(--pp-space-4) var(--pp-space-5); border: 1px solid var(--pp-info-border); border-radius: var(--pp-radius-l);
+  background: var(--pp-info-fill); color: var(--pp-text-body); font-size: var(--pp-fs-body); line-height: var(--pp-lh-body);
+}
+.site-prose .note > :last-child { margin-bottom: 0; }
+.site-prose .note p { margin-bottom: var(--pp-space-3); }
+/* Tables: the kit's table look on plain <table> markup; scrolls sideways inside itself on phones. */
+.site-prose table {
+  display: block; max-width: 100%; overflow-x: auto; margin: 0 0 var(--pp-space-6); border: 1px solid var(--pp-border); border-radius: var(--pp-radius-l);
+  border-collapse: separate; border-spacing: 0; background: var(--pp-surface); font-size: var(--pp-fs-body-s); line-height: var(--pp-lh-body-s);
+}
+.site-prose caption { padding: var(--pp-space-3) var(--pp-space-4) 0; text-align: left; color: var(--pp-text-muted); font-weight: var(--pp-weight-medium); }
+.site-prose th, .site-prose td { padding: 12px var(--pp-space-4); text-align: left; vertical-align: top; border-bottom: 1px solid var(--pp-border-subtle); }
+.site-prose th { background: var(--pp-surface-sunken); color: var(--pp-text-muted); font-size: var(--pp-fs-caption); line-height: var(--pp-lh-caption); font-weight: var(--pp-weight-semibold); white-space: nowrap; }
+.site-prose tbody tr:last-child > * { border-bottom: 0; }
+.site-prose pre { margin: 0 0 var(--pp-space-5); padding: var(--pp-space-4); border: 1px solid var(--pp-border); border-radius: var(--pp-radius-l); background: var(--pp-surface-sunken); overflow-x: auto; font: 13px/1.65 var(--pp-font-mono); color: var(--pp-text-body); }
+.site-prose pre code { padding: 0; border: 0; background: none; font-size: inherit; color: inherit; overflow-wrap: normal; }
+.site-prose .pp-code { margin-bottom: var(--pp-space-5); }
+.site-prose .pp-code pre { margin: 0; padding: var(--pp-space-4) 0; border: 0; border-radius: 0; background: none; }
+.site-prose .mark { width: 16px; height: 16px; fill: currentColor; display: inline-block; vertical-align: -3px; margin-right: 4px; }
+.site-prose__links { margin-top: var(--pp-space-10); padding-top: var(--pp-space-5); border-top: 1px solid var(--pp-border-subtle); font-size: var(--pp-fs-body-s); color: var(--pp-text-muted); }
+
+/* ---- home ------------------------------------------------------------------------------------- */
+.site-hero .pp-hero__title { text-wrap: balance; }
+.site-hero .pp-terminal pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.site-hero .pp-hero__note .site-links { margin-top: var(--pp-space-2); }
+.site-steps { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--pp-space-5); }
+.site-steps > .pp-card { display: grid; align-content: start; gap: var(--pp-space-3); min-width: 0; }
+.site-step__n {
+  display: inline-grid; place-items: center; width: 28px; height: 28px; margin-right: var(--pp-space-2); border-radius: var(--pp-radius-full);
+  background: var(--pp-accent-subtle); color: var(--pp-text-link); font-size: var(--pp-fs-body-s); font-weight: var(--pp-weight-semibold);
+}
+.site-steps h3 { display: flex; align-items: center; margin: 0; font-size: var(--pp-fs-h3); line-height: var(--pp-lh-h3); color: var(--pp-text); font-weight: var(--pp-weight-semibold); }
+@media (max-width: 800px) { .site-steps { grid-template-columns: minmax(0, 1fr); } }
+
+.site-addrs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--pp-space-5); }
+.site-addrs > .pp-card { display: grid; align-content: start; gap: var(--pp-space-3); min-width: 0; }
+.site-addrs .pp-addr { justify-self: start; max-width: 100%; }
+.site-addrs .pp-addr__text { overflow-wrap: anywhere; white-space: normal; }
+.site-addrs h3 { display: flex; flex-wrap: wrap; align-items: center; gap: var(--pp-space-2); margin: 0; font-size: var(--pp-fs-h3); line-height: var(--pp-lh-h3); color: var(--pp-text); font-weight: var(--pp-weight-semibold); }
+.site-addrs p { margin: 0; }
+@media (max-width: 800px) { .site-addrs { grid-template-columns: minmax(0, 1fr); } }
+.site-tiers { display: grid; gap: var(--pp-space-3); max-width: 760px; }
+.site-tiers .pp-table td:last-child, .site-tiers .pp-table th:last-child { text-align: right; }
+.site-tiers .pp-table td:first-child { white-space: normal; }
+
+.site-rows { display: grid; gap: var(--pp-space-20); }
+@media (max-width: 600px) { .site-rows { gap: var(--pp-space-12); } }
+.pp-feature-row__copy > p + p { margin-top: var(--pp-space-3); }
+.site-feature-links { display: grid; gap: var(--pp-space-2); margin-top: var(--pp-space-2); }
+
+/* ---- download --------------------------------------------------------------------------------- */
+.download-hero { padding-bottom: 0; }
+.download-hero + .site-band { padding-top: var(--pp-space-10); }
+.platform-symbols { position: absolute; width: 0; height: 0; overflow: hidden; }
+.download-feature { display: grid; justify-items: start; gap: var(--pp-space-3); }
+.download-feature h2 { margin: 0; font-size: var(--pp-fs-h1); line-height: var(--pp-lh-h1); font-weight: var(--pp-weight-semibold); color: var(--pp-text); }
+.download-feature p { margin: 0; }
+.download-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--pp-space-5); }
+.download-option { display: flex; flex-direction: column; align-items: flex-start; gap: var(--pp-space-2); min-width: 0; }
+.download-option h3 { margin: 0; font-size: var(--pp-fs-h3); line-height: var(--pp-lh-h3); color: var(--pp-text); font-weight: var(--pp-weight-semibold); }
+.download-option[data-platform="mac"] { grid-column: 1 / -1; }
+.download-option .platform-description { flex-grow: 1; margin: 0; }
+.download-option .download-meta { margin: 0; }
+.download-option .pp-btn { margin-top: var(--pp-space-2); max-width: 100%; white-space: normal; text-align: left; height: auto; min-height: var(--pp-control-m); }
+.download-meta { color: var(--pp-text-muted); font-size: var(--pp-fs-body-s); line-height: var(--pp-lh-body-s); }
+.download-links { margin: var(--pp-space-2) 0 0; font-size: var(--pp-fs-body-s); }
+.download-install { padding-left: 1.4em; }
+.download-install li { margin: var(--pp-space-2) 0; }
+.download-help { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--pp-space-5); }
+.download-help > .pp-card { display: grid; align-content: start; gap: var(--pp-space-3); min-width: 0; }
+.download-help h2 { margin: 0; font-size: var(--pp-fs-h2); line-height: var(--pp-lh-h2); color: var(--pp-text); font-weight: var(--pp-weight-semibold); }
+.download-help p, .download-help ol { margin: 0; }
+.download-help code { overflow-wrap: anywhere; }
+@media (max-width: 800px) {
+  .download-options, .download-help { grid-template-columns: minmax(0, 1fr); }
+  .download-feature .site-actions { flex-direction: column; align-items: stretch; width: 100%; }
+}
+
+/* ---- marketplace (public catalog cards come from marketplace.css, fed the kit's tokens) ------- */
+:root {
+  --ac-panel: var(--pp-surface);
+  --ac-raised: var(--pp-surface-raised);
+  --ac-hair: var(--pp-border-subtle);
+  --ac-hair-strong: var(--pp-border);
+  --ac-ink: var(--pp-text);
+  --ac-text: var(--pp-text-body);
+  --ac-muted: var(--pp-text-muted);
+  --ac-accent: var(--pp-accent);
+  --ac-accent-text: var(--pp-text-link);
+  --ac-accent-soft: var(--pp-accent-subtle);
+  --ac-ring: 0 0 0 3px var(--pp-focus-ring);
+  --ac-shadow: var(--pp-shadow-1);
+  --ac-shadow-hover: var(--pp-shadow-2);
+  --ac-ok: var(--pp-success);
+  --ac-input: var(--pp-surface);
+}
+.site-prose .mp-public { margin: var(--pp-space-8) 0; }
+.site-prose .mp-grid { padding-left: 0; }
+.site-prose .mp-grid li { margin: 0; }
+.site-prose .mp-card a { text-decoration: none; }
+
+/* ---- partners (partners.js draws the directory) ------------------------------------------------ */
+.on-filters { display: flex; flex-wrap: wrap; align-items: center; gap: var(--pp-space-3); margin: 0 0 var(--pp-space-6); }
+.on-filters .pp-input { flex: 1 1 240px; }
+.on-partner-grid { list-style: none; padding: 0 !important; display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: var(--pp-space-4); }
+.on-partner-grid > li { margin: 0; padding: var(--pp-space-5); border: 1px solid var(--pp-border); border-radius: var(--pp-radius-l); background: var(--pp-surface); box-shadow: var(--pp-shadow-1); }
+.on-partner-grid h2, .on-partner-grid h3 { margin: 0 0 var(--pp-space-2); font-size: var(--pp-fs-h3); line-height: var(--pp-lh-h3); }
+.on-partner-grid p { margin: 0 0 var(--pp-space-2); font-size: var(--pp-fs-body); line-height: var(--pp-lh-body); }
+.on-actions { display: flex; flex-wrap: wrap; gap: var(--pp-space-3); margin-top: var(--pp-space-6); }
+
+/* ---- checkout --------------------------------------------------------------------------------- */
+.site-checkout { width: 100%; max-width: 640px; margin: 0 auto; padding: var(--pp-space-12) var(--pp-space-5) var(--pp-space-16); }
+.site-checkout .pp-card { display: grid; gap: var(--pp-space-3); }
+.site-checkout h1 { margin: 0; font-size: var(--pp-fs-h1); line-height: var(--pp-lh-h1); color: var(--pp-text); font-weight: var(--pp-weight-semibold); }
+.site-checkout p { margin: 0; }
+.site-checkout #pp-pay-form { min-height: 40px; }
+
+/* ---- moved pages, invitation and the error page ----------------------------------------------- */
+.site-moved { display: grid; place-content: center; justify-items: center; gap: var(--pp-space-3); min-height: 60vh; padding: var(--pp-space-12) var(--pp-space-5); text-align: center; }
+.site-moved h1 { margin: 0; font-size: var(--pp-fs-h1); line-height: var(--pp-lh-h1); color: var(--pp-text); font-weight: var(--pp-weight-semibold); }
+.site-moved p { margin: 0; max-width: 48ch; }
+body.site > .pp-error-page { flex: 1 0 auto; }

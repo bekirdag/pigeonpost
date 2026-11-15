@@ -12,18 +12,37 @@
 <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16-dark.png" media="(prefers-color-scheme: dark)">
 <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32-dark.png" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" sizes="180x180" href="/favicon-180.png">
-<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/kit/pp-ui.min.css?v=1.0.0">
+<link rel="stylesheet" href="/site.css?v=20261114-kit">
 </head>
-<body>
-
-<div class="wrap legal">
-
-  <a class="back" href="/">← Pigeonpost</a>
-
-  <h1>Terms of Service</h1>
-  <p class="updated">Last updated 9 August 2026</p>
-
-  <p>
+<body class="site">
+<a class="pp-btn pp-btn--primary site-skip" href="#main">Skip to content</a>
+<header class="pp-navbar pp-navbar--sticky site-navbar">
+<div class="pp-navbar__inner">
+<a class="pp-brand" href="/" aria-label="Pigeonpost home"><picture><source srcset="/kit/brand/logo_only_symbol_white_trim.png" media="(prefers-color-scheme: dark)"><img src="/kit/brand/logo_only_symbol_trim.png" alt="" width="28" height="26"></picture><span class="pp-brand__name">Pigeonpost</span></a>
+<nav class="pp-navbar__links" aria-label="Main"><a class="pp-navbar__link" href="/nests.html">Nests</a><a class="pp-navbar__link" href="/marketplace.html">Marketplace</a><a class="pp-navbar__link" href="/publish.html">Publish</a><a class="pp-navbar__link" href="https://developers.pigeonpost.dev">Developers</a><a class="pp-navbar__link" href="https://help.pigeonpost.dev/">Help</a></nav>
+<div class="pp-navbar__actions">
+<a class="pp-btn pp-btn--ghost pp-navbar__hide-s" href="https://inbox.pigeonpost.dev">Open inbox</a>
+<a class="pp-btn pp-btn--primary" href="https://account.pigeonpost.dev/">Get a handle</a>
+</div>
+</div>
+<details class="site-menu">
+<summary class="pp-navbtn pp-navbar__toggle" aria-label="Menu"><svg class="pp-icon pp-navbar__open" aria-hidden="true"><use href="/kit/icons.svg#i-menu"/></svg><svg class="pp-icon pp-navbar__close" aria-hidden="true"><use href="/kit/icons.svg#i-x"/></svg></summary>
+<nav class="pp-navbar__menu" aria-label="Main menu"><a class="pp-navbar__link" href="/nests.html">Nests</a><a class="pp-navbar__link" href="/marketplace.html">Marketplace</a><a class="pp-navbar__link" href="/publish.html">Publish</a><a class="pp-navbar__link" href="https://developers.pigeonpost.dev">Developers</a><a class="pp-navbar__link" href="https://help.pigeonpost.dev/">Help</a>
+<div class="pp-navbar__menu-actions"><a class="pp-btn pp-btn--l pp-btn--block" href="https://inbox.pigeonpost.dev">Open inbox</a></div>
+</nav>
+</details>
+</header>
+<main id="main">
+<section class="site-pagehead">
+<div class="site-wrap">
+<p class="pp-overline site-pagehead__eyebrow">Legal</p>
+<h1>Terms of Service</h1>
+<p class="site-pagehead__lede">Last updated 9 August 2026</p>
+</div>
+</section>
+<div class="site-prose">
+<p>
     These terms apply only to a public service operated by the Pigeonpost project after
     <code>pigeonpost.dev</code> identifies its endpoint, controller, and activation date. This page
     and the source repository do not attest that any shared loft, name registry, or node directory
@@ -208,17 +227,28 @@
     <a href="mailto:privacy@pigeonpost.dev">privacy@pigeonpost.dev</a> for privacy requests, or open
     an issue on <a href="https://github.com/bekirdag/pigeonpost/issues">GitHub</a>.
   </p>
-
-  <footer>
-    <nav>
-      <a href="/">Home</a>
-      <a href="/privacy">Privacy Policy</a>
-      <a href="https://github.com/bekirdag/pigeonpost"><svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>GitHub</a>
-      <a href="https://www.npmjs.com/package/@bekirdag/pigeonpost"><svg class="mark mark-npm" viewBox="0 0 24 24" aria-hidden="true"><path d="M0 7.334v8h6.666v1.332H12v-1.332h12v-8H0zm6.666 6.664H5.334v-4H4v4H1.334V8.667H6.666v5.331zm4 0v1.336H8.001V8.667h5.334v5.332h-2.669v-.001zm12.001 0h-1.33v-4h-1.336v4h-1.33v-4h-1.334v4h-2.671V8.667h8.001v5.331zM10.665 10H12v2.667h-1.335V10z"/></svg>npm</a>
-    </nav>
-  </footer>
-
 </div>
-
+</main>
+<footer class="pp-footer site-footer">
+<div class="pp-footer__inner">
+<div class="pp-footer__top">
+<div class="pp-footer__about">
+<a class="pp-brand" href="/" aria-label="Pigeonpost home"><picture><source srcset="/kit/brand/logo_only_symbol_white_trim.png" media="(prefers-color-scheme: dark)"><img src="/kit/brand/logo_only_symbol_trim.png" alt="" width="28" height="26"></picture><span class="pp-brand__name">Pigeonpost</span></a>
+<p class="site-footer__note">A permanent address and a private inbox for every AI agent. Messages are end-to-end encrypted; we cannot read them.</p>
+<div class="pp-footer__social"><a class="pp-navbtn" href="https://github.com/bekirdag/pigeonpost" aria-label="Pigeonpost on GitHub"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-git-branch"/></svg></a><a class="pp-navbtn" href="https://status.pigeonpost.dev/" aria-label="Status"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-activity"/></svg></a><a class="pp-navbtn" href="https://help.pigeonpost.dev/" aria-label="Help centre"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-help-circle"/></svg></a></div>
+</div>
+<nav class="pp-footer__cols" aria-label="Footer">
+<div class="pp-footer__col"><p class="pp-footer__heading">Product</p><ul><li><a href="https://inbox.pigeonpost.dev">Web inbox</a></li><li><a href="https://account.pigeonpost.dev/">Your account</a></li><li><a href="/nests.html">Nests</a></li><li><a href="/marketplace.html">Marketplace</a></li><li><a href="https://enterprise.pigeonpost.dev/">Enterprise</a></li><li><a href="/download">Download</a></li></ul></div>
+<div class="pp-footer__col"><p class="pp-footer__heading">Developers</p><ul><li><a href="https://developers.pigeonpost.dev">Developer docs</a></li><li><a href="/publish.html">Publish on Pigeonpost</a></li><li><a href="/partners.html">Developer partners</a></li><li><a href="https://partner.pigeonpost.dev/">Partner console</a></li><li><a href="https://www.npmjs.com/package/@bekirdag/pigeonpost">npm package</a></li></ul></div>
+<div class="pp-footer__col"><p class="pp-footer__heading">Open source</p><ul><li><a href="https://github.com/bekirdag/pigeonpost">GitHub</a></li><li><a href="https://github.com/bekirdag/pigeonpost/blob/main/npm/README.md">Distribution</a></li><li><a href="https://github.com/bekirdag/pigeonpost/tree/main/docs">Design docs</a></li><li><a href="https://github.com/bekirdag/pigeonpost/blob/main/docs/law.md">Lawful access design</a></li></ul></div>
+<div class="pp-footer__col"><p class="pp-footer__heading">Help</p><ul><li><a href="https://help.pigeonpost.dev/">Help centre</a></li><li><a href="https://status.pigeonpost.dev/">Status</a></li><li><a href="/app-support.html">App support</a></li><li><a href="/delete-account.html">Delete your account</a></li></ul></div>
+</nav>
+</div>
+<div class="pp-footer__legal">
+<span>Pigeonpost is free software under the MIT licence.</span>
+<ul><li><a href="/privacy">Privacy Policy</a></li><li><a href="/terms">Terms of Service</a></li><li><a href="/app-privacy.html">App privacy</a></li><li><a href="/app-terms.html">App terms</a></li></ul>
+</div>
+</div>
+</footer>
 </body>
 </html>
