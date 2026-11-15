@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Marketplace — Pigeonpost</title>
-<meta name="description" content="Apps from approved publishers that you install into a Nest. Every release is built from source, reviewed and approved by Pigeonpost staff before it is listed.">
+<meta name="description" content="Services and apps from approved publishers. Every listing is reviewed and approved by Pigeonpost staff before it appears in the Marketplace.">
 <link rel="icon" href="/favicon.ico" sizes="any">
 <meta name="color-scheme" content="light dark">
 <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" media="(prefers-color-scheme: light)">
@@ -14,9 +14,9 @@
 <link rel="apple-touch-icon" sizes="180x180" href="/favicon-180.png">
 <link rel="stylesheet" href="/kit/pp-ui.min.css?v=1.0.0">
 <link rel="stylesheet" href="/site.css?v=20261114-kit">
-<link rel="stylesheet" href="/marketplace.css?v=20261111-mp2">
+<link rel="stylesheet" href="/marketplace.css?v=20261115-kit">
 <meta property="og:title" content="Marketplace — Pigeonpost">
-<meta property="og:description" content="Apps from approved publishers, installed into your Nest.">
+<meta property="og:description" content="Services and apps from approved publishers, reviewed by Pigeonpost staff.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://pigeonpost.dev/marketplace.html">
 </head>
@@ -24,7 +24,7 @@
 <a class="pp-btn pp-btn--primary site-skip" href="#main">Skip to content</a>
 <header class="pp-navbar pp-navbar--sticky site-navbar">
 <div class="pp-navbar__inner">
-<a class="pp-brand" href="/" aria-label="Pigeonpost home"><picture><source srcset="/kit/brand/logo_only_symbol_white_trim.png" media="(prefers-color-scheme: dark)"><img src="/kit/brand/logo_only_symbol_trim.png" alt="" width="28" height="26"></picture><span class="pp-brand__name">Pigeonpost</span></a>
+<a class="pp-brand" href="/" aria-label="Pigeonpost home"><picture><source srcset="/kit/brand/logo_only_symbol_white_trim.png" media="(prefers-color-scheme: dark)"><img src="/kit/brand/logo_only_symbol_trim.png" alt="" width="28" height="26"></picture><span class="pp-brand__name">Pigeonpost</span><span class="pp-brand__product">Marketplace</span></a>
 <nav class="pp-navbar__links" aria-label="Main"><a class="pp-navbar__link" href="/nests.html">Nests</a><a class="pp-navbar__link" href="/marketplace.html" aria-current="page">Marketplace</a><a class="pp-navbar__link" href="/publish.html">Publish</a><a class="pp-navbar__link" href="https://developers.pigeonpost.dev">Developers</a><a class="pp-navbar__link" href="https://help.pigeonpost.dev/">Help</a></nav>
 <div class="pp-navbar__actions">
 <a class="pp-btn pp-btn--ghost pp-navbar__hide-s" href="https://inbox.pigeonpost.dev">Open inbox</a>
@@ -38,50 +38,45 @@
 </nav>
 </details>
 </header>
-<main id="main">
-<section class="site-pagehead">
+<main id="main" class="mk">
 <div class="site-wrap">
-<p class="pp-overline site-pagehead__eyebrow">Product</p>
-<h1>Marketplace</h1>
-<p class="site-pagehead__lede">Apps from approved publishers, installed into your Nest</p>
+<section class="mk-hero" id="mk-hero">
+<p class="pp-overline">Pigeonpost Marketplace</p>
+<h1 class="pp-display-m">Services and apps from approved publishers</h1>
+<p class="pp-body-l pp-muted">Every listing is reviewed and approved by Pigeonpost staff before it appears here. You buy and run them from your Pigeonpost account.</p>
+<div class="pp-input pp-search pp-search--pill pp-input--l mk-search">
+<svg class="pp-icon pp-input__icon" aria-hidden="true"><use href="/kit/icons.svg#i-search"/></svg>
+<input class="pp-input__control" id="mk-q" type="search" value="" placeholder="Search the marketplace" aria-label="Search the marketplace" autocomplete="off">
 </div>
 </section>
-<div class="site-prose">
-<p>
-    The Marketplace offers apps from approved publishers that you install into a
-    <a href="/nests.html">Nest</a>. The catalog is just opening, and listings are being added.
-  </p>
-
-  <section class="mp-public" id="mp-public" hidden aria-live="polite"></section>
-
-  <h2>Every release is reviewed</h2>
-  <p>
-    Pigeonpost builds every release from the publisher's source code. We never run an image a
-    publisher uploads. Each release is scanned and behaviour-tested, and named Pigeonpost staff approve
-    it before it can be listed. A new version goes through review again.
-  </p>
-
-  <h2>Each buyer runs their own copy</h2>
-  <p>
-    When you install an app, you get your own isolated worker, with its own sandbox and storage. It
-    cannot reach the internet, other Pigeonpost services or other buyers' Nests.
-  </p>
-
-  <h2>Buying</h2>
-  <p>
-    Browse the catalog in your account under <strong>Products</strong> → <strong>Services</strong>.
-    An app is a one-off purchase or a monthly subscription, bought on the web at
-    <a href="https://account.pigeonpost.dev/">account.pigeonpost.dev</a>. The price is shown before you pay and includes tax.
-    Purchases are sold by Piyote Bilişim on behalf of the publisher and paid through iyzico. A monthly
-    app can be cancelled any time and keeps working until the end of the paid month. The Pigeonpost
-    apps show what you own.
-  </p>
-
-  <h2>Publish an app</h2>
-  <p>
-    Developers can build and sell apps here. Read <a href="/publish.html">Publish on Pigeonpost</a>
-      and meet our <a href="/partners.html">Developer partners</a>.
-  </p>
+<div class="mk-app" id="mk-app" aria-live="polite">
+<noscript><p class="pp-body-s pp-muted">The catalog needs JavaScript. You can also browse it in your account under Products → Services at <a href="https://account.pigeonpost.dev/">account.pigeonpost.dev</a>.</p></noscript>
+</div>
+<section class="mk-about" id="mk-about" aria-labelledby="mk-about-title">
+<h2 class="mk-about__title" id="mk-about-title">How the Marketplace works</h2>
+<div class="mk-about__grid">
+<div class="pp-card mk-about__card">
+<span class="mk-about__icon"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-shield-check"/></svg></span>
+<h3>Every release is reviewed</h3>
+<p>Pigeonpost builds every app release from the publisher's source code and never runs an image a publisher uploads. Each release is scanned and behaviour-tested, and named Pigeonpost staff approve it before it can be listed. A new version goes through review again.</p>
+</div>
+<div class="pp-card mk-about__card">
+<span class="mk-about__icon"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-lock"/></svg></span>
+<h3>Each buyer runs their own copy</h3>
+<p>When you install an app into a <a href="/nests.html">Nest</a>, you get your own isolated worker, with its own sandbox and storage. It cannot reach the internet, other Pigeonpost services or other buyers' Nests.</p>
+</div>
+<div class="pp-card mk-about__card">
+<span class="mk-about__icon"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-wallet"/></svg></span>
+<h3>Buying</h3>
+<p>Open a listing in your account at <a href="https://account.pigeonpost.dev/">account.pigeonpost.dev</a>, under <strong>Products</strong> → <strong>Services</strong>. The price is shown before you pay. Purchases are sold by Piyote Bilişim on behalf of the publisher. A monthly app can be cancelled any time and keeps working until the end of the paid month.</p>
+</div>
+<div class="pp-card mk-about__card">
+<span class="mk-about__icon"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-store"/></svg></span>
+<h3>Publish an app</h3>
+<p>Developers can build and sell apps here. Read <a href="/publish.html">Publish on Pigeonpost</a> and meet our <a href="/partners.html">Developer partners</a>.</p>
+</div>
+</div>
+</section>
 </div>
 </main>
 <footer class="pp-footer site-footer">
@@ -106,6 +101,7 @@
 </div>
 </footer>
 <script src="/marketplace-core.js?v=20261111-mp3"></script>
-<script src="/marketplace-public.js?v=20261111-mp2"></script>
+<script src="/marketplace-kit.js?v=20261115-kit"></script>
+<script src="/marketplace-public.js?v=20261115-kit"></script>
 </body>
 </html>

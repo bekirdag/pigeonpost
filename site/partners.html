@@ -9,14 +9,16 @@
 <link rel="icon" href="/favicon.ico" sizes="any">
 <link rel="stylesheet" href="/kit/pp-ui.min.css?v=1.0.0">
 <link rel="stylesheet" href="/site.css?v=20261114-kit">
-<script defer src="/marketplace-core.js"></script>
-<script defer src="/partners.js?v=20261114-onboarding"></script>
+<link rel="stylesheet" href="/marketplace.css?v=20261115-kit">
+<script defer src="/marketplace-core.js?v=20261111-mp3"></script>
+<script defer src="/marketplace-kit.js?v=20261115-kit"></script>
+<script defer src="/partners.js?v=20261115-kit"></script>
 </head>
 <body class="site">
 <a class="pp-btn pp-btn--primary site-skip" href="#main">Skip to content</a>
 <header class="pp-navbar pp-navbar--sticky site-navbar">
 <div class="pp-navbar__inner">
-<a class="pp-brand" href="/" aria-label="Pigeonpost home"><picture><source srcset="/kit/brand/logo_only_symbol_white_trim.png" media="(prefers-color-scheme: dark)"><img src="/kit/brand/logo_only_symbol_trim.png" alt="" width="28" height="26"></picture><span class="pp-brand__name">Pigeonpost</span></a>
+<a class="pp-brand" href="/" aria-label="Pigeonpost home"><picture><source srcset="/kit/brand/logo_only_symbol_white_trim.png" media="(prefers-color-scheme: dark)"><img src="/kit/brand/logo_only_symbol_trim.png" alt="" width="28" height="26"></picture><span class="pp-brand__name">Pigeonpost</span><span class="pp-brand__product">Marketplace</span></a>
 <nav class="pp-navbar__links" aria-label="Main"><a class="pp-navbar__link" href="/nests.html">Nests</a><a class="pp-navbar__link" href="/marketplace.html">Marketplace</a><a class="pp-navbar__link" href="/publish.html">Publish</a><a class="pp-navbar__link" href="https://developers.pigeonpost.dev">Developers</a><a class="pp-navbar__link" href="https://help.pigeonpost.dev/">Help</a></nav>
 <div class="pp-navbar__actions">
 <a class="pp-btn pp-btn--ghost pp-navbar__hide-s" href="https://inbox.pigeonpost.dev">Open inbox</a>
@@ -30,16 +32,14 @@
 </nav>
 </details>
 </header>
-<main id="main">
-<section class="site-pagehead">
+<main id="main" class="mk">
 <div class="site-wrap">
-<p class="pp-overline site-pagehead__eyebrow">Developers</p>
-<h1 id="partners-title">Developer partners</h1>
-<p class="site-pagehead__lede" id="partners-intro">Meet the independent publishers approved to offer apps on Pigeonpost. Each app release is reviewed separately.</p>
-</div>
+<section class="mk-hero mk-hero--compact" id="partners-hero">
+<p class="pp-overline">Pigeonpost Marketplace</p>
+<h1 class="pp-display-m" id="partners-title">Developer partners</h1>
+<p class="pp-body-l pp-muted" id="partners-intro">Meet the independent publishers approved to offer apps on Pigeonpost. Each app release is reviewed separately.</p>
 </section>
-<div class="site-prose">
-<div id="partners-content" aria-live="polite"><p>Loading partners…</p></div>
+<div class="mk-app" id="partners-content" aria-live="polite"><p class="pp-body-s pp-muted mk-loading">Loading partners…</p></div>
 </div>
 </main>
 <footer class="pp-footer site-footer">
