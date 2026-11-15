@@ -232,8 +232,7 @@ body.site > .pp-error-page { flex: 1 0 auto; }
 /* Home page, laid out as the kit's website template (2026-11-15). The template's inline styles
    live here because pigeonpost.dev's CSP has no 'unsafe-inline' for style attributes. */
 .site-logos { padding-block: var(--pp-space-2) var(--pp-space-10); }
-.site-logos .pp-wordmark { gap: var(--pp-space-2); color: var(--pp-text-muted); text-decoration: none; }
-.site-logos .pp-wordmark:hover { color: var(--pp-text); }
+.site-logos .pp-wordmark { gap: var(--pp-space-2); color: var(--pp-text-muted); }
 .site-logos .pp-wordmark .pp-icon { width: 20px; height: 20px; }
 .site-band > .site-rows-wide { gap: 96px; }
 @media (max-width: 760px) { .site-band > .site-rows-wide { gap: var(--pp-space-12); } }
