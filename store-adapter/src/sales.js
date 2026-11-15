@@ -77,7 +77,7 @@ export const FRAME = `<!DOCTYPE html>
 <tr><td class="pp-card pp-pad" style="background:#FFFFFF;border:1px solid #E1E5EA;border-radius:16px;padding:32px 32px 28px;">
 {{CONTENT}}
 </td></tr>
-<tr><td class="pp-foot" style="padding:18px 8px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:12px;line-height:18px;color:#59626E;">{{REASON}}<br>Pigeonpost · Piyote Bilişim · pigeonpost.dev</td></tr>
+<tr><td class="pp-foot" style="padding:18px 8px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:12px;line-height:18px;color:#59626E;">{{REASON}}<br>Pigeonpost · Piyote Bilişim Ltd. Şti. · pigeonpost.dev</td></tr>
 </table>
 </td></tr>
 </table>
@@ -103,7 +103,7 @@ export function renderLead(lead) {
   const text = `A "Talk to sales" request came in from the enterprise portal at ${lead.at}.\n\n`
     + rows.map(([key, label]) => `${label}: ${lead[key]}`).join("\n")
     + `\n\nReference: ${lead.id}\nReply to the contact address directly; replies to this message are not read.\n`
-    + `\n--\nPigeonpost · Piyote Bilişim · pigeonpost.dev\n`;
+    + `\n--\nPigeonpost · Piyote Bilişim Ltd. Şti. · pigeonpost.dev\n`;
   const label = (l) => `<div class="pp-foot" style="font-family:${FONT};font-size:12px;line-height:16px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:#59626E;">${esc(l)}</div>`;
   const box = rows.map(([key, l], i) => `<div style="margin-top:${i ? 12 : 0}px;">${label(l)}`
     + `<div class="pp-p" style="margin-top:2px;white-space:pre-wrap;font-size:14px;line-height:22px;color:#343C47;">${esc(lead[key])}</div></div>`).join("");

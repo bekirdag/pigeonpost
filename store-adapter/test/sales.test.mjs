@@ -86,7 +86,7 @@ test("a lead is emailed to a person through the pigeonpost-notice workflow, with
   assert.deepEqual(images, [LOGO_LIGHT, LOGO_DARK], "no tracking pixel");
   assert.ok(!/href=/i.test(body.html), "no links");
   assert.ok(body.html.includes("max-width:560px") && body.html.includes("prefers-color-scheme: dark"));
-  assert.ok(body.html.includes("<!-- pp-email-frame v1 -->") && body.html.includes("Pigeonpost · Piyote Bilişim · pigeonpost.dev"));
+  assert.ok(body.html.includes("<!-- pp-email-frame v1 -->") && body.html.includes("Pigeonpost · Piyote Bilişim Ltd. Şti. · pigeonpost.dev"));
   assert.ok(!/@font-face|@import|<script|<link/i.test(body.html), "no webfont, script or stylesheet");
 });
 
@@ -98,7 +98,7 @@ test("the lead uses the design kit frame and the payload fits the notice schema 
   assert.ok(body.text.length > 0 && body.text.length <= 256_000);
   assert.equal(body.payload.html, body.html);
   assert.ok(body.html.startsWith("<!DOCTYPE html>"));
-  assert.ok(body.text.endsWith("Pigeonpost · Piyote Bilişim · pigeonpost.dev\n"));
+  assert.ok(body.text.endsWith("Pigeonpost · Piyote Bilişim Ltd. Şti. · pigeonpost.dev\n"));
 });
 
 test("the frame is byte for byte the postbox's shared frame", () => {
