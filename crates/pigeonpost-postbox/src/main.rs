@@ -7128,9 +7128,11 @@ async fn not_found() -> impl IntoResponse {
 }
 
 /// Retention sweep loop. Opens the same store as the server (WAL makes that safe) and, each tick,
-/// drops ephemeral identities and messages older than `EPHEMERAL_RETENTION_DAYS`, then collects
-/// the attachments nothing refers to any more. In P0 every identity is ephemeral; when durable
-/// (paid) identities land they'll be excluded by a plan flag.
+/// expires anonymous `/k/` mailboxes (no account behind them) older than
+/// `EPHEMERAL_RETENTION_DAYS` (30) together with their messages, then collects the attachments
+/// nothing refers to any more. Mailboxes with an account are never deleted by age; they are
+/// bounded by size only: `FREE_QUOTA_MB` (20 MB) on the free plan and `PAID_QUOTA_MB` (1 GB) on
+/// paid plans. See `Store::reap`.
 ///
 /// The attachment pass is the only thing that returns disk. Deleting a message releases that
 /// mailbox's rows in the request that does it, but nothing else does: an upload whose send never

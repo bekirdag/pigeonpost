@@ -6,10 +6,11 @@
 //! `keycloak/themes/pigeonpost/email/html/template.ftl`), which renders exactly this, and follows
 //! the design kit's template (design.pigeonpost.dev/templates/email.html): a 560 px column on the
 //! kit ground, the bird symbol beside a live-text wordmark in Pigeon Navy, a white 16 px card, the
-//! kit dark palette, and the footer line "Pigeonpost · Piyote Bilişim · pigeonpost.dev". Sign-in
-//! codes, saas_be receipts, calendar and organization messages therefore share one frame byte for
-//! byte. The frame carries the `pp-email-frame v1` marker, so saas_be passes it through unchanged
-//! instead of wrapping it a second time. The store adapter keeps a copy (its tests compare it).
+//! kit dark palette, and the footer line "Pigeonpost · Piyote Bilişim Ltd. Şti. · pigeonpost.dev"
+//! (the company's legal name). Sign-in codes, saas_be receipts, calendar and organization messages
+//! therefore share one frame byte for byte. The frame carries the `pp-email-frame v1` marker,
+//! so saas_be passes it through unchanged instead of wrapping it a second time. The store adapter
+//! keeps a copy (its tests compare it).
 //!
 //! The card blocks below use the frame's component styles and its class names only (`pp-h`,
 //! `pp-p`, `pp-foot`, `pp-box`, `pp-cell`, `pp-rule`, `pp-a`), so the frame's one `<style>` block
@@ -29,7 +30,7 @@ pub(crate) const LOGO_DARK: &str = "https://pigeonpost.dev/email/pigeonpost-symb
 
 /// The frame's last footer line.
 #[cfg(test)]
-pub(crate) const FOOTER_BRAND: &str = "Pigeonpost · Piyote Bilişim · pigeonpost.dev";
+pub(crate) const FOOTER_BRAND: &str = "Pigeonpost · Piyote Bilişim Ltd. Şti. · pigeonpost.dev";
 
 /// The kit's system font stack (no webfont is fetched).
 pub(crate) const FONT: &str =
