@@ -158,7 +158,7 @@ fn mail_golden_messages_share_the_kit_frame_and_guarantees() {
     for (name, (subject, html, text)) in &all {
         // The kit frame.
         assert!(html.contains("max-width:560px"), "{name}");
-        assert!(html.contains("class=\"pp-brand\""), "{name}");
+        assert!(html.contains("class=\"pp-word\""), "{name}");
         assert!(html.contains(crate::mail_layout::LOGO_LIGHT), "{name}");
         assert!(html.contains(crate::mail_layout::LOGO_DARK), "{name}");
         assert!(html.contains("prefers-color-scheme: dark"), "{name}");

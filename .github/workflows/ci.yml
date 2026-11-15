@@ -258,7 +258,8 @@ jobs:
           # saas_be's credit checkout, which hands it to iyzico; the field name is that contract's.
           # mail_layout.rs renders those contact-address messages: it names the published logo
           # path on pigeonpost.dev and the client meta tags by their fixed spellings. The golden
-          # files in crates/pigeonpost-postbox/tests/mail-golden are that renderer's exact output.
+          # files in crates/pigeonpost-postbox/tests/mail-golden are that renderer's exact output, and
+          # src/mail_frame.html is the shared frame it fills (the same skeleton as the Keycloak theme).
           # The vendored LiveKit client bundles sdp-transform, whose SDP grammar names the
           # RFC 4566 `e=` line by its spec name; the file is pinned byte for byte by its hash.
           # Calendar screens describe actual contact-address guest delivery, distinct from
@@ -305,6 +306,7 @@ jobs:
               ':(exclude)store-adapter/test/credits.test.mjs' \
               ':(exclude)crates/pigeonpost-postbox/src/mail_layout.rs' \
               ':(exclude)crates/pigeonpost-postbox/tests/mail-golden' \
+              ':(exclude)crates/pigeonpost-postbox/src/mail_frame.html' \
               ':(exclude)apps/ios/Tests/main.swift' \
               ':(exclude)apps/ios/Shared/Auth/Session.swift' \
               ':(exclude)apps/ios/Tests/groups-postbox.mjs' \

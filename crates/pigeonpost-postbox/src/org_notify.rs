@@ -112,7 +112,7 @@ pub(crate) fn render(
         esc(org)
     );
     let preheader = format!("Your company address will be {handle}.");
-    let html = layout::document("en", &subject, &preheader, &card, &footer);
+    let html = layout::document("en", &preheader, &card, &footer);
     (subject, html, text)
 }
 

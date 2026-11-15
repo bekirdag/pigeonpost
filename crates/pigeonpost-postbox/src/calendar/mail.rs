@@ -603,7 +603,7 @@ pub(crate) fn render(kind: Kind, v: &View) -> (String, String, String) {
         t.push_str(&format!("{}\n", w.no_reply));
     }
     t.push_str("Pigeonpost · pigeonpost.dev\n");
-    let html = layout::document(&v.lang, &subject, &preheader, &h, &foot.join("<br>"));
+    let html = layout::document(&v.lang, &preheader, &h, &foot.join("<br>"));
     (subject, html, t)
 }
 

@@ -6,7 +6,7 @@ import { join } from "node:path";
 import http from "node:http";
 import { once } from "node:events";
 import { spawnBridge, readBody } from "./harness.mjs";
-import { createNotifier, LOGO_DARK, LOGO_LIGHT, noticeRequest, renderLead } from "../src/sales.js";
+import { createNotifier, FRAME, LOGO_DARK, LOGO_LIGHT, noticeRequest, renderLead } from "../src/sales.js";
 
 const good = { name: "Ada Example", company: "Example Corp", contact: "ada@example.test", size: "800", message: "We need 800 seats." };
 const post = (base, body, headers = {}) => fetch(base + "/api/ent/sales", {
@@ -86,7 +86,7 @@ test("a lead is emailed to a person through the pigeonpost-notice workflow, with
   assert.deepEqual(images, [LOGO_LIGHT, LOGO_DARK], "no tracking pixel");
   assert.ok(!/href=/i.test(body.html), "no links");
   assert.ok(body.html.includes("max-width:560px") && body.html.includes("prefers-color-scheme: dark"));
-  assert.ok(body.html.includes('class="pp-brand"') && body.html.includes("#05368B"));
+  assert.ok(body.html.includes("<!-- pp-email-frame v1 -->") && body.html.includes("Pigeonpost · Piyote Bilişim · pigeonpost.dev"));
   assert.ok(!/@font-face|@import|<script|<link/i.test(body.html), "no webfont, script or stylesheet");
 });
 
@@ -98,7 +98,12 @@ test("the lead uses the design kit frame and the payload fits the notice schema 
   assert.ok(body.text.length > 0 && body.text.length <= 256_000);
   assert.equal(body.payload.html, body.html);
   assert.ok(body.html.startsWith("<!DOCTYPE html>"));
-  assert.ok(body.text.endsWith("Pigeonpost · pigeonpost.dev\n"));
+  assert.ok(body.text.endsWith("Pigeonpost · Piyote Bilişim · pigeonpost.dev\n"));
+});
+
+test("the frame is byte for byte the postbox's shared frame", () => {
+  const rust = readFileSync(new URL("../../crates/pigeonpost-postbox/src/mail_frame.html", import.meta.url), "utf8");
+  assert.equal(FRAME, rust.replace(/\r\n/g, "\n"));
 });
 
 test("the lead notification matches the notice schema and the subject stays one line", () => {
