@@ -9,29 +9,28 @@
 <!-- The web server replaces this placeholder with the per-request CSP nonce. -->
 <meta name="csp-nonce" content="__CSP_NONCE__">
 <link rel="icon" href="/favicon.ico" sizes="any">
-<link rel="stylesheet" href="/style.css">
-<link rel="stylesheet" href="/brand.css">
-<link rel="stylesheet" href="/account.css">
+<link rel="stylesheet" href="/kit/pp-ui.min.css?v=1.0.0">
+<link rel="stylesheet" href="/site.css?v=20261114-kit">
 </head>
-<body>
-<div class="wrap">
-  <header>
-    <a href="/account"><picture class="brand-logo">
-      <source srcset="/logo_white.png" media="(prefers-color-scheme: dark)">
-      <img src="/logo.png" alt="Pigeonpost" width="640" height="213">
-    </picture></a>
-  </header>
-  <main class="account">
-    <div class="ac-card">
-      <h2 id="pp-pay-title">Secure payment</h2>
-      <p class="muted" id="pp-pay-summary">Preparing the iyzico payment form…</p>
-      <p class="ac-note">Your card details go directly to iyzico. Pigeonpost never sees or stores them.</p>
-      <p class="ac-note">Seller: Piyote Bilişim (iyzico merchant 101064752). <a href="/app-terms.html">Terms</a></p>
-      <div id="pp-pay-form"></div>
-      <p><a href="/account">Back to your account</a></p>
-    </div>
-  </main>
+<body class="site">
+<header class="pp-navbar site-navbar">
+<div class="pp-navbar__inner">
+<a class="pp-brand" href="/account" aria-label="Pigeonpost account"><picture><source srcset="/kit/brand/logo_only_symbol_white_trim.png" media="(prefers-color-scheme: dark)"><img src="/kit/brand/logo_only_symbol_trim.png" alt="" width="28" height="26"></picture><span class="pp-brand__name">Pigeonpost</span><span class="pp-brand__product">Payment</span></a>
+<div class="pp-navbar__actions">
+<span class="pp-badge pp-badge--success"><svg class="pp-icon pp-icon--s" aria-hidden="true"><use href="/kit/icons.svg#i-lock"/></svg>Secure</span>
 </div>
+</div>
+</header>
+<main id="main" class="site-checkout">
+  <div class="pp-card pp-card--l">
+    <h1 id="pp-pay-title">Secure payment</h1>
+    <p class="pp-muted" id="pp-pay-summary">Preparing the iyzico payment form…</p>
+    <p class="site-note">Your card details go directly to iyzico. Pigeonpost never sees or stores them.</p>
+    <p class="site-note">Seller: Piyote Bilişim (iyzico merchant 101064752). <a href="/app-terms.html">Terms</a></p>
+    <div id="pp-pay-form"></div>
+    <p><a class="pp-btn pp-btn--ghost" href="/account"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-arrow-left"/></svg>Back to your account</a></p>
+  </div>
+</main>
 <script src="/account-config.js"></script>
 <script src="/billing/checkout.js"></script>
 </body>

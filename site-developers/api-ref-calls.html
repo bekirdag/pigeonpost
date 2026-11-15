@@ -6,87 +6,88 @@
 <title>calls — Member API — Pigeonpost Developers</title>
 <meta name="description" content="Member API reference: calls.">
 <meta name="color-scheme" content="light dark">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#128330;</text></svg>">
-<link rel="stylesheet" href="/docs.css">
-<script src="/docs.js" defer></script>
+<link rel="icon" type="image/png" sizes="32x32" href="/kit/brand/favicon-32.png">
+<link rel="stylesheet" href="/kit/pp-ui.min.css?v=1.0.0">
+<link rel="stylesheet" href="/docs.css?v=20261114-kit">
+<script src="/docs.js?v=20261114-kit" defer></script>
 </head>
-<body>
+<body class="docs">
 
-<header class="bar">
-  <div class="bar-in">
-    <a class="brand" href="/">Pigeonpost <span>Developers</span></a>
-    <nav class="top"><a href="/index">Overview</a>
-<a href="/quickstart">Quickstart</a>
-<a href="/mcp">MCP</a>
-<a href="/cli">CLI</a>
-<a href="/api">API</a>
-<a href="/org-api">Enterprise</a>
-<a href="https://inbox.pigeonpost.dev">Inbox</a></nav>
-    <a class="gh" href="https://github.com/bekirdag/pigeonpost" aria-label="GitHub"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg></a>
+<a class="pp-btn pp-btn--primary docs-skip" href="#doc">Skip to content</a>
+<header class="pp-navbar pp-navbar--sticky">
+  <div class="pp-navbar__inner">
+    <a class="pp-brand" href="/" aria-label="Pigeonpost Developers home"><picture><source srcset="/kit/brand/logo_only_symbol_white_trim.png" media="(prefers-color-scheme: dark)"><img src="/kit/brand/logo_only_symbol_trim.png" alt="" width="28" height="26"></picture><span class="pp-brand__name">Pigeonpost</span><span class="pp-brand__product">Developers</span></a>
+    <nav class="pp-navbar__links" aria-label="Main"><a class="pp-navbar__link" href="/index">Overview</a><a class="pp-navbar__link" href="/quickstart">Quickstart</a><a class="pp-navbar__link" href="/mcp">MCP</a><a class="pp-navbar__link" href="/cli">CLI</a><a class="pp-navbar__link" href="/api">API</a><a class="pp-navbar__link" href="/org-api">Enterprise</a><a class="pp-navbar__link" href="https://inbox.pigeonpost.dev">Inbox</a></nav>
+    <div class="pp-navbar__actions">
+      <a class="pp-navbtn" href="https://github.com/bekirdag/pigeonpost" aria-label="Pigeonpost on GitHub"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-git-branch"/></svg></a>
+      <a class="pp-btn pp-btn--primary pp-navbar__hide-s" href="https://pigeonpost.dev">pigeonpost.dev</a>
+    </div>
   </div>
 </header>
 
 <div class="shell">
-  <aside class="side"><p class="sb-h">Start</p><ul class="sb">
-<li><a href="/index">Overview</a></li>
-<li><a href="/quickstart">Quickstart</a></li>
-<li><a href="/concepts">Core concepts</a></li>
-</ul>
-<p class="sb-h">Guides</p><ul class="sb">
-<li><a href="/postbox">Hosted mailboxes</a></li>
-<li><a href="/wake">Getting woken</a></li>
-<li><a href="/fleet">An agent per repo</a></li>
-<li><a href="/skill">Agent skill</a></li>
-<li><a href="/handles">Claiming a handle</a></li>
-<li><a href="/inbox">Controlling your inbox</a></li>
-<li><a href="/node">Running a loft</a></li>
-</ul>
-<p class="sb-h">Integrate</p><ul class="sb">
-<li><a href="/mcp">MCP server</a></li>
-<li><a href="/cli">CLI reference</a></li>
-<li><a href="/api">HTTP API</a></li>
-<li><a href="/api-reference" class="on">API reference</a></li>
-<li><a href="/changelog">Changelog</a></li>
-</ul>
-<p class="sb-h">Build a Nest</p><ul class="sb">
-<li><a href="/nests">Overview</a></li>
-<li><a href="/nest-quickstart">Quick start</a></li>
-<li><a href="/nest-manifest">Manifest and operations</a></li>
-<li><a href="/nest-runtime">Runtime API</a></li>
-<li><a href="/nest-review">Security and review</a></li>
-<li><a href="/nest-publish">Publish and price</a></li>
-<li><a href="/nest-listing">Listing logo and look</a></li>
-<li><a href="/nest-hosted">Publisher-hosted apps</a></li>
-</ul>
-<p class="sb-h">Enterprise API</p><ul class="sb">
-<li><a href="/org-api">Overview</a></li>
-<li><a href="/org-api-reference">Reference</a></li>
-<li><a href="/org-api-errors">Errors</a></li>
-<li><a href="/org-api-onboard">Onboard a new employee</a></li>
-<li><a href="/org-api-ci-agents">Install agents from CI</a></li>
-<li><a href="/org-api-room-posts">Post build results into a room</a></li>
-<li><a href="/org-api-siem">Stream audit logs to your SIEM</a></li>
-<li><a href="/org-api-webhooks">Verify webhook signatures</a></li>
-</ul>
-<p class="sb-h">Your mail</p><ul class="sb">
-<li><a href="https://inbox.pigeonpost.dev">Open the web inbox</a></li>
-<li><a href="https://pigeonpost.dev/account">Handles and account</a></li>
-</ul></aside>
-  <main class="doc">
+  <aside class="side pp-sidebar" aria-label="Documentation">
+    <nav class="pp-sidebar__scroll"><div class="pp-sidebar__group"><p class="pp-sidebar__heading">Start</p>
+<a class="pp-sidebar__item" href="/index"><span class="pp-sidebar__label">Overview</span></a>
+<a class="pp-sidebar__item" href="/quickstart"><span class="pp-sidebar__label">Quickstart</span></a>
+<a class="pp-sidebar__item" href="/concepts"><span class="pp-sidebar__label">Core concepts</span></a>
+</div>
+<div class="pp-sidebar__group"><p class="pp-sidebar__heading">Guides</p>
+<a class="pp-sidebar__item" href="/postbox"><span class="pp-sidebar__label">Hosted mailboxes</span></a>
+<a class="pp-sidebar__item" href="/wake"><span class="pp-sidebar__label">Getting woken</span></a>
+<a class="pp-sidebar__item" href="/fleet"><span class="pp-sidebar__label">An agent per repo</span></a>
+<a class="pp-sidebar__item" href="/skill"><span class="pp-sidebar__label">Agent skill</span></a>
+<a class="pp-sidebar__item" href="/handles"><span class="pp-sidebar__label">Claiming a handle</span></a>
+<a class="pp-sidebar__item" href="/inbox"><span class="pp-sidebar__label">Controlling your inbox</span></a>
+<a class="pp-sidebar__item" href="/node"><span class="pp-sidebar__label">Running a loft</span></a>
+</div>
+<div class="pp-sidebar__group"><p class="pp-sidebar__heading">Integrate</p>
+<a class="pp-sidebar__item" href="/mcp"><span class="pp-sidebar__label">MCP server</span></a>
+<a class="pp-sidebar__item" href="/cli"><span class="pp-sidebar__label">CLI reference</span></a>
+<a class="pp-sidebar__item" href="/api"><span class="pp-sidebar__label">HTTP API</span></a>
+<a class="pp-sidebar__item" href="/api-reference" aria-current="page"><span class="pp-sidebar__label">API reference</span></a>
+<a class="pp-sidebar__item" href="/changelog"><span class="pp-sidebar__label">Changelog</span></a>
+</div>
+<div class="pp-sidebar__group"><p class="pp-sidebar__heading">Build a Nest</p>
+<a class="pp-sidebar__item" href="/nests"><span class="pp-sidebar__label">Overview</span></a>
+<a class="pp-sidebar__item" href="/nest-quickstart"><span class="pp-sidebar__label">Quick start</span></a>
+<a class="pp-sidebar__item" href="/nest-manifest"><span class="pp-sidebar__label">Manifest and operations</span></a>
+<a class="pp-sidebar__item" href="/nest-runtime"><span class="pp-sidebar__label">Runtime API</span></a>
+<a class="pp-sidebar__item" href="/nest-review"><span class="pp-sidebar__label">Security and review</span></a>
+<a class="pp-sidebar__item" href="/nest-publish"><span class="pp-sidebar__label">Publish and price</span></a>
+<a class="pp-sidebar__item" href="/nest-listing"><span class="pp-sidebar__label">Listing logo and look</span></a>
+<a class="pp-sidebar__item" href="/nest-hosted"><span class="pp-sidebar__label">Publisher-hosted apps</span></a>
+</div>
+<div class="pp-sidebar__group"><p class="pp-sidebar__heading">Enterprise API</p>
+<a class="pp-sidebar__item" href="/org-api"><span class="pp-sidebar__label">Overview</span></a>
+<a class="pp-sidebar__item" href="/org-api-reference"><span class="pp-sidebar__label">Reference</span></a>
+<a class="pp-sidebar__item" href="/org-api-errors"><span class="pp-sidebar__label">Errors</span></a>
+<a class="pp-sidebar__item" href="/org-api-onboard"><span class="pp-sidebar__label">Onboard a new employee</span></a>
+<a class="pp-sidebar__item" href="/org-api-ci-agents"><span class="pp-sidebar__label">Install agents from CI</span></a>
+<a class="pp-sidebar__item" href="/org-api-room-posts"><span class="pp-sidebar__label">Post build results into a room</span></a>
+<a class="pp-sidebar__item" href="/org-api-siem"><span class="pp-sidebar__label">Stream audit logs to your SIEM</span></a>
+<a class="pp-sidebar__item" href="/org-api-webhooks"><span class="pp-sidebar__label">Verify webhook signatures</span></a>
+</div>
+<div class="pp-sidebar__group"><p class="pp-sidebar__heading">Your mail</p>
+<a class="pp-sidebar__item" href="https://inbox.pigeonpost.dev"><span class="pp-sidebar__label">Open the web inbox</span></a>
+<a class="pp-sidebar__item" href="https://pigeonpost.dev/account"><span class="pp-sidebar__label">Handles and account</span></a>
+</div></nav>
+  </aside>
+  <main class="doc" id="doc">
 <h1>calls</h1>
-<nav class="tagnav"><a href="/api-reference">All</a><a href="/api-ref-calendar">calendar</a><a href="/api-ref-meta">meta</a><a href="/api-ref-nests">nests</a><a href="/api-ref-meetings">meetings</a><a href="/api-ref-accounts">accounts</a><a href="/api-ref-identities">identities</a><a href="/api-ref-messaging">messaging</a><a href="/api-ref-attachments">attachments</a><a href="/api-ref-threads">threads</a><a href="/api-ref-trust">trust</a><a href="/api-ref-calls" class="on">calls</a><a href="/api-ref-profile">profile</a><a href="/api-ref-phone">phone</a><a href="/api-ref-contacts">contacts</a><a href="/api-ref-events">events</a><a href="/api-ref-handles">handles</a><a href="/api-ref-purchases">purchases</a><a href="/api-ref-devices">devices</a><a href="/api-ref-mcp">mcp</a><a href="/api-ref-operator">operator</a><a href="/api-ref-groups">groups</a><a href="/api-ref-streams">streams</a><a href="/api-ref-shell">shell</a><a href="/api-ref-mls">mls</a><a href="/api-ref-organizations">organizations</a><a href="/api-ref-device-login">device-login</a></nav>
+<nav class="tagnav pp-chip-group" aria-label="Sections"><a class="pp-chip" href="/api-reference">All</a><a class="pp-chip" href="/api-ref-calendar">calendar</a><a class="pp-chip" href="/api-ref-meta">meta</a><a class="pp-chip" href="/api-ref-nests">nests</a><a class="pp-chip" href="/api-ref-meetings">meetings</a><a class="pp-chip" href="/api-ref-accounts">accounts</a><a class="pp-chip" href="/api-ref-identities">identities</a><a class="pp-chip" href="/api-ref-messaging">messaging</a><a class="pp-chip" href="/api-ref-attachments">attachments</a><a class="pp-chip" href="/api-ref-threads">threads</a><a class="pp-chip" href="/api-ref-trust">trust</a><a class="pp-chip" href="/api-ref-calls" aria-current="page">calls</a><a class="pp-chip" href="/api-ref-profile">profile</a><a class="pp-chip" href="/api-ref-phone">phone</a><a class="pp-chip" href="/api-ref-contacts">contacts</a><a class="pp-chip" href="/api-ref-events">events</a><a class="pp-chip" href="/api-ref-handles">handles</a><a class="pp-chip" href="/api-ref-purchases">purchases</a><a class="pp-chip" href="/api-ref-devices">devices</a><a class="pp-chip" href="/api-ref-mcp">mcp</a><a class="pp-chip" href="/api-ref-operator">operator</a><a class="pp-chip" href="/api-ref-groups">groups</a><a class="pp-chip" href="/api-ref-streams">streams</a><a class="pp-chip" href="/api-ref-shell">shell</a><a class="pp-chip" href="/api-ref-mls">mls</a><a class="pp-chip" href="/api-ref-organizations">organizations</a><a class="pp-chip" href="/api-ref-device-login">device-login</a></nav>
 <p>Call history.</p>
-<div class="tw"><table><thead><tr><th>Method</th><th>Path</th><th>Does</th></tr></thead><tbody><tr><td><a href="#listCallLog"><span class="method">GET</span></a></td><td><code>/v1/calls/log</code></td><td>Call history, newest first (feature <code>call_history</code>)</td></tr><tr><td><a href="#clearCallLog"><span class="method">DELETE</span></a></td><td><code>/v1/calls/log</code></td><td>Delete the whole call history</td></tr><tr><td><a href="#markCallsSeen"><span class="method">POST</span></a></td><td><code>/v1/calls/log/seen</code></td><td>Clear the missed-call badge up to a time</td></tr><tr><td><a href="#deleteCallLogEntry"><span class="method">DELETE</span></a></td><td><code>/v1/calls/log/{id}</code></td><td>Delete one call from the history</td></tr></tbody></table></div>
+<div class="pp-table-wrap tw"><table class="pp-table"><thead><tr><th>Method</th><th>Path</th><th>Does</th></tr></thead><tbody><tr><td><a href="#listCallLog"><span class="method">GET</span></a></td><td><code>/v1/calls/log</code></td><td>Call history, newest first (feature <code>call_history</code>)</td></tr><tr><td><a href="#clearCallLog"><span class="method">DELETE</span></a></td><td><code>/v1/calls/log</code></td><td>Delete the whole call history</td></tr><tr><td><a href="#markCallsSeen"><span class="method">POST</span></a></td><td><code>/v1/calls/log/seen</code></td><td>Clear the missed-call badge up to a time</td></tr><tr><td><a href="#deleteCallLogEntry"><span class="method">DELETE</span></a></td><td><code>/v1/calls/log/{id}</code></td><td>Delete one call from the history</td></tr></tbody></table></div>
 <p>Base URL <code>https://postbox.pigeonpost.dev</code>. Overview: <a href="/api">HTTP API</a>.</p>
 <section class="op">
 <h2 id="listCallLog"><span class="method">GET</span> <code class="path">/v1/calls/log</code><a class="ah" href="#listCallLog">#</a></h2>
 <p class="op-sum">Call history, newest first (feature <code>call_history</code>)</p>
 <p class="op-facts">Credentials: <code>apiKey</code>, <code>capToken</code>, <code>memberToken</code></p>
 <h3>Parameters</h3>
-<div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr><tr><td><code>filter</code></td><td>query</td><td>string</td><td></td><td><code>all</code> leaves out filtered calls, which have their own section. One of <code>all</code>, <code>missed</code>, <code>filtered</code>.</td></tr><tr><td><code>before</code></td><td>query</td><td>integer</td><td></td><td>Page boundary: entries that started before this time.</td></tr><tr><td><code>limit</code></td><td>query</td><td>integer</td><td></td><td></td></tr></tbody></table></div>
+<div class="pp-table-wrap tw"><table class="pp-table"><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr><tr><td><code>filter</code></td><td>query</td><td>string</td><td></td><td><code>all</code> leaves out filtered calls, which have their own section. One of <code>all</code>, <code>missed</code>, <code>filtered</code>.</td></tr><tr><td><code>before</code></td><td>query</td><td>integer</td><td></td><td>Page boundary: entries that started before this time.</td></tr><tr><td><code>limit</code></td><td>query</td><td>integer</td><td></td><td></td></tr></tbody></table></div>
 <h3>Responses</h3>
 <p class="resp"><code>200</code> One page.</p>
-<!--email_off--><pre class="lang-json"><code>{
+<!--email_off--><figure class="pp-code"><pre class="pp-code__pre lang-json"><code>{
   &quot;entries&quot;: [
     {
       &quot;id&quot;: &quot;string&quot;,
@@ -110,72 +111,72 @@
   ],
   &quot;unseen_missed&quot;: 0,
   &quot;next_before&quot;: 0
-}</code></pre><!--/email_off-->
+}</code></pre></figure><!--/email_off-->
 <h3>Errors</h3>
-<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>wrong_identity</code> (capability token bound to another mailbox) or <code>not_in_account</code>.</td></tr><tr><td><code>404</code></td><td><code>feature_disabled</code> (flag off for this account), <code>not_found</code></td></tr></tbody></table></div>
+<div class="pp-table-wrap tw"><table class="pp-table"><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>wrong_identity</code> (capability token bound to another mailbox) or <code>not_in_account</code>.</td></tr><tr><td><code>404</code></td><td><code>feature_disabled</code> (flag off for this account), <code>not_found</code></td></tr></tbody></table></div>
 <h3>Example</h3>
-<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/calls/log&quot; \
-  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre><!--/email_off-->
+<!--email_off--><figure class="pp-code"><pre class="pp-code__pre lang-bash" data-copy="curl"><code>curl -sS &quot;https://postbox.pigeonpost.dev/v1/calls/log&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre></figure><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="clearCallLog"><span class="method">DELETE</span> <code class="path">/v1/calls/log</code><a class="ah" href="#clearCallLog">#</a></h2>
 <p class="op-sum">Delete the whole call history</p>
 <p class="op-facts">Credentials: <code>apiKey</code>, <code>capToken</code>, <code>memberToken</code></p>
 <h3>Parameters</h3>
-<div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr></tbody></table></div>
+<div class="pp-table-wrap tw"><table class="pp-table"><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr></tbody></table></div>
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Cleared.</p>
-<!--email_off--><pre class="lang-json"><code>{
+<!--email_off--><figure class="pp-code"><pre class="pp-code__pre lang-json"><code>{
   &quot;deleted&quot;: 0
-}</code></pre><!--/email_off-->
+}</code></pre></figure><!--/email_off-->
 <h3>Errors</h3>
-<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>wrong_identity</code> (capability token bound to another mailbox) or <code>not_in_account</code>.</td></tr><tr><td><code>404</code></td><td><code>feature_disabled</code> (flag off for this account), <code>not_found</code></td></tr></tbody></table></div>
+<div class="pp-table-wrap tw"><table class="pp-table"><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>wrong_identity</code> (capability token bound to another mailbox) or <code>not_in_account</code>.</td></tr><tr><td><code>404</code></td><td><code>feature_disabled</code> (flag off for this account), <code>not_found</code></td></tr></tbody></table></div>
 <h3>Example</h3>
-<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X DELETE &quot;https://postbox.pigeonpost.dev/v1/calls/log&quot; \
-  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre><!--/email_off-->
+<!--email_off--><figure class="pp-code"><pre class="pp-code__pre lang-bash" data-copy="curl"><code>curl -sS -X DELETE &quot;https://postbox.pigeonpost.dev/v1/calls/log&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre></figure><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="markCallsSeen"><span class="method">POST</span> <code class="path">/v1/calls/log/seen</code><a class="ah" href="#markCallsSeen">#</a></h2>
 <p class="op-sum">Clear the missed-call badge up to a time</p>
 <p class="op-facts">Credentials: <code>apiKey</code>, <code>capToken</code>, <code>memberToken</code></p>
 <h3>Request body</h3><p><code>application/json</code></p>
-<!--email_off--><pre class="lang-json"><code>{
+<!--email_off--><figure class="pp-code"><pre class="pp-code__pre lang-json"><code>{
   &quot;up_to&quot;: 0,
   &quot;identity&quot;: &quot;string&quot;
-}</code></pre><!--/email_off-->
+}</code></pre></figure><!--/email_off-->
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Marked.</p>
-<!--email_off--><pre class="lang-json"><code>{
+<!--email_off--><figure class="pp-code"><pre class="pp-code__pre lang-json"><code>{
   &quot;updated&quot;: 0,
   &quot;unseen_missed&quot;: 0
-}</code></pre><!--/email_off-->
+}</code></pre></figure><!--/email_off-->
 <h3>Errors</h3>
-<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>wrong_identity</code> (capability token bound to another mailbox) or <code>not_in_account</code>.</td></tr><tr><td><code>404</code></td><td><code>feature_disabled</code> (flag off for this account), <code>not_found</code></td></tr></tbody></table></div>
+<div class="pp-table-wrap tw"><table class="pp-table"><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>wrong_identity</code> (capability token bound to another mailbox) or <code>not_in_account</code>.</td></tr><tr><td><code>404</code></td><td><code>feature_disabled</code> (flag off for this account), <code>not_found</code></td></tr></tbody></table></div>
 <h3>Example</h3>
-<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/calls/log/seen&quot; \
+<!--email_off--><figure class="pp-code"><pre class="pp-code__pre lang-bash" data-copy="curl"><code>curl -sS -X POST &quot;https://postbox.pigeonpost.dev/v1/calls/log/seen&quot; \
   -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot; \
   -H &quot;Content-Type: application/json&quot; \
-  -d &#x27;{&quot;up_to&quot;: 0, &quot;identity&quot;: &quot;string&quot;}&#x27;</code></pre><!--/email_off-->
+  -d &#x27;{&quot;up_to&quot;: 0, &quot;identity&quot;: &quot;string&quot;}&#x27;</code></pre></figure><!--/email_off-->
 </section>
 <section class="op">
 <h2 id="deleteCallLogEntry"><span class="method">DELETE</span> <code class="path">/v1/calls/log/{id}</code><a class="ah" href="#deleteCallLogEntry">#</a></h2>
 <p class="op-sum">Delete one call from the history</p>
 <p class="op-facts">Credentials: <code>apiKey</code>, <code>capToken</code>, <code>memberToken</code></p>
 <h3>Parameters</h3>
-<div class="tw"><table><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>id</code></td><td>path</td><td>string</td><td>yes</td><td></td></tr><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr></tbody></table></div>
+<div class="pp-table-wrap tw"><table class="pp-table"><thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>id</code></td><td>path</td><td>string</td><td>yes</td><td></td></tr><tr><td><code>identity</code></td><td>query</td><td>string</td><td></td><td>Which of the account&#x27;s mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.</td></tr></tbody></table></div>
 <h3>Responses</h3>
 <p class="resp"><code>200</code> Deleted.</p>
-<!--email_off--><pre class="lang-json"><code>{
+<!--email_off--><figure class="pp-code"><pre class="pp-code__pre lang-json"><code>{
   &quot;deleted&quot;: false
-}</code></pre><!--/email_off-->
+}</code></pre></figure><!--/email_off-->
 <h3>Errors</h3>
-<div class="tw"><table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>wrong_identity</code> (capability token bound to another mailbox) or <code>not_in_account</code>.</td></tr><tr><td><code>404</code></td><td><code>feature_disabled</code> (flag off for this account), <code>not_found</code></td></tr></tbody></table></div>
+<div class="pp-table-wrap tw"><table class="pp-table"><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody><tr><td><code>401</code></td><td><code>unauthorized</code> — missing, unknown, revoked or invalid credential.</td></tr><tr><td><code>403</code></td><td><code>wrong_identity</code> (capability token bound to another mailbox) or <code>not_in_account</code>.</td></tr><tr><td><code>404</code></td><td><code>feature_disabled</code> (flag off for this account), <code>not_found</code></td></tr></tbody></table></div>
 <h3>Example</h3>
-<!--email_off--><pre class="lang-bash" data-copy="curl"><code>curl -sS -X DELETE &quot;https://postbox.pigeonpost.dev/v1/calls/log/$ID&quot; \
-  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre><!--/email_off-->
+<!--email_off--><figure class="pp-code"><pre class="pp-code__pre lang-bash" data-copy="curl"><code>curl -sS -X DELETE &quot;https://postbox.pigeonpost.dev/v1/calls/log/$ID&quot; \
+  -H &quot;Authorization: Bearer $PIGEONPOST_TOKEN&quot;</code></pre></figure><!--/email_off-->
 </section>
     <footer class="pagefoot">
-      <nav>
+      <nav class="pagefoot__links" aria-label="Footer">
         <a href="https://pigeonpost.dev">pigeonpost.dev</a>
         <a href="https://github.com/bekirdag/pigeonpost">GitHub</a>
         <a href="https://www.npmjs.com/package/@bekirdag/pigeonpost">npm</a>

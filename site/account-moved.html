@@ -4,11 +4,20 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
+<meta name="color-scheme" content="light dark">
 <title>Your account has moved — Pigeonpost</title>
-<link rel="stylesheet" href="/style.css">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="stylesheet" href="/kit/pp-ui.min.css?v=1.0.0">
+<link rel="stylesheet" href="/site.css?v=20261114-kit">
 </head>
-<body>
-<main class="wrap">
+<body class="site">
+<header class="pp-navbar site-navbar">
+<div class="pp-navbar__inner">
+<a class="pp-brand" href="/" aria-label="Pigeonpost home"><picture><source srcset="/kit/brand/logo_only_symbol_white_trim.png" media="(prefers-color-scheme: dark)"><img src="/kit/brand/logo_only_symbol_trim.png" alt="" width="28" height="26"></picture><span class="pp-brand__name">Pigeonpost</span></a>
+</div>
+</header>
+<main id="main" class="site-moved">
+  <span class="pp-spinner" role="presentation"></span>
   <h1>Your account has moved</h1>
   <p>It now lives at <a id="moved-link" href="https://account.pigeonpost.dev/">account.pigeonpost.dev</a>. Taking you there…</p>
 </main>

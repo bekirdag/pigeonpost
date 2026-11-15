@@ -101,11 +101,12 @@ def sidebar(current):
     current = nav_slug(current)
     out = []
     for section, items in NAV:
-        out.append(f'<p class="sb-h">{section}</p><ul class="sb">')
+        out.append(f'<div class="pp-sidebar__group"><p class="pp-sidebar__heading">{section}</p>')
         for slug, label in items:
-            cls = ' class="on"' if slug == current else ""
-            out.append(f'<li><a href="{href(slug)}"{cls}>{label}</a></li>')
-        out.append("</ul>")
+            cur = ' aria-current="page"' if slug == current else ""
+            out.append(f'<a class="pp-sidebar__item" href="{href(slug)}"{cur}>'
+                       f'<span class="pp-sidebar__label">{label}</span></a>')
+        out.append("</div>")
     return "\n".join(out)
 
 
@@ -113,8 +114,8 @@ def topnav(current):
     current = nav_slug(current)
     if current.startswith("org-api"):
         current = "org-api"
-    return "\n".join(
-        f'<a href="{href(s)}"{" class=\"on\"" if s == current else ""}>{l}</a>'
+    return "".join(
+        f'<a class="pp-navbar__link" href="{href(s)}"{" aria-current=\"page\"" if s == current else ""}>{l}</a>'
         for s, l in TOP
     )
 
@@ -127,26 +128,33 @@ SHELL = """<!doctype html>
 <title>{title} — Pigeonpost Developers</title>
 <meta name="description" content="{desc}">
 <meta name="color-scheme" content="light dark">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#128330;</text></svg>">
-<link rel="stylesheet" href="/docs.css">
-<script src="/docs.js" defer></script>
+<link rel="icon" type="image/png" sizes="32x32" href="/kit/brand/favicon-32.png">
+<link rel="stylesheet" href="/kit/pp-ui.min.css?v=1.0.0">
+<link rel="stylesheet" href="/docs.css?v=20261114-kit">
+<script src="/docs.js?v=20261114-kit" defer></script>
 </head>
-<body>
+<body class="docs">
 
-<header class="bar">
-  <div class="bar-in">
-    <a class="brand" href="/">Pigeonpost <span>Developers</span></a>
-    <nav class="top">{topnav}</nav>
-    <a class="gh" href="{gh}" aria-label="GitHub"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg></a>
+<a class="pp-btn pp-btn--primary docs-skip" href="#doc">Skip to content</a>
+<header class="pp-navbar pp-navbar--sticky">
+  <div class="pp-navbar__inner">
+    <a class="pp-brand" href="/" aria-label="Pigeonpost Developers home"><picture><source srcset="/kit/brand/logo_only_symbol_white_trim.png" media="(prefers-color-scheme: dark)"><img src="/kit/brand/logo_only_symbol_trim.png" alt="" width="28" height="26"></picture><span class="pp-brand__name">Pigeonpost</span><span class="pp-brand__product">Developers</span></a>
+    <nav class="pp-navbar__links" aria-label="Main">{topnav}</nav>
+    <div class="pp-navbar__actions">
+      <a class="pp-navbtn" href="{gh}" aria-label="Pigeonpost on GitHub"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-git-branch"/></svg></a>
+      <a class="pp-btn pp-btn--primary pp-navbar__hide-s" href="https://pigeonpost.dev">pigeonpost.dev</a>
+    </div>
   </div>
 </header>
 
 <div class="shell">
-  <aside class="side">{sidebar}</aside>
-  <main class="doc">
+  <aside class="side pp-sidebar" aria-label="Documentation">
+    <nav class="pp-sidebar__scroll">{sidebar}</nav>
+  </aside>
+  <main class="doc" id="doc">
 {body}
     <footer class="pagefoot">
-      <nav>
+      <nav class="pagefoot__links" aria-label="Footer">
         <a href="https://pigeonpost.dev">pigeonpost.dev</a>
         <a href="{gh}">GitHub</a>
         <a href="https://www.npmjs.com/package/@bekirdag/pigeonpost">npm</a>
@@ -182,10 +190,10 @@ def render(md):
             i += 1
             if lang == "curl":
                 # A copyable command: docs.js gives these a Copy button.
-                cls = ' class="lang-bash" data-copy="curl"'
+                cls = ' class="pp-code__pre lang-bash" data-copy="curl"'
             else:
-                cls = f' class="lang-{lang}"' if lang else ""
-            out.append(cf_off(f'<pre{cls}><code>{chr(10).join(buf)}</code></pre>'))
+                cls = f' class="pp-code__pre lang-{lang}"' if lang else ' class="pp-code__pre"'
+            out.append(cf_off(f'<figure class="pp-code"><pre{cls}><code>{chr(10).join(buf)}</code></pre></figure>'))
             continue
 
         if ln.startswith("|"):
@@ -194,7 +202,7 @@ def render(md):
                 rows.append([c.strip() for c in lines[i].strip("|").split("|")])
                 i += 1
             head, body = rows[0], rows[2:] if len(rows) > 1 else []
-            t = ['<div class="tw"><table><thead><tr>']
+            t = ['<div class="pp-table-wrap tw"><table class="pp-table"><thead><tr>']
             t += [f"<th>{inline(c)}</th>" for c in head]
             t.append("</tr></thead><tbody>")
             for r in body:
@@ -208,7 +216,7 @@ def render(md):
             while i < len(lines) and lines[i].startswith("> "):
                 buf.append(lines[i][2:])
                 i += 1
-            out.append(f'<div class="note">{inline(" ".join(buf))}</div>')
+            out.append(note(inline(" ".join(buf))))
             continue
 
         m = re.match(r"^(#{1,3}) (.+)$", ln)
@@ -250,6 +258,13 @@ def render(md):
 
         i += 1
     return "\n".join(out)
+
+
+def note(markup):
+    """A callout: the kit's info alert."""
+    return ('<div class="pp-alert pp-alert--info note" role="note">'
+            '<svg class="pp-icon pp-alert__icon" aria-hidden="true"><use href="/kit/icons.svg#i-info"/></svg>'
+            f'<div class="pp-alert__content"><p class="pp-alert__text">{markup}</p></div></div>')
 
 
 def cf_off(markup):
@@ -3705,7 +3720,7 @@ def curl_snippet(api, method, path, item, op):
 
 
 def table(head, rows):
-    out = ['<div class="tw"><table><thead><tr>']
+    out = ['<div class="pp-table-wrap tw"><table class="pp-table"><thead><tr>']
     out += [f"<th>{h}</th>" for h in head]
     out.append("</tr></thead><tbody>")
     for r in rows:
@@ -3720,10 +3735,10 @@ def code(text):
 
 
 def pre(text, lang="json", copy=False):
-    attrs = f' class="lang-{lang}"'
+    attrs = f' class="pp-code__pre lang-{lang}"'
     if copy:
-        attrs = ' class="lang-bash" data-copy="curl"'
-    return cf_off(f"<pre{attrs}><code>{html.escape(text)}</code></pre>")
+        attrs = ' class="pp-code__pre lang-bash" data-copy="curl"'
+    return cf_off(f'<figure class="pp-code"><pre{attrs}><code>{html.escape(text)}</code></pre></figure>')
 
 
 def description_html(api, text):
@@ -3852,9 +3867,9 @@ def tag_nav(api, current):
     links = []
     for tag, _, _ in api.tags():
         slug = api.tag_slug(tag)
-        cls = ' class="on"' if slug == current else ""
-        links.append(f'<a href="/{slug}"{cls}>{html.escape(tag)}</a>')
-    return f'<nav class="tagnav"><a href="/{api.slug}">All</a>{"".join(links)}</nav>'
+        cur = ' aria-current="page"' if slug == current else ""
+        links.append(f'<a class="pp-chip" href="/{slug}"{cur}>{html.escape(tag)}</a>')
+    return f'<nav class="tagnav pp-chip-group" aria-label="Sections"><a class="pp-chip" href="/{api.slug}">All</a>{"".join(links)}</nav>'
 
 
 def tag_page(api, tag, desc, ops):

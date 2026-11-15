@@ -267,6 +267,8 @@ jobs:
           # native HTML input type; these two files do not redefine Pigeonpost messaging.
           # partner.pigeonpost.dev carries the same application form (page-application.js) and,
           # like site-enterprise/config.js, requests the realm's standard address scope by name.
+          # site/kit and site-developers/kit are the design kit's CSS bundle vendored byte for byte;
+          # its sign-in button component names a contact-address provider variant by that word.
           if git grep -n -i -w "$forbidden_word" -- . \
               ':(exclude)site/account.js' \
               ':(exclude)site/publisher-onboarding.js' \
@@ -286,6 +288,8 @@ jobs:
               ':(exclude)site-enterprise/app.js' \
               ':(exclude)site-enterprise/i18n-tr.js' \
               ':(exclude)site-help' \
+              ':(exclude)site/kit' \
+              ':(exclude)site-developers/kit' \
               ':(exclude)deploy/account-deletions.py' \
               ':(exclude)deploy/identity/provision-chatgpt.py' \
               ':(exclude)crates/pigeonpost-cli/src/login_cmd.rs' \

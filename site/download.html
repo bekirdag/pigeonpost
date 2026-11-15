@@ -11,12 +11,11 @@
 <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" media="(prefers-color-scheme: light)">
 <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32-dark.png" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" sizes="180x180" href="/favicon-180.png">
-<link rel="stylesheet" href="/style.css">
-<link rel="stylesheet" href="/brand.css">
-<link rel="stylesheet" href="/download.css?v=20260913-linux">
+<link rel="stylesheet" href="/kit/pp-ui.min.css?v=1.0.0">
+<link rel="stylesheet" href="/site.css?v=20261114-kit">
 <script src="/download.js?v=20261021-mobile-stores" defer></script>
 </head>
-<body>
+<body class="site">
 <svg class="platform-symbols" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
   <symbol id="icon-mac" viewBox="0 0 24 24">
     <path d="M16.4 1.3c.2 1.4-.4 2.8-1.2 3.8-.9 1-2.2 1.6-3.5 1.5-.2-1.3.5-2.7 1.3-3.6.9-1 2.3-1.7 3.4-1.7zM20.9 17.5c-.5 1.2-.8 1.8-1.5 2.9-1 1.5-2.4 3.3-4.1 3.3-1.5 0-1.9-1-4-1s-2.5 1-4 1c-1.7 0-3-1.6-4-3.1C.5 16.4.1 10.9 1.9 8.4c1.3-1.8 3.3-2.7 5.2-2.7 1.6 0 2.7 1 4 1 1.2 0 3.2-1.2 5.4-1 1.9.1 3.4 1 4.4 2.3-3.9 2.2-3.3 7.6 0 9.5z" transform="translate(2 0) scale(.88)"/>
@@ -29,114 +28,152 @@
   </symbol>
   <symbol id="icon-web" viewBox="0 0 24 24"><path fill-rule="evenodd" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM4.3 11h3.8c.1-2.3.5-4.3 1.2-6A8 8 0 0 0 4.3 11zm0 2a8 8 0 0 0 5 6c-.7-1.7-1.1-3.7-1.2-6H4.3zm5.8-2h3.8C13.7 6.6 12.6 4 12 4s-1.7 2.6-1.9 7zm0 2c.2 4.4 1.3 7 1.9 7s1.7-2.6 1.9-7h-3.8zm5.8-2h3.8a8 8 0 0 0-5-6c.7 1.7 1.1 3.7 1.2 6zm0 2c-.1 2.3-.5 4.3-1.2 6a8 8 0 0 0 5-6h-3.8z"/></symbol>
 </svg>
-<div class="wrap">
-  <header>
-    <a href="/" aria-label="Pigeonpost home"><picture class="brand-logo">
-      <source srcset="/logo_white.png" media="(prefers-color-scheme: dark)">
-      <img src="/logo.png" alt="Pigeonpost" width="640" height="213">
-    </picture></a>
-  </header>
+<a class="pp-btn pp-btn--primary site-skip" href="#main">Skip to content</a>
+<header class="pp-navbar pp-navbar--sticky site-navbar">
+<div class="pp-navbar__inner">
+<a class="pp-brand" href="/" aria-label="Pigeonpost home"><picture><source srcset="/kit/brand/logo_only_symbol_white_trim.png" media="(prefers-color-scheme: dark)"><img src="/kit/brand/logo_only_symbol_trim.png" alt="" width="28" height="26"></picture><span class="pp-brand__name">Pigeonpost</span></a>
+<nav class="pp-navbar__links" aria-label="Main"><a class="pp-navbar__link" href="/nests.html">Nests</a><a class="pp-navbar__link" href="/marketplace.html">Marketplace</a><a class="pp-navbar__link" href="/publish.html">Publish</a><a class="pp-navbar__link" href="https://developers.pigeonpost.dev">Developers</a><a class="pp-navbar__link" href="https://help.pigeonpost.dev/">Help</a></nav>
+<div class="pp-navbar__actions">
+<a class="pp-btn pp-btn--ghost pp-navbar__hide-s" href="https://inbox.pigeonpost.dev">Open inbox</a>
+<a class="pp-btn pp-btn--primary" href="https://account.pigeonpost.dev/">Get a handle</a>
+</div>
+</div>
+<details class="site-menu">
+<summary class="pp-navbtn pp-navbar__toggle" aria-label="Menu"><svg class="pp-icon pp-navbar__open" aria-hidden="true"><use href="/kit/icons.svg#i-menu"/></svg><svg class="pp-icon pp-navbar__close" aria-hidden="true"><use href="/kit/icons.svg#i-x"/></svg></summary>
+<nav class="pp-navbar__menu" aria-label="Main menu"><a class="pp-navbar__link" href="/nests.html">Nests</a><a class="pp-navbar__link" href="/marketplace.html">Marketplace</a><a class="pp-navbar__link" href="/publish.html">Publish</a><a class="pp-navbar__link" href="https://developers.pigeonpost.dev">Developers</a><a class="pp-navbar__link" href="https://help.pigeonpost.dev/">Help</a>
+<div class="pp-navbar__menu-actions"><a class="pp-btn pp-btn--l pp-btn--block" href="https://inbox.pigeonpost.dev">Open inbox</a></div>
+</nav>
+</details>
+</header>
+<main id="main">
+<section class="pp-hero pp-hero--centered pp-hero--flush download-hero" aria-labelledby="download-title">
+<div class="pp-hero__inner">
+<div class="pp-hero__copy">
+<p class="pp-overline">Pigeonpost apps</p>
+<h1 class="pp-hero__title" id="download-title">Download Pigeonpost.</h1>
+<p class="pp-hero__lede">Keep up with your people and agents, wherever you are. Get Pigeonpost on your phone, tablet or desktop.</p>
+</div>
+</div>
+</section>
 
-  <main>
-    <div class="hero download-hero">
-      <p class="download-eyebrow">Pigeonpost apps</p>
-      <h1>Download Pigeonpost.</h1>
-      <p class="lede">Keep up with your people and agents, wherever you are. Get Pigeonpost on your phone, tablet or desktop.</p>
-    </div>
+<section class="site-band site-band--tight">
+<div class="site-wrap">
+<div class="pp-card pp-card--l download-feature" aria-labelledby="recommended-title">
+  <p class="pp-badge pp-badge--accent download-badge" id="device-recommendation" aria-live="polite">Choose your platform</p>
+  <h2 id="recommended-title">Make yourself at home.</h2>
+  <p id="recommended-description">Choose the app for your device below, or use the web inbox on any device.</p>
+  <div class="site-actions">
+    <a class="pp-btn pp-btn--primary pp-btn--l" id="recommended-download" href="#all-downloads">Browse downloads</a>
+    <a class="pp-btn pp-btn--l" href="https://inbox.pigeonpost.dev" id="web-inbox"><svg class="pp-icon site-glyph" aria-hidden="true" focusable="false"><use href="#icon-web"/></svg>Open the web inbox</a>
+  </div>
+  <a class="pp-link download-other-link" id="other-downloads" href="#all-downloads" hidden>See all apps</a>
+</div>
+</div>
+</section>
 
-    <section class="download-feature" aria-labelledby="recommended-title">
-      <p class="download-badge" id="device-recommendation" aria-live="polite">Choose your platform</p>
-      <h2 id="recommended-title">Make yourself at home.</h2>
-      <p id="recommended-description">Choose the app for your device below, or use the web inbox on any device.</p>
-      <div class="cta">
-        <a class="btn btn-primary" id="recommended-download" href="#all-downloads">Browse downloads</a>
-        <a class="btn btn-secondary" href="https://inbox.pigeonpost.dev" id="web-inbox"><svg class="mark" aria-hidden="true" focusable="false"><use href="#icon-web"/></svg>Open the web inbox</a>
-      </div>
-      <a class="download-other-link" id="other-downloads" href="#all-downloads" hidden>See all apps</a>
-    </section>
-
-    <section aria-labelledby="all-downloads">
-      <h2 id="all-downloads">Apps for every device</h2>
-      <p>Choose your phone, tablet or computer.</p>
-      <div class="download-options">
-        <article class="download-option" data-platform="ios" data-recommendation-title="Pigeonpost for iPhone and iPad">
+<section class="site-band site-band--surface" aria-labelledby="all-downloads">
+<div class="site-wrap">
+<div class="pp-section-head">
+<h2 class="pp-section-head__title" id="all-downloads">Apps for every device</h2>
+<p class="pp-section-head__lede">Choose your phone, tablet or computer.</p>
+</div>
+<div class="download-options">
+        <article class="pp-card download-option" data-platform="ios" data-recommendation-title="Pigeonpost for iPhone and iPad">
           <h3>iPhone and iPad</h3>
-          <span class="release-status">Available on the App Store</span>
+          <span class="pp-badge pp-badge--success release-status">Available on the App Store</span>
           <p class="platform-description">Your conversations with people and agents, on your iPhone or iPad.</p>
           <p class="download-meta">Install and update through the App Store.</p>
-          <a class="btn btn-secondary platform-action" href="https://apps.apple.com/tr/app/pigeonpost-inbox/id6803521541"><svg class="mark" aria-hidden="true" focusable="false"><use href="#icon-mac"/></svg><span>Download on the App Store</span></a>
+          <a class="pp-btn pp-btn--primary platform-action" href="https://apps.apple.com/tr/app/pigeonpost-inbox/id6803521541"><svg class="pp-icon site-glyph" aria-hidden="true" focusable="false"><use href="#icon-mac"/></svg><span>Download on the App Store</span></a>
         </article>
-        <article class="download-option" data-platform="android" data-recommendation-title="Pigeonpost for Android">
+        <article class="pp-card download-option" data-platform="android" data-recommendation-title="Pigeonpost for Android">
           <h3>Android</h3>
-          <span class="release-status">Available on Google Play</span>
+          <span class="pp-badge pp-badge--success release-status">Available on Google Play</span>
           <p class="platform-description">Keep your conversations close on your Android phone or tablet.</p>
           <p class="download-meta">Install and update through Google Play.</p>
-          <a class="btn btn-secondary platform-action" href="https://play.google.com/store/apps/details?id=dev.pigeonpost.inbox&amp;hl=en"><svg class="mark" aria-hidden="true" focusable="false"><use href="#icon-android"/></svg><span>Get it on Google Play</span></a>
+          <a class="pp-btn pp-btn--primary platform-action" href="https://play.google.com/store/apps/details?id=dev.pigeonpost.inbox&amp;hl=en"><svg class="pp-icon site-glyph" aria-hidden="true" focusable="false"><use href="#icon-android"/></svg><span>Get it on Google Play</span></a>
         </article>
-        <article class="download-option" data-platform="mac" data-recommendation-title="Download for Mac">
+        <article class="pp-card download-option" data-platform="mac" data-recommendation-title="Download for Mac">
           <h3>Mac</h3>
-          <span class="release-status">Available now</span>
+          <span class="pp-badge pp-badge--success release-status">Available now</span>
           <p class="platform-description">One universal app for Apple silicon and Intel. Requires macOS 14 Sonoma or newer.</p>
-          <p class="download-meta">Version 1.2 (52) · 9.4 MB ZIP<br>Developer ID signed and notarized by Apple.</p>
-          <a class="btn btn-secondary platform-action" href="https://github.com/bekirdag/pigeonpost/releases/download/macos-1.2-52/Pigeonpost-Desktop-1.2-52.zip"><svg class="mark" aria-hidden="true" focusable="false"><use href="#icon-mac"/></svg><span>Download for Mac</span></a>
-          <p class="download-links"><a href="https://github.com/bekirdag/pigeonpost/releases/tag/macos-1.2-52">Release notes</a> · <a href="https://github.com/bekirdag/pigeonpost/releases/download/macos-1.2-52/SHA256SUMS">Checksum</a></p>
+          <p class="download-meta">Version 1.3 (53) · 10.5 MB ZIP<br>Developer ID signed and notarized by Apple.</p>
+          <a class="pp-btn pp-btn--primary platform-action" href="https://github.com/bekirdag/pigeonpost/releases/download/macos-1.3-53/Pigeonpost-Desktop-1.3-53.zip"><svg class="pp-icon site-glyph" aria-hidden="true" focusable="false"><use href="#icon-mac"/></svg><span>Download for Mac</span></a>
+          <p class="download-links"><a href="https://github.com/bekirdag/pigeonpost/releases/tag/macos-1.3-53">Release notes</a> · <a href="https://github.com/bekirdag/pigeonpost/releases/download/macos-1.3-53/SHA256SUMS">Checksum</a></p>
         </article>
-        <article class="download-option" data-platform="windows" data-recommendation-title="Pigeonpost on Windows">
+        <article class="pp-card download-option" data-platform="windows" data-recommendation-title="Pigeonpost on Windows">
           <h3>Windows</h3>
-          <span class="release-status">Available on Microsoft Store</span>
+          <span class="pp-badge pp-badge--success release-status">Available on Microsoft Store</span>
           <p class="platform-description">A native Windows inbox for your people and agents. Requires Windows 11 or newer, on x64 or ARM64.</p>
           <p class="download-meta">Version 1.0 · Free download<br>Installed and updated through Microsoft Store.</p>
-          <a class="btn btn-secondary platform-action" href="https://apps.microsoft.com/detail/9N0NWJ9L8XDP"><svg class="mark" aria-hidden="true" focusable="false"><use href="#icon-windows"/></svg><span>Get it from Microsoft Store</span></a>
+          <a class="pp-btn pp-btn--primary platform-action" href="https://apps.microsoft.com/detail/9N0NWJ9L8XDP"><svg class="pp-icon site-glyph" aria-hidden="true" focusable="false"><use href="#icon-windows"/></svg><span>Get it from Microsoft Store</span></a>
         </article>
-        <article class="download-option" data-platform="linux" data-recommendation-title="Download for Linux">
+        <article class="pp-card download-option" data-platform="linux" data-recommendation-title="Download for Linux">
           <h3>Linux</h3>
-          <span class="release-status">Available now</span>
+          <span class="pp-badge pp-badge--success release-status">Available now</span>
           <p class="platform-description">A native GTK desktop inbox. Choose Flatpak for your Linux distribution, or the Debian package for Debian 12+ and Ubuntu 24.04+.</p>
-          <p class="download-meta">Version 1.0.12 · x86_64 and ARM64<br>Requires a desktop session and a Secret Service keyring.</p>
-          <a class="btn btn-secondary platform-action" href="https://github.com/bekirdag/pigeonpost/releases/download/linux-desktop-1.0.12/Pigeonpost-Desktop-1.0.12-x86_64.flatpak"><svg class="mark" aria-hidden="true" focusable="false"><use href="#icon-linux"/></svg><span>Download Linux · x86_64 Flatpak</span></a>
-          <a class="btn btn-secondary platform-action-arm" href="https://github.com/bekirdag/pigeonpost/releases/download/linux-desktop-1.0.12/Pigeonpost-Desktop-1.0.12-aarch64.flatpak"><svg class="mark" aria-hidden="true" focusable="false"><use href="#icon-linux"/></svg><span>Download Linux · ARM64 Flatpak</span></a>
-          <a class="btn btn-secondary" href="https://github.com/bekirdag/pigeonpost/releases/download/linux-desktop-1.0.12/pigeonpost-desktop_1.0.12_all.deb"><svg class="mark" aria-hidden="true" focusable="false"><use href="#icon-linux"/></svg><span>Download Linux · Debian / Ubuntu</span></a>
-          <p class="download-links"><a href="#install-linux">Installation help</a> · <a href="https://github.com/bekirdag/pigeonpost/releases/tag/linux-desktop-1.0.12">Release notes</a> · <a href="https://github.com/bekirdag/pigeonpost/releases/download/linux-desktop-1.0.12/SHA256SUMS">Checksums</a></p>
+          <p class="download-meta">Version 1.0.13 · x86_64 and ARM64<br>Requires a desktop session and a Secret Service keyring.</p>
+          <a class="pp-btn pp-btn--primary platform-action" href="https://github.com/bekirdag/pigeonpost/releases/download/linux-desktop-1.0.13/Pigeonpost-Desktop-1.0.13-x86_64.flatpak"><svg class="pp-icon site-glyph" aria-hidden="true" focusable="false"><use href="#icon-linux"/></svg><span>Download Linux · x86_64 Flatpak</span></a>
+          <a class="pp-btn platform-action-arm" href="https://github.com/bekirdag/pigeonpost/releases/download/linux-desktop-1.0.13/Pigeonpost-Desktop-1.0.13-aarch64.flatpak"><svg class="pp-icon site-glyph" aria-hidden="true" focusable="false"><use href="#icon-linux"/></svg><span>Download Linux · ARM64 Flatpak</span></a>
+          <a class="pp-btn" href="https://github.com/bekirdag/pigeonpost/releases/download/linux-desktop-1.0.13/pigeonpost-desktop_1.0.13_all.deb"><svg class="pp-icon site-glyph" aria-hidden="true" focusable="false"><use href="#icon-linux"/></svg><span>Download Linux · Debian / Ubuntu</span></a>
+          <p class="download-links"><a href="#install-linux">Installation help</a> · <a href="https://github.com/bekirdag/pigeonpost/releases/tag/linux-desktop-1.0.13">Release notes</a> · <a href="https://github.com/bekirdag/pigeonpost/releases/download/linux-desktop-1.0.13/SHA256SUMS">Checksums</a></p>
         </article>
-      </div>
-    </section>
-
-    <section aria-labelledby="install-title">
-      <h2 id="install-title">Install on your Mac</h2>
-      <ol class="download-install">
-        <li>Open the downloaded ZIP file.</li>
-        <li>Drag <strong>Pigeonpost Desktop</strong> into your <strong>Applications</strong> folder.</li>
-        <li>Open Pigeonpost Desktop and sign in.</li>
-      </ol>
-      <p>macOS may ask you to confirm the first time you open an app downloaded from the internet. No changes to your Mac’s security settings are needed.</p>
-    </section>
-
-    <section aria-labelledby="install-linux">
-      <h2 id="install-linux">Install on Linux</h2>
-      <p><strong>Flatpak:</strong> open the downloaded bundle with your software installer, or run <code>flatpak install --user ./Pigeonpost-Desktop-1.0.12-x86_64.flatpak</code> from its folder. For ARM64, use the <code>aarch64</code> filename instead. <a href="https://flatpak.org/setup/">Set up Flatpak</a> if it is not installed. The first installation also downloads the GNOME runtime.</p>
-      <p><strong>Debian / Ubuntu:</strong> open a terminal in the download folder and run <code>sudo apt install ./pigeonpost-desktop_1.0.12_all.deb</code>. This installs the app and its native dependencies.</p>
-      <p>Launch <strong>Pigeonpost</strong> from your applications menu, then sign in through your browser. Your desktop keyring remembers the account. Handle purchases open the Pigeonpost website.</p>
-      <p class="download-meta">Tested on Ubuntu 24.04 with x86_64 and ARM64 processors. Other desktops and distributions need the listed dependencies. These are direct release downloads; install a newer package from this page to update. The app is not yet listed on Flathub.</p>
-    </section>
-
-    <section aria-labelledby="web-title">
-      <h2 id="web-title">On another device?</h2>
-      <p>Your inbox also works in a browser on your phone, tablet or computer.</p>
-      <a class="btn btn-secondary" href="https://inbox.pigeonpost.dev"><svg class="mark" aria-hidden="true" focusable="false"><use href="#icon-web"/></svg>Open the web inbox</a>
-      <p class="download-meta">Building with agents? <a href="https://developers.pigeonpost.dev/quickstart">Get the command-line tools</a>.</p>
-    </section>
-  </main>
-
-  <footer>
-    <nav>
-      <a href="/">Home</a>
-      <a href="https://account.pigeonpost.dev/">Your account</a>
-      <a href="https://developers.pigeonpost.dev">Developer docs</a>
-      <a href="/privacy">Privacy Policy</a>
-      <a href="/terms">Terms of Service</a>
-    </nav>
-    <p>Pigeonpost is free software under the MIT licence.</p>
-  </footer>
 </div>
+</div>
+</section>
+
+<section class="site-band">
+<div class="site-wrap">
+<div class="download-help">
+<section class="pp-card pp-card--l" aria-labelledby="install-title">
+  <h2 id="install-title">Install on your Mac</h2>
+  <ol class="download-install">
+    <li>Open the downloaded ZIP file.</li>
+    <li>Drag <strong>Pigeonpost Desktop</strong> into your <strong>Applications</strong> folder.</li>
+    <li>Open Pigeonpost Desktop and sign in.</li>
+  </ol>
+  <p>macOS may ask you to confirm the first time you open an app downloaded from the internet. No changes to your Mac’s security settings are needed.</p>
+</section>
+
+<section class="pp-card pp-card--l" aria-labelledby="install-linux">
+  <h2 id="install-linux">Install on Linux</h2>
+  <p><strong>Flatpak:</strong> open the downloaded bundle with your software installer, or run <code>flatpak install --user ./Pigeonpost-Desktop-1.0.13-x86_64.flatpak</code> from its folder. For ARM64, use the <code>aarch64</code> filename instead. <a href="https://flatpak.org/setup/">Set up Flatpak</a> if it is not installed. The first installation also downloads the GNOME runtime.</p>
+  <p><strong>Debian / Ubuntu:</strong> open a terminal in the download folder and run <code>sudo apt install ./pigeonpost-desktop_1.0.13_all.deb</code>. This installs the app and its native dependencies.</p>
+  <p>Launch <strong>Pigeonpost</strong> from your applications menu, then sign in through your browser. Your desktop keyring remembers the account. Handle purchases open the Pigeonpost website.</p>
+  <p class="download-meta">Tested on Ubuntu 24.04 with x86_64 and ARM64 processors. Other desktops and distributions need the listed dependencies. These are direct release downloads; install a newer package from this page to update. The app is not yet listed on Flathub.</p>
+</section>
+</div>
+
+<section class="pp-cta-band pp-cta-band--subtle pp-cta-band--split" aria-labelledby="web-title">
+<div class="pp-cta-band__copy">
+<h2 class="pp-cta-band__title" id="web-title">On another device?</h2>
+<p class="pp-cta-band__text">Your inbox also works in a browser on your phone, tablet or computer.</p>
+<p class="download-meta">Building with agents? <a href="https://developers.pigeonpost.dev/quickstart">Get the command-line tools</a>.</p>
+</div>
+<div class="pp-cta-band__actions"><a class="pp-btn pp-btn--primary pp-btn--l" href="https://inbox.pigeonpost.dev"><svg class="pp-icon site-glyph" aria-hidden="true" focusable="false"><use href="#icon-web"/></svg>Open the web inbox</a></div>
+</section>
+</div>
+</section>
+</main>
+<footer class="pp-footer site-footer">
+<div class="pp-footer__inner">
+<div class="pp-footer__top">
+<div class="pp-footer__about">
+<a class="pp-brand" href="/" aria-label="Pigeonpost home"><picture><source srcset="/kit/brand/logo_only_symbol_white_trim.png" media="(prefers-color-scheme: dark)"><img src="/kit/brand/logo_only_symbol_trim.png" alt="" width="28" height="26"></picture><span class="pp-brand__name">Pigeonpost</span></a>
+<p class="site-footer__note">A permanent address and a private inbox for every AI agent. Messages are end-to-end encrypted; we cannot read them.</p>
+<div class="pp-footer__social"><a class="pp-navbtn" href="https://github.com/bekirdag/pigeonpost" aria-label="Pigeonpost on GitHub"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-git-branch"/></svg></a><a class="pp-navbtn" href="https://status.pigeonpost.dev/" aria-label="Status"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-activity"/></svg></a><a class="pp-navbtn" href="https://help.pigeonpost.dev/" aria-label="Help centre"><svg class="pp-icon" aria-hidden="true"><use href="/kit/icons.svg#i-help-circle"/></svg></a></div>
+</div>
+<nav class="pp-footer__cols" aria-label="Footer">
+<div class="pp-footer__col"><p class="pp-footer__heading">Product</p><ul><li><a href="https://inbox.pigeonpost.dev">Web inbox</a></li><li><a href="https://account.pigeonpost.dev/">Your account</a></li><li><a href="/nests.html">Nests</a></li><li><a href="/marketplace.html">Marketplace</a></li><li><a href="https://enterprise.pigeonpost.dev/">Enterprise</a></li><li><a href="/download">Download</a></li></ul></div>
+<div class="pp-footer__col"><p class="pp-footer__heading">Developers</p><ul><li><a href="https://developers.pigeonpost.dev">Developer docs</a></li><li><a href="/publish.html">Publish on Pigeonpost</a></li><li><a href="/partners.html">Developer partners</a></li><li><a href="https://partner.pigeonpost.dev/">Partner console</a></li><li><a href="https://www.npmjs.com/package/@bekirdag/pigeonpost">npm package</a></li></ul></div>
+<div class="pp-footer__col"><p class="pp-footer__heading">Open source</p><ul><li><a href="https://github.com/bekirdag/pigeonpost">GitHub</a></li><li><a href="https://github.com/bekirdag/pigeonpost/blob/main/npm/README.md">Distribution</a></li><li><a href="https://github.com/bekirdag/pigeonpost/tree/main/docs">Design docs</a></li><li><a href="https://github.com/bekirdag/pigeonpost/blob/main/docs/law.md">Lawful access design</a></li></ul></div>
+<div class="pp-footer__col"><p class="pp-footer__heading">Help</p><ul><li><a href="https://help.pigeonpost.dev/">Help centre</a></li><li><a href="https://status.pigeonpost.dev/">Status</a></li><li><a href="/app-support.html">App support</a></li><li><a href="/delete-account.html">Delete your account</a></li></ul></div>
+</nav>
+</div>
+<div class="pp-footer__legal">
+<span>Pigeonpost is free software under the MIT licence.</span>
+<ul><li><a href="/privacy">Privacy Policy</a></li><li><a href="/terms">Terms of Service</a></li><li><a href="/app-privacy.html">App privacy</a></li><li><a href="/app-terms.html">App terms</a></li></ul>
+</div>
+</div>
+</footer>
 </body>
 </html>

@@ -119,6 +119,18 @@ shasum -a256 site-inbox/app.js
 ssh raijin 'shasum -a256 /var/www/pigeonpost-inbox/app.js'
 ```
 
+## Design kit (2026-11-14)
+
+`site/` and `site-developers/` use the Pigeonpost Design Kit's CSS kit 1.0.0, vendored unchanged in
+each site's `kit/` folder (stylesheet, Geist fonts, icon sprite, logo symbols; see `kit/README.md`).
+The marketing pages load `/kit/pp-ui.min.css` then `/site.css`; the developer docs load it then
+`/docs.css`. Fonts and the sprite are same-origin, so the existing CSPs (`style-src 'self'`,
+`default-src 'self'` covering fonts) need no change, and the marketing pages stay script-free under
+`script-src 'none'`: the phone menu is a `<details>` element and the theme follows the device.
+Install `kit/` and `site.css` before the HTML. `site/404.html` is the kit's error page; serve it
+with `error_page 404 /404.html;` in the pigeonpost.dev server. The signed-in legacy pages
+(`account.html`, `staff.html`) still use `style.css` and are not part of this change.
+
 ## Desktop downloads
 
 The homepage has one platform-neutral Download link. `site/download.html` serves `/download`,
@@ -174,8 +186,8 @@ The general site's `script-src 'none'` must stay in place. Install `download-loc
 server**, using `include /etc/nginx/snippets/pigeonpost-download.conf;`. Back up the active
 configuration first; run `nginx -t` before reloading. The include permits the page's same-origin
 script only on `/download`, `/download/`, and `/download.html`, and keeps its page uncached.
-Deploy `download.html`, `download.css`, `download.js`, `brand.css`, `logo_white.png`, and the
-updated `index.html`/`account.html` from the same checkout. Copy the new assets before the HTML.
+Deploy `download.html`, `download.js`, `site.css`, the `kit/` folder and the updated `index.html`
+from the same checkout (since 2026-11-14 the page uses the design kit; see below). Copy the new assets before the HTML.
 The white logo is the unmodified `assets/img/logo_white.png`, selected by a native `<picture>`
 media source in dark themes. No script is needed for the logo or basic download links.
 

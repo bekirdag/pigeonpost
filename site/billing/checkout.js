@@ -58,7 +58,7 @@
     const box = $("#pp-pay-form");
     const buy = document.createElement("button");
     buy.type = "button";
-    buy.className = "btn btn-primary";
+    buy.className = "pp-btn pp-btn--primary";
     buy.id = "pp-pay-confirm";
     buy.textContent = "Buy the web plan as well";
     buy.addEventListener("click", () => {

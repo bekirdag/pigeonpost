@@ -1,4 +1,5 @@
-// Pigeonpost developer docs: a Copy button on every command snippet (`pre[data-copy]`).
+// Pigeonpost developer docs: a Copy button on every command snippet (`pre[data-copy]`), styled as
+// the design kit's code-block copy button (`.pp-code__copy`) in the corner of its `.pp-code` figure.
 // Served from this origin; no inline scripts or handlers, so the site keeps `script-src 'self'`.
 (function () {
   "use strict";
@@ -15,7 +16,7 @@
     var source = pre.querySelector("code") || pre;
     var button = document.createElement("button");
     button.type = "button";
-    button.className = "copy-btn";
+    button.className = "pp-code__copy";
     button.textContent = "Copy";
     button.setAttribute("aria-label", "Copy command");
     var timer = null;
@@ -36,7 +37,7 @@
         say("Press Ctrl+C");
       }
     });
-    pre.appendChild(button);
+    (pre.closest(".pp-code") || pre).appendChild(button);
   }
 
   function init() {
