@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Static picker preview for Android 12-14 (Android 15+ draws a generated one). The launcher inflates it
+     as RemoteViews, without AppCompat, so android:tint is the attribute that works. Sample content only. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools"
+    tools:ignore="HardcodedText,ContentDescription,UseCompoundDrawables,UseAppTint"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:background="@drawable/widget_preview_background" android:padding="12dp" android:orientation="vertical">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal"
+        android:gravity="center_vertical" android:layout_marginBottom="8dp">
+        <ImageView android:layout_width="18dp" android:layout_height="18dp" android:src="@drawable/pp_ic_calendar_days" android:tint="@color/widget_link" />
+        <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="8dp"
+            android:text="Today" android:textSize="16sp" android:textStyle="bold" android:textColor="@color/widget_text" />
+    </LinearLayout>
+    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:layout_marginBottom="2dp"
+        android:text="TODAY" android:textSize="11sp" android:textStyle="bold" android:textColor="@color/widget_muted" />
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal"
+        android:gravity="center_vertical" android:paddingTop="4dp" android:paddingBottom="4dp">
+        <ImageView android:layout_width="3dp" android:layout_height="34dp" android:src="@drawable/widget_preview_pill" android:scaleType="fitXY" />
+        <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="8dp" android:orientation="vertical">
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Design review" android:textSize="15sp"
+                android:fontFamily="sans-serif-medium" android:textColor="@color/widget_text" android:maxLines="1" />
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="15:30 – 16:15" android:textSize="12sp"
+                android:textColor="@color/widget_muted" android:maxLines="1" />
+        </LinearLayout>
+    </LinearLayout>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal"
+        android:gravity="center_vertical" android:paddingTop="4dp" android:paddingBottom="4dp">
+        <ImageView android:layout_width="3dp" android:layout_height="34dp" android:src="@drawable/widget_preview_pill" android:scaleType="fitXY" />
+        <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="8dp" android:orientation="vertical">
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Dinner with Maya" android:textSize="15sp"
+                android:fontFamily="sans-serif-medium" android:textColor="@color/widget_text" android:maxLines="1" />
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="19:00 – 21:00 · Harbour Kitchen" android:textSize="12sp"
+                android:textColor="@color/widget_muted" android:maxLines="1" />
+        </LinearLayout>
+    </LinearLayout>
+    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:layout_marginBottom="2dp"
+        android:text="TOMORROW" android:textSize="11sp" android:textStyle="bold" android:textColor="@color/widget_muted" />
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal"
+        android:gravity="center_vertical" android:paddingTop="4dp" android:paddingBottom="4dp">
+        <ImageView android:layout_width="3dp" android:layout_height="34dp" android:src="@drawable/widget_preview_pill" android:scaleType="fitXY" />
+        <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="8dp" android:orientation="vertical">
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Quarterly planning" android:textSize="15sp"
+                android:fontFamily="sans-serif-medium" android:textColor="@color/widget_text" android:maxLines="1" />
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="10:00 – 11:30" android:textSize="12sp"
+                android:textColor="@color/widget_muted" android:maxLines="1" />
+        </LinearLayout>
+    </LinearLayout>
+</LinearLayout>

@@ -112,6 +112,7 @@ class MainActivity : ComponentActivity() {
             choosePicture = { picture.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
             takePicture = ::takePicture) }
         if (savedInstanceState == null) openNotification(intent)
+        if (savedInstanceState == null) openWidget(intent)
         if (savedInstanceState == null) model.openGroupLink(intent.data)
         if (savedInstanceState == null) openMeetingLink(intent.data)
         if (savedInstanceState == null) intent.data?.toString()?.let(DevicePairingLink::parse)?.let(model::openDeviceApproval)
@@ -153,6 +154,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent); setIntent(intent)
         openNotification(intent)
+        openWidget(intent)
         openMeetingLink(intent.data)
         intent.data?.toString()?.let(DevicePairingLink::parse)?.let(model::openDeviceApproval)
         answerCall(intent)
@@ -175,6 +177,12 @@ class MainActivity : ComponentActivity() {
         if (browser == null) { model.inbox.showError("Install a browser to open this invitation."); return }
         try { CustomTabsIntent.Builder().setShowTitle(true).build().apply { intent.setPackage(browser) }.launchUrl(this, Uri.parse(url)) }
         catch (_: ActivityNotFoundException) { model.inbox.showError("No browser is available for this invitation.") }
+    }
+    /** A widget tap that is not a conversation or an event (those arrive as notification extras). */
+    private fun openWidget(intent: Intent) {
+        if (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return
+        model.openWidgetTarget(intent.getStringExtra(dev.pigeonpost.inbox.widgets.WidgetTargets.EXTRA),
+            intent.getStringExtra(dev.pigeonpost.inbox.widgets.WidgetTargets.EXTRA_NEST))
     }
     private fun openNotification(intent: Intent) {
         val payload = buildMap {

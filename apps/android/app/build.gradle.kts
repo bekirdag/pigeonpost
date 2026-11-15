@@ -107,10 +107,14 @@ dependencies {
     // UniFFI's Kotlin binding calls the library through JNA; the AAR carries libjnidispatch for each ABI.
     implementation("net.java.dev.jna:jna:5.17.0@aar")
     implementation("androidx.exifinterface:exifinterface:1.4.1")
+    // Home-screen widgets: they draw the app's snapshot and never reach the network themselves.
+    implementation(libs.glance.appwidget)
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
+    testImplementation(libs.glance.appwidget.testing)
+    testImplementation(libs.glance.testing)
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
     androidTestImplementation("androidx.test:runner:1.7.0")
     androidTestImplementation("androidx.test:rules:1.7.0")

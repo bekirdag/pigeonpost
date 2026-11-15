@@ -1,0 +1,10 @@
+# Version catalog. New dependencies go here; the existing ones are still declared inline in each
+# module's build file and move here as they are next touched.
+[versions]
+glance = "1.2.0"
+
+[libraries]
+# Home-screen widgets (app/src/main/kotlin/dev/pigeonpost/inbox/widgets, docs/widgets-plan-android.md).
+glance-appwidget = { module = "androidx.glance:glance-appwidget", version.ref = "glance" }
+glance-appwidget-testing = { module = "androidx.glance:glance-appwidget-testing", version.ref = "glance" }
+glance-testing = { module = "androidx.glance:glance-testing", version.ref = "glance" }

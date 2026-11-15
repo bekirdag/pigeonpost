@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Design kit tokens (pigeonpost-ui PPDark) for the widget picker's static preview layouts. -->
+<resources>
+    <color name="widget_surface">#FF141820</color>
+    <color name="widget_text">#FFF2F4F7</color>
+    <color name="widget_muted">#FFA3ACB9</color>
+    <color name="widget_link">#FF6EA8FF</color>
+    <color name="widget_accent">#FF086CFF</color>
+    <color name="widget_on_accent">#FFFFFFFF</color>
+    <color name="widget_success">#FF4FDB55</color>
+    <color name="widget_warning">#FFF5B547</color>
+    <color name="widget_info">#FF6EA8FF</color>
+    <color name="widget_face_blue">#FF13233F</color>
+    <color name="widget_face_teal">#FF1D3B3E</color>
+    <color name="widget_face_violet">#FF2F2E4A</color>
+</resources>

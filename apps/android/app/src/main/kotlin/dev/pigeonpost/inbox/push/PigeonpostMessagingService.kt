@@ -43,6 +43,8 @@ internal fun displayPush(context: Context, data: Map<String, String>) {
     if (preferences.getString("identity", null) != identity || !validAddress(identity) || !(group || validAddress(peer))
         || id.isBlank() || id.length > 200 || !PushNotifications.allowed(context)) return
     if (PushNotifications.foreground) { if (group) PushNotifications.groupPoke?.invoke(); return }
+    // In front, the app rewrites the widget snapshot itself; closed, the inbox widget counts this push.
+    dev.pigeonpost.inbox.widgets.WidgetPush.message(context, identity, peer, if (group) data["title"] else null, id)
     val intent = Intent(context, MainActivity::class.java)
         .setData(Uri.Builder().scheme("pigeonpost-notification").authority("message").appendPath(id).build())
         .putExtra("push_identity", identity).putExtra("push_peer", peer)

@@ -91,6 +91,11 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
     var sheet by rememberSaveable { mutableStateOf<String?>(null) }
     var plansSeen by rememberSaveable { mutableStateOf(0) }
     LaunchedEffect(plansRequests) { if (plansRequests > plansSeen) { plansSeen = plansRequests; sheet = "plans" } }
+    // The widget's "New message": open the new-conversation sheet once the inbox is on screen.
+    val composeRequested by model.composeRequested.collectAsStateWithLifecycle()
+    LaunchedEffect(composeRequested, session.signedIn, session.termsAccepted, state.acting?.address) {
+        if (composeRequested && session.signedIn && session.termsAccepted && state.acting != null) { sheet = "new"; model.composeHandled() }
+    }
     var editContact by remember { mutableStateOf<Contact?>(null) }
     var viewing by remember { mutableStateOf<Attachment?>(null) }
     val snackbar = remember { SnackbarHostState() }

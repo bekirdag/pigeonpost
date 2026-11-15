@@ -1,2 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources><string name="app_name">Pigeonpost</string></resources>
+<resources>
+    <string name="app_name">Pigeonpost</string>
+    <!-- Home-screen widgets: names and descriptions in the widget picker. -->
+    <string name="widget_inbox_label">Inbox</string>
+    <string name="widget_inbox_description">Unread count and your latest conversations. Message text stays hidden unless you turn on previews.</string>
+    <string name="widget_quick_actions_label">Quick actions</string>
+    <string name="widget_quick_actions_description">Start a new message or open your inbox.</string>
+    <string name="widget_nests_label">Nests</string>
+    <string name="widget_nests_description">Your Nests at a glance: status and running hours.</string>
+    <string name="widget_agenda_label">Agenda</string>
+    <string name="widget_agenda_description">Today\'s and upcoming events from your Pigeonpost calendar.</string>
+</resources>

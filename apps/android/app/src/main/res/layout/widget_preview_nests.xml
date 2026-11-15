@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Static picker preview for Android 12-14 (Android 15+ draws a generated one). The launcher inflates it
+     as RemoteViews, without AppCompat, so android:tint is the attribute that works. Sample content only. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools"
+    tools:ignore="HardcodedText,ContentDescription,UseCompoundDrawables,UseAppTint"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:background="@drawable/widget_preview_background" android:padding="12dp" android:orientation="vertical">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal"
+        android:gravity="center_vertical" android:layout_marginBottom="8dp">
+        <ImageView android:layout_width="18dp" android:layout_height="18dp" android:src="@drawable/pp_ic_egg" android:tint="@color/widget_link" />
+        <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="8dp"
+            android:text="Nests" android:textSize="16sp" android:textStyle="bold" android:textColor="@color/widget_text" />
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="3" android:textSize="13sp"
+            android:fontFamily="sans-serif-medium" android:textColor="@color/widget_muted" />
+    </LinearLayout>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:paddingTop="5dp" android:paddingBottom="5dp">
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical">
+            <ImageView android:layout_width="8dp" android:layout_height="8dp" android:src="@drawable/widget_preview_dot" android:tint="@color/widget_success" />
+            <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="8dp"
+                android:text="Research helper" android:textSize="15sp" android:fontFamily="sans-serif-medium" android:textColor="@color/widget_text" android:maxLines="1" />
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="46 h of 120 h" android:textSize="12sp" android:textColor="@color/widget_muted" />
+        </LinearLayout>
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="16dp"
+            android:text="Ready" android:textSize="12sp" android:textColor="@color/widget_muted" />
+    </LinearLayout>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:paddingTop="5dp" android:paddingBottom="5dp">
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical">
+            <ImageView android:layout_width="8dp" android:layout_height="8dp" android:src="@drawable/widget_preview_dot" android:tint="@color/widget_info" />
+            <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="8dp"
+                android:text="Inbox triage" android:textSize="15sp" android:fontFamily="sans-serif-medium" android:textColor="@color/widget_text" android:maxLines="1" />
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="31 h of 120 h" android:textSize="12sp" android:textColor="@color/widget_muted" />
+        </LinearLayout>
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="16dp"
+            android:text="Working…" android:textSize="12sp" android:textColor="@color/widget_muted" />
+    </LinearLayout>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:paddingTop="5dp" android:paddingBottom="5dp">
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical">
+            <ImageView android:layout_width="8dp" android:layout_height="8dp" android:src="@drawable/widget_preview_dot" android:tint="@color/widget_warning" />
+            <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="8dp"
+                android:text="Bookkeeping" android:textSize="15sp" android:fontFamily="sans-serif-medium" android:textColor="@color/widget_text" android:maxLines="1" />
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="9 h of 120 h" android:textSize="12sp" android:textColor="@color/widget_muted" />
+        </LinearLayout>
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="16dp"
+            android:text="Paused" android:textSize="12sp" android:textColor="@color/widget_muted" />
+    </LinearLayout>
+</LinearLayout>

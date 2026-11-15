@@ -231,6 +231,14 @@ fun SettingsDialog(state: InboxState, session: SessionState, fixtures: Boolean, 
                     Text("Incoming calls ring as a notification. Allow full-screen notifications to see them over the lock screen, like a phone call.", style = MaterialTheme.typography.bodyMedium)
                     OutlinedButton(allow, Modifier.fillMaxWidth()) { Text("Allow full-screen calls") }
                 }
+                model?.let { m ->
+                    val widgetPreviews by m.widgetPreviews.collectAsStateWithLifecycle()
+                    HorizontalDivider()
+                    Text("Home screen widgets", style = MaterialTheme.typography.titleMedium)
+                    ToggleRow("Show message previews in widgets",
+                        "Off: widgets show who wrote and “New message”, never what was written. Turning this on puts the first line of each conversation on your home screen.",
+                        widgetPreviews == true) { m.setWidgetPreviews(it) }
+                }
             }
             SettingsPage.HELP -> {
                 TextButton({ openLink("https://pigeonpost.dev/app-support.html") }) { Text("Contact support") }
