@@ -35,7 +35,7 @@
       for (const c of rows) {
         box.append(ui.kv([
           ["Gross sales", ui.money(c.gross_minor, c.currency)],
-          ["Pigeonpost 10%", `−${ui.money(c.commission_minor, c.currency)}`],
+          ["Piyote 10%", `−${ui.money(c.commission_minor, c.currency)}`],
           ["Tax", `−${ui.money(c.tax_minor, c.currency)}`],
           ["Refunds", `−${ui.money(c.reversed_publisher_minor, c.currency)}`],
           ["Net", el("strong", {}, ui.money(c.net_publisher_minor, c.currency))],
@@ -47,7 +47,7 @@
   }
 
   function list(view, ctx, rows, approvedReviews, admin) {
-    view.append(ui.header({ title: "Listings & pricing", text: "What buyers see in the Services catalog. Pigeonpost keeps 10% of each sale.",
+    view.append(ui.header({ title: "Listings & pricing", text: "What buyers see in the Services catalog. Piyote keeps 10% of each sale.",
       actions: admin && approvedReviews.length ? ui.button("New listing", { kind: "primary", icon: "plus", href: PP.href("listings", "new") }) : null }));
     if (!admin) view.append(ui.gate({ tone: "info", text: "Your role can read listings but not change them." }));
     view.append(ui.table({
