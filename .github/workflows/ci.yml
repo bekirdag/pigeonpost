@@ -145,6 +145,8 @@ jobs:
         run: python3 .github/scripts/test_cubemeld_gamecenter.py
       - name: Validate the dedicated ChatGPT OAuth provisioning boundaries
         run: python3 deploy/identity/test-chatgpt.py
+      - name: Test the status monitor's merge, flapping and alert logic
+        run: python3 deploy/status/test_pp_status.py
       - uses: dtolnay/rust-toolchain@8632757d5a758c452f724e9d837848c694a7bb48 # 1.91.1
         with:
           components: rustfmt, clippy
@@ -252,7 +254,8 @@ jobs:
           # address terminology as well; neither names Pigeonpost message delivery.
           # The synthetic local OIDC issuer uses the same fixed verified-address claim names.
           # pigeonpost-nests config.rs names Postmark's fixed HTTP endpoint path as the alert
-          # relay's fallback default; the alerts themselves are Pigeonpost messages.
+          # relay's fallback default; the alerts themselves are Pigeonpost messages. The status
+          # monitor (deploy/status/pp-status.py) calls the same fixed Postmark path for its fallback.
           # org_notify.rs calls saas_be's internal notification route, whose path segment is the
           # transport's name in saas_be's API; the message it sends is a Pigeonpost invitation.
           # store-adapter/src/sales.js (and its test) calls the same saas_be route to tell a person
@@ -303,6 +306,7 @@ jobs:
               ':(exclude)crates/pigeonpost-postbox/src/fcm.rs' \
               ':(exclude)crates/pigeonpost-postbox/src/org_notify.rs' \
               ':(exclude)crates/pigeonpost-nests/src/config.rs' \
+              ':(exclude)deploy/status/pp-status.py' \
               ':(exclude)store-adapter/src/sales.js' \
               ':(exclude)store-adapter/test/sales.test.mjs' \
               ':(exclude)store-adapter/src/credits.js' \

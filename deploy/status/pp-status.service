@@ -1,8 +1,12 @@
 [Unit]
-Description=Pigeonpost status page health pass (status.pigeonpost.dev)
+Description=Pigeonpost status: inside checks (raijin), pushed to the outside monitor
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/python3 %h/pp-status/pp-status.py
+ExecStart=/usr/bin/python3 %h/pp-status/pp-status.py probe --vantage inside
+# The outside monitor (nests-1). The key's authorized_keys entry there is a forced `ingest`.
+Environment=PP_STATUS_PUSH=ppstatus@193.164.5.238
+Environment=PP_STATUS_PUSH_KEY=%h/.ssh/pp_status_ed25519
+# Fallback copy: wodomini serves it only if the outside host does not answer.
 Environment=PP_STATUS_OUT=/var/www/pigeonpost-status/status.json
 TimeoutStartSec=90
