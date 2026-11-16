@@ -13,14 +13,17 @@
 <link rel="stylesheet" href="/status.css">
 </head>
 <body>
-<div class="st-wrap">
-  <header class="st-head">
-    <a class="pp-brand" href="https://pigeonpost.dev/"><img class="pp-brand-logo" src="/shared/brand/logo-symbol.png" alt="" width="28" height="26"><span class="pp-brand-text"><strong>Pigeonpost</strong><span>Status</span></span></a>
-    <button type="button" class="pp-icon-btn pp-theme" data-theme-toggle></button>
-  </header>
-  <main id="st-root" aria-live="polite"><p class="pp-muted">Checking…</p></main>
-  <footer class="st-foot"><a href="https://help.pigeonpost.dev">Help</a> · <a href="https://pigeonpost.dev/">pigeonpost.dev</a></footer>
-</div>
+<header class="pp-navbar pp-navbar--sticky">
+  <div class="pp-navbar__inner st-inner">
+    <a class="pp-brand" href="https://pigeonpost.dev/" aria-label="Pigeonpost home"><img class="pp-brand-logo" src="/shared/brand/logo-symbol.png" alt="" width="28" height="26"><span class="pp-brand__name">Pigeonpost</span><span class="pp-brand__product">Status</span></a>
+    <div class="pp-navbar__actions">
+      <a class="pp-btn pp-btn-quiet pp-navbar__hide-s" href="https://pigeonpost.dev/">pigeonpost.dev</a>
+      <button type="button" class="pp-icon-btn pp-navbtn pp-theme" data-theme-toggle></button>
+    </div>
+  </div>
+</header>
+<main class="st-page" id="st-root" aria-live="polite"><p class="pp-muted">Checking…</p></main>
+<footer class="pp-footer pp-footer--app st-foot"><div class="pp-footer__inner"><div class="pp-footer__legal"><span>Pigeonpost by Piyote Bilişim</span><ul><li><a href="https://help.pigeonpost.dev">help.pigeonpost.dev</a></li><li><a href="https://pigeonpost.dev/">pigeonpost.dev</a></li></ul></div></div></footer>
 <script src="/shared/core.js"></script>
 <script src="/status.js"></script>
 </body>
