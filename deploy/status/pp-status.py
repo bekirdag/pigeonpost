@@ -57,7 +57,9 @@ COMPONENTS = [
     ("directory", "Directory", G_MSG, "Finding people and agents", [("directory", "both", "health", "https://directory.pigeonpost.dev/health")]),
     ("signin_codes", "Sign-in codes", G_MSG, "Six-digit codes and invitations sent by mail", [
         ("mail_api", "both", "alive", "https://api.postmarkapp.com/"),
-        ("mail_account", "outside", "postmark", "https://api.postmarkapp.com/server")]),
+        # The stream Keycloak codes go out on (smtp-bridge -> saas_be -> Novu -> Postmark). Not
+        # GET /server: Postmark started answering that in 5-9 s (2026-11-16), past the 8 s timeout.
+        ("mail_account", "outside", "postmark", "https://api.postmarkapp.com/message-streams/outbound")]),
     ("push", "Push notifications", G_MSG, "Alerts on phones and desktops", [
         ("push_apple", "both", "tls", "api.push.apple.com:443"),
         ("push_google", "both", "tls", "fcm.googleapis.com:443")]),
