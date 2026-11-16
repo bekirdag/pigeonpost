@@ -12,6 +12,8 @@
 //     pages: [{ key, title, group, icon, allow(ctx), count(ctx), render(view, ctx, params) }],
 //     themePosition: "left",               // optional: the theme switch at the top left (default: right)
 //     navHeader: (ctx) => node,            // optional: drawn above the navigation (e.g. an org picker)
+//     banner: (ctx) => node,               // optional: a kit banner above every page (e.g. "Staff view")
+//     topActions: (ctx) => node(s),        // optional: the platform's own top-bar actions (a credit chip)
 //   });
 //
 // `allow(ctx)` hides a page the caller may not use (the postbox still enforces every route);
@@ -382,7 +384,9 @@
     const seq = ++state.renderSeq;
     const main = document.getElementById("pp-main");
     const view = el("div", { class: "pp-view", "data-page": page.key });
-    main.replaceChildren(view);
+    let banner = null;
+    try { banner = state.opts.banner ? state.opts.banner(state.ctx) : null; } catch { banner = null; }
+    main.replaceChildren(...(banner ? [banner] : []), view);
     view.append(PP.ui ? PP.ui.loading() : el("p", { class: "muted" }, "Loading…"));
     try {
       const fill = el("div", { class: "pp-view-inner" });

@@ -22,7 +22,7 @@ ALLOW = [
     r"pp-icon(--[\w-]+)?", r"pp-segmented(__[\w-]+)?", r"pp-kanban[\w-]*", r"pp-dl(__[\w-]+)?", r"pp-timeline(__[\w-]+|--[\w-]+)?",
     r"pp-progress(__[\w-]+|--[\w-]+)?", r"pp-filter-bar[\w-]*", r"pp-status-dot(--[\w-]+)?", r"pp-dot", r"pp-count(--[\w-]+)?",
     r"pp-quote[\w-]*", r"pp-callout(__[\w-]+|--[\w-]+)?", r"pp-alert(__[\w-]+|--[\w-]+)", r"pp-review[\w-]*", r"pp-audit[\w-]*",
-    r"pp-search--[\w-]+", r"pp-tab__count",
+    r"pp-search--[\w-]+", r"pp-tab__count", r"pp-banner(__[\w-]+|--[\w-]+)?", r"pp-status-list", r"pp-status-row(__[\w-]+)?", r"pp-status",
 ]
 ALLOW_RE = re.compile(r"^(?:%s)$" % "|".join(ALLOW))
 # Base blocks the platforms already define with different rules; never take the kit's base rule.
