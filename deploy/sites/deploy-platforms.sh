@@ -3,6 +3,7 @@
 #
 #   deploy/sites/deploy-platforms.sh assemble <out-dir> [platform…]   build roots locally
 #   deploy/sites/deploy-platforms.sh publish  <out-dir> [platform…]   stage on raijin, then one sudo -S install
+#                                                                       (status also goes to nests-1, which serves it)
 #
 # Platforms: account partner management enterprise help status. Each root is the platform's own
 # directory (site-<platform>/) plus site-shared/ copied to /shared/ (tests, node_modules and
@@ -29,6 +30,11 @@ assemble() {
 }
 
 publish() {
+  # Prod serves merged commits only: no "-dirty" builds (PP_DEPLOY_ALLOW_DIRTY=1 for emergencies).
+  if [ "${PP_DEPLOY_ALLOW_DIRTY:-}" != 1 ] && [ -n "$(git -C "$here" status --porcelain)" ]; then
+    echo "refusing to publish uncommitted changes (commit and merge first, or PP_DEPLOY_ALLOW_DIRTY=1)" >&2
+    exit 1
+  fi
   assemble
   cat > "$out/install.sh" <<'REMOTE'
 #!/usr/bin/env bash
@@ -60,6 +66,11 @@ REMOTE
   rsync -az "$out/" raijin:stage-platforms/ </dev/null
   # stdin (the sudo password) passes through ssh to install.sh's read.
   ssh raijin "bash ~/stage-platforms/install.sh ${platforms[*]}"
+  # status.pigeonpost.dev is served from nests-1 (raijin's copy is only wodomini's fallback):
+  # install the same assembled root there too. See deploy/status/README.md.
+  for p in "${platforms[@]}"; do
+    if [ "$p" = status ]; then "$here/deploy/status/deploy-outside.sh" page "$out/status" </dev/null; fi
+  done
 }
 
 case "$cmd" in
