@@ -130,6 +130,9 @@ a.pp-navbtn:hover { text-decoration: none; }
   .pp-side-close, .pp-menu-btn, .pp-icon-btn.pp-side-close, .pp-icon-btn.pp-menu-btn { display: inline-grid; }
   .pp-nav-item.pp-sidebar__item { height: var(--pp-touch-min); }
   .pp-top.pp-topbar { padding: 0 var(--pp-space-2); }
+  /* A top-left theme switch moves beside the actions so the menu button leads. */
+  .pp-top > .pp-theme-left { order: 2; }
+  .pp-top > .pp-topbar__actions { order: 3; }
   .pp-main.pp-shell__content { padding: var(--pp-space-4) var(--pp-space-4) var(--pp-space-12); }
 }
 .pp-pop-platforms { display: none; }
