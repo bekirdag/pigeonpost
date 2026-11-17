@@ -267,3 +267,110 @@
 .mp-callout p { margin: 0; font-size: 14px; line-height: 1.5; color: var(--mp-text); }
 .mp-callout strong { color: var(--mp-ink); }
 .mp-callout-icon { flex-shrink: 0; width: 20px; height: 20px; margin-top: 1px; fill: none; stroke: var(--warn-text, #92400e); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ---- the public marketplace on the design kit's marketplace template ---------------------------
+   marketplace.html (catalog and ?listing=<id>) and partners.html, drawn by marketplace-kit.js with
+   the kit's own components (pp-listing-card, pp-listing-header, pp-order, pp-sidebar, pp-chip…).
+   This is the template's page layout (kt-help-hero, kt-featured, kt-market, kt-detail) on the
+   site's tokens; no inline styles, so the strict style-src policy holds. */
+.mk-hero { padding: var(--pp-space-16) var(--pp-space-4) var(--pp-space-8); text-align: center; display: grid; gap: var(--pp-space-4); justify-items: center;
+  background: radial-gradient(50% 70% at 50% 0%, color-mix(in srgb, var(--pp-accent) 12%, transparent), transparent 70%); }
+.mk-hero h1, .mk-hero p { margin: 0; }
+.mk-hero h1 { color: var(--pp-text); text-wrap: balance; }
+.mk-hero .pp-body-l { max-width: 62ch; text-wrap: pretty; }
+.mk-search { width: min(620px, 100%); }
+.mk-hero--compact { padding-bottom: var(--pp-space-6); }
+.mk-loading { padding: var(--pp-space-8) 0; text-align: center; }
+.mk-app { padding-bottom: var(--pp-space-12); }
+.mk-app .pp-empty { margin: var(--pp-space-6) 0; }
+
+.mk-featured { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--pp-space-4); }
+.mk-feature-card {
+  position: relative; overflow: hidden; display: grid; gap: var(--pp-space-3); align-content: space-between; min-height: 200px; padding: var(--pp-space-6);
+  border-radius: var(--pp-radius-xl); color: var(--pp-gray-0); background: linear-gradient(150deg, var(--pp-navy-900), var(--pp-navy-600));
+}
+.mk-feature-card:nth-child(2) { background: linear-gradient(150deg, var(--pp-green-900), var(--pp-teal-600)); }
+.mk-feature-card:nth-child(3) { background: linear-gradient(150deg, var(--pp-blue-900), var(--pp-violet-600)); }
+.mk-feature-card__eyebrow { color: inherit; opacity: .8; }
+.mk-feature-card__title { margin: 0; font-size: var(--pp-fs-h2); line-height: var(--pp-lh-h2); font-weight: var(--pp-weight-semibold); color: var(--pp-gray-0); }
+.mk-feature-card p { margin: 0; color: rgba(255, 255, 255, .82); font-size: var(--pp-fs-body-s); line-height: var(--pp-lh-body-s); }
+.mk-feature-card .pp-btn { justify-self: start; background: var(--pp-gray-0); border-color: var(--pp-gray-0); color: var(--pp-navy-800); }
+
+.mk-market { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: var(--pp-space-8); align-items: start; padding: var(--pp-space-8) 0 0; }
+.mk-market__filters { display: grid; gap: var(--pp-space-5); position: sticky; top: 88px; min-width: 0; }
+.mk-market__filters .pp-sidebar__item { height: 34px; }
+.mk-market__chips { display: none; }
+.mk-results { min-width: 0; }
+.mk-results__head p { margin: 0; }
+.mk-sort { width: 200px; }
+.mk .pp-listing-card__title { white-space: normal; overflow: visible; text-overflow: clip; margin: 0; }
+.mk .pp-listing-card__publisher, .mk .pp-listing-card__desc { margin: 0; }
+.mk-logo--image { overflow: hidden; background: var(--pp-surface-sunken); }
+.mk-logo-img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.mk-crumbs { padding-top: var(--pp-space-6); }
+.mk-detail { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: var(--pp-space-8); align-items: start; padding: var(--pp-space-6) 0 0; }
+.mk-detail__main { min-width: 0; }
+.mk-detail .pp-listing-header p, .mk-detail .pp-listing-header h1 { margin: 0; }
+.mk-detail .pp-listing-header__meta a { color: inherit; }
+.mk-order { position: sticky; top: 88px; }
+.mk-order p, .mk-order h2, .mk-order dl { margin: 0; }
+.mk-prose { display: grid; gap: var(--pp-space-4); max-width: 680px; color: var(--pp-text-body); font-size: 15px; line-height: 24px; }
+.mk-prose p { margin: 0; }
+.mk-op { display: grid; gap: var(--pp-space-3); padding: var(--pp-space-5); border-radius: var(--pp-radius-l); border: 1px solid var(--pp-border); background: var(--pp-surface); }
+.mk-op__title { margin: 0; font-size: var(--pp-fs-h4); line-height: var(--pp-lh-h4); font-weight: var(--pp-weight-semibold); color: var(--pp-text); }
+.mk-op__desc, .mk-op__label { margin: 0; }
+.mk-op__label { font-weight: var(--pp-weight-semibold); color: var(--pp-text); font-size: var(--pp-fs-body-s); }
+.mk-op__list { margin: var(--pp-space-2) 0 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.mk-op__list li { display: flex; align-items: center; justify-content: space-between; gap: var(--pp-space-3); padding: 6px 0; border-bottom: 1px solid var(--pp-border-subtle); font-size: var(--pp-fs-body-s); }
+.mk-op__list li:last-child { border-bottom: 0; }
+.mk-facts { display: grid; gap: 6px; margin: 0; font-size: var(--pp-fs-body-s); }
+.mk-facts__row { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: var(--pp-space-3); }
+.mk-facts dt { color: var(--pp-text-muted); }
+.mk-facts dd { margin: 0; color: var(--pp-text); }
+
+.mk-trust { display: grid; gap: var(--pp-space-4); padding: var(--pp-space-6); border-radius: var(--pp-radius-xl); border: 1px solid var(--pp-border); background: var(--pp-surface-sunken); }
+.mk-trust__title { margin: 0; font-size: var(--pp-fs-h3); line-height: var(--pp-lh-h3); font-weight: var(--pp-weight-semibold); color: var(--pp-text); }
+.mk-trust__list { margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: var(--pp-space-4); }
+.mk-trust__item { display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: var(--pp-space-3); align-items: start; }
+.mk-trust__icon { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; background: var(--pp-accent-subtle); border: 1px solid var(--pp-accent-subtle-border); color: var(--pp-text-link); }
+.mk-trust__icon .pp-icon { width: 18px; height: 18px; }
+.mk-trust__text { display: grid; gap: 2px; font-size: var(--pp-fs-body-s); line-height: var(--pp-lh-body-s); color: var(--pp-text-muted); }
+.mk-trust__text strong { color: var(--pp-text); font-weight: var(--pp-weight-semibold); }
+.mk-trust__links { margin: 0; font-size: var(--pp-fs-body-s); }
+
+.mk-about { padding: var(--pp-space-8) 0 var(--pp-space-20); border-top: 1px solid var(--pp-border-subtle); display: grid; gap: var(--pp-space-6); }
+.mk-about__title { margin: 0; font-size: var(--pp-fs-h2); line-height: var(--pp-lh-h2); font-weight: var(--pp-weight-semibold); color: var(--pp-text); }
+.mk-about__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: var(--pp-space-4); }
+.mk-about__card { display: grid; align-content: start; gap: var(--pp-space-3); }
+.mk-about__card h3, .mk-about__card p { margin: 0; }
+.mk-about__card h3 { font-size: var(--pp-fs-h4); line-height: var(--pp-lh-h4); font-weight: var(--pp-weight-semibold); color: var(--pp-text); }
+.mk-about__card p { color: var(--pp-text-body); font-size: var(--pp-fs-body-s); line-height: var(--pp-lh-body-s); }
+.mk-about__icon { width: 40px; height: 40px; border-radius: var(--pp-radius-m); display: grid; place-items: center; background: var(--pp-accent-subtle); border: 1px solid var(--pp-accent-subtle-border); color: var(--pp-text-link); }
+.mk-about__icon .pp-icon { width: 20px; height: 20px; }
+
+/* partners.html */
+.mk-publisher { margin-top: var(--pp-space-6); }
+.mk-publisher .pp-listing-header p, .mk-publisher .pp-listing-header h1 { margin: 0; }
+.mk-publisher .pp-listing-header__meta a { color: inherit; }
+.mk-partners-search { display: flex; gap: var(--pp-space-3); width: min(620px, 100%); }
+.mk-partners-search .pp-search { flex: 1 1 auto; min-width: 0; }
+.mk-section-title { margin: var(--pp-space-8) 0 var(--pp-space-4); font-size: var(--pp-fs-h2); line-height: var(--pp-lh-h2); font-weight: var(--pp-weight-semibold); color: var(--pp-text); }
+.mk-pager { display: flex; flex-wrap: wrap; gap: var(--pp-space-3); justify-content: center; margin-top: var(--pp-space-6); }
+
+@media (max-width: 960px) {
+  .mk-market, .mk-detail { grid-template-columns: minmax(0, 1fr); gap: var(--pp-space-5); }
+  .mk-market__filters, .mk-order { position: static; }
+  .mk-market__cats { display: none; }
+  .mk-market__chips { display: flex; }
+  .mk-featured { grid-template-columns: minmax(0, 1fr); }
+  .mk-feature-card { min-height: 0; }
+}
+@media (max-width: 600px) {
+  .mk-hero { padding: var(--pp-space-12) 0 var(--pp-space-6); }
+  .mk-featured { display: none; } /* the template's phone catalog goes straight to the listings */
+  .mk-results__head { flex-wrap: wrap; }
+  .mk-sort { width: 100%; }
+  .mk-trust { padding: var(--pp-space-4); }
+  .mk-partners-search { flex-wrap: wrap; }
+}
