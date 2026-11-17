@@ -19,12 +19,14 @@ import dev.pigeonpost.core.widgets.WidgetSourceNests
 import dev.pigeonpost.inbox.auth.SessionState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.time.YearMonth
 
 /** Everything the widgets are built from, as the app holds it right now. */
@@ -43,7 +45,10 @@ internal class WidgetSync(private val context: Context, private val scope: Corou
     private var refreshedCalendar: String? = null
 
     fun start(sources: kotlinx.coroutines.flow.Flow<WidgetSources>, refreshCalendar: () -> Unit) {
-        scope.launch {
+        // Off the main thread: building, encrypting and writing the snapshot and redrawing widgets
+        // ran on the ViewModel's Main dispatcher after every state change, which kept the UI thread
+        // busy (and made Compose UI tests time out at random on slow emulators).
+        scope.launch(Dispatchers.Default) {
             sources.collectLatest { now ->
                 // Coalesce bursts (a refresh changes several stores in a row) into one write.
                 delay(400)
@@ -64,7 +69,7 @@ internal class WidgetSync(private val context: Context, private val scope: Corou
         if (!inbox.loaded) return
         val calendar = sources.calendar?.takeIf { it.enabled && it.mailbox == mailbox }
         calendar?.let { state ->
-            if (refreshedCalendar != state.contextId && agendaPlaced()) { refreshedCalendar = state.contextId; refreshCalendar() }
+            if (refreshedCalendar != state.contextId && agendaPlaced()) { refreshedCalendar = state.contextId; withContext(Dispatchers.Main) { refreshCalendar() } }
         }
         val input = input(sources, mailbox, calendar)
         val changed = WidgetStore.update(context) { previous ->
