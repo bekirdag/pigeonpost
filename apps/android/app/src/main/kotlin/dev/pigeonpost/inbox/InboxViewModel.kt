@@ -101,7 +101,10 @@ data class AppGraph(
         fun loadGroupCrypto(): GroupCryptoLibrary? = try { UniffiGroupCrypto().also { check(it.generateStateKey().size == 32) } } catch (_: Throwable) { null }
     }
 }
-class PigeonpostApplication : Application() { val graph by lazy { AppGraph.live(this) } }
+class PigeonpostApplication : Application() {
+    val graph by lazy { AppGraph.live(this) }
+    override fun onCreate() { super.onCreate(); dev.pigeonpost.inbox.widgets.WidgetPreviews.publish(this) }
+}
 
 class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: CallsOverride? = null, pinnedAppearance: String? = null) : AndroidViewModel(app) {
     val session = graph.session
@@ -251,8 +254,18 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
     val pictureForAll = MutableStateFlow(false)
     private val cropping = MutableStateFlow<android.graphics.Bitmap?>(null)
     val crop = cropping.asStateFlow()
+    /** Home-screen widgets: "Show message previews in widgets" (off by default) and their snapshot. */
+    val widgetPreviews = dev.pigeonpost.inbox.widgets.WidgetStore.previewsEnabled(app)
+    fun setWidgetPreviews(show: Boolean) = dev.pigeonpost.inbox.widgets.WidgetStore.setPreviews(getApplication(), show)
+    private val widgetSync = dev.pigeonpost.inbox.widgets.WidgetSync(app, viewModelScope)
+    /** A widget's "New message": the conversation list opens its new-conversation sheet once. */
+    private val composeAsked = MutableStateFlow(false)
+    val composeRequested = composeAsked.asStateFlow()
+    fun composeHandled() { composeAsked.value = false }
     init {
         graph.start(viewModelScope)
+        widgetSync.start(dev.pigeonpost.inbox.widgets.widgetSources(session.state, inbox.state, groups?.state, nests?.state, calendar?.state,
+            people?.state, widgetPreviews)) { calendar?.refresh() }
         viewModelScope.launch { session.state.collect { deviceApproval?.synchronize(); organizationRooms?.synchronize(); people?.synchronize() } }
         dev.pigeonpost.inbox.push.PushNotifications.groupPoke = { groups?.poke() }
         PushNotifications.calendarPoke = { viewModelScope.launch { calendar?.refresh() } }
@@ -333,6 +346,9 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
         closeMeetingLink()
         calls?.stopStream()
         viewModelScope.launch(Dispatchers.IO) { runCatching { notesKeys.destroy() } }
+        // The widgets forget this account at once, before the postbox hears about the sign-out.
+        composeAsked.value = false
+        viewModelScope.launch { runCatching { dev.pigeonpost.inbox.widgets.WidgetSync.clear(getApplication()) } }
         val authorization = session.authorizationLease
         val token = push?.clear()
         people?.reset(clearAliases = true)
@@ -536,6 +552,27 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
                     calendar.state.value.contextId != actor.contextId) return@launch
                 openCalendar(); calendar.refresh(); notice.event?.let(calendar::openEvent)
             } finally { if (visit == calendarNoticeId) calendar.noticeWaiting(false) }
+        }
+    }
+
+    /**
+     * A tap on a widget's header, button or empty state. Rows reuse the notification extras
+     * (openNotification / openCalendarNotice); this covers the rest. Navigation only, once signed in.
+     */
+    fun openWidgetTarget(target: String?, nest: String?) {
+        if (target == null) return
+        viewModelScope.launch {
+            val signedIn = session.state.first { !it.loading }
+            if (!signedIn.signedIn || !signedIn.termsAccepted) return@launch
+            inbox.state.first { it.accountLoaded || !session.state.value.signedIn }
+            if (!session.state.value.signedIn) return@launch
+            when (target) {
+                dev.pigeonpost.inbox.widgets.WidgetTargets.INBOX -> { closeProducts(); groups?.close(); inbox.selectPeer(null); inbox.showView(LeftView.INBOX) }
+                dev.pigeonpost.inbox.widgets.WidgetTargets.COMPOSE -> { closeProducts(); groups?.close(); inbox.selectPeer(null); inbox.showView(LeftView.INBOX); composeAsked.value = true }
+                dev.pigeonpost.inbox.widgets.WidgetTargets.NESTS -> openProducts()
+                dev.pigeonpost.inbox.widgets.WidgetTargets.NEST ->
+                    if (nest != null && dev.pigeonpost.core.nests.NestRules.validNestId(nest)) openNest(nest) else openProducts()
+            }
         }
     }
 

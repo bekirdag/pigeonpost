@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Inbox widget: 4x2 by default, from 2x1 up to full tablet sizes. Home screen only, never the keyguard. -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/widget_inbox_description"
+    android:initialLayout="@layout/glance_default_loading_layout"
+    android:previewLayout="@layout/widget_preview_inbox"
+    android:previewImage="@drawable/widget_preview_inbox_image"
+    android:minWidth="250dp" android:minHeight="110dp"
+    android:minResizeWidth="110dp" android:minResizeHeight="40dp"
+    android:targetCellWidth="4" android:targetCellHeight="2"
+    android:resizeMode="horizontal|vertical"
+    android:widgetCategory="home_screen"
+    android:updatePeriodMillis="0" />

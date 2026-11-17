@@ -74,6 +74,24 @@
                 <data android:scheme="dev.pigeonpost.inbox" android:host="oauth2redirect" />
             </intent-filter>
         </activity>
+        <!-- Home-screen widgets (docs/widgets-plan-android.md). They draw the app's sealed snapshot only:
+             no tokens, no keys, no network. Not exported beyond the system's widget broadcasts. -->
+        <receiver android:name=".widgets.InboxWidgetReceiver" android:exported="false" android:label="@string/widget_inbox_label">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_inbox_info" />
+        </receiver>
+        <receiver android:name=".widgets.QuickActionsWidgetReceiver" android:exported="false" android:label="@string/widget_quick_actions_label">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_quick_actions_info" />
+        </receiver>
+        <receiver android:name=".widgets.NestsWidgetReceiver" android:exported="false" android:label="@string/widget_nests_label">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_nests_info" />
+        </receiver>
+        <receiver android:name=".widgets.AgendaWidgetReceiver" android:exported="false" android:label="@string/widget_agenda_label">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_agenda_info" />
+        </receiver>
         <provider android:name="androidx.core.content.FileProvider" android:authorities="${applicationId}.files"
             android:exported="false" android:grantUriPermissions="true">
             <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths" />

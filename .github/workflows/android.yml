@@ -18,7 +18,7 @@ concurrency:
 jobs:
   build-and-test:
     name: build-and-test (${{ matrix.device }})
-    # The phone leg builds and checks everything; the tablet leg runs the same native workflow suite in
+    # The phone leg builds and checks everything (JVM tests include the widget layouts); the tablet leg runs the same native workflow suite in
     # the tablet layout (Tablet.kt: conversations column, inbox switcher, sidebar Calls), in parallel.
     strategy:
       fail-fast: false
@@ -26,7 +26,7 @@ jobs:
         include:
           - device: phone
             profile: pixel_7
-            tasks: :core:test :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest :app:assembleRelease :app:bundleRelease
+            tasks: :core:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest :app:assembleRelease :app:bundleRelease
           - device: tablet
             profile: pixel_tablet
             tasks: :app:assembleDebug :app:assembleDebugAndroidTest

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Design kit tokens (pigeonpost-ui PPLight) for the widget picker's static preview layouts.
+     The live widgets take the same values from PPTokens in code (widgets/WidgetTheme.kt). -->
+<resources>
+    <color name="widget_surface">#FFFFFFFF</color>
+    <color name="widget_text">#FF12161C</color>
+    <color name="widget_muted">#FF59626E</color>
+    <color name="widget_link">#FF0A5FE0</color>
+    <color name="widget_accent">#FF086CFF</color>
+    <color name="widget_on_accent">#FFFFFFFF</color>
+    <color name="widget_success">#FF15801D</color>
+    <color name="widget_warning">#FF8A5208</color>
+    <color name="widget_info">#FF0B4FB8</color>
+    <color name="widget_face_blue">#FFEDF4FF</color>
+    <color name="widget_face_teal">#FFD9F4F0</color>
+    <color name="widget_face_violet">#FFEBE7FC</color>
+</resources>
