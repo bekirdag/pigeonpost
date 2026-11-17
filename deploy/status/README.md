@@ -9,6 +9,17 @@ status.pigeonpost.dev is the one public status page. 25 components in 6 groups, 
 - Page: site-status/ (the design kit status-help template, owned by the platforms work) is served by nginx on nests-1 from /var/www/pigeonpost-status with a Let's Encrypt cert (certbot webroot /var/www/letsencrypt, certbot.timer renews). Config: deploy/status/nginx-status.conf.
 - Today the Cloudflare record still points at wodomini: wodomini /etc/nginx/sites-available/pigeonpost-status.conf (deploy/status/wodomini-status.conf) terminates TLS and proxies to nests-1 with certificate verification, falling back to raijin's copy on 502/503/504. Pending: change the Cloudflare record status.pigeonpost.dev to A 193.164.5.238, proxied, so wodomini leaves the path. Before changing it, write down the current record (type, content, proxied) and keep it as the rollback. No API token can edit pigeonpost.dev, so this is a dashboard change. Until then nothing breaks: wodomini only proxies.
 
+## What survives which outage (today: Cloudflare -> wodomini -> nests-1)
+| Down | Page | Data |
+|---|---|---|
+| raijin | up (served by nests-1) | outside checks only; raijin-only components show "No data", raijin-hosted sites go down after 5 runs |
+| nests-1 | up (wodomini serves raijin's copy) | raijin's single-location view, no alerts (the Nests Prometheus is on nests-1 too) |
+| wodomini | **down**: the Cloudflare record points at wodomini | monitor and alerts keep running on nests-1 |
+
+wodomini is the remaining single point of failure for the page itself. Moving the Cloudflare
+record to nests-1 (above) removes it; after that, a nests-1 outage takes the page down instead,
+because nothing would then fall back to raijin.
+
 ## Merge rule
 - A check run from both locations is "fail" only when both fail; one failing is "split" (can make degraded, never down).
 - If the inside report is stale the outside decides alone ("fail1") and needs 5 failed runs in a row instead of 3.
@@ -23,8 +34,14 @@ status.pigeonpost.dev is the one public status page. 25 components in 6 groups, 
 - Unsent alerts are retried next run. The first run after a reset only learns state.
 
 ## Deploy
-- `deploy/status/deploy-outside.sh page` and `deploy/status/deploy-outside.sh monitor` (backups under /var/backups/pigeonpost/ on nests-1).
-- raijin: rsync pp-status.py to ~/pp-status/ and pp-status.service to ~/.config/systemd/user/, `systemctl --user daemon-reload`.
+Deploy from a clean checkout of a merged `main` commit only: both scripts refuse uncommitted
+trees, and the page's `?v=<commit>` stamp shows what is served.
+- Page: `deploy/sites/deploy-platforms.sh publish <out> status` (sudo password on stdin) installs the
+  same assembled root on raijin (fallback copy) and on nests-1 (served). `deploy/status/deploy-outside.sh page`
+  installs on nests-1 alone. Backups: `/var/backups/pigeonpost/site-status-*.tgz` on each host.
+- Monitor: `deploy/status/deploy-outside.sh monitor` (nests-1). raijin: rsync pp-status.py to ~/pp-status/ and
+  pp-status.service to ~/.config/systemd/user/, `systemctl --user daemon-reload`.
+- Check: `curl -s https://status.pigeonpost.dev/ | grep -o '?v=[0-9a-f]*' | sort -u` must print the merged commit.
 
 ## Incidents
 Write a JSON list to /var/lib/pp-status/incidents.json on nests-1 (fields title, state, text, updated).
