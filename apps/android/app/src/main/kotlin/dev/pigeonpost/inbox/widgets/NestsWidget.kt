@@ -11,7 +11,6 @@ import androidx.glance.GlanceModifier
 import androidx.glance.LocalSize
 import androidx.glance.action.clickable
 import androidx.glance.appwidget.GlanceAppWidget
-import androidx.glance.appwidget.GlanceAppWidgetReceiver
 import androidx.glance.appwidget.SizeMode
 import androidx.glance.appwidget.lazy.LazyColumn
 import androidx.glance.appwidget.lazy.items
@@ -57,7 +56,7 @@ class NestsWidget : GlanceAppWidget() {
     }
 }
 
-class NestsWidgetReceiver : GlanceAppWidgetReceiver() { override val glanceAppWidget: GlanceAppWidget = NestsWidget() }
+class NestsWidgetReceiver : PigeonpostWidgetReceiver() { override val glanceAppWidget: GlanceAppWidget = NestsWidget() }
 
 /** The status dot's colours: the kit's success, info, warning and danger. */
 internal fun nestTone(status: String, reason: String?): ColorProvider = when (status) {

@@ -13,7 +13,6 @@ import androidx.glance.ImageProvider
 import androidx.glance.LocalSize
 import androidx.glance.action.clickable
 import androidx.glance.appwidget.GlanceAppWidget
-import androidx.glance.appwidget.GlanceAppWidgetReceiver
 import androidx.glance.appwidget.SizeMode
 import androidx.glance.appwidget.lazy.LazyColumn
 import androidx.glance.appwidget.lazy.items
@@ -66,7 +65,7 @@ class AgendaWidget : GlanceAppWidget() {
     }
 }
 
-class AgendaWidgetReceiver : GlanceAppWidgetReceiver() { override val glanceAppWidget: GlanceAppWidget = AgendaWidget() }
+class AgendaWidgetReceiver : PigeonpostWidgetReceiver() { override val glanceAppWidget: GlanceAppWidget = AgendaWidget() }
 
 /** A day heading or an event, in the order the list shows them. */
 internal sealed interface AgendaLine {

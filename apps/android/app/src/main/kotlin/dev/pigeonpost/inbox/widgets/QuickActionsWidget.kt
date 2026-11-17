@@ -12,7 +12,6 @@ import androidx.glance.LocalSize
 import androidx.glance.action.Action
 import androidx.glance.action.clickable
 import androidx.glance.appwidget.GlanceAppWidget
-import androidx.glance.appwidget.GlanceAppWidgetReceiver
 import androidx.glance.appwidget.SizeMode
 import androidx.glance.appwidget.provideContent
 import androidx.glance.layout.Alignment
@@ -50,7 +49,7 @@ class QuickActionsWidget : GlanceAppWidget() {
     }
 }
 
-class QuickActionsWidgetReceiver : GlanceAppWidgetReceiver() { override val glanceAppWidget: GlanceAppWidget = QuickActionsWidget() }
+class QuickActionsWidgetReceiver : PigeonpostWidgetReceiver() { override val glanceAppWidget: GlanceAppWidget = QuickActionsWidget() }
 
 @Composable
 fun QuickActionsContent(snapshot: WidgetSnapshot?) {

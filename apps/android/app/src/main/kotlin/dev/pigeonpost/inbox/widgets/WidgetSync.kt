@@ -1,7 +1,6 @@
 package dev.pigeonpost.inbox.widgets
 
 import android.content.Context
-import androidx.glance.appwidget.GlanceAppWidgetManager
 import androidx.glance.appwidget.updateAll
 import dev.pigeonpost.core.InboxState
 import dev.pigeonpost.core.calendar.CalendarState
@@ -119,7 +118,7 @@ internal class WidgetSync(private val context: Context, private val scope: Corou
         )
     }
 
-    private suspend fun agendaPlaced() = runCatching { GlanceAppWidgetManager(context).getGlanceIds(AgendaWidget::class.java).isNotEmpty() }.getOrDefault(false)
+    private fun agendaPlaced() = WidgetPlacement.agenda(context)
 
     companion object {
         suspend fun clear(context: Context) {
@@ -129,7 +128,9 @@ internal class WidgetSync(private val context: Context, private val scope: Corou
             if (had) updateWidgets(context)
         }
 
+        /** Redraw placed widgets. With none on a home screen there is nothing to redraw (see [WidgetPlacement]). */
         suspend fun updateWidgets(context: Context) {
+            if (!WidgetPlacement.any(context)) return
             for (widget in listOf(InboxWidget(), QuickActionsWidget(), NestsWidget(), AgendaWidget())) runCatching { widget.updateAll(context) }
         }
     }
