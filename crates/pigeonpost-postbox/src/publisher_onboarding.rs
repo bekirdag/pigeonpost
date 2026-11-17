@@ -1002,9 +1002,10 @@ pub(crate) mod tests {
             "test-tax",
             "Synthetic address",
             "TR3300",
-            "contact_email",
-            "kyc",
-            "documents",
+            // Keys are matched with their opening quote: a random id can contain "kyc".
+            "\"contact_email",
+            "\"kyc",
+            "\"documents",
         ] {
             assert!(!text.contains(field), "leaked {field}");
         }

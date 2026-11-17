@@ -890,16 +890,34 @@ async fn delivery_backs_off_between_attempts() {
     let w = world_with("b", Some((url, BRIDGE_TOKEN))).await;
     let (listing, _) = live_listing(&w).await;
     let id = started(&w, &listing).await;
-    let (s, _) = result(&w.srv, &w.service.cap, &id, pdf_result("ok")).await;
-    assert_eq!(s, 200);
-    // The buyer's mailbox is gone: the send fails.
+    // The buyer's mailbox is gone: the send fails. Set before the result lands, because posting
+    // a result starts a delivery pass of its own in the background.
     sql(
         &w.srv,
         "UPDATE nest_hosted_jobs SET deliver_to = '/k/nobody' WHERE id = ?1",
         vec![id.clone()],
     )
     .await;
-    deliver_once(&w.srv.state).await;
+    let (s, _) = result(&w.srv, &w.service.cap, &id, pdf_result("ok")).await;
+    assert_eq!(s, 200);
+    // Exactly one attempt: the background pass, or ours if it has not run yet. Wait for it to be
+    // recorded so the two passes never overlap.
+    let mut tries = 0;
+    for _ in 0..200 {
+        tries = job_int(
+            &w,
+            "SELECT delivery_attempts FROM nest_hosted_jobs WHERE id = ?1",
+            &id,
+        )
+        .await;
+        if tries >= 1 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    if tries == 0 {
+        deliver_once(&w.srv.state).await;
+    }
     let next = job_int(
         &w,
         "SELECT COALESCE(delivery_next_at, 0) FROM nest_hosted_jobs WHERE id = ?1",
