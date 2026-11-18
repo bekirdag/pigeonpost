@@ -82,13 +82,13 @@
         <button class="list-filter" type="button" data-filter="all" aria-pressed="true">All</button>
         <button class="list-filter" type="button" data-filter="unread" aria-pressed="false">Unread</button>
         <button class="list-filter" type="button" data-filter="agents" aria-pressed="false"><svg class="lu" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>Agents</button>
+        <button class="list-filter" type="button" data-filter="people" aria-pressed="false"><svg class="lu" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>People</button>
         <button class="list-filter" type="button" data-filter="held" aria-pressed="false">Held <span class="list-filter-count" id="held-count" hidden></span></button>
       </div>
-      <!-- Not an error and not a dialog: what is loaded stays on screen and stays readable, and
-           this is the page admitting it may no longer be current. -->
-      <p class="offline-banner" id="offline-banner" role="status" hidden>
-        Offline — showing what was last loaded.
-      </p>
+      <!-- No "offline" banner: a network blip is retried silently (the live loop, and a refresh
+           whenever the page is brought back). This line is only for an answer that needs the
+           person — a session that expired, an inbox that has never loaded. -->
+      <p class="inbox-error" id="inbox-error" role="alert" hidden></p>
       <p class="inbox-status" id="inbox-status" role="status" hidden><span class="spinner" aria-hidden="true"></span><span id="inbox-status-text">Loading inbox…</span></p>
       <button class="linkish" id="retry-inbox" type="button" hidden>Try again</button>
       <div class="archive-banner" id="archive-banner" hidden>

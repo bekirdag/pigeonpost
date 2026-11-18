@@ -264,6 +264,8 @@ test("column resizing has a keyboard equivalent and saves the chosen width", asy
 
 test("a delayed older snapshot cannot replace a newer snapshot of the same mailbox", async t => {
   const a = await app(t); await a.clickPeer();
+  // An activation refresh never starts on top of a listing in flight, so let the opening one land.
+  await until(() => a.$("inbox-status").hidden);
   const old = deferred(); let count = 0;
   a.server.intercept = call => {
     if (call.path !== "/v1/inbox" || call.query.has("wait")) return;
@@ -271,7 +273,10 @@ test("a delayed older snapshot cannot replace a newer snapshot of the same mailb
   };
   await a.refresh();
   a.server.mailboxes[OWNER].messages.at(-1).body = "This is the current server snapshot";
-  await a.refresh();
+  // Activation refreshes never overlap (one in flight, at most one per 5 s), so the second,
+  // overlapping listing comes from the retry handler, which always asks. (Its button is disabled
+  // while a listing is in flight, so the handler is called directly.)
+  await a.$("retry-inbox").onclick(); await tick();
   old.resolve(response({ messages: [] })); await tick();
   assert.match(a.$("messages").textContent, /current server snapshot/);
   assert.equal(a.$("inbox-status").hidden, true);
@@ -300,7 +305,8 @@ test("offline opening provides a usable retry and clears loading after recovery"
   }; });
   await until(() => !a.$("retry-inbox").hidden);
   assert.equal(a.$("inbox-status").hidden, true);
-  assert.match(a.$("offline-banner").textContent, /Could not reach/);
+  assert.match(a.$("inbox-error").textContent, /hasn’t loaded/);
+  assert.doesNotMatch(a.$("inbox-error").textContent, /offline/i);
   offline = false;
   a.$("retry-inbox").click();
   await until(() => a.$("retry-inbox").hidden && a.$("inbox-status").hidden);

@@ -293,8 +293,8 @@
     resetPhase1b();
     window.PigeonpostGroups?.reset(); // Phase 3a
     window.PigeonpostCalendar?.reset(); // Phase 3B
-    const banner = $("offline-banner");
-    if (banner) banner.hidden = true;
+    const error = $("inbox-error");
+    if (error) error.hidden = true;
     render();
   }
 
@@ -1090,7 +1090,7 @@
       archived: new Set(), // peers filed out of sight, from the server so it holds across devices
       viewingArchive: false,
       vocabulary: null,  // which verbs may be granted, per the server
-      offline: false,    // the last attempt to reach the postbox did not arrive
+      unreachable: false, // the last attempt to reach the postbox did not arrive (never shown as "offline")
       loading: false,
       hasLoaded: false,
       loadError: null,
@@ -1161,11 +1161,15 @@
     $("inbox-status").hidden = !state.loading;
     $("inbox-status-text").textContent = state.hasLoaded ? "Updating inbox…" : "Loading inbox…";
     $("threads").setAttribute("aria-busy", String(state.loading));
-    $("retry-inbox").hidden = !(state.offline || state.loadError);
+    // No "offline" banner (owner, 2026-11-18). A network blip once the inbox has loaded shows
+    // nothing: what is on screen stays, the live loop keeps trying, and bringing the page back
+    // refreshes it. What is left is an answer that needs the person, or an inbox that has never
+    // loaded at all — there an empty list would claim "No mail yet", so it gets a way to retry.
+    const message = state.loadError || (!state.hasLoaded && state.unreachable ? "Your inbox hasn’t loaded yet." : "");
+    $("inbox-error").hidden = !message;
+    $("inbox-error").textContent = message;
+    $("retry-inbox").hidden = !message;
     $("retry-inbox").disabled = state.loading;
-    $("offline-banner").hidden = !(state.offline || state.loadError);
-    $("offline-banner").textContent = state.loadError || (state.hasLoaded
-      ? "Offline — showing what was last loaded." : "Could not reach your inbox. Try again when you’re connected.");
   }
 
   // Who a message is a conversation *with* — the other end, whichever way it went. The server says
@@ -1575,7 +1579,7 @@
     const shown = quick === "all" ? searched : searched.filter((t) => listFilterMatches(t, quick));
 
     list.textContent = "";
-    $("threads-empty").hidden = shown.length > 0 || state.loading || Boolean(state.loadError) || state.offline;
+    $("threads-empty").hidden = shown.length > 0 || state.loading || Boolean(state.loadError) || (state.unreachable && !state.hasLoaded);
     if (needle && !shown.length) $("threads-empty").textContent = "No matching conversations. Try another name or address.";
     else if (quick !== "all" && !shown.length) $("threads-empty").textContent = LIST_FILTER_EMPTY[quick];
 
@@ -1595,17 +1599,20 @@
     }
   }
 
-  // The quick filters (the kit template's All · Unread · Agents · Held). An agent is a mailbox the
-  // account itself holds, or one of its Nests: the only ones this page knows to be software.
+  // The quick filters (the kit template's All · Unread · Agents · People · Held). An agent is a
+  // mailbox the account itself holds, or one of its Nests: the only ones this page knows to be
+  // software. People is exactly everything else, so All = Agents ∪ People with no overlap.
   const LIST_FILTER_EMPTY = {
     unread: "Nothing unread.",
     agents: "No conversations with your agents yet.",
+    people: "No conversations with people yet.",
     held: "Nothing is held for review.",
   };
   const isAgentThread = (t) => Boolean(t && (t.mine || window.PigeonpostNests?.isNest(t.peer)));
   function listFilterMatches(t, filter) {
     if (filter === "unread") return t.unread > 0;
     if (filter === "agents") return isAgentThread(t);
+    if (filter === "people") return !isAgentThread(t);
     if (filter === "held") return Boolean(t.held);
     return true;
   }
@@ -3599,7 +3606,7 @@
       if (!context.current() || signal?.aborted || request !== state.loadingRequest) return;
       // Still thrown — a caller that wants to sign out on a 401 needs to see it. This only records
       // that the postbox was not reached, which every caller of this would otherwise swallow.
-      if (!(e instanceof ApiError)) setOffline(true);
+      if (!(e instanceof ApiError)) setUnreachable(true);
       else state.loadError = e.status === 401 ? "Your session expired. Sign in again." : "Could not load your inbox. Please try again.";
       throw e;
     } finally {
@@ -3612,7 +3619,7 @@
     state.acceptedInboxRequest = request;
     state.hasLoaded = true;
     state.loadError = null;
-    setOffline(false);
+    setUnreachable(false);
     adopt(body);
     renderLoading();
   }
@@ -3687,14 +3694,15 @@
     });
   }
 
-  // The banner, not a dialog and not an empty screen: what is loaded stays readable and stays
-  // scrollable, and the one thing that changes is that the page stops claiming to be current.
-  // Sending is still allowed — the composer's own failure path is what says a message did not go,
-  // and it says it about that message rather than about the whole app.
-  function setOffline(off) {
-    const next = Boolean(off);
-    if (state.offline === next) return;
-    state.offline = next;
+  // Recorded, not announced: what is loaded stays readable and scrollable, and nothing on screen
+  // says "offline" (owner, 2026-11-18 — it was mostly blips, and it was annoying). It only matters
+  // before the inbox has ever loaded, where `renderLoading` offers a retry instead of an empty list.
+  // Sending is still allowed — the composer's own failure path says a message did not go, about
+  // that message rather than about the whole app.
+  function setUnreachable(on) {
+    const next = Boolean(on);
+    if (state.unreachable === next) return;
+    state.unreachable = next;
     renderLoading();
   }
 
@@ -3870,7 +3878,7 @@
         // from the cursor, which is the whole point of keeping one.
       } catch (e) {
         if (!liveWanted || gen !== liveGen) return;
-        setOffline(true);
+        setUnreachable(true);
         await new Promise((r) => setTimeout(r, backoff));
         backoff = Math.min(backoff * 2, 30000);
       }
@@ -3954,7 +3962,7 @@
         state.acceptedInboxRequest = request;
         state.hasLoaded = true;
         state.loadError = null;
-        setOffline(false);
+        setUnreachable(false);
         adopt(body);
         render();
         backoff = 1000;
@@ -3962,7 +3970,7 @@
         if (!polling || gen !== pollGeneration || !context.current()) break;
         if (e instanceof ApiError && e.status === 401) { signOut(); return; }
         // Anything else — offline, proxy hiccup — is temporary. Back off rather than spin.
-        if (!(e instanceof ApiError)) setOffline(true);
+        if (!(e instanceof ApiError)) setUnreachable(true);
         await new Promise((r) => setTimeout(r, backoff));
         backoff = Math.min(backoff * 2, 30000);
       }
@@ -3970,6 +3978,27 @@
   }
 
   // ---- wiring -------------------------------------------------------------------------------
+
+  // A silent refresh when the page is brought back (tab shown, window focused, network back).
+  // Focus and visibility usually fire together, and a laptop waking fires `online` too, so this
+  // runs at most once per ACTIVATION_REFRESH_MS and never on top of a listing already in flight.
+  // A failure is not shown: the live loop retries, and the next activation asks again. Only a
+  // refused session is acted on, through the same sign-out the retry button uses.
+  const ACTIVATION_REFRESH_MS = Number.isFinite(cfg.activationRefreshMs) ? cfg.activationRefreshMs : 5000;
+  let activationRefreshAt = -Infinity;
+  let activationRefreshing = false;
+  function refreshOnActivation() {
+    if (!getToken() || !state.me || document.visibilityState !== "visible") return;
+    if (activationRefreshing || state.loading) return;
+    const now = Date.now();
+    if (now - activationRefreshAt < ACTIVATION_REFRESH_MS) return;
+    activationRefreshAt = now;
+    activationRefreshing = true;
+    loadInbox()
+      .then(render)
+      .catch((e) => { if (e instanceof ApiError && e.status === 401) signOut(); })
+      .finally(() => { activationRefreshing = false; });
+  }
 
   // ---- sheets ---------------------------------------------------------------------------------
 
@@ -4754,22 +4783,27 @@
       if (!getToken() || !state.me) return;
       if (document.visibilityState === "visible") {
         // Current mail, not a stale view, before the stream has said anything.
-        loadInbox().then(render).catch(() => {});
+        refreshOnActivation();
         startLive();
       } else {
         stopLive();
       }
     });
 
+    // Coming back to the window is the same moment for a desktop browser, where the tab never
+    // stopped being "visible" while another app was in front of it. The window's own focus only:
+    // a field inside the page taking focus is not the page coming back.
+    window.addEventListener("focus", (e) => { if (e.target === window) refreshOnActivation(); });
+
     // The browser knows before a request has to time out to find it. Reopening the stream is not
     // enough on its own: one that is already open but asleep in its backoff will not notice for up
-    // to thirty seconds, and until it does the page still says it is offline. Ask for the mail.
+    // to thirty seconds. Ask for the mail. There is no "offline" listener on purpose: losing the
+    // network is not shown (owner, 2026-11-18); coming back is just another refresh.
     window.addEventListener("online", () => {
       if (!getToken() || !state.me || document.visibilityState !== "visible") return;
-      loadInbox().then(render).catch(() => {});
+      refreshOnActivation();
       startLive();
     });
-    window.addEventListener("offline", () => setOffline(true));
 
     $("send-btn").disabled = true;
   }

@@ -159,3 +159,68 @@ test("the details list the conversation's files, newest first, each going to its
   assert.equal(a.$("peer-files-title").textContent, "Files · 2");
   assert.deepEqual([...a.$("peer-files").querySelectorAll(".peer-file-name")].map(n => n.textContent), ["new.png", "old.pdf"]);
 });
+
+// Owner, 2026-11-18: "I like the all, unread, agents, people filtration." People is exactly the
+// threads Agents is not, so the two together are All.
+test("People shows exactly the threads Agents does not, in the kit's order", async t => {
+  const a = await app(t, { configure: server => {
+    server.mailboxes[OWNER].messages.push({ message_id: "agent-1", direction: "in", from: "/garden/main", peer: "/garden/main", peer_handle: "/garden/main", body: "Build is green.", received_at: 1789600200, read: true, autonomy: "review" });
+  }});
+  const buttons = [...a.$("list-filters").querySelectorAll("[data-filter]")];
+  assert.deepEqual(buttons.map(b => b.dataset.filter), ["all", "unread", "agents", "people", "held"]);
+  assert.ok(buttons.find(b => b.dataset.filter === "people").querySelector("svg.lu"), "people button contains an svg.lu");
+  const count = () => a.$("threads").querySelectorAll(".thread-row").length;
+  const all = count();
+  assert.equal(all, 2);
+  buttons.find(b => b.dataset.filter === "agents").click();
+  const agents = count();
+  buttons.find(b => b.dataset.filter === "people").click();
+  const people = count();
+  assert.ok(agents > 0, "agents filter shows some threads");
+  assert.ok(people > 0, "people filter shows some threads");
+  assert.equal(agents + people, all, "agents and people partitions cover all threads");
+  assert.equal(buttons.find(b => b.dataset.filter === "people").getAttribute("aria-pressed"), "true", "people button is pressed");
+  assert.equal(a.$("pane-list").dataset.filter, "people", "pane-list reflects people filter");
+});
+
+test("People says so when every conversation is with an agent", async t => {
+  const a = await app(t, { configure: server => {
+    const box = server.mailboxes[OWNER];
+    for (const m of box.messages) { m.peer = m.peer_handle = "/garden/main"; }
+    for (const th of box.threads) th.peer = "/garden/main";
+    box.contacts = [];
+  }});
+  a.$("list-filters").querySelector('[data-filter="people"]').click();
+  assert.equal(a.$("threads").querySelectorAll(".thread-row").length, 0, "no threads shown");
+  assert.equal(a.$("threads-empty").hidden, false, "empty state is visible");
+  assert.equal(a.$("threads-empty").textContent, "No conversations with people yet.", "empty state text is correct");
+});
+
+// Owner, 2026-11-18: "The web app often says 'offline' … remove it and refresh on activation."
+test("there is no offline banner; bringing the page back refreshes the inbox once, quietly", async t => {
+  let unreachable = false;
+  const a = await app(t, { configure: server => {
+    server.intercept = call => {
+      if (unreachable && call.path === "/v1/inbox" && !call.query.has("wait")) throw new TypeError("Failed to fetch");
+    };
+  }});
+  await until(() => a.$("inbox-status").hidden);
+  assert.equal(a.$("offline-banner"), null, "the banner is gone from the page");
+  const listings = () => a.server.calls.filter(c => c.path === "/v1/inbox" && !c.query.has("wait")).length;
+  const before = listings();
+  unreachable = true;
+  // Tab shown, window focused and network back usually arrive together: one refresh, not three.
+  a.w.document.dispatchEvent(new a.w.Event("visibilitychange"));
+  a.w.dispatchEvent(new a.w.Event("focus"));
+  a.w.dispatchEvent(new a.w.Event("online"));
+  await tick(80);
+  assert.equal(listings(), before + 1, "one refresh for one activation");
+  assert.equal(a.$("inbox-error").hidden, true, "a failed refresh shows nothing");
+  assert.equal(a.$("retry-inbox").hidden, true, "and offers no retry for a blip");
+  assert.doesNotMatch(a.$("pane-list").textContent, /offline/i);
+  assert.ok(a.$("threads").querySelector(".thread-row"), "what was loaded stays on screen");
+  // Within the throttle window another activation does not ask again.
+  a.w.dispatchEvent(new a.w.Event("focus"));
+  await tick(40);
+  assert.equal(listings(), before + 1, "throttled");
+});
