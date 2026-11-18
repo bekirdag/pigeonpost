@@ -6,6 +6,7 @@
 //! | `POST /v1/marketplace/listings/{listing}/reports` | `NestInstall` | a person who can see the listing; 10 a day |
 //! | `GET /v1/staff/listing-reports`, `POST /v1/staff/listing-reports/{report}/close` | `MarketplaceOps` | a reviewer or ops, with step-up |
 //! | `GET /v1/staff/listings?status=&publisher=&cursor=` | `MarketplaceOps` | a reviewer or ops, with step-up |
+//! | `POST /v1/staff/marketplace/listings/{listing}/feature` | `MarketplaceOps` | a reviewer or ops with step-up and no stake: set or clear the featured rank |
 //! | `PUT\|DELETE /v1/publishers/{publisher}/listings/{listing}/logo` | `PublisherManage` | a certified publisher's admins |
 //! | `PUT /v1/publishers/{publisher}/listings/{listing}/storefront` | `PublisherManage` | same: category, support and privacy links |
 //! | `GET /v1/marketplace/listings/{listing}/logo/{hash}/{size}.webp` | `NestDiscover` | anyone holding the URL (public, immutable) |
@@ -33,18 +34,21 @@
 
 use crate::groups::{GErr, GResult};
 use crate::marketplace::{caller, deny, facts, into_response, iso, not_found, parse};
-use crate::marketplace_m2::{gate, new_id, publisher_read, staff_gate, text, Need, PAGE};
+use crate::marketplace_m1::conflict_code;
+use crate::marketplace_m2::{
+    audit_row, gate, new_id, publisher_read, reason_of, staff_gate, text, Need, PAGE,
+};
 use crate::policy::{authorize, Action, Actor, Resource};
-use crate::{now_unix, AppState};
+use crate::{now_unix, AppState, ClientIp};
 use axum::body::Bytes;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
-use axum::{Json, Router};
+use axum::{Extension, Json, Router};
 use rusqlite::{params, Connection, OptionalExtension};
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap};
 
@@ -70,6 +74,10 @@ pub(crate) fn router() -> Router<AppState> {
             post(close_report),
         )
         .route("/v1/staff/listings", get(staff_listings))
+        .route(
+            "/v1/staff/marketplace/listings/{listing}/feature",
+            post(staff_feature),
+        )
         .route(
             "/v1/publishers/{publisher}/listings/{listing}/logo",
             put(upload_logo)
@@ -478,14 +486,15 @@ async fn staff_listings(
             return Err(GErr::bad("invalid_request", "publisher: a publisher id"));
         }
         let offset = offset_of(&q)?;
-        let mut rows = state
+        let (mut rows, next_rank) = state
             .store
-            .group_read(move |c| -> GResult<Vec<Value>> {
+            .group_read(move |c| -> GResult<(Vec<Value>, i64)> {
                 let mut stmt = c.prepare(
                     "SELECT l.id, l.publisher_id, p.display_name, l.title, l.visibility, l.status,
                             l.moderation_reason, l.address, r.version, r.security_state, l.created_at,
                             l.updated_at, l.published_at, l.price_currency, l.price_term,
-                            (SELECT COUNT(*) FROM nest_listing_reports x WHERE x.listing_id = l.id AND x.status = 'open')
+                            (SELECT COUNT(*) FROM nest_listing_reports x WHERE x.listing_id = l.id AND x.status = 'open'),
+                            l.featured_rank
                        FROM nest_listings l JOIN publisher_profiles p ON p.id = l.publisher_id
                        JOIN nest_releases r ON r.id = l.release_id
                       WHERE (?1 = '' OR l.status = ?1) AND (?2 = '' OR l.publisher_id = ?2)
@@ -509,15 +518,133 @@ async fn staff_listings(
                             "published_at": r.get::<_, Option<i64>>(12)?.map(iso),
                             "price": price_json(r.get(13)?, r.get(14)?),
                             "open_reports": r.get::<_, i64>(15)?,
+                            "featured": r.get::<_, Option<i64>>(16)?.is_some(),
+                            "featured_rank": r.get::<_, Option<i64>>(16)?,
                         }))
                     })?
                     .collect::<rusqlite::Result<Vec<_>>>()?;
-                Ok(rows)
+                let next_rank = next_featured_rank_in(c)?;
+                Ok((rows, next_rank))
             })
             .await?;
         let next = (rows.len() > PAGE).then(|| (offset + PAGE).to_string());
         rows.truncate(PAGE);
-        Ok(Json(json!({ "data": rows, "next_cursor": next })))
+        Ok(Json(
+            json!({ "data": rows, "next_cursor": next, "next_featured_rank": next_rank }),
+        ))
+    }
+    .await;
+    into_response(result)
+}
+
+/// Highest featured rank staff may set. Lower ranks come first; the store shows the first three.
+pub(crate) const FEATURED_RANK_MAX: i64 = 999;
+
+/// The rank after the last featured listing still in the catalog (1 when none is).
+fn next_featured_rank_in(c: &Connection) -> rusqlite::Result<i64> {
+    let max: Option<i64> = c.query_row(
+        "SELECT MAX(featured_rank) FROM nest_listings
+          WHERE featured_rank IS NOT NULL AND status = 'published'",
+        [],
+        |r| r.get(0),
+    )?;
+    Ok(max.map_or(1, |m| (m + 1).min(FEATURED_RANK_MAX)))
+}
+
+/// `rank` must be present: a number features, `null` unfeatures. A missing field is an error,
+/// not a silent unfeature.
+fn present<'de, D: Deserializer<'de>>(d: D) -> Result<Option<i64>, D::Error> {
+    Option::<i64>::deserialize(d)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FeatureReq {
+    #[serde(deserialize_with = "present")]
+    rank: Option<i64>,
+    reason: String,
+}
+
+/// `POST /v1/staff/marketplace/listings/{listing}/feature` with `{rank, reason}` — put a
+/// published listing in the catalog's featured row at `rank` (1-999, lower first; ties are
+/// allowed), or take it out with `rank: null`. Gated like moderation: a reviewer or ops with
+/// step-up and no stake in the publisher, and audited as `marketplace.listing.feature` or
+/// `marketplace.listing.unfeature`.
+async fn staff_feature(
+    State(state): State<AppState>,
+    client_ip: Option<Extension<ClientIp>>,
+    headers: HeaderMap,
+    Path(listing): Path<String>,
+    body: Result<Json<Value>, JsonRejection>,
+) -> Response {
+    let result = async {
+        let req: FeatureReq = parse(body)?;
+        if let Some(r) = req.rank {
+            if !(1..=FEATURED_RANK_MAX).contains(&r) {
+                return Err(GErr::bad(
+                    "invalid_request",
+                    format!("rank: 1-{FEATURED_RANK_MAX}, or null to unfeature"),
+                ));
+            }
+        }
+        let reason = reason_of(&req.reason)?;
+        let lid = listing.clone();
+        let publisher = state
+            .store
+            .group_read(move |c| -> GResult<Option<String>> {
+                Ok(c.query_row(
+                    "SELECT publisher_id FROM nest_listings WHERE id = ?1",
+                    [&lid],
+                    |r| r.get(0),
+                )
+                .optional()?)
+            })
+            .await?;
+        let (principal, account) = staff_gate(
+            &state,
+            &headers,
+            Action::MarketplaceOps,
+            &listing,
+            publisher.clone(),
+        )
+        .await?;
+        publisher.ok_or_else(not_found)?;
+        let rank = req.rank;
+        let action = if rank.is_some() { "feature" } else { "unfeature" };
+        let audit = audit_row(
+            &state,
+            &principal,
+            &account,
+            &format!("marketplace.listing.{action}"),
+            format!("listing:{listing}"),
+            json!({ "rank": rank, "reason": reason }),
+            &client_ip,
+            &headers,
+        );
+        let now = now_unix() as i64;
+        let v = state
+            .store
+            .group_tx(move |tx| -> GResult<Value> {
+                let status: String = tx.query_row(
+                    "SELECT status FROM nest_listings WHERE id = ?1",
+                    [&listing],
+                    |r| r.get(0),
+                )?;
+                if rank.is_some() && status != "published" {
+                    return Err(conflict_code(
+                        "listing_not_published",
+                        "only a published listing can be featured",
+                    ));
+                }
+                tx.execute(
+                    "UPDATE nest_listings SET featured_rank = ?2, updated_at = ?3 WHERE id = ?1",
+                    params![listing, rank, now],
+                )?;
+                crate::store::audit::append_in(tx, &audit)?;
+                Ok(json!({ "listing_id": listing, "featured": rank.is_some(), "featured_rank": rank }))
+            })
+            .await?;
+        Ok(Json(json!({ "data": v })))
     }
     .await;
     into_response(result)
