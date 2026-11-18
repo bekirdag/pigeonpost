@@ -64,6 +64,10 @@ final class Account {
     /// Untyped so this file does not depend on the Nests module of the app.
     @ObservationIgnored var nestStoreBox: AnyObject?
 
+    /// The addresses of the Nests already loaded, for the inbox's Agents filter. Never creates the
+    /// store: asking which threads are agents must not start a StoreKit listener.
+    var loadedNestAddresses: Set<String> { (nestStoreBox as? NestAddressSource)?.nestAddresses ?? [] }
+
     private let rememberedKey = "ppi_identity"
 
     init(session: Session, base: URL = Config.postbox, defaults: UserDefaults = .standard) {
@@ -357,4 +361,10 @@ final class Account {
         defaults.removeObject(forKey: rememberedKey)
         onForget?()
     }
+}
+
+/// What the inbox needs to know of the Nests store: which mailboxes are this account's Nests.
+/// `NestStore` answers it; declared here so the account does not depend on the Nests code.
+protocol NestAddressSource: AnyObject {
+    var nestAddresses: Set<String> { get }
 }

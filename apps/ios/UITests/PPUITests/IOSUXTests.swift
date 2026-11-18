@@ -192,6 +192,69 @@ final class IOSUXTests: XCTestCase {
         screenshot("partial-selection-pasted")
     }
 
+    /// The gesture people try first. A long press in the conversation is the message's menu, and
+    /// its Select Text opens the words on their own, where a long press selects a word and the
+    /// system's edit menu copies just that.
+    func testSelectTextFromTheMessageMenu() {
+        open(["-ios-history"])
+        let newest = history.cells["message:history-44"]
+        XCTAssertTrue(newest.waitForExistence(timeout: 8))
+        newest.staticTexts["History message 44"].press(forDuration: 1.0)
+        let select = app.buttons["Select Text"]
+        XCTAssertTrue(select.waitForExistence(timeout: 4), "the message menu offers Select Text")
+        XCTAssertTrue(app.buttons["Copy"].exists, "and still offers Copy")
+        select.tap()
+        XCTAssertTrue(app.navigationBars["Select Text"].waitForExistence(timeout: 4))
+        let bar = app.navigationBars["Select Text"].frame
+        let words = app.staticTexts.matching(identifier: "History message 44").allElementsBoundByIndex
+            .first { $0.frame.minY > bar.maxY }
+        let text = try! XCTUnwrap(words, app.debugDescription)
+        text.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5)).withOffset(CGVector(dx: 14, dy: 0)).press(forDuration: 1.0)
+        let copy = app.menuItems["Copy"]
+        XCTAssertTrue(copy.waitForExistence(timeout: 4), "a long press selects in the sheet")
+        screenshot("select-text-sheet")
+        copy.tap()
+        app.navigationBars["Select Text"].buttons["Done"].tap()
+
+        let composer = app.textViews["messageComposer"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 4))
+        composer.tap()
+        composer.tap()
+        let paste = app.menuItems["Paste"]
+        XCTAssertTrue(paste.waitForExistence(timeout: 4), app.debugDescription)
+        paste.tap()
+        if app.alerts.buttons["Allow Paste"].waitForExistence(timeout: 1) { app.alerts.buttons["Allow Paste"].tap() }
+        XCTAssertEqual(composer.value as? String, "History", "Only the selected word was copied")
+    }
+
+    /// All · Unread · Agents · People over the list. Agents is this account's own mailboxes; People
+    /// is everyone else, groups included; each filter that empties the list says so.
+    func testQuickFiltersNarrowTheList() {
+        app.launchArguments = ["-fixtures"]
+        app.launch()
+        let agents = app.buttons["listFilter:agents"]
+        XCTAssertTrue(agents.waitForExistence(timeout: 10), app.debugDescription)
+        let person = app.staticTexts["noisy bot"]
+        let agent = app.staticTexts["Bekir Docdex"]
+        XCTAssertTrue(person.waitForExistence(timeout: 8))
+        XCTAssertTrue(agent.exists)
+        screenshot("filter-all")
+
+        agents.tap()
+        XCTAssertTrue(agent.waitForExistence(timeout: 4), "an agent of this account is under Agents")
+        XCTAssertFalse(person.exists, "a person is not")
+        screenshot("filter-agents")
+
+        app.buttons["listFilter:people"].tap()
+        XCTAssertTrue(person.waitForExistence(timeout: 4), "a person is under People")
+        XCTAssertFalse(agent.exists, "an agent is not")
+        screenshot("filter-people")
+
+        app.buttons["listFilter:all"].tap()
+        XCTAssertTrue(agent.waitForExistence(timeout: 4))
+        XCTAssertTrue(person.exists)
+    }
+
     func testMailboxOrderDoesNotFollowCurrentSelection() {
         app.launchArguments = ["-fixtures", "-ios-mailboxes", "-sheet=identities"]
         app.launch()

@@ -218,4 +218,13 @@ enum InboxEntry: Identifiable {
         out.append(contentsOf: pending.map { .group($0) })
         return out
     }
+
+    /// The same list narrowed by the quick filter above it. Archive keeps its own list untouched:
+    /// the filters are the inbox's, as on the web.
+    static func merge(_ conversations: [Conversation], _ groups: [GroupSummary],
+                      filter: InboxListFilter, nests: Set<String>) -> [InboxEntry] {
+        guard filter != .all else { return merge(conversations, groups) }
+        return merge(conversations.filter { filter.matches($0, nests: nests) },
+                     groups.filter { filter.matchesGroup(unread: $0.unread) })
+    }
 }

@@ -110,6 +110,9 @@ final class Inbox {
 
     var filter = "" { didSet { rebuild() } }
     var viewingArchive = false
+    /// The quick filter chosen over the list. Kept for the app's session — across mailboxes, and
+    /// across the phone and desktop layouts an iPad moves between — and never sent anywhere.
+    var listFilter: InboxListFilter = .all
 
     init(account: Account) {
         self.account = account

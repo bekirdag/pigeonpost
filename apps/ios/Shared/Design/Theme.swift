@@ -58,12 +58,38 @@ enum Theme {
     /// A preview, a caption, an inactive control.
     static let secondary = K.textMuted
     /// When it was said.
+    #if os(macOS)
+    static let muted = D.textFaint
+    #else
     static let muted = K.textFaint
+    #endif
     /// The quiet name over a column, the address under a title.
     static let quiet = K.textBody
 
     // ---- surfaces, back to front ----------------------------------------------------------------
+    //
+    // The Mac takes the kit's desktop ladder (`PP.Desktop`): in the dark, the kit's phone surfaces
+    // are within 1.1:1 of each other, and three columns side by side read as one black sheet. Light
+    // mode is the same on both — every desktop role's light value is the kit token used here.
 
+    #if os(macOS)
+    private typealias D = PP.Desktop
+    static let app = D.window
+    static let sidebar = D.sidebar
+    static let column = D.column
+    static let wash = D.canvas
+    static let ground = D.raised
+    static let field = D.sunken
+    static let composer = D.raised
+    static let selected = D.selected
+    static let chip = D.chip
+    static let tile = D.hover
+    static let rule = D.rule
+    static let stroke = D.border
+    static let strokeStrong = D.borderStrong
+    /// The window's bar: a step up from the conversation under it, so the two are told apart.
+    static let toolbar = D.toolbar
+    #else
     /// The window behind everything, and the sign-in screen.
     static let app = K.bg
     /// The conversations column.
@@ -91,6 +117,9 @@ enum Theme {
     static let stroke = K.border
     /// The border of a field or a button that is only an outline.
     static let strokeStrong = K.borderStrong
+    /// The window's bar, where there is one to colour.
+    static let toolbar = K.bgSubtle
+    #endif
 
     /// Your own message: the kit's `bubbleMine` — Signal Blue at card strength, not a solid fill.
     enum Mine {
@@ -107,8 +136,13 @@ enum Theme {
 
     /// Someone else's message: the kit's `bubbleTheirs`.
     enum Theirs {
+        #if os(macOS)
+        static let fill = PP.Desktop.raised
+        static let stroke = PP.Desktop.border
+        #else
         static let fill = K.bubbleTheirs
         static let stroke = K.bubbleTheirsBorder
+        #endif
         static let text = K.bubbleTheirsText
         /// The green rail down the side of an agent's message.
         static let agentRail = K.bubbleAgentRail
@@ -135,7 +169,7 @@ enum Theme {
     /// The layer over the chat doodle, and the one number worth touching. The artwork has no opacity
     /// of its own, so this alpha is its strength: in the dark it is all but the conversation ground
     /// itself, so the pattern is a texture you notice only if you look for it.
-    static let doodleVeil = K.bgSubtle.opacity(doodleVeilAlpha)
+    static let doodleVeil = wash.opacity(doodleVeilAlpha)
 
     private static let doodleVeilAlpha = 0.9
 

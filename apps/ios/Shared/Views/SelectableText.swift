@@ -34,9 +34,11 @@ struct SelectableText: View {
     var wraps: Bool = true
 
     #if canImport(UIKit)
+    @Environment(\.selectableTextLongPressSelects) private var longPressSelects
+
     var body: some View {
         MeasuredByText(text: text, wraps: wraps) {
-            SelectableTextView(text: text, wraps: wraps)
+            SelectableTextView(text: text, wraps: wraps, longPressSelects: longPressSelects)
         }
     }
     #elseif canImport(AppKit)
@@ -61,6 +63,10 @@ extension EnvironmentValues {
     /// Keep the Mac's text views in place rather than swapping them in on hover. For the selection
     /// test, which cannot move the real pointer and so cannot make SwiftUI report a hover.
     @Entry var selectableTextStaysLive = false
+    /// Let a long press select, as it does in any other text on iOS. Off in a conversation, where
+    /// the long press is the message's menu; on in the menu's own Select Text sheet, where there is
+    /// no menu to compete with and a long press is the gesture people reach for first.
+    @Entry var selectableTextLongPressSelects = false
 }
 
 /// Sizes its one child from the attributed string alone, never by asking the platform view.
@@ -143,6 +149,7 @@ final class TextMeasureCache {
 private struct SelectableTextView: UIViewRepresentable {
     let text: NSAttributedString
     let wraps: Bool
+    var longPressSelects = false
 
     func makeUIView(context: Context) -> ReadOnlyTextView {
         // TextKit 1, explicitly: `TextMeasure` sizes the view with TextKit 1 metrics, and TextKit 2
@@ -164,6 +171,7 @@ private struct SelectableTextView: UIViewRepresentable {
         view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         view.setContentHuggingPriority(.defaultLow, for: .horizontal)
         view.attributedText = text
+        view.yieldsLongPress = !longPressSelects
         view.yieldLongPress()
         return view
     }
@@ -188,11 +196,16 @@ private struct SelectableTextView: UIViewRepresentable {
 }
 
 final class ReadOnlyTextView: UITextView {
+    /// Whether the long press is handed to the message's menu (see below). `false` in the Select
+    /// Text sheet, which has no menu.
+    var yieldsLongPress = true
+
     /// The long press belongs to the message's context menu, which an ancestor's
     /// `UIContextMenuInteraction` presents. A text view's own long-press recognisers would win the
     /// race and turn every long press into a selection, so they step aside; the double-tap, the
     /// triple-tap and the selection handles are unaffected.
     func yieldLongPress() {
+        guard yieldsLongPress else { return }
         for recognizer in gestureRecognizers ?? [] where recognizer is UILongPressGestureRecognizer {
             recognizer.isEnabled = false
         }
