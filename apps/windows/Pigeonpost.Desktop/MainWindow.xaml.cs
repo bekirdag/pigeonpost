@@ -104,6 +104,7 @@ public sealed partial class MainWindow : Window
         ViewModel.MessagesUpdating += Messages_Updating;
         ViewModel.MessagesUpdated += Messages_Updated;
         ViewModel.InboxUpdated += Inbox_Updated;
+        AttachListFilter();
         Closed += (_, _) =>
         {
             fileDrop?.Dispose();

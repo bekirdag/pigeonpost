@@ -167,6 +167,37 @@ class NativeTests(unittest.TestCase):
         self.window.clear_account()
         self.assertEqual(self.window.get_title(), "Pigeonpost")
 
+    def test_list_filters_split_agents_and_people(self):
+        window = self.window
+        window.messages = copy.deepcopy(self.api.rows) + [
+            {"message_id": "own", "peer": "/k/two", "peer_handle": "/demo/agent", "body": "Build done.", "received_at": 1789320100, "read": True}]
+        window.peer = None
+
+        def shown():
+            peers, row = [], window.peer_list.get_first_child()
+            while row:
+                peers.append(getattr(row, "peer", None))
+                row = row.get_next_sibling()
+            return sorted(peers)
+
+        self.assertEqual([b.get_label() for b in window.list_filter_buttons.values()], ["All", "Unread", "Agents", "People"])
+        window.list_filter_buttons["agents"].set_active(True)
+        self.assertEqual(shown(), ["/demo/agent"])
+        window.list_filter_buttons["people"].set_active(True)
+        self.assertEqual(shown(), ["/alex/main", "/studio/reviewer"])
+        window.list_filter_buttons["unread"].set_active(True)
+        self.assertEqual(shown(), ["/studio/reviewer"])
+        self.assertFalse(window.peer_empty.get_visible())
+        window.messages = [m for m in window.messages if m["message_id"] == "own"]
+        window.contacts = []
+        window.list_filter_buttons["people"].set_active(True)
+        self.assertEqual(shown(), [])
+        self.assertTrue(window.peer_empty.get_visible())
+        self.assertEqual(window.peer_empty.get_text(), "No conversations with people yet.")
+        window.list_filter_buttons["all"].set_active(True)
+        self.assertEqual(shown(), ["/demo/agent"])
+        self.assertFalse(window.peer_empty.get_visible())
+
     def test_widgets_display_real_messages_and_subjects(self):
         self.select()
         self.assertEqual(self.window.peer_title.get_text(), "Alex")

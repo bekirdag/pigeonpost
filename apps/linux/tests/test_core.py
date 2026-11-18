@@ -231,6 +231,24 @@ class ModelTests(unittest.TestCase):
                                       {"message_id": "read", "read": True}]), 1)
         self.assertEqual(unread_count([]), 0)
 
+    def test_list_filters_split_agents_and_people_exactly(self):
+        from pigeonpost.model import LIST_FILTER_EMPTY, LIST_FILTERS, is_agent_peer, list_filter_matches, peer_aliases
+        self.assertEqual([name for _, name in LIST_FILTERS], ["All", "Unread", "Agents", "People"])
+        agents = {"/k/mine1", "/bekir/docdex", "/k/nest1"}
+        aliases = peer_aliases([{"message_id": "1", "peer": "/k/mine1", "peer_handle": "/bekir/fleet", "read": True},
+                                {"message_id": "2", "peer": "/k/alice", "peer_handle": "/alice/main"}])
+        self.assertTrue(is_agent_peer("/bekir/docdex", aliases, agents))
+        self.assertTrue(is_agent_peer("/bekir/fleet", aliases, agents))
+        self.assertTrue(is_agent_peer("/k/nest1", aliases, agents))
+        self.assertFalse(is_agent_peer("/alice/main", aliases, agents))
+        unread = [{"message_id": "u", "read": False}]
+        for agent in (True, False):
+            self.assertNotEqual(list_filter_matches("agents", unread, agent), list_filter_matches("people", unread, agent))
+            self.assertTrue(list_filter_matches("all", [], agent))
+        self.assertTrue(list_filter_matches("unread", unread, False))
+        self.assertFalse(list_filter_matches("unread", [{"message_id": "r", "read": True}], False))
+        self.assertEqual(LIST_FILTER_EMPTY["people"], "No conversations with people yet.")
+
     def test_handles_read_as_names(self):
         from pigeonpost.model import NAME_ACRONYMS, display_name, initials
         for handle, name in [("/bekir/main", "Bekir"), ("/bekir", "Bekir"), ("/wodo/hr", "Wodo HR"),

@@ -108,6 +108,37 @@ Test("Apple fixture: received/sent grouping, order and own mailboxes", () =>
     Equal(rows.Single(c => c.IsMine).Name, "Bekir Docdex");
     Check(rows.All(c => c.Peer != own[2].Address), "An untouched owned mailbox must not create a conversation.");
 });
+Test("List filters: Agents are own mailboxes and Nests, People exactly the rest, Unread has unread", () =>
+{
+    var rows = Build();
+    Func<string, bool> nest = peer => peer == "/bekir/agent1";
+    string Shown(ConversationListFilter filter, Func<string, bool>? agents = null) =>
+        string.Join(',', rows.Where(c => ConversationListFilters.Matches(c, filter, agents)).Select(c => c.Peer));
+    Equal(Shown(ConversationListFilter.All), string.Join(',', rows.Select(c => c.Peer)));
+    Equal(Shown(ConversationListFilter.Agents), "/bekir/docdex");
+    Equal(Shown(ConversationListFilter.Agents, nest), "/bekir/agent1,/bekir/docdex");
+    Equal(Shown(ConversationListFilter.People, nest), "/k/eeee5555ffff6666gggg7777hh");
+    Equal(Shown(ConversationListFilter.Unread), string.Join(',', rows.Where(c => c.Unread > 0).Select(c => c.Peer)));
+    foreach (var c in rows)
+        Check(ConversationListFilters.Matches(c, ConversationListFilter.Agents, nest) != ConversationListFilters.Matches(c, ConversationListFilter.People, nest),
+            $"{c.Peer} must be in exactly one of Agents and People.");
+    Equal(ConversationListFilters.EmptyMessage(ConversationListFilter.People), "No conversations with people yet.");
+});
+AsyncTest("List filter narrows the inbox, keeps a shown selection and explains an empty result", async () =>
+{
+    using var vm = new InboxViewModel(new PreviewInboxService()); await vm.InitializeAsync();
+    var all = vm.Conversations.Count;
+    vm.AgentPeer = peer => peer == "/preview/engineering";
+    vm.ListFilter = ConversationListFilter.Agents;
+    Equal(string.Join(',', vm.Conversations.Select(c => c.Peer)), "/preview/engineering");
+    Equal(vm.SelectedConversation!.Peer, "/preview/engineering");
+    vm.ListFilter = ConversationListFilter.People;
+    Equal(vm.Conversations.Count, all - 1); Check(vm.Conversations.All(c => c.Peer != "/preview/engineering"), "People shows an agent.");
+    vm.AgentPeer = _ => true;
+    Check(vm.IsListEmpty, "People should be empty when every peer is an agent."); Equal(vm.EmptyListMessage, "No conversations with people yet.");
+    vm.ListFilter = ConversationListFilter.All;
+    Equal(vm.Conversations.Count, all);
+});
 Test("Repeated server rows do not inflate messages, unread or held counts", () =>
 {
     var rows = Build(fixture with { Messages = [.. fixtureMessages, .. fixtureMessages] });

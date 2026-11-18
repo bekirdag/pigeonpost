@@ -299,13 +299,14 @@ class GroupsMixin:
 
     # ---- list rows -----------------------------------------------------------------------------
 
-    def render_group_rows(self, search):
-        """Invitations first, then groups by last activity, above direct conversations."""
-        if not self.groups_on():
+    def render_group_rows(self, search, list_filter="all"):
+        """Invitations first, then groups by last activity, above direct conversations.
+        The list filters narrow groups as the web inbox does: none under Agents, unread ones under Unread."""
+        if not self.groups_on() or list_filter == "agents":
             return
         client = self.group_client()
         invited = [g for g in self.groups if (g.get("my") or {}).get("state") == "invited" and not g.get("deleted_at")]
-        if invited and not search:
+        if invited and not search and list_filter != "unread":
             row = Gtk.ListBoxRow()
             row.kind = "invitations"
             content = box(10, horizontal=True, margin=9)
@@ -320,7 +321,8 @@ class GroupsMixin:
                 for g in invited:
                     self.peer_list.append(self.invitation_row(g))
         rows = [g for g in self.groups if (g.get("my") or {}).get("state") != "invited" and not g.get("deleted_at")
-                and (not search or search in str(g.get("name", "")).casefold())]
+                and (not search or search in str(g.get("name", "")).casefold())
+                and (list_filter != "unread" or (g.get("my") or {}).get("unread"))]
         rows.sort(key=lambda g: -(g.get("last_at") or 0))
         # SDS §5.4: the selected org inbox's rooms sit under a Company section with Browse rooms.
         company, org = self.company_rooms(rows)

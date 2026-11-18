@@ -21,6 +21,8 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
     private bool sending;
     private bool showArchived;
     private string senderSearch = "";
+    private ConversationListFilter listFilter;
+    private Func<string, bool>? agentPeer;
     private string find = "";
     private string draft = "";
     private string? error;
@@ -88,7 +90,8 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
     public string MailboxAddress => SelectedMailbox?.Key ?? "";
     public string InboxSummary => $"{allConversations.Sum(c => c.Unread)} unread · {allConversations.Sum(c => c.Held)} held";
     public string ArchiveAction => ShowArchived ? "Restore conversation" : "Archive conversation";
-    public string EmptyListMessage => ShowArchived ? "No archived conversations" : SenderSearch.Length > 0 ? "No matching senders" : "No conversations yet";
+    public string EmptyListMessage => ShowArchived ? "No archived conversations" : SenderSearch.Length > 0 ? "No matching senders"
+        : ConversationListFilters.EmptyMessage(ListFilter);
     public bool IsListEmpty => Conversations.Count == 0;
 
     public string SenderSearch
@@ -96,6 +99,21 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
         get => senderSearch;
         set { if (Set(ref senderSearch, value)) FilterConversations(); }
     }
+    // All · Unread · Agents · People above the list (ConversationListFilter).
+    public ConversationListFilter ListFilter
+    {
+        get => listFilter;
+        set { if (Set(ref listFilter, value)) FilterConversations(); }
+    }
+    // Peers the window knows to be agents besides the account's own mailboxes (its Nests). Set by the
+    // window; RefreshListFilter re-applies it when what the window knows changes.
+    public Func<string, bool>? AgentPeer
+    {
+        get => agentPeer;
+        set { agentPeer = value; FilterConversations(); }
+    }
+    public bool IsAgentConversation(Conversation conversation) => ConversationListFilters.IsAgent(conversation, agentPeer);
+    public void RefreshListFilter() { if (listFilter is ConversationListFilter.Agents or ConversationListFilter.People) FilterConversations(); }
     public bool ShowArchived
     {
         get => showArchived;
@@ -618,7 +636,8 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
         var archived = snapshot.Archived.Select(p => ConversationBuilder.ResolvePeer(p, snapshot, Mailboxes)).ToHashSet(StringComparer.Ordinal);
         var next = allConversations.Where(c => archived.Contains(c.Peer) == ShowArchived
             && (string.IsNullOrWhiteSpace(SenderSearch) || c.Name.Contains(SenderSearch.Trim(), StringComparison.OrdinalIgnoreCase)
-                || c.Peer.Contains(SenderSearch.Trim(), StringComparison.OrdinalIgnoreCase))).ToArray();
+                || c.Peer.Contains(SenderSearch.Trim(), StringComparison.OrdinalIgnoreCase))
+            && ConversationListFilters.Matches(c, ListFilter, agentPeer)).ToArray();
         IsUpdatingLists = true;
         try
         {

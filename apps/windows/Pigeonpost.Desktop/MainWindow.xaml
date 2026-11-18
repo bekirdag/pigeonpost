@@ -57,6 +57,13 @@
             <Style x:Key="SendActionButton" TargetType="Button" BasedOn="{StaticResource PrimaryActionButton}">
                 <Setter Property="MinHeight" Value="40" /><Setter Property="Padding" Value="16,0" /><Setter Property="CornerRadius" Value="20" />
             </Style>
+            <!-- Kit filter chip: a pill on chip surface; checked takes the selected-row tint (Controls.xaml). -->
+            <Style x:Key="FilterChip" TargetType="ToggleButton">
+                <Setter Property="Background" Value="{ThemeResource ChipSurfaceBrush}" /><Setter Property="Foreground" Value="{ThemeResource ChipTextBrush}" />
+                <Setter Property="BorderThickness" Value="0" /><Setter Property="CornerRadius" Value="14" />
+                <Setter Property="Padding" Value="11,0" /><Setter Property="MinHeight" Value="28" /><Setter Property="MinWidth" Value="0" />
+                <Setter Property="FontSize" Value="12.5" /><Setter Property="FontWeight" Value="Medium" />
+            </Style>
             <Style x:Key="SidebarComboBox" TargetType="ComboBox">
                 <Setter Property="CornerRadius" Value="{StaticResource PPRadiusM}" /><Setter Property="MinHeight" Value="{StaticResource PPControlM}" /><Setter Property="FontSize" Value="13.5" />
             </Style>
@@ -467,8 +474,19 @@
                     <HyperlinkButton x:Name="OrgBrowseRooms" Grid.Column="2" Content="Browse rooms" Click="OrgBrowseRooms_Click" FontSize="12.5" Padding="6,2" AutomationProperties.Name="Browse rooms" />
                 </Grid>
                 </StackPanel>
-                <TextBox x:Name="SenderSearchBox" Grid.Row="2" PlaceholderText="Search conversations" FontSize="13.5"
+                <StackPanel Grid.Row="2" Spacing="8">
+                <TextBox x:Name="SenderSearchBox" PlaceholderText="Search conversations" FontSize="13.5"
                          Text="{x:Bind ViewModel.SenderSearch, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Search senders" />
+                <!-- Quick filters, as in the web inbox: they narrow the list and change nothing. -->
+                <StackPanel x:Name="ListFilterChips" Orientation="Horizontal" Spacing="6" AutomationProperties.Name="Show">
+                    <ToggleButton Content="All" Tag="All" IsChecked="True" Click="ListFilter_Click" Style="{StaticResource FilterChip}" AutomationProperties.Name="All conversations" />
+                    <ToggleButton Content="Unread" Tag="Unread" Click="ListFilter_Click" Style="{StaticResource FilterChip}" AutomationProperties.Name="Unread conversations" />
+                    <ToggleButton Tag="Agents" Click="ListFilter_Click" Style="{StaticResource FilterChip}" AutomationProperties.Name="Conversations with agents">
+                        <StackPanel Orientation="Horizontal" Spacing="5"><FontIcon Glyph="&#xE99A;" FontSize="12" /><TextBlock Text="Agents" /></StackPanel>
+                    </ToggleButton>
+                    <ToggleButton Content="People" Tag="People" Click="ListFilter_Click" Style="{StaticResource FilterChip}" AutomationProperties.Name="Conversations with people" />
+                </StackPanel>
+                </StackPanel>
                 <Grid Grid.Row="3" ColumnSpacing="8">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                     <ComboBox SelectedIndex="0" SelectionChanged="ArchiveFilter_SelectionChanged" Style="{StaticResource SidebarComboBox}" AutomationProperties.Name="Conversation filter" MinWidth="108">

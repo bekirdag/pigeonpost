@@ -33,6 +33,25 @@ internal static class DesignTokenTests
         ("ComposerAreaBrush", "Bg", 1),
     ];
 
+    // Dark mode on the desktop departs from the kit's dark surfaces, which were too close together to tell
+    // the panes apart on a large window (owner, 2026-11-18). Four surface levels and a visible separator:
+    // navigation #0F1115, subjects #171A21, conversation #1E222B, headers/cards/dialogs #262B36,
+    // separators #2E3440. Faint text is lifted to keep WCAG AA on the lighter levels. Light is the kit's.
+    internal static readonly Dictionary<string, string> DesktopDark = new()
+    {
+        ["DialogSurfaceBrush"] = "#262B36", ["DialogBorderBrush"] = "#2E3440",
+        ["AppBackgroundBrush"] = "#0F1115", ["NavigationSurfaceBrush"] = "#0F1115", ["ThreadsSurfaceBrush"] = "#171A21",
+        ["ConversationSurfaceBrush"] = "#1E222B", ["HeaderSurfaceBrush"] = "#262B36", ["DividerBrush"] = "#2E3440",
+        ["RowHoverBrush"] = "#1E222B", ["RowSelectedBrush"] = "#1F3157",
+        ["FieldSurfaceBrush"] = "#1E222B", ["FieldBorderBrush"] = "#3B4252",
+        ["IconButtonSurfaceBrush"] = "#1E222B", ["IconButtonBorderBrush"] = "#2E3440",
+        ["TextTertiaryBrush"] = "#949DAA",
+        ["IncomingMessageBrush"] = "#262B36", ["IncomingBorderBrush"] = "#2E3440",
+        ["IncomingFooterBorderBrush"] = "#2E3440", ["IncomingFooterTextBrush"] = "#949DAA",
+        ["ChipSurfaceBrush"] = "#262B36", ["AttachmentSurfaceBrush"] = "#1E222B", ["AttachmentBorderBrush"] = "#2E3440",
+        ["ComposerSurfaceBrush"] = "#262B36", ["ComposerBorderBrush"] = "#2E3440", ["ComposerAreaBrush"] = "#1E222B",
+    };
+
     public static IEnumerable<(string Name, Func<Task> Run)> All()
     {
         yield return ("Desktop brushes carry the design kit's light and dark values", () =>
@@ -48,9 +67,27 @@ internal static class DesignTokenTests
                     Require(appBrushes.TryGetValue(key, out var actual), $"{theme}: App.xaml has no {key}.");
                     Require(kitBrushes.TryGetValue("PP" + role + "Brush", out var token), $"{theme}: the kit has no PP{role}Brush.");
                     var expected = alpha >= 1 ? token : $"#{(int)Math.Round(alpha * 255):X2}{token![^6..]}";
-                    Require(string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase), $"{theme}: {key} is {actual}, the kit's {role} is {expected}.");
+                    if (theme == "Default" && DesktopDark.TryGetValue(key, out var desktop)) expected = desktop;
+                    Require(string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase), $"{theme}: {key} is {actual}, expected {expected} ({role}).");
                 }
             }
+            return Task.CompletedTask;
+        });
+        yield return ("Dark panes are distinguishable and their text keeps WCAG AA contrast", () =>
+        {
+            var dark = Brushes(XDocument.Load(DesktopPath("App.xaml")), "Default");
+            // Each pane steps up in luminance from the one beside it.
+            string[] levels = ["NavigationSurfaceBrush", "ThreadsSurfaceBrush", "ConversationSurfaceBrush", "HeaderSurfaceBrush"];
+            for (var i = 1; i < levels.Length; i++)
+                Require(Contrast(dark[levels[i]], dark[levels[i - 1]]) >= 1.08, $"{levels[i]} is too close to {levels[i - 1]}.");
+            Require(Contrast(dark["DividerBrush"], dark["ConversationSurfaceBrush"]) >= 1.2, "Dividers do not show on the conversation pane.");
+            string[] surfaces = ["NavigationSurfaceBrush", "ThreadsSurfaceBrush", "ConversationSurfaceBrush", "HeaderSurfaceBrush",
+                "RowHoverBrush", "RowSelectedBrush", "IncomingMessageBrush", "ChipSurfaceBrush", "FieldSurfaceBrush", "ComposerSurfaceBrush", "DialogSurfaceBrush"];
+            string[] texts = ["TextPrimaryBrush", "TextSecondaryBrush", "TextTertiaryBrush", "ChipTextBrush", "AccentBrush"];
+            foreach (var surface in surfaces)
+                foreach (var text in texts)
+                    Require(Contrast(dark[text], dark[surface]) >= 4.5, $"{text} on {surface} is {Contrast(dark[text], dark[surface]):0.00}:1, below AA.");
+            Require(Contrast(dark["IncomingFooterTextBrush"], dark["IncomingMessageBrush"]) >= 4.5, "Bubble footer text is below AA.");
             return Task.CompletedTask;
         });
         yield return ("Every app brush has a high-contrast form and the accent is Signal Blue", () =>
@@ -79,6 +116,22 @@ internal static class DesignTokenTests
     {
         var root = Path.Combine(Path.GetDirectoryName(here)!, "..", "Pigeonpost.Desktop", first);
         return second is null ? root : Path.Combine(root, second);
+    }
+
+    // WCAG 2 contrast ratio of two opaque #RRGGBB colours.
+    private static double Contrast(string a, string b)
+    {
+        static double Luminance(string hex)
+        {
+            double Channel(int i)
+            {
+                var c = Convert.ToInt32(hex.Substring(hex.Length - 6 + i * 2, 2), 16) / 255.0;
+                return c <= 0.03928 ? c / 12.92 : Math.Pow((c + 0.055) / 1.055, 2.4);
+            }
+            return 0.2126 * Channel(0) + 0.7152 * Channel(1) + 0.0722 * Channel(2);
+        }
+        var (x, y) = (Luminance(a), Luminance(b));
+        return (Math.Max(x, y) + 0.05) / (Math.Min(x, y) + 0.05);
     }
 
     private static void Require(bool condition, string reason) { if (!condition) throw new Exception(reason); }

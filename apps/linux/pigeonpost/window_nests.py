@@ -117,6 +117,9 @@ class NestsMixin:
                          loaded_at=time.monotonic(), message=None)
             self.render_products()
             self.render_conversation_chrome()
+            # Which peers are Nests decides the Agents and People list filters.
+            if getattr(self, "list_filter", "all") in ("agents", "people"):
+                self.render_peers()
             if state["org"]:
                 self.load_org_nests(state["org"])
         self.bound_work(lease, work, loaded, lambda e: state is self.nest_state and self.nest_failed(e))

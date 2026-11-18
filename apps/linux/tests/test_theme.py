@@ -22,7 +22,35 @@ class KitPalette(unittest.TestCase):
                 continue
             light, dark = self.theme.PALETTE[name]
             self.assertEqual(light.replace("0.", "."), self.semantic[role]["light"].replace("0.", "."), name)
-            self.assertEqual(dark.replace("0.", "."), self.semantic[role]["dark"].replace("0.", "."), name)
+            expected = self.theme.DESKTOP_DARK.get(name, self.semantic[role]["dark"])
+            self.assertEqual(dark.replace("0.", "."), expected.replace("0.", "."), name)
+
+    def test_dark_panes_are_distinguishable_and_text_keeps_aa(self):
+        dark = self.theme.colours(True)
+
+        def luminance(colour):
+            channels = [int(colour[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+            channels = [c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4 for c in channels]
+            return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+
+        def contrast(a, b):
+            x, y = luminance(a), luminance(b)
+            return (max(x, y) + 0.05) / (min(x, y) + 0.05)
+
+        levels = ["sidebar", "column", "wash", "ground"]
+        for lower, upper in zip(levels, levels[1:]):
+            self.assertGreaterEqual(contrast(dark[upper], dark[lower]), 1.08, f"{upper} too close to {lower}")
+        self.assertGreaterEqual(contrast(dark["rule"], dark["wash"]), 1.2)
+        for surface in levels + ["hover", "selected", "chip", "theirs_fill", "raised", "field", "composer"]:
+            for text in ("ink", "body", "secondary", "muted", "link"):
+                self.assertGreaterEqual(contrast(dark[text], dark[surface]), 4.5, f"{text} on {surface}")
+
+    def test_light_mode_is_the_kits(self):
+        light = self.theme.colours(False)
+        for name, role in self.theme.ROLES.items():
+            if not isinstance(role, tuple):
+                self.assertEqual(light[name].replace("0.", "."), self.semantic[role]["light"].replace("0.", "."), name)
+        self.assertEqual(light["field_stroke"], "transparent")
 
     def test_brand_accent_is_signal_blue(self):
         self.assertEqual(self.theme.PALETTE["accent"], ("#086CFF", "#086CFF"))

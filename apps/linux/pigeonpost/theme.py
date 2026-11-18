@@ -75,6 +75,37 @@ ROLES = {
 }
 
 
+# Dark mode on the desktop departs from the kit's dark surfaces, which sat too close together to tell the
+# panes apart (owner, 2026-11-18): conversation list #0F1115, subjects #171A21, conversation #1E222B,
+# header bar, bubbles and dialogs #262B36, 1 px separators #2E3440. Faint text is lifted to keep WCAG AA on
+# the lighter levels. Light mode stays exactly the kit's. tests/test_theme.py checks levels and contrast.
+DESKTOP_DARK = {
+    "app": "#0F1115",
+    "sidebar": "#0F1115",
+    "column": "#171A21",
+    "wash": "#1E222B",
+    "ground": "#262B36",
+    "raised": "#262B36",
+    "field": "#171A21",
+    "composer": "#262B36",
+    "hover": "#1E222B",
+    "selected": "#1F3157",
+    "chip": "#262B36",
+    "tile": "#1E222B",
+    "rule": "#2E3440",
+    "stroke": "#2E3440",
+    "stroke_strong": "#3B4252",
+    "theirs_fill": "#262B36",
+    "theirs_stroke": "#2E3440",
+    "muted": "#949DAA",
+}
+# Desktop-only colours with no kit role: (light, dark). An entry's edge is invisible in light (as before)
+# and a separator line in dark, so search fields stay visible on every surface level.
+DESKTOP_ONLY = {
+    "field_stroke": ("transparent", "#2E3440"),
+}
+
+
 def _mix(top, opacity, under):
     a = [int(top[i:i + 2], 16) for i in (1, 3, 5)]
     b = [int(under[i:i + 2], 16) for i in (1, 3, 5)]
@@ -91,6 +122,9 @@ def load_palette(path=TOKENS):
             palette[name] = tuple(_mix(semantic[top][m], opacity, semantic[under][m]) for m in ("light", "dark"))
         else:
             palette[name] = (semantic[role]["light"], semantic[role]["dark"])
+    for name, dark in DESKTOP_DARK.items():
+        palette[name] = (palette[name][0], dark)
+    palette.update(DESKTOP_ONLY)
     # GTK's CSS parser wants a leading zero on alpha values ("rgba(8, 108, 255, .35)" -> "0.35").
     return {name: tuple(re.sub(r"(?<![\d.])\.(\d)", r"0.\1", v) for v in pair) for name, pair in palette.items()}
 
@@ -122,7 +156,7 @@ dropdown.pp-mailbox > button { background-color: @pp_ground; border: 1px solid @
 dropdown.pp-mailbox > button label { font-family: "Geist Mono", monospace; font-weight: 600; font-size: 13px; }
 
 entry.search, searchentry, .pp-sidebar entry, .pp-wash entry {
-  background-color: @pp_field; color: @pp_ink; border: 1px solid transparent; border-radius: 10px;
+  background-color: @pp_field; color: @pp_ink; border: 1px solid @pp_field_stroke; border-radius: 10px;
   min-height: 36px; box-shadow: none; outline-color: @pp_focus_ring;
 }
 entry.search:focus-within, searchentry:focus-within, .pp-sidebar entry:focus-within, .pp-wash entry:focus-within {
@@ -140,6 +174,11 @@ button.suggested-action:disabled { background-color: @pp_chip; color: @pp_muted;
 button.destructive-action { border-radius: 10px; }
 .pp-pill-button { background-color: @pp_ground; border: 1px solid @pp_stroke_strong; color: @pp_quiet; border-radius: 8px; font-size: 12.5px; font-weight: 500; padding: 4px 10px; box-shadow: none; }
 .pp-pill-button:hover { background-color: @pp_hover; color: @pp_ink; }
+
+/* Quick filters above the conversation list: kit chips; the chosen one takes the selected-row tint. */
+.pp-filter-chips > button.pp-chip { background-color: @pp_chip; color: @pp_body; border: none; border-radius: 999px; min-height: 28px; padding: 0 11px; font-size: 12.5px; font-weight: 500; box-shadow: none; }
+.pp-filter-chips > button.pp-chip:hover { color: @pp_ink; }
+.pp-filter-chips > button.pp-chip:checked { background-color: @pp_selected; color: @pp_ink; font-weight: 600; }
 
 list.pp-list { background-color: transparent; }
 list.pp-list > row { border-radius: 14px; margin: 1px 0; padding: 0; color: @pp_ink; }
