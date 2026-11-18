@@ -25,6 +25,8 @@ enum AuthError: Error { case sessionExpired }
     #if MAC_INBOX_UI_TESTS
     // Nothing switched on: the Phase 1b surfaces stay out of the way of these checks.
     let features = Features()
+    /// No Nests loaded in these checks; the Agents filter falls back to the account's own mailboxes.
+    var loadedNestAddresses: Set<String> { [] }
     #endif
     var ownAgents: [Mailbox] { mailboxes.filter { $0.address != me?.address } }
     init() { client = PostboxClient(base: URL(string: "https://pigeonpost.test")!, tokens: session) }

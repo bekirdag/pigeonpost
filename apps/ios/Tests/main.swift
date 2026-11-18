@@ -379,6 +379,26 @@ check(editedWork["note"] as? String == "Revised" && (editedWork["args"] as? [Str
 let localSent = ThreadMessage(id: "local_pending", kind: .outgoing, at: now, body: "pending", threadId: nil)
 check(!localSent.isEditable(), "optimistic rows wait for a server copy before editing")
 
+print("\nthe list's quick filters")
+let ownAgent = Conversation(peer: "/bekir/docdex", unread: 2, mine: true)
+let nestAgent = Conversation(peer: "/bekir/nest-hr", unread: 0)
+let person = Conversation(peer: "/alice", unread: 1)
+let quiet = Conversation(peer: "/bob")
+let everyone = [ownAgent, nestAgent, person, quiet]
+let nestSet: Set<String> = ["/bekir/nest-hr"]
+func shown(_ f: InboxListFilter) -> [String] { everyone.filter { f.matches($0, nests: nestSet) }.map(\.peer) }
+equal(shown(.all), everyone.map(\.peer), "All shows every conversation")
+equal(shown(.unread), ["/bekir/docdex", "/alice"], "Unread shows only what has unread mail")
+equal(shown(.agents), ["/bekir/docdex", "/bekir/nest-hr"], "Agents is this account's own mailboxes and its Nests (the web's isAgentThread)")
+equal(shown(.people), ["/alice", "/bob"], "People is everyone else")
+check(everyone.allSatisfy { InboxListFilter.agents.matches($0, nests: nestSet) != InboxListFilter.people.matches($0, nests: nestSet) },
+      "every conversation is in exactly one of Agents and People")
+check(!InboxListFilter.agents.matches(nestAgent), "a Nest not yet loaded is not claimed as an agent")
+check(InboxListFilter.people.matchesGroup(unread: 0) && !InboxListFilter.agents.matchesGroup(unread: 3)
+      && InboxListFilter.unread.matchesGroup(unread: 1) && !InboxListFilter.unread.matchesGroup(unread: 0),
+      "groups: kept under People, gone under Agents, only unread ones under Unread")
+check(Set(InboxListFilter.allCases.map(\.emptyMessage)).count == InboxListFilter.allCases.count, "each filter has its own empty state")
+
 print("")
 if failures == 0 {
     print("all good")

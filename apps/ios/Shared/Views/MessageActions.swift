@@ -200,3 +200,53 @@ struct MessageInfoSheet: View {
         loading = false
     }
 }
+
+#if os(iOS)
+/// A message's words on their own, to select any part of them — the long-press menu's Select Text.
+///
+/// In the conversation a long press is the message's menu (Copy, Reply, Delete…), so selection
+/// there starts with a double tap, which nobody tries first. Here there is no menu to compete with:
+/// a long press selects a word as it does in any other iOS text, the handles extend it, and the
+/// system's edit menu copies exactly what is selected.
+struct MessageTextSheet: View {
+    let text: String
+    /// Agent replies are markdown and are shown as the conversation shows them; group messages
+    /// are plain text.
+    var markdown: Bool = true
+    var close: (() -> Void)? = nil
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                Group {
+                    if markdown {
+                        MarkdownText(raw: text)
+                    } else {
+                        SelectableText(text: NSAttributedString(string: text, attributes: [
+                            .font: Typeface.platform(16),
+                            .foregroundColor: UIColor(Theme.body),
+                        ]))
+                    }
+                }
+                .padding(20)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .environment(\.selectableTextLongPressSelects, true)
+            .background(Theme.app)
+            .accessibilityIdentifier("selectTextSheet")
+            .navigationTitle("Select Text")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Copy All") { Clipboard.copy(text) }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { if let close { close() } else { dismiss() } }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+}
+#endif

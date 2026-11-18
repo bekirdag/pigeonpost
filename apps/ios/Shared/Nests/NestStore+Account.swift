@@ -1,5 +1,8 @@
 import Foundation
 
+/// The inbox's Agents filter counts the account's Nests as agents, as the web's does.
+extension NestStore: NestAddressSource {}
+
 extension NestStore {
     convenience init(account: Account, purchases: NestPurchasing) {
         self.init(services: NestServices(

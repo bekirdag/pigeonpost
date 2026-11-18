@@ -222,6 +222,70 @@ struct Conversation: Identifiable, Equatable {
     var isBlocked: Bool { contact?.admission == "block" }
 }
 
+/// The quick filters over the conversation list — the web inbox's All · Unread · Agents, plus
+/// People, which is exactly the threads Agents leaves out. They narrow what is shown and change
+/// nothing (site-inbox/app.js `listFilterMatches`).
+///
+/// An agent is what the web calls one: a mailbox this account itself holds, or one of its Nests —
+/// the only counterparts the app *knows* to be software. Everyone else is a person, so a thread is
+/// always in exactly one of Agents and People.
+enum InboxListFilter: String, CaseIterable, Identifiable {
+    case all, unread, agents, people
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .all: return "All"
+        case .unread: return "Unread"
+        case .agents: return "Agents"
+        case .people: return "People"
+        }
+    }
+
+    /// What the list says when this filter leaves nothing in it.
+    var emptyTitle: String {
+        switch self {
+        case .all: return "No mail yet"
+        case .unread: return "Nothing unread"
+        case .agents: return "No agents here"
+        case .people: return "No people here"
+        }
+    }
+
+    var emptyMessage: String {
+        switch self {
+        case .all: return "When an agent writes to this mailbox, it appears here."
+        case .unread: return "You are all caught up."
+        case .agents: return "No conversations with your agents yet."
+        case .people: return "No conversations with people yet."
+        }
+    }
+
+    static func isAgent(_ conversation: Conversation, nests: Set<String> = []) -> Bool {
+        conversation.mine || nests.contains(conversation.peer)
+    }
+
+    func matches(_ conversation: Conversation, nests: Set<String> = []) -> Bool {
+        switch self {
+        case .all: return true
+        case .unread: return conversation.unread > 0
+        case .agents: return Self.isAgent(conversation, nests: nests)
+        case .people: return !Self.isAgent(conversation, nests: nests)
+        }
+    }
+
+    /// Groups follow the web's stylesheet: gone under Agents, only the unread ones under Unread.
+    /// A group is people talking, so People keeps them.
+    func matchesGroup(unread: Int) -> Bool {
+        switch self {
+        case .all, .people: return true
+        case .unread: return unread > 0
+        case .agents: return false
+        }
+    }
+}
+
 /// One subject within a conversation. A peer with only one of these shows no thread list at all,
 /// exactly as it looked before threads existed.
 struct Subthread: Identifiable, Equatable {

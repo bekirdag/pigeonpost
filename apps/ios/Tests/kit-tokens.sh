@@ -7,5 +7,6 @@
 kit_src=Packages/PigeonpostUI/Sources/PigeonpostUI/Generated
 mkdir -p "$out/kit"
 swiftc -O -parse-as-library -module-name PigeonpostUI -emit-module -emit-module-path "$out/kit/PigeonpostUI.swiftmodule" \
-  -emit-library -static -o "$out/kit/libPigeonpostUI.a" "$kit_src/PPTokens.swift" "$kit_src/PPScales.swift"
+  -emit-library -static -o "$out/kit/libPigeonpostUI.a" "$kit_src/PPTokens.swift" "$kit_src/PPScales.swift" \
+  Packages/PigeonpostUI/Sources/PigeonpostUI/Foundation/PPDesktopSurfaces.swift
 kit="-I $out/kit -L $out/kit -lPigeonpostUI"

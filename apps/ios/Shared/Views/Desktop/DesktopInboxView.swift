@@ -109,9 +109,9 @@ struct DesktopInboxView: View {
             }
         }
         #if os(macOS)
-        // The window's bar in the conversation's own ground, as the conversation design's header
-        // is, instead of the system's grey strip.
-        .toolbarBackground(Theme.wash, for: .windowToolbar)
+        // The window's bar in its own colour rather than the system's grey strip: the conversation's
+        // ground in the light, a step above it in the dark (`Theme.toolbar`).
+        .toolbarBackground(Theme.toolbar, for: .windowToolbar)
         #endif
         // Empty on purpose. The sender is drawn as a button in the detail toolbar, and an
         // unset title falls back to the application's name — which put "Pigeonpost Desktop"
@@ -327,6 +327,16 @@ struct DesktopInboxView: View {
     /// on both platforms, and on the Mac there is no way to ask it not to.
     private var conversationList: some View {
         List {
+            // The quick filters (the web's `.list-filter` row), as the list's first row rather than
+            // a fixed header: on an iPad in landscape with the keyboard up, a header row left the
+            // list no height at all, and its rows piled on top of one another. The archive is one
+            // list on purpose and has none.
+            if !inbox.viewingArchive {
+                InboxFilterBar(filter: Binding(get: { inbox.listFilter }, set: { inbox.listFilter = $0 }))
+                    .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 8, trailing: 0))
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+            }
             if inbox.offline, inbox.hasLoaded {
                 VStack(alignment: .leading, spacing: 6) {
                     Label("Not connected. Showing what was last loaded.", systemImage: "wifi.slash")
@@ -338,7 +348,7 @@ struct DesktopInboxView: View {
                 .listRowBackground(Color.clear)
                 .listRowSeparator(.hidden)
             }
-            if groups.enabled, !inbox.viewingArchive, inbox.filter.isEmpty {
+            if groups.enabled, !inbox.viewingArchive, inbox.filter.isEmpty, quickFilter == .all {
                 GroupInvitations()
                     .listRowInsets(EdgeInsets(top: 4, leading: 18, bottom: 4, trailing: 18))
                     .listRowBackground(Color.clear)
@@ -353,7 +363,7 @@ struct DesktopInboxView: View {
                 }
             }
             // Filtered mail at the foot of the list, as on the phone and the web.
-            if let filtered, !inbox.viewingArchive, inbox.filter.isEmpty,
+            if let filtered, !inbox.viewingArchive, inbox.filter.isEmpty, quickFilter == .all,
                case let senders = filtered.senders(contacts: inbox.contacts), !senders.isEmpty {
                 FilteredEntryRow(count: senders.count)
                     .selectable(false, radius: 10, choose: openFiltered)
@@ -383,13 +393,20 @@ struct DesktopInboxView: View {
             }
         }
         #endif
+        // A new list per quick filter, from its top. The Mac's List kept the old scroll offset when
+        // a filter shortened it, and the first rows of the new list sat hidden above the column.
+        .id(quickFilter)
         .overlay { emptyConversations }
     }
 
     /// Conversations and groups together; the archive holds no groups.
     private var entries: [InboxEntry] {
-        InboxEntry.merge(inbox.visible, groups.enabled && !inbox.viewingArchive ? groups.listed(filter: inbox.filter) : [])
+        InboxEntry.merge(inbox.visible, groups.enabled && !inbox.viewingArchive ? groups.listed(filter: inbox.filter) : [],
+                         filter: quickFilter, nests: account.loadedNestAddresses)
     }
+
+    /// The quick filter in force: the chosen one in the inbox, none in the archive.
+    private var quickFilter: InboxListFilter { inbox.viewingArchive ? .all : inbox.listFilter }
 
     @ViewBuilder
     private func conversationRow(_ conversation: Conversation) -> some View {
@@ -411,7 +428,12 @@ struct DesktopInboxView: View {
 
     @ViewBuilder
     private var emptyConversations: some View {
-        if inbox.hasLoaded, entries.isEmpty, !(groups.enabled && !groups.invitations.isEmpty) {
+        if inbox.hasLoaded, entries.isEmpty, quickFilter != .all || !(groups.enabled && !groups.invitations.isEmpty) {
+            if inbox.filter.isEmpty, quickFilter != .all {
+                ContentUnavailableView(quickFilter.emptyTitle, systemImage: "line.3.horizontal.decrease",
+                                       description: Text(quickFilter.emptyMessage))
+                    .accessibilityIdentifier("listFilterEmpty")
+            } else {
             #if os(iOS)
             if !inbox.filter.isEmpty {
                 ContentUnavailableView.search(text: inbox.filter)
@@ -431,6 +453,7 @@ struct DesktopInboxView: View {
                     : "Try a different sender or search term.")
             )
             #endif
+            }
         }
     }
 

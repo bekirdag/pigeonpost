@@ -361,14 +361,22 @@ struct ConversationsView: View {
             list
                 .safeAreaInset(edge: .top, spacing: 0) {
                     VStack(spacing: 0) {
-                        if let calendar, account.features.calendar {
-                            CalendarEntry(count: calendar.pendingCount) { sheet = .calendar }
+                        VStack(spacing: 0) {
+                            if let calendar, account.features.calendar {
+                                CalendarEntry(count: calendar.pendingCount) { sheet = .calendar }
+                            }
+                            if account.features.meetingSummaries {
+                                MeetingNotesEntry { sheet = .meetingNotes }
+                            }
                         }
-                        if account.features.meetingSummaries {
-                            MeetingNotesEntry { sheet = .meetingNotes }
+                        .padding(.horizontal, 16)
+                        // The quick filters are the inbox's; the archive is one list on purpose.
+                        if !inbox.viewingArchive {
+                            InboxFilterBar(filter: $inbox.listFilter, inset: 16)
+                                .padding(.vertical, 8)
                         }
                     }
-                    .padding(.horizontal, 16).background(Theme.sidebar)
+                    .background(Theme.sidebar)
                 }
                 .navigationTitle(inbox.viewingArchive ? "Archive" : "Inbox")
                 .navigationBarTitleDisplayMode(.inline)
@@ -405,7 +413,7 @@ struct ConversationsView: View {
                     .foregroundStyle(Theme.muted)
                     .listRowBackground(Theme.wash)
             }
-            if groups.enabled, !inbox.viewingArchive, inbox.filter.isEmpty {
+            if groups.enabled, !inbox.viewingArchive, inbox.filter.isEmpty, quickFilter == .all {
                 GroupInvitations()
                     .listRowBackground(Theme.sidebar)
                     .listRowSeparatorTint(Theme.rule)
@@ -422,7 +430,7 @@ struct ConversationsView: View {
                 }
             }
             // Filtered mail, at the foot of the list: looked at on purpose, never among the rest.
-            if let filtered, !inbox.viewingArchive, inbox.filter.isEmpty,
+            if let filtered, !inbox.viewingArchive, inbox.filter.isEmpty, quickFilter == .all,
                case let senders = filtered.senders(contacts: inbox.contacts), !senders.isEmpty {
                 Button { sheet = .filtered } label: { FilteredEntryRow(count: senders.count) }
                     .buttonStyle(.plain)
@@ -443,8 +451,12 @@ struct ConversationsView: View {
 
     /// Conversations and groups together, unless the archive (which holds no groups) is open.
     private var entries: [InboxEntry] {
-        InboxEntry.merge(inbox.visible, groups.enabled && !inbox.viewingArchive ? groups.listed(filter: inbox.filter) : [])
+        InboxEntry.merge(inbox.visible, groups.enabled && !inbox.viewingArchive ? groups.listed(filter: inbox.filter) : [],
+                         filter: quickFilter, nests: account.loadedNestAddresses)
     }
+
+    /// The quick filter in force: the chosen one in the inbox, none in the archive.
+    private var quickFilter: InboxListFilter { inbox.viewingArchive ? .all : inbox.listFilter }
 
     private func pruneDirectMessages() async {
         while !Task.isCancelled {
@@ -478,9 +490,13 @@ struct ConversationsView: View {
 
     @ViewBuilder
     private var emptyState: some View {
-        if inbox.visible.isEmpty, inbox.hasLoaded, entries.isEmpty, groups.invitations.isEmpty || !groups.enabled {
+        if inbox.hasLoaded, entries.isEmpty, quickFilter != .all || groups.invitations.isEmpty || !groups.enabled {
             if !inbox.filter.isEmpty {
                 ContentUnavailableView.search(text: inbox.filter)
+            } else if quickFilter != .all {
+                ContentUnavailableView(quickFilter.emptyTitle, systemImage: "line.3.horizontal.decrease",
+                                       description: Text(quickFilter.emptyMessage))
+                    .accessibilityIdentifier("listFilterEmpty")
             } else if inbox.viewingArchive {
                 ContentUnavailableView("Nothing archived", systemImage: "archivebox",
                                        description: Text("Conversations you file out of sight land here."))

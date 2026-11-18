@@ -19,7 +19,7 @@ struct ConversationHistoryView: UIViewControllerRepresentable {
 }
 
 @MainActor
-final class HistoryController: UIViewController, UITableViewDataSource, UITableViewDelegate {
+final class HistoryController: UIViewController, UITableViewDataSource, UITableViewDelegate, UIGestureRecognizerDelegate {
     private let table = BottomOriginTable(frame: .zero, style: .plain)
     private let latestButton = UIButton(type: .system)
     private var window = HistoryWindow()
@@ -55,6 +55,7 @@ final class HistoryController: UIViewController, UITableViewDataSource, UITableV
         table.alwaysBounceVertical = true
         let dismissKeyboard = UITapGestureRecognizer(target: self, action: #selector(endEditing))
         dismissKeyboard.cancelsTouchesInView = false
+        dismissKeyboard.delegate = self
         table.addGestureRecognizer(dismissKeyboard)
         table.dataSource = self
         table.delegate = self
@@ -223,6 +224,11 @@ final class HistoryController: UIViewController, UITableViewDataSource, UITableV
         let mine = message.kind == .outgoing
         var actions: [UIMenuElement] = [
             UIAction(title: "Copy", image: UIImage(systemName: "doc.on.doc")) { _ in Clipboard.copy(message.body) },
+            // Part of it, not all of it. The long press is this menu, so the gesture people try
+            // first for a selection needs a way through to one.
+            UIAction(title: "Select Text", image: UIImage(systemName: "selection.pin.in.out")) { [weak self] _ in
+                self?.selectText(message)
+            },
         ]
         if let scope = actionScope, let inbox, let account, message.status == .sent, !message.id.hasPrefix("local_") {
             if account.features.messageReply {
@@ -260,6 +266,29 @@ final class HistoryController: UIViewController, UITableViewDataSource, UITableV
         actions.append(UIAction(title: "Delete", image: UIImage(systemName: "trash"),
                                 attributes: .destructive) { [weak self] _ in self?.confirmDelete(message) })
         return UIMenu(children: actions)
+    }
+
+    private func selectText(_ message: ThreadMessage) {
+        weak var host: UIViewController?
+        let controller = UIHostingController(rootView: MessageTextSheet(text: message.body, close: { host?.dismiss(animated: true) }))
+        host = controller
+        if let presentation = controller.sheetPresentationController {
+            presentation.detents = [.medium(), .large()]
+            presentation.prefersGrabberVisible = true
+        }
+        present(controller, animated: true)
+    }
+
+    /// The tap that puts the keyboard away is not for taps on a message's words. Ending editing
+    /// there resigned the text view as it took the selection — and a resigned text view drops its
+    /// selection — so a double tap selected a word and cleared it again in the same moment.
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        var view = touch.view
+        while let current = view {
+            if current is ReadOnlyTextView { return false }
+            view = current.superview
+        }
+        return true
     }
 
     private func block(_ peer: String, message: ThreadMessage) {

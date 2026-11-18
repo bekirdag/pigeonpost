@@ -662,6 +662,8 @@ struct GroupBubble: View {
     @Environment(Account.self) private var account
     @State private var copied = false
     @State private var hovering = false
+    /// The words open on their own for selecting part of them (iOS; the Mac selects in place).
+    @State private var selectingText = false
     @FocusState private var focusedAction: MessageActionFocus?
 
     private var showsInfo: Bool {
@@ -781,6 +783,9 @@ struct GroupBubble: View {
                 }
                 if let text = item.text, !text.isEmpty, item.deleted != true {
                     Button { Clipboard.copy(text) } label: { Label("Copy", systemImage: "doc.on.doc") }
+                    #if os(iOS)
+                    Button { selectingText = true } label: { Label("Select Text", systemImage: "selection.pin.in.out") }
+                    #endif
                 }
                 if deletable, let seq = item.seq {
                     Button(role: .destructive) { onDelete(seq) } label: { Label("Delete for everyone", systemImage: "trash") }
@@ -791,6 +796,11 @@ struct GroupBubble: View {
             }
             if !mine { Spacer(minLength: 40) }
         }
+        #if os(iOS)
+        .sheet(isPresented: $selectingText) {
+            MessageTextSheet(text: item.text ?? "", markdown: false)
+        }
+        #endif
         .padding(.vertical, 1)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("groupMessage:" + (item.seq.map(String.init) ?? "pending"))

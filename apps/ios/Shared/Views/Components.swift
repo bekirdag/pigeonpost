@@ -1,6 +1,9 @@
 //  The small shared pieces: the pills the server's decisions are shown as, and the toast.
 
 import SwiftUI
+#if canImport(PigeonpostUI)
+import PigeonpostUI
+#endif
 
 /// The unread count, centred on the digits rather than on the line box.
 ///
@@ -322,4 +325,57 @@ extension View {
 extension String {
     /// Written often enough, in both apps, that spelling it out each time is the noise.
     var trimmed: String { trimmingCharacters(in: .whitespacesAndNewlines) }
+}
+
+/// The quick filters over the conversation list — All · Unread · Agents · People — drawn as the
+/// design kit's tags (`PPTag`), as the web inbox's `.list-filter` row and Android's `PPTag` row are.
+///
+/// Tapped rather than wrapped in `Button`: a button anywhere in the desktop sidebar's header
+/// collapses the List beneath it (see `DesktopInboxView`), and the side switch beside it is built
+/// the same way for the same reason.
+struct InboxFilterBar: View {
+    @Binding var filter: InboxListFilter
+    /// The row's side margin: the phone list's 16, the desktop sidebar's 12.
+    var inset: CGFloat = 12
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(InboxListFilter.allCases) { option in
+                    chip(option)
+                        .fixedSize()
+                        .contentShape(Rectangle())
+                        .onTapGesture { filter = option }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityAddTraits(option == filter ? [.isButton, .isSelected] : .isButton)
+                        .accessibilityLabel(option.title)
+                        .accessibilityAction { filter = option }
+                        .accessibilityIdentifier("listFilter:" + option.rawValue)
+                }
+            }
+            .padding(.horizontal, inset)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Show")
+    }
+
+    #if MAC_INBOX_UI_TESTS
+    // The Mac inbox test builds the kit's tokens without its components (Tests/kit-tokens.sh);
+    // a plain label stands in for the tag there.
+    private func chip(_ option: InboxListFilter) -> some View {
+        Text(option.title).font(.geist(13, .medium)).padding(.horizontal, 10).frame(height: 28)
+    }
+    #else
+    private func chip(_ option: InboxListFilter) -> some View {
+        PPTag(option.title, icon: icon(option), selected: option == filter)
+    }
+
+    private func icon(_ option: InboxListFilter) -> PPIconName? {
+        switch option {
+        case .agents: return .bot
+        case .people: return .users
+        default: return nil
+        }
+    }
+    #endif
 }
