@@ -15,8 +15,9 @@ from . import APP_ID, VERSION
 from .api import APIError, MAX_FILE, Postbox
 from .auth import Session
 from .calls import CallAlerts, valid_room
-from .model import (contact_for, conversation_address_input, conversations, display_name, message_text, normalize, safe_filename,
-                    size_text, subjects, target_thread, timestamp, valid_peer, unread_count)
+from .model import (LIST_FILTER_EMPTY, LIST_FILTERS, contact_for, conversation_address_input, conversations, display_name,
+                    is_agent_peer, list_filter_matches, message_text, normalize, peer_aliases, safe_filename, size_text, subjects,
+                    target_thread, timestamp, valid_peer, unread_count)
 from .vault import Vault
 from .previews import ThumbnailCache, supports as preview_supported
 from .theme import CHOICES, Design, Preferences, apply_appearance
@@ -92,6 +93,7 @@ class Window(ContactsMixin, MessagesMixin, NestsMixin, NotesMixin, PairingMixin,
         self.mailboxes, self.messages, self.threads, self.contacts, self.archived = [], [], [], [], []
         self.vocabulary, self.quota = {}, {}
         self.identity = self.peer = self.subject = None
+        self.list_filter = "all"
         # Phase 1b and 3: what the postbox enables (GET /v1/capabilities), and the state behind it.
         self.features = frozenset()
         self.capabilities_at = 0
@@ -404,6 +406,22 @@ class Window(ContactsMixin, MessagesMixin, NestsMixin, NotesMixin, PairingMixin,
         self.peer_search = Gtk.SearchEntry(placeholder_text="Search conversations")
         self.peer_search.connect("search-changed", lambda _: self.render_peers())
         sidebar.append(self.peer_search)
+        # Quick filters, as in the web inbox: All · Unread · Agents · People. They change nothing.
+        chips = box(6, horizontal=True)
+        chips.add_css_class("pp-filter-chips")
+        self.list_filter_buttons = {}
+        first = None
+        for value, text in LIST_FILTERS:
+            chip = Gtk.ToggleButton(label=text, active=value == self.list_filter)
+            chip.add_css_class("pp-chip")
+            chip.update_property([Gtk.AccessibleProperty.LABEL], [f"Show {'all' if value == 'all' else text.lower()} conversations"])
+            if first:
+                chip.set_group(first)
+            first = first or chip
+            chip.connect("toggled", lambda b, v=value: self.set_list_filter(v) if b.get_active() else None)
+            self.list_filter_buttons[value] = chip
+            chips.append(chip)
+        sidebar.append(chips)
         compose_row = box(6, horizontal=True)
         compose_row.set_homogeneous(True)
         new_conversation = Gtk.Button()
@@ -435,6 +453,9 @@ class Window(ContactsMixin, MessagesMixin, NestsMixin, NotesMixin, PairingMixin,
         self.peer_list.add_css_class("navigation-sidebar")
         self.peer_list.add_css_class("pp-list")
         self.peer_list.connect("row-selected", self.peer_selected)
+        self.peer_empty = label("", "pp-status", wrap=True)
+        self.peer_empty.set_visible(False)
+        sidebar.append(self.peer_empty)
         sidebar.append(scroll(self.peer_list))
         self.connection_status = label("", "pp-status", wrap=True)
         sidebar.append(self.connection_status)
@@ -773,13 +794,18 @@ class Window(ContactsMixin, MessagesMixin, NestsMixin, NotesMixin, PairingMixin,
         self.rendering = True
         clear(self.peer_list)
         search = self.peer_search.get_text().casefold()
-        self.render_group_rows(search)
+        quick = self.list_filter
+        self.render_group_rows(search, quick)
         rows = conversations(self.messages, self.contacts)
         if self.peer:
             rows.setdefault(self.peer, [])
+        agents = self.agent_addresses() if quick in ("agents", "people") else set()
+        aliases = peer_aliases(self.messages) if agents else {}
         for peer, messages in list(rows.items())[:1000]:
             name = self.peer_name(peer)
             if peer in self.archived or search not in (name + " " + peer).casefold():
+                continue
+            if quick != "all" and not list_filter_matches(quick, messages, is_agent_peer(peer, aliases, agents)):
                 continue
             row = Gtk.ListBoxRow()
             row.peer, row.kind = peer, "peer"
@@ -809,7 +835,27 @@ class Window(ContactsMixin, MessagesMixin, NestsMixin, NotesMixin, PairingMixin,
             self.peer_list.append(row)
             if self.page() == "filtered":
                 self.peer_list.select_row(row)
+        empty = self.peer_list.get_first_child() is None and bool(self.identity)
+        self.peer_empty.set_text("No matching conversations." if search else LIST_FILTER_EMPTY[quick])
+        self.peer_empty.set_visible(empty)
         self.rendering = False
+
+    def agent_addresses(self):
+        """The account's own mailboxes and its Nests (own and organization, as nest_for_peer finds them)
+        are agents; everyone else is people."""
+        found = {row["address"] for row in self.mailboxes}
+        state = getattr(self, "nest_state", None) or {}
+        found |= {n["address"] for n in (state.get("snapshot") or {}).get("nests", ()) if n.get("address")}
+        found |= set(state.get("org_directory") or ())
+        return found
+
+    def set_list_filter(self, value):
+        if value == self.list_filter or value not in LIST_FILTER_EMPTY:
+            return
+        self.list_filter = value
+        if not self.list_filter_buttons[value].get_active():
+            self.list_filter_buttons[value].set_active(True)
+        self.render_peers()
 
     def avatars_changed(self):
         """A picture arrived; widgets made before it are updated in place by the cache."""

@@ -91,6 +91,44 @@ def unread_count(messages):
                 if m.get("message_id") and m.get("direction") != "out" and not m.get("read")})
 
 
+# The quick filters above the conversation list (the web inbox's All · Unread · Agents · People).
+# They narrow what is shown and change nothing. An agent is a mailbox the account itself holds or one
+# of its Nests; People is exactly everyone else.
+LIST_FILTERS = (("all", "All"), ("unread", "Unread"), ("agents", "Agents"), ("people", "People"))
+LIST_FILTER_EMPTY = {
+    "all": "No conversations yet.",
+    "unread": "Nothing unread.",
+    "agents": "No conversations with your agents yet.",
+    "people": "No conversations with people yet.",
+}
+
+
+def peer_aliases(messages):
+    """{handle: mailbox addresses its messages carry}: conversations are keyed by handle when the peer
+    has one, while own mailboxes and Nests are known by address. One pass, for a whole list render."""
+    aliases = {}
+    for message in messages or ():
+        if message.get("peer_handle") and message.get("peer"):
+            aliases.setdefault(message["peer_handle"], set()).add(message["peer"])
+    return aliases
+
+
+def is_agent_peer(peer, aliases, agent_addresses):
+    """True when the conversation is with one of agent_addresses (the account's own mailboxes and its
+    Nests), under its own key or any address its messages carry."""
+    return bool(({peer} | aliases.get(peer, set())) & set(agent_addresses))
+
+
+def list_filter_matches(list_filter, messages, agent):
+    if list_filter == "unread":
+        return unread_count(messages) > 0
+    if list_filter == "agents":
+        return agent
+    if list_filter == "people":
+        return not agent
+    return True
+
+
 def subjects(peer, messages, threads):
     rows = {t["thread_id"]: dict(t) for t in threads if normalize(t.get("peer", ""), messages) == peer}
     for message in conversations(messages).get(peer, []):

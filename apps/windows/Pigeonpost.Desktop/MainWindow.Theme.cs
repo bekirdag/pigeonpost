@@ -69,17 +69,18 @@ public sealed partial class MainWindow
             bar.ResetToDefault();
             return;
         }
-        // Design kit roles: --pp-bg, --pp-text, --pp-text-faint, --pp-surface-hover, --pp-surface-selected.
+        // Design kit roles: --pp-bg, --pp-text, --pp-text-faint, --pp-surface-hover, --pp-surface-selected
+        // (dark: the desktop surface levels in App.xaml, see DesignTokenTests.DesktopDark).
         var dark = Root.ActualTheme == ElementTheme.Dark;
-        var background = dark ? ColorHelper.FromArgb(255, 0x0B, 0x0E, 0x12) : ColorHelper.FromArgb(255, 0xF4, 0xF6, 0xF8);
+        var background = dark ? ColorHelper.FromArgb(255, 0x0F, 0x11, 0x15) : ColorHelper.FromArgb(255, 0xF4, 0xF6, 0xF8);
         var foreground = dark ? ColorHelper.FromArgb(255, 0xF2, 0xF4, 0xF7) : ColorHelper.FromArgb(255, 0x12, 0x16, 0x1C);
-        var muted = dark ? ColorHelper.FromArgb(255, 0x8A, 0x93, 0xA0) : ColorHelper.FromArgb(255, 0x63, 0x6C, 0x78);
+        var muted = dark ? ColorHelper.FromArgb(255, 0x94, 0x9D, 0xAA) : ColorHelper.FromArgb(255, 0x63, 0x6C, 0x78);
         bar.BackgroundColor = bar.InactiveBackgroundColor = background;
         bar.ButtonBackgroundColor = bar.ButtonInactiveBackgroundColor = background;
         bar.ForegroundColor = bar.ButtonForegroundColor = foreground;
         bar.InactiveForegroundColor = bar.ButtonInactiveForegroundColor = muted;
-        bar.ButtonHoverBackgroundColor = dark ? ColorHelper.FromArgb(255, 0x1D, 0x23, 0x2D) : ColorHelper.FromArgb(255, 0xEE, 0xF1, 0xF5);
-        bar.ButtonPressedBackgroundColor = dark ? ColorHelper.FromArgb(255, 0x1C, 0x28, 0x40) : ColorHelper.FromArgb(255, 0xE4, 0xEB, 0xF7);
+        bar.ButtonHoverBackgroundColor = dark ? ColorHelper.FromArgb(255, 0x1E, 0x22, 0x2B) : ColorHelper.FromArgb(255, 0xEE, 0xF1, 0xF5);
+        bar.ButtonPressedBackgroundColor = dark ? ColorHelper.FromArgb(255, 0x1F, 0x31, 0x57) : ColorHelper.FromArgb(255, 0xE4, 0xEB, 0xF7);
         bar.ButtonHoverForegroundColor = bar.ButtonPressedForegroundColor = foreground;
     }
 

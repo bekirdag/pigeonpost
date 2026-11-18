@@ -175,6 +175,7 @@ public sealed partial class MainWindow
             ViewModel.MessagesUpdating += Messages_Updating;
             ViewModel.MessagesUpdated += Messages_Updated;
             ViewModel.InboxUpdated += Inbox_Updated;
+            AttachListFilter();
             unreadState.Clear();
             ResetSideViews();
             AvatarFiles.Clear();

@@ -290,6 +290,7 @@ public sealed partial class MainWindow
         SidePage.Visibility = ToVisibility(page && (!compact || compactConversation));
         SideListHost.Visibility = ToVisibility(sideView == SideView.Groups && (!compact || !compactConversation));
         ConversationListHost.Visibility = ToVisibility(sideView != SideView.Groups);
+        if (ListFilterChips is not null) ListFilterChips.Visibility = ConversationListHost.Visibility;
         if (!page) return;
         MessagingArea.Visibility = SubjectPane.Visibility = SubjectDivider.Visibility = Visibility.Collapsed;
         if (compact)

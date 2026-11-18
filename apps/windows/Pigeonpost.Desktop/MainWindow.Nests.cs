@@ -54,7 +54,7 @@ public sealed partial class MainWindow
     private void ResetNests()
     {
         nests = new NestPageState();
-        UpdateNestHeader();
+        NestsKnownChanged();
     }
 
     private void ClearNestPages() { productsContent = null; nestContent = null; }
@@ -64,7 +64,7 @@ public sealed partial class MainWindow
         if (!NestsOn)
         {
             nests = new NestPageState();
-            UpdateNestHeader();
+            NestsKnownChanged();
             if (sideView is SideView.Products or SideView.Nest) ShowSideView(SideView.Chats);
             return;
         }
@@ -93,7 +93,7 @@ public sealed partial class MainWindow
     {
         state.Loading = state.Busy = false;
         state.Message = NestRules.Explain(error);
-        if (NestRules.EndsAccess(error)) { state.Snapshot = null; state.Selected = null; state.Detail = null; UpdateNestHeader(); }
+        if (NestRules.EndsAccess(error)) { state.Snapshot = null; state.Selected = null; state.Detail = null; NestsKnownChanged(); }
         RenderProducts();
         RenderNest();
     }
@@ -120,7 +120,7 @@ public sealed partial class MainWindow
         state.Snapshot = snapshot;
         state.LoadedAt = DateTimeOffset.UtcNow;
         if (first) state.Message = null;
-        UpdateNestHeader();
+        NestsKnownChanged();
         if (changed) RenderProducts();
     }
 
@@ -302,7 +302,7 @@ public sealed partial class MainWindow
         if (!done) return;
         state.Snapshot = snapshot;
         state.Message = null;
-        UpdateNestHeader();
+        NestsKnownChanged();
         RenderProducts();
     }
 

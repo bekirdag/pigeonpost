@@ -109,36 +109,38 @@
                     <SolidColorBrush x:Key="ComposerAreaBrush" Color="#F4F6F8" />
                 </ResourceDictionary>
                 <ResourceDictionary x:Key="Default">
-                    <!-- Dark: the kit's dark roles. -->
+                    <!-- Dark: the kit's dark roles, except the desktop surface levels (navigation #0F1115, subjects #171A21,
+                         conversation #1E222B, headers/cards #262B36, 1 px separators #2E3440) so the panes stay distinguishable.
+                         DesignTokenTests.DesktopDark lists every brush that departs from the kit. -->
                     <!-- Dialogs -->
-                    <SolidColorBrush x:Key="DialogSurfaceBrush" Color="#1A1F28" />
-                    <SolidColorBrush x:Key="DialogBorderBrush" Color="#232A35" />
+                    <SolidColorBrush x:Key="DialogSurfaceBrush" Color="#262B36" />
+                    <SolidColorBrush x:Key="DialogBorderBrush" Color="#2E3440" />
                     <!-- Surfaces: sender list and subjects on bg-subtle, the conversation on bg, its header on surface -->
-                    <SolidColorBrush x:Key="AppBackgroundBrush" Color="#0B0E12" />
-                    <SolidColorBrush x:Key="NavigationSurfaceBrush" Color="#0F1217" />
-                    <SolidColorBrush x:Key="ThreadsSurfaceBrush" Color="#0F1217" />
-                    <SolidColorBrush x:Key="ConversationSurfaceBrush" Color="#0B0E12" />
-                    <SolidColorBrush x:Key="HeaderSurfaceBrush" Color="#141820" />
-                    <SolidColorBrush x:Key="DividerBrush" Color="#232A35" />
-                    <SolidColorBrush x:Key="RowHoverBrush" Color="#1D232D" />
-                    <SolidColorBrush x:Key="RowSelectedBrush" Color="#1C2840" />
-                    <SolidColorBrush x:Key="FieldSurfaceBrush" Color="#141820" />
-                    <SolidColorBrush x:Key="FieldBorderBrush" Color="#343D4A" />
-                    <SolidColorBrush x:Key="IconButtonSurfaceBrush" Color="#141820" />
-                    <SolidColorBrush x:Key="IconButtonBorderBrush" Color="#232A35" />
+                    <SolidColorBrush x:Key="AppBackgroundBrush" Color="#0F1115" />
+                    <SolidColorBrush x:Key="NavigationSurfaceBrush" Color="#0F1115" />
+                    <SolidColorBrush x:Key="ThreadsSurfaceBrush" Color="#171A21" />
+                    <SolidColorBrush x:Key="ConversationSurfaceBrush" Color="#1E222B" />
+                    <SolidColorBrush x:Key="HeaderSurfaceBrush" Color="#262B36" />
+                    <SolidColorBrush x:Key="DividerBrush" Color="#2E3440" />
+                    <SolidColorBrush x:Key="RowHoverBrush" Color="#1E222B" />
+                    <SolidColorBrush x:Key="RowSelectedBrush" Color="#1F3157" />
+                    <SolidColorBrush x:Key="FieldSurfaceBrush" Color="#1E222B" />
+                    <SolidColorBrush x:Key="FieldBorderBrush" Color="#3B4252" />
+                    <SolidColorBrush x:Key="IconButtonSurfaceBrush" Color="#1E222B" />
+                    <SolidColorBrush x:Key="IconButtonBorderBrush" Color="#2E3440" />
                     <!-- Text. AccentBrush is accent-coloured text (links, quotes); AccentFillBrush fills badges. -->
                     <SolidColorBrush x:Key="TextPrimaryBrush" Color="#F2F4F7" />
                     <SolidColorBrush x:Key="TextSecondaryBrush" Color="#A3ACB9" />
-                    <SolidColorBrush x:Key="TextTertiaryBrush" Color="#8A93A0" />
+                    <SolidColorBrush x:Key="TextTertiaryBrush" Color="#949DAA" />
                     <SolidColorBrush x:Key="AccentBrush" Color="#6EA8FF" />
                     <SolidColorBrush x:Key="AccentFillBrush" Color="#086CFF" />
                     <SolidColorBrush x:Key="OnAccentBrush" Color="#FFFFFF" />
                     <!-- Message bubbles: theirs neutral, mine Signal Blue tinted -->
-                    <SolidColorBrush x:Key="IncomingMessageBrush" Color="#1A1F28" />
-                    <SolidColorBrush x:Key="IncomingBorderBrush" Color="#262D38" />
+                    <SolidColorBrush x:Key="IncomingMessageBrush" Color="#262B36" />
+                    <SolidColorBrush x:Key="IncomingBorderBrush" Color="#2E3440" />
                     <SolidColorBrush x:Key="IncomingTextBrush" Color="#F2F4F7" />
-                    <SolidColorBrush x:Key="IncomingFooterBorderBrush" Color="#1C222B" />
-                    <SolidColorBrush x:Key="IncomingFooterTextBrush" Color="#8A93A0" />
+                    <SolidColorBrush x:Key="IncomingFooterBorderBrush" Color="#2E3440" />
+                    <SolidColorBrush x:Key="IncomingFooterTextBrush" Color="#949DAA" />
                     <SolidColorBrush x:Key="OutgoingMessageBrush" Color="#17325E" />
                     <SolidColorBrush x:Key="OutgoingBorderBrush" Color="#23477F" />
                     <SolidColorBrush x:Key="OutgoingTextBrush" Color="#EAF1FE" />
@@ -152,20 +154,20 @@
                     <SolidColorBrush x:Key="SuccessBrush" Color="#4FDB55" />
                     <SolidColorBrush x:Key="DangerBrush" Color="#FF6B6B" />
                     <SolidColorBrush x:Key="DangerFillBrush" Color="#2B1416" />
-                    <SolidColorBrush x:Key="ChipSurfaceBrush" Color="#1D232D" />
+                    <SolidColorBrush x:Key="ChipSurfaceBrush" Color="#262B36" />
                     <SolidColorBrush x:Key="ChipTextBrush" Color="#D3D8E0" />
-                    <SolidColorBrush x:Key="AttachmentSurfaceBrush" Color="#141820" />
-                    <SolidColorBrush x:Key="AttachmentBorderBrush" Color="#232A35" />
+                    <SolidColorBrush x:Key="AttachmentSurfaceBrush" Color="#1E222B" />
+                    <SolidColorBrush x:Key="AttachmentBorderBrush" Color="#2E3440" />
                     <!-- Badges -->
                     <SolidColorBrush x:Key="AvatarSurfaceBrush" Color="#13233F" />
                     <SolidColorBrush x:Key="AvatarTextBrush" Color="#6EA8FF" />
                     <SolidColorBrush x:Key="ReviewSurfaceBrush" Color="#2A2010" />
                     <SolidColorBrush x:Key="ReviewTextBrush" Color="#F5B547" />
                     <!-- Composer -->
-                    <SolidColorBrush x:Key="ComposerSurfaceBrush" Color="#141820" />
-                    <SolidColorBrush x:Key="ComposerBorderBrush" Color="#232A35" />
+                    <SolidColorBrush x:Key="ComposerSurfaceBrush" Color="#262B36" />
+                    <SolidColorBrush x:Key="ComposerBorderBrush" Color="#2E3440" />
                     <SolidColorBrush x:Key="ComposerFocusBorderBrush" Color="#086CFF" />
-                    <SolidColorBrush x:Key="ComposerAreaBrush" Color="#0B0E12" />
+                    <SolidColorBrush x:Key="ComposerAreaBrush" Color="#1E222B" />
                 </ResourceDictionary>
                 <ResourceDictionary x:Key="HighContrast">
                     <SolidColorBrush x:Key="DialogSurfaceBrush" Color="{ThemeResource SystemColorWindowColor}" />
