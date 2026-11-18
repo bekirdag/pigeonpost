@@ -82,6 +82,17 @@ class GroupMessageActionsUiTest {
         return seq
     }
 
+    /** Long-press on the words selects them; the menu is the time row's long-press, as in a one-to-one bubble. */
+    @Test fun longPressOnGroupTextSelectsAndTheMenuStaysOnTheTimeRow() = scenario {
+        open(); val seq = sequence(seed)
+        ui.onNode(hasText(seed) and hasAnyAncestor(hasTestTag("groupMessage:$seq")), useUnmergedTree = true)
+            .performTouchInput { longClick(centerLeft + androidx.compose.ui.geometry.Offset(40f, 0f)) }
+        ui.waitForIdle()
+        ui.onAllNodesWithText("Message info").assertCountEquals(0)
+        ui.onNodeWithTag("groupMessageMeta:$seq", useUnmergedTree = true).performTouchInput { longClick() }
+        ui.waitUntil(10_000) { ui.onAllNodesWithText("Message info").fetchSemanticsNodes().isNotEmpty() }
+    }
+
     @Test fun cancellingAnEditRestoresTheOrdinaryGroupDraft() = scenario {
         open(); val seq = send("Original group proposal")
         ui.onNodeWithTag("groupComposer").performTextInput("Ordinary group draft")

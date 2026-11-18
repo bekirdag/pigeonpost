@@ -54,7 +54,8 @@ fun TabletInbox(state: InboxState, store: InboxStore, model: InboxViewModel, use
     newConversation: () -> Unit, settings: () -> Unit, info: () -> Unit, newSubject: () -> Unit,
     chooseFile: () -> Unit, choosePhoto: () -> Unit, attachment: (Attachment, String) -> Unit, openLink: (String) -> Unit,
     groups: GroupsState = GroupsState(), newGroup: () -> Unit = {}, groupInfo: () -> Unit = {},
-    openGroupFile: (Group, GroupFile, String) -> Unit = { _, _, _ -> }, openFiltered: (FilteredGroup) -> Unit = {}, openPeer: (String) -> Unit = store::selectPeer) {
+    openGroupFile: (Group, GroupFile, String) -> Unit = { _, _, _ -> }, openFiltered: (FilteredGroup) -> Unit = {}, openPeer: (String) -> Unit = store::selectPeer,
+    listFilter: ListFilter = ListFilter.ALL, selectListFilter: (ListFilter) -> Unit = {}) {
     val p = Pp.colors
     var columns by rememberSaveable { mutableStateOf(true) }
     val groupOpen = groups.open != null && model.groups != null
@@ -65,7 +66,8 @@ fun TabletInbox(state: InboxState, store: InboxStore, model: InboxViewModel, use
             AnimatedVisibility(columns, enter = expandHorizontally(), exit = shrinkHorizontally()) {
                 Row(Modifier.fillMaxHeight()) {
                     Sidebar(state, store, model, groups, username, Modifier.width(sidebarWidth).fillMaxHeight().background(p.sidebar),
-                        hide = { columns = false }, newConversation = newConversation, newGroup = newGroup, settings = settings, openFiltered = openFiltered, openPeer = openPeer)
+                        hide = { columns = false }, newConversation = newConversation, newGroup = newGroup, settings = settings, openFiltered = openFiltered, openPeer = openPeer,
+                        listFilter = listFilter, selectListFilter = selectListFilter)
                     Seam(Modifier.width(1.dp).fillMaxHeight())
                     // A group has no subjects: its thread takes the space.
                     if (!groupOpen) {
@@ -97,8 +99,10 @@ fun TabletInbox(state: InboxState, store: InboxStore, model: InboxViewModel, use
 
 @Composable
 private fun Sidebar(state: InboxState, store: InboxStore, model: InboxViewModel, groups: GroupsState, username: String?, modifier: Modifier, hide: () -> Unit,
-    newConversation: () -> Unit, newGroup: () -> Unit, settings: () -> Unit, openFiltered: (FilteredGroup) -> Unit, openPeer: (String) -> Unit) {
+    newConversation: () -> Unit, newGroup: () -> Unit, settings: () -> Unit, openFiltered: (FilteredGroup) -> Unit, openPeer: (String) -> Unit,
+    listFilter: ListFilter, selectListFilter: (ListFilter) -> Unit) {
     val p = Pp.colors
+    val isNest = rememberNestCheck(model)
     var searching by rememberSaveable { mutableStateOf(false) }
     var invitesOpen by rememberSaveable { mutableStateOf(true) }
     if (state.leftView == LeftView.CALLS) {
@@ -156,14 +160,18 @@ private fun Sidebar(state: InboxState, store: InboxStore, model: InboxViewModel,
             Text(if (state.loaded) "Updating inbox…" else "Loading inbox…", style = geist(12.sp), color = p.muted)
         }
         if (searching) SearchField(state.filter, store::filter, "Search conversations", Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 10.dp))
+        ListFilterChips(listFilter, selectListFilter, Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 8.dp))
         if (state.offline) Text("Offline · showing the last loaded conversations", Modifier.padding(horizontal = 16.dp, vertical = 6.dp), color = p.heldText, style = geist(12.sp, FontWeight.Medium))
-        val filtered = if (!state.viewingArchive && state.filter.isEmpty()) state.filteredGroups.size else 0
-        val hasGroups = groups.enabled && (groups.joined.isNotEmpty() || groups.invitations.isNotEmpty()) && !state.viewingArchive
-        if (state.visible.isEmpty() && !hasGroups && filtered == 0) EmptyPane(if (state.filter.isNotEmpty()) "No matches" else if (state.viewingArchive) "Archive is empty" else "No conversations yet",
-            if (state.filter.isNotEmpty()) "Try a name or address." else "Your conversations will appear here.", Modifier.weight(1f))
-        else LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(vertical = 2.dp)) {
-            model.groups?.let { gs -> groupRows(groups, state, gs, phone = false, invitesOpen = invitesOpen, toggleInvites = { invitesOpen = !invitesOpen }, open = model::openGroup) }
-            items(state.visible, key = { it.peer }) { conversation ->
+        val shown = state.shown(listFilter, isNest)
+        val filtered = if (!state.viewingArchive && state.filter.isEmpty() && listFilter == ListFilter.ALL) state.filteredGroups.size else 0
+        val hasGroups = groups.enabled && listFilter.showsAnyGroup(groups) && !state.viewingArchive
+        if (shown.isEmpty() && !hasGroups && filtered == 0) {
+            if (listFilter != ListFilter.ALL && state.visible.isNotEmpty()) EmptyPane(listFilter.empty, "Choose All to see every conversation.", Modifier.weight(1f).testTag("listFilterEmpty"))
+            else EmptyPane(if (state.filter.isNotEmpty()) "No matches" else if (state.viewingArchive) "Archive is empty" else "No conversations yet",
+                if (state.filter.isNotEmpty()) "Try a name or address." else "Your conversations will appear here.", Modifier.weight(1f))
+        } else LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(vertical = 2.dp)) {
+            model.groups?.let { gs -> groupRows(groups, state, gs, phone = false, invitesOpen = invitesOpen, toggleInvites = { invitesOpen = !invitesOpen }, open = model::openGroup, listFilter = listFilter) }
+            items(shown, key = { it.peer }) { conversation ->
                 ConversationRow(conversation, conversation.peer == state.selectedPeer && groups.open == null, phone = false) { openPeer(conversation.peer) }
             }
             if (filtered > 0) item(key = "filtered") { FilteredEntry(filtered) { store.showView(LeftView.FILTERED) } }
