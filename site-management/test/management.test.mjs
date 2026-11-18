@@ -271,3 +271,37 @@ test("the page ships no inline script or style, is not indexed, and never writes
   }
   assert.match(read("../config.js"), /clientId: "pigeonpost-web"/);
 });
+
+test("listings: a featured row shows its rank; Feature posts the rank (next free by default) and Unfeature posts null", async (t) => {
+  const posted = [];
+  const row = (id, title, status, featured_rank) => ({ id, title, status, featured_rank, featured: featured_rank != null, publisher_id: "pub_w", publisher: { display_name: "Wodo" }, security_state: "normal", open_reports: 0 });
+  const { w, $$ } = boot(t, { url: "https://management.pigeonpost.dev/#/listings/listings", routes: base(["ops"], {
+    "GET /v1/staff/listings": reply(200, { data: [row("lst_hr", "Wodo AI HR", "published", null), row("lst_top", "Contract reviewer", "published", 1), row("lst_d", "Draft one", "draft", null)], next_cursor: null, next_featured_rank: 2 }),
+    "GET /v1/staff/listing-reports": EMPTY,
+    "POST /v1/staff/marketplace/listings/lst_hr/feature": (req) => { posted.push(["lst_hr", req.body]); return reply(200, { data: { listing_id: "lst_hr", featured: true, featured_rank: req.body.rank } }); },
+    "POST /v1/staff/marketplace/listings/lst_top/feature": (req) => { posted.push(["lst_top", req.body]); return reply(200, { data: { listing_id: "lst_top", featured: false, featured_rank: null } }); },
+  }) });
+  await tick();
+  const rowOf = (name) => $$("tbody tr").find((r) => r.textContent.includes(name));
+  const buttons = (r) => [...r.querySelectorAll("button")].map((b) => b.textContent);
+  assert.match(rowOf("Contract reviewer").textContent, /Featured #1/);
+  assert.doesNotMatch(rowOf("Wodo AI HR").textContent, /Featured #/);
+  assert.ok(!buttons(rowOf("Draft one")).includes("Feature"), "only a published listing can be featured");
+  assert.ok(buttons(rowOf("Contract reviewer")).includes("Unfeature"));
+
+  [...rowOf("Wodo AI HR").querySelectorAll("button")].find((b) => b.textContent === "Feature").click();
+  const form = rowOf("Wodo AI HR").querySelector("form");
+  assert.equal(form.querySelector('[name="rank"]').value, "2", "defaults to the next free rank");
+  type(w, form.querySelector('[name="rank"]'), "1");
+  type(w, form.querySelector('[name="reason"]'), "Owner asked to feature it");
+  submit(w, form);
+  await tick();
+  assert.deepEqual(posted[0], ["lst_hr", { rank: 1, reason: "Owner asked to feature it" }]);
+
+  [...rowOf("Contract reviewer").querySelectorAll("button")].find((b) => b.textContent === "Unfeature").click();
+  const un = rowOf("Contract reviewer").querySelector("form");
+  type(w, un.querySelector('[name="reason"]'), "Make room");
+  submit(w, un);
+  await tick();
+  assert.deepEqual(posted[1], ["lst_top", { rank: null, reason: "Make room" }]);
+});

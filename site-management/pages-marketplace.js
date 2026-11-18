@@ -147,11 +147,12 @@
         if (t === "listings") M.list(panel, {
           search: false, caption: "Listings",
           chips: { name: "status", label: "Status", value: "", options: [["", "Any status"], ["published", "Published"], ["suspended", "Suspended"], ["draft", "Draft"], ["withdrawn", "Withdrawn"]] },
-          fetch: (p) => M.get(`/v1/staff/listings?${p}`), empty: { icon: "tag", title: "No listings" },
+          fetch: async (p) => { const r = await M.get(`/v1/staff/listings?${p}`); if (r && r.next_featured_rank) nextRank = r.next_featured_rank; return r; },
+          empty: { icon: "tag", title: "No listings" },
           columns: [
             { key: "title", label: "Listing", sort: true, render: (l) => el("div", { class: "pm-stack" }, el("strong", {}, l.title), M.mono(l.id)) },
             { key: "publisher", label: "Publisher", render: (l) => (l.publisher && l.publisher.display_name) || l.publisher_id },
-            { key: "status", label: "Status", sort: true, render: (l) => M.status(l.status) },
+            { key: "status", label: "Status", sort: true, render: (l) => el("div", { class: "pm-inline" }, M.status(l.status), l.featured_rank != null ? ui.badge(`Featured #${l.featured_rank}`, "accent") : null) },
             { key: "security_state", label: "Security", render: (l) => (l.security_state && l.security_state !== "normal" ? M.status(l.security_state) : "—") },
             { key: "open_reports", label: "Reports", num: true, sort: true },
             { key: "id", label: "", render: (l) => listingActions(l) },
@@ -174,9 +175,43 @@
     }),
   });
 
+  /// The rank a new feature defaults to: after the last featured published listing (the server says).
+  let nextRank = 1;
+
+  /// Feature a published listing at a rank (lower first; the store shows the first three), or
+  /// take it out of the featured row. Same inline confirm form as Suspend, with a rank field.
+  function featureAction(l) {
+    const id = enc(l.id);
+    if (l.featured_rank != null) {
+      return M.reasonAction("Unfeature", async (reason) => { await M.post(`/v1/staff/marketplace/listings/${id}/feature`, { rank: null, reason }); return "Unfeatured. It is out of the featured row."; });
+    }
+    if (l.status !== "published") return null;
+    const wrap = el("div", { class: "pm-inline" });
+    const btn = ui.button("Feature", { size: "sm", onclick: () => {
+      btn.hidden = true;
+      wrap.append(M.form([
+        { name: "rank", label: "Rank", type: "number", min: "1", max: "999", step: "1", required: true, value: String(nextRank), hint: "Lower comes first. The store shows the first three." },
+        { name: "reason", label: "Reason", required: true, maxlength: 2000, placeholder: "Why — the record keeps it" },
+      ], {
+        submit: "Feature",
+        onSubmit: async (v) => {
+          const rank = Number(v.rank);
+          if (!Number.isInteger(rank) || rank < 1 || rank > 999) throw new Error("Rank is a whole number from 1 to 999.");
+          await M.post(`/v1/staff/marketplace/listings/${id}/feature`, { rank, reason: v.reason });
+          return `Featured at #${rank}.`;
+        },
+      }));
+      const i = wrap.querySelector("input");
+      if (i) i.focus();
+    } });
+    wrap.append(btn);
+    return wrap;
+  }
+
   function listingActions(l) {
     const id = enc(l.id);
     return el("div", { class: "pm-actions" },
+      featureAction(l),
       l.status === "suspended"
         ? M.reasonAction("Reinstate", async (reason) => { await M.post(`/v1/staff/listings/${id}/moderation`, { action: "reinstate", reason }); return "Reinstated."; })
         : M.reasonAction("Suspend", async (reason) => { await M.post(`/v1/staff/listings/${id}/moderation`, { action: "suspend", reason }); return "Suspended. It is out of the catalog."; }, { danger: true }),

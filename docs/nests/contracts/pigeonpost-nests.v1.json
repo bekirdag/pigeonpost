@@ -3343,6 +3343,114 @@
         }
       }
     },
+    "/v1/staff/marketplace/listings/{listing}/feature": {
+      "post": {
+        "tags": [
+          "Staff"
+        ],
+        "operationId": "staffFeatureListing",
+        "summary": "Feature or unfeature a listing",
+        "description": "A person with a live `reviewer` or `ops` staff role and a recent strong sign-in (`403 staff_required`, `step_up_required`), with no stake in the publisher (`403 staff_conflict`). A `rank` puts the listing in the store's featured row (lower ranks first; the store shows the first three); `null` takes it out. Only a `published` listing can be featured (`409 listing_not_published`); unfeaturing works in any status. Recorded in the audit log with the reason.",
+        "x-pigeonpost-status": "implemented",
+        "x-pigeonpost-action": "MarketplaceOps",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Listing"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "rank",
+                  "reason"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "rank": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 1,
+                    "maximum": 999,
+                    "description": "The featured rank, or null to unfeature."
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The listing's featured state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "listing_id",
+                        "featured",
+                        "featured_rank"
+                      ],
+                      "additionalProperties": false,
+                      "properties": {
+                        "listing_id": {
+                          "type": "string"
+                        },
+                        "featured": {
+                          "type": "boolean"
+                        },
+                        "featured_rank": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
     "/v1/publishers/{publisher}/listings/{listing}/grants": {
       "get": {
         "tags": [

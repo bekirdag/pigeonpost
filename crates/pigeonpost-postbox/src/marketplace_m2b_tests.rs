@@ -1399,3 +1399,111 @@ async fn a_build_plane_release_runs_as_a_test_nest_in_the_test_pool() {
     assert_eq!(sent["release"]["image"], record["image"]);
     assert_eq!(sent["release"]["signature"].as_str().unwrap().len(), 128);
 }
+
+// ---- staff featuring ---------------------------------------------------------------------------------
+
+async fn scalar_i64(srv: &Srv, query: &str) -> i64 {
+    let q = query.to_string();
+    srv.state
+        .store
+        .group_read(move |c| -> Result<i64, crate::groups::GErr> {
+            Ok(c.query_row(&q, [], |r| r.get(0))?)
+        })
+        .await
+        .unwrap()
+}
+
+/// Staff feature a published listing at a rank and unfeature it: reviewer or ops with step-up only,
+/// audited, shown on public reads, and refused for a listing that is not published.
+#[tokio::test]
+async fn staff_feature_sets_and_clears_the_featured_rank() {
+    let (srv, owner) = setup().await;
+    srv.global_flag("marketplace").await;
+    let (rev, ann, p, _t, l, _b) = published_with_schema(&srv, &owner, "f1").await;
+
+    // (2) POST as publisher (not staff) -> 403 staff_required
+    let path = format!("/v1/staff/marketplace/listings/{l}/feature");
+    let (s, v) = srv
+        .post(&path, &ann.strong, json!({"rank": 1, "reason": "x"}))
+        .await;
+    assert_eq!((s, code(&v)), (403, "staff_required"), "{v}");
+
+    // POST as reviewer without step-up -> 401
+    let (s, _v) = srv
+        .post(&path, &rev.token, json!({"rank": 1, "reason": "x"}))
+        .await;
+    assert_eq!(s, 401);
+
+    // (3) POST as reviewer with step-up rank 2 -> 200 and featured_rank == 2
+    let (s, v) = srv
+        .post(&path, &rev.strong, json!({"rank": 2, "reason": "x"}))
+        .await;
+    assert_eq!(s, 200);
+    assert_eq!(v["data"]["featured_rank"], 2);
+
+    // (4) GET public listing -> featured true and featured_rank == 2
+    let (s, v) = srv
+        .get(&format!("/v1/marketplace/listings/{l}"), &ann.token)
+        .await;
+    assert_eq!(s, 200);
+    assert_eq!(v["data"]["featured"], true);
+    assert_eq!(v["data"]["featured_rank"], 2);
+
+    // (5) GET staff listings -> data[0]["featured_rank"]==2 and next_featured_rank==3
+    let (s, v) = srv
+        .get(
+            &format!("/v1/staff/listings?status=published&publisher={p}"),
+            &rev.strong,
+        )
+        .await;
+    assert_eq!(s, 200);
+    assert_eq!(v["data"][0]["featured_rank"], 2);
+    assert_eq!(v["next_featured_rank"], 3);
+
+    // (6) POST rank 0 -> (400, "invalid_request")
+    let (s, v) = srv
+        .post(&path, &rev.strong, json!({"rank": 0, "reason": "x"}))
+        .await;
+    assert_eq!((s, code(&v)), (400, "invalid_request"), "{v}");
+
+    // POST without rank -> status 400
+    let (s, _v) = srv.post(&path, &rev.strong, json!({"reason": "x"})).await;
+    assert_eq!(s, 400);
+
+    // (7) POST rank null -> 200 and data featured false
+    let (s, v) = srv
+        .post(&path, &rev.strong, json!({"rank": null, "reason": "x"}))
+        .await;
+    assert_eq!(s, 200);
+    assert_eq!(v["data"]["featured"], false);
+
+    // Public read featured false
+    let (s, v) = srv
+        .get(&format!("/v1/marketplace/listings/{l}"), &ann.token)
+        .await;
+    assert_eq!(s, 200);
+    assert_eq!(v["data"]["featured"], false);
+
+    // (8) Audit log count
+    let count = scalar_i64(
+        &srv,
+        "SELECT COUNT(*) FROM audit_log WHERE action LIKE 'marketplace.listing.%feature'",
+    )
+    .await;
+    assert_eq!(count, 2);
+
+    // (9) Withdraw listing then POST rank 1 -> (409, "listing_not_published")
+    let (s, _v) = srv
+        .post(
+            &format!("/v1/publishers/{p}/listings/{l}/withdraw"),
+            &ann.token,
+            json!({}),
+        )
+        .await;
+    assert_eq!(s, 200);
+
+    let (s, v) = srv
+        .post(&path, &rev.strong, json!({"rank": 1, "reason": "x"}))
+        .await;
+    assert_eq!((s, code(&v)), (409, "listing_not_published"), "{v}");
+}
