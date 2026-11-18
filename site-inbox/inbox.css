@@ -94,10 +94,11 @@
 .pane-list[data-filter="held"] .groups-section { display: none; }
 .pane-list[data-filter="unread"] .groups-list > li:not(:has(.dot:not([hidden]))) { display: none; }
 
-/* Offline, loading and error, between the filters and the list. */
-.offline-banner {
+/* Loading and error, between the filters and the list. There is no offline state to draw: a
+   network blip is retried quietly, and only an answer that needs the person is shown here. */
+.inbox-error {
   margin: 0 12px 8px; padding: 8px 12px; border-radius: var(--pp-radius-l);
-  background: var(--pp-warning-fill); border: 1px solid var(--pp-warning-border); color: var(--pp-text-body);
+  background: var(--pp-danger-fill); border: 1px solid var(--pp-danger-border); color: var(--pp-text-body);
   font-size: var(--pp-fs-body-s); line-height: var(--pp-lh-body-s);
 }
 .inbox-status { margin: 0 16px 8px; font-size: var(--pp-fs-body-s); color: var(--pp-text-muted); }

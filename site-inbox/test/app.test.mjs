@@ -206,6 +206,9 @@ EVENTS.mode = "live";
 
 window.eval(readFileSync(`${APP}/names.js`, "utf8"));
 window.eval(readFileSync(`${APP}/config.js`, "utf8"));
+// This file replays listings by firing `visibilitychange` again and again, seconds apart at most.
+// The page refreshes at most once per 5 s on activation; here every activation must be heard.
+window.PIGEONPOST_INBOX.activationRefreshMs = 0;
 window.eval(readFileSync(`${APP}/app.js`, "utf8"));
 
 const settle = (ms = 60) => new Promise((r) => setTimeout(r, ms));
@@ -1004,7 +1007,8 @@ w2.eval(readFileSync(`${APP}/config.js`, "utf8"));
   check("it tries the stream first", EVENTS.opened.length > 0, true);
   check("a refused stream falls back to the long poll", calls2.some((p) => p.includes("wait=")), true);
   check("and the mailbox is still on screen", $2("threads").children.length > 0, true);
-  check("nothing is announced when it is working", $2("offline-banner").hidden, true);
+  check("nothing is announced when it is working", $2("inbox-error").hidden, true);
+  check("and there is no offline banner at all", $2("offline-banner"), null);
 
   $2("settings-btn").click();
   await settle(60);
@@ -1030,17 +1034,23 @@ w2.eval(readFileSync(`${APP}/config.js`, "utf8"));
   $2("settings-btn").click();
   await settle(60);
   check("contacts it could not refetch are still there", $2("contact-list").children.length, contactsBefore);
-  check("and one failed route is not called offline", $2("offline-banner").hidden, true);
+  check("and one failed route is not called anything", $2("inbox-error").hidden, true);
   $2("settings-close").click();
 
-  // Losing the network is. Nothing arrives, so nothing is refuted, so what is on screen stays on
-  // screen — behind a banner that stops the page claiming to be current.
+  // Losing the network shows nothing (owner, 2026-11-18: the "offline" banner was mostly blips).
+  // Nothing arrives, so nothing is refuted, so what is on screen stays on screen, and coming back
+  // to the page asks for the mail again, quietly.
   const onScreen = $2("threads").children.length;
   check("there is a mailbox on screen to keep", onScreen > 0, true);
   refuseAll = true;
+  const before = calls2.length;
   w2.document.dispatchEvent(new w2.Event("visibilitychange"));
   await settle(200);
-  check("offline says so, quietly", $2("offline-banner").hidden, false);
+  check("coming back to the page refreshes the inbox",
+    calls2.slice(before).some((p) => p.startsWith("/v1/inbox") && !p.includes("wait=")), true);
+  check("a failed refresh says nothing", $2("inbox-error").hidden, true);
+  check("and offers no retry for a blip", $2("retry-inbox").hidden, true);
+  check("nothing on the page says offline", /offline/i.test($2("pane-list").textContent), false);
   check("and holds what was loaded", $2("threads").children.length, onScreen);
 }
 
@@ -1086,15 +1096,16 @@ w3.eval(readFileSync(`${APP}/config.js`, "utf8"));
   await settle(250);
 
   const $3 = (id) => w3.document.getElementById(id);
-  check("a mailbox that would not load says so", $3("offline-banner").hidden, false);
+  check("a mailbox that never loaded offers a retry", $3("retry-inbox").hidden, false);
+  check("without calling it offline", /offline/i.test($3("inbox-error").textContent), false);
   // The whole point. Something has to be trying, or the banner is permanent.
   check("but something is still trying",
     calls3.filter((p) => p.startsWith("/v1/events")).length > 0, true);
 
   unreachable = false;
   await settle(1400);
-  check("the network comes back and the page stops claiming to be offline",
-    $3("offline-banner").hidden, true);
+  check("the network comes back and the retry goes away",
+    $3("inbox-error").hidden && $3("retry-inbox").hidden, true);
   check("without anybody reloading it", $3("threads").children.length > 0, true);
   check("and it settled on the long poll this postbox needs",
     calls3.some((p) => p.includes("wait=")), true);
