@@ -5,7 +5,6 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -36,7 +35,10 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -83,11 +85,12 @@ private fun previewOf(history: List<HistoryItem>, me: String?, name: (String?) -
 }
 
 /** Groups sit beside direct conversations: pending invitations first, then the groups themselves. */
-fun LazyListScope.groupRows(groups: GroupsState, inbox: InboxState, store: GroupStore, phone: Boolean, invitesOpen: Boolean, toggleInvites: () -> Unit, open: (String) -> Unit) {
+fun LazyListScope.groupRows(groups: GroupsState, inbox: InboxState, store: GroupStore, phone: Boolean, invitesOpen: Boolean, toggleInvites: () -> Unit, open: (String) -> Unit,
+    listFilter: dev.pigeonpost.core.ListFilter = dev.pigeonpost.core.ListFilter.ALL) {
     if (!groups.enabled) return
     val filter = inbox.filter.trim()
     val invitations = groups.invitations
-    if (invitations.isNotEmpty() && filter.isEmpty() && !inbox.viewingArchive) {
+    if (invitations.isNotEmpty() && filter.isEmpty() && !inbox.viewingArchive && listFilter.showsInvitations) {
         item(key = "group-invitations") {
             val p = Pp.colors
             Row(Modifier.fillMaxWidth().clickable(onClickLabel = if (invitesOpen) "Hide invitations" else "Show invitations", onClick = toggleInvites)
@@ -99,7 +102,7 @@ fun LazyListScope.groupRows(groups: GroupsState, inbox: InboxState, store: Group
         }
         if (invitesOpen) items(invitations, key = { "invite:" + it.id }) { g -> InvitationCard(g, groups, inbox, store) }
     }
-    val rows = groups.joined.filter { !inbox.viewingArchive && (filter.isEmpty() || it.name.contains(filter, true)) }
+    val rows = groups.joined.filter { !inbox.viewingArchive && (filter.isEmpty() || it.name.contains(filter, true)) && listFilter.showsGroup(it.my?.unread ?: 0) }
     items(rows, key = { "group:" + it.id }) { g -> GroupRow(g, groups, inbox, phone) { open(g.id) } }
 }
 
@@ -441,6 +444,9 @@ private fun GroupBubble(x: HistoryItem, g: Group, groups: GroupsState, sender: S
     val replyable = readable && Features.MESSAGE_REPLY in groups.features && x.seq != null && !x.pending
     val reference = if (x.actionsVerified) GroupActions.sequence(x.replyTo) else null
     val parent = reference?.let { seq -> history.firstOrNull { it.kind == "message" && it.seq == seq && !it.deleted && !it.undecryptable } }
+    // Long-press on the words selects them (as in a one-to-one bubble); the menu is a long-press on the
+    // parts that are not text — the sender line and the time row — and the bubble's TalkBack action.
+    val holdForMenu = Modifier.pointerInput(Unit) { detectTapGestures(onLongPress = { menu = true }) }
     Column(Modifier.fillMaxWidth().then(if (highlighted) Modifier.background(p.selected, RoundedCornerShape(12.dp)) else Modifier)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start, verticalAlignment = Alignment.Top) {
             if (!mine) {
@@ -448,12 +454,12 @@ private fun GroupBubble(x: HistoryItem, g: Group, groups: GroupsState, sender: S
                 Spacer(Modifier.width(8.dp))
             } else Spacer(Modifier.width(40.dp))
             Column(Modifier.weight(1f, fill = false).widthIn(max = 560.dp).clip(shape).background(if (mine) p.mineFill else p.ground)
-                .border(1.dp, if (mine) p.mineStroke else p.stroke, shape).combinedClickable(onClick = {}, onLongClick = { menu = true }, onLongClickLabel = "Message actions")
+                .border(1.dp, if (mine) p.mineStroke else p.stroke, shape).semantics(mergeDescendants = true) { onLongClick("Message actions") { menu = true; true } }
                 .padding(start = 14.dp, end = 6.dp, top = 8.dp, bottom = 4.dp).testTag("groupMessage:" + (x.seq ?: x.cmid))) {
-                if (!mine && showSender) Text(sender, style = geist(12.5.sp, FontWeight.SemiBold), color = p.accent)
+                if (!mine && showSender) Text(sender, holdForMenu, style = geist(12.5.sp, FontWeight.SemiBold), color = p.accent)
                 when {
-                    x.deleted -> Text("This message is no longer available", style = geist(14.sp).copy(fontStyle = FontStyle.Italic), color = p.muted)
-                    x.undecryptable -> Text("Encrypted message — not readable on this device", style = geist(14.sp).copy(fontStyle = FontStyle.Italic), color = p.muted)
+                    x.deleted -> Text("This message is no longer available", holdForMenu, style = geist(14.sp).copy(fontStyle = FontStyle.Italic), color = p.muted)
+                    x.undecryptable -> Text("Encrypted message — not readable on this device", holdForMenu, style = geist(14.sp).copy(fontStyle = FontStyle.Italic), color = p.muted)
                     blocked && !reveal -> TextButton({ reveal = true }, contentPadding = PaddingValues(0.dp)) { Text("Message from someone you blocked · Show", style = geist(13.5.sp), color = p.muted) }
                     else -> {
                         if (reference != null) Box(Modifier.padding(end = 8.dp, bottom = 6.dp).testTag("groupReplyQuote:" + x.seq)) {
@@ -477,12 +483,13 @@ private fun GroupBubble(x: HistoryItem, g: Group, groups: GroupsState, sender: S
                         }
                     }
                 }
-                Row(Modifier.align(Alignment.End), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(Modifier.align(Alignment.End).then(holdForMenu).heightIn(min = 24.dp).padding(start = 12.dp).testTag("groupMessageMeta:" + (x.seq ?: x.cmid)),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     val meta = if (mine) p.mineMeta else p.muted
                     x.expiresAt?.let { deadline -> Icon(KitIcons.Timer, "Disappears " + DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(deadline * 1000)), Modifier.size(13.dp), tint = meta) }
                     Text(shortTime(x.createdAt) + if (x.editOf != null && x.actionsVerified) " · edited" else "", style = geist(11.5.sp), color = meta)
                     if (mine) GroupReceiptMark(x, groups, inbox.policy?.readReceipts != false, meta)
-                    // The full action list is the bubble's long-press (TalkBack: "Message actions"); no action icon sits inside the bubble (SDS §14C).
+                    // The full action list is a long-press here or on the sender line (TalkBack: the bubble's "Message actions"); no action icon sits inside the bubble (SDS §14C).
                     Box {
                         DropdownMenu(menu, { menu = false }, containerColor = p.ground) {
                             if (replyable) DropdownMenuItem({ Text("Reply") }, { menu = false; x.seq?.let { store.beginReply(g.id, it) } }, enabled = canChange)
