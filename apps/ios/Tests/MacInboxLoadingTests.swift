@@ -396,8 +396,9 @@ extension Notification.Name {
             InboxLoadingTests.finish(target.address, marker: marker, inboxBody: stressMessages(marker))
             await InboxLoadingTests.wait("picker data ready") { inbox.hasLoaded && !inbox.loading }
             await settle()
-            // The first row, under the mailbox bar and the quick-filter chips (36 pt).
-            await click(x: 90, y: 136, window: window, host: host)
+            await InboxLoadingTests.wait("picker conversation has a native row") { firstConversationCenter(in: host) != nil }
+            let first = firstConversationCenter(in: host)!
+            await click(x: first.x, y: host.isFlipped ? first.y : host.bounds.height - first.y, window: window, host: host)
             if index.isMultiple(of: 2) { await settle() }
             InboxLoadingTests.check(inbox.reading == "/test/peer", "conversation opens through the native List")
             await click(x: 350, y: 92, window: window, host: host)
@@ -563,7 +564,10 @@ extension Notification.Name {
         }) else { return nil }
         // Presenting a sheet can change the window's toolbar and safe area on Sonoma. Click
         // the actual native row rather than reusing a point from before that transition.
-        let row = table.convert(table.rect(ofRow: 0), to: host)
+        // Row 0 is the quick-filter chips (the inbox list's first row); the first conversation is
+        // the row after it.
+        guard table.numberOfRows > 1 else { return nil }
+        let row = table.convert(table.rect(ofRow: 1), to: host)
         return NSPoint(x: row.midX, y: row.midY)
     }
 

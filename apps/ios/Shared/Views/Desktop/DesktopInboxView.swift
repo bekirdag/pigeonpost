@@ -212,12 +212,6 @@ struct DesktopInboxView: View {
                     }
                     #endif
             }
-            // The quick filters (the web's `.list-filter` row), over the conversations only: the
-            // call history and the archive are lists of their own.
-            if !showingCalls, !inbox.viewingArchive {
-                InboxFilterBar(filter: $inbox.listFilter)
-                    .padding(.bottom, 8)
-            }
             if showingCalls, let callLog, account.features.callHistory {
                 CallLogList(callLog: callLog, open: { key in
                     peer = key
@@ -333,6 +327,16 @@ struct DesktopInboxView: View {
     /// on both platforms, and on the Mac there is no way to ask it not to.
     private var conversationList: some View {
         List {
+            // The quick filters (the web's `.list-filter` row), as the list's first row rather than
+            // a fixed header: on an iPad in landscape with the keyboard up, a header row left the
+            // list no height at all, and its rows piled on top of one another. The archive is one
+            // list on purpose and has none.
+            if !inbox.viewingArchive {
+                InboxFilterBar(filter: Binding(get: { inbox.listFilter }, set: { inbox.listFilter = $0 }))
+                    .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 8, trailing: 0))
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+            }
             if inbox.offline, inbox.hasLoaded {
                 VStack(alignment: .leading, spacing: 6) {
                     Label("Not connected. Showing what was last loaded.", systemImage: "wifi.slash")
