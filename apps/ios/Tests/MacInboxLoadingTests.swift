@@ -396,7 +396,8 @@ extension Notification.Name {
             InboxLoadingTests.finish(target.address, marker: marker, inboxBody: stressMessages(marker))
             await InboxLoadingTests.wait("picker data ready") { inbox.hasLoaded && !inbox.loading }
             await settle()
-            await click(x: 90, y: 100, window: window, host: host)
+            // The first row, under the mailbox bar and the quick-filter chips (36 pt).
+            await click(x: 90, y: 136, window: window, host: host)
             if index.isMultiple(of: 2) { await settle() }
             InboxLoadingTests.check(inbox.reading == "/test/peer", "conversation opens through the native List")
             await click(x: 350, y: 92, window: window, host: host)
