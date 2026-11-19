@@ -6,7 +6,7 @@ import { JSDOM } from "jsdom";
 const html = readFileSync(new URL("../../site/download.html", import.meta.url), "utf8");
 const source = readFileSync(new URL("../../site/download.js", import.meta.url), "utf8");
 const homepage = readFileSync(new URL("../../site/index.html", import.meta.url), "utf8");
-const macArchive = "https://github.com/bekirdag/pigeonpost/releases/download/macos-1.3-53/Pigeonpost-Desktop-1.3-53.zip";
+const macArchive = "https://github.com/bekirdag/pigeonpost/releases/download/macos-1.3.1-55/Pigeonpost-Desktop-1.3.1-55.zip";
 const windowsStore = "https://apps.microsoft.com/detail/9N0NWJ9L8XDP";
 const appStore = "https://apps.apple.com/tr/app/pigeonpost-inbox/id6803521541";
 const googlePlay = "https://play.google.com/store/apps/details?id=dev.pigeonpost.inbox&hl=en";
