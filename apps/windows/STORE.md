@@ -8,8 +8,8 @@ Product: **Pigeonpost Desktop** (the shorter Pigeonpost name was unavailable).
 - Publisher display name: `Wodo Teknoloji A.Ş.`
 - Package family: `WodoTeknolojiA.PigeonpostDesktop_80zy2mk5xaxza`
 - First submission: `1152921505702010327`
-- Previous packages: `1.0.11.0` (Submission 10), `1.0.12.0` (Submission 11, `1152921505702264712`), `1.0.13.0` (Submission 12, November 4, 2026).
-  Next: `1.0.14.0` (Submission 13, November 15, 2026), Windows 11, x64 and ARM64: the Pigeonpost Design Kit look.
+- Previous packages: `1.0.11.0` (Submission 10), `1.0.12.0` (Submission 11, `1152921505702264712`), `1.0.13.0` (Submission 12, November 4, 2026), `1.0.14.0` (Submission 13, November 15, 2026, the Pigeonpost Design Kit look).
+  Next: `1.0.15.0` (Submission 14, November 19, 2026), Windows 11, x64 and ARM64: list filters and dark-mode surfaces.
 
 ## Listing copy
 
@@ -70,6 +70,15 @@ different from Explorer's account, so the taskbar overlay API is denied there; t
 disabling the tray or native alerts. Overlay display in a normal same-user Explorer session was not
 visually tested. Evidence and package hashes are recorded in
 `docs/planning/2026-10-16-desktop-notifications-progress.md`.
+
+### Version 1.0.15 release notes
+
+1.0.15: Filter the conversation list with All, Unread, Agents and People. Agents shows conversations with
+your own agent mailboxes and Nests; People shows everyone else. In dark mode the panes now use distinct
+shades so the list, the conversation and the composer are easy to tell apart, and faint text is easier to
+read. Light mode is unchanged.
+
+1.0.15 adds no capabilities; the manifest changes only its version.
 
 ### Version 1.0.13 release notes
 
