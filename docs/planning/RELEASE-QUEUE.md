@@ -5,13 +5,15 @@ changes, list them here, and ship them together on the release call. Clear entri
 
 ## Held builds
 
-- Android 0.6.0 (17): home-screen widgets (#321, #334). Signed AAB built 2026-11-17; not submitted.
+None.
 
 ## Waiting changes
 
-- 2026-11-18 — Inbox filters All · Unread · Agents · People (web keeps Held). Web inbox also drops the
-  "Offline" banner and refreshes silently on tab show, focus and reconnect. Web inbox: #339.
-- 2026-11-18 — Same filter chips, and group message text selectable (actions menu moves to the sender/time
-  row). Android: #340.
-- 2026-11-18 — Same filters; iOS message text selection fix plus "Select Text"; clearer Mac dark-mode
-  surfaces. iOS, iPadOS, macOS: #341.
+None.
+
+## Released 2026-11-19 (owner's release call)
+
+- Web inbox #339: deployed to inbox.pigeonpost.dev.
+- Android 0.6.0 (17), with widgets #321/#334 and filters/selection #340: in Google Play production review.
+- iOS/iPadOS and Mac 1.3.1 (55), #341 via #343: waiting for App Store review. Mac website download 1.3.1-55 is live (#345).
+- Windows 1.0.15, #338 via #344: in Microsoft Store certification (submission 14). Linux 1.0.14 is published (tag linux-desktop-1.0.14).
