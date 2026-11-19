@@ -15,5 +15,3 @@ changes, list them here, and ship them together on the release call. Clear entri
   row). Android: #340.
 - 2026-11-18 — Same filters; iOS message text selection fix plus "Select Text"; clearer Mac dark-mode
   surfaces. iOS, iPadOS, macOS: #341.
-- 2026-11-18 — Same filters, and dark-mode surface levels you can tell apart (light unchanged).
-  Windows, Linux: #338.
