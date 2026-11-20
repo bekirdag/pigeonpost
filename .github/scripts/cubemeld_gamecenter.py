@@ -274,8 +274,12 @@ def ensure_image(client: Client, localization, file_name: str, content: bytes, l
         state = (image.get("attributes", {}).get("assetDeliveryState") or {}).get("state")
         if state in {"COMPLETE", "UPLOAD_COMPLETE", None}:
             return True
-        print(f"  {label}: image state {state}")
-        return False
+        if not (APPLY and state in {"AWAITING_UPLOAD", "FAILED"}):
+            print(f"  {label}: image state {state}")
+            return False
+        # An upload interrupted earlier (reserved, never committed): drop it and upload again.
+        client.call("DELETE", f"/v2/gameCenterAchievementImages/{image['id']}")
+        print(f"  {label}: removed an unfinished image upload ({state})")
     if not APPLY:
         print(f"  {label}: image missing")
         return False
